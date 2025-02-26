@@ -36,7 +36,7 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
-use ethrex_blockchain::mempool::Mempool;
+use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
 use serde::Deserialize;
 use serde_json::Value;
@@ -68,7 +68,7 @@ pub use clients::{EngineClient, EthClient};
 
 use axum::extract::State;
 use ethrex_p2p::types::Node;
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::error::StoreError;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -79,8 +79,7 @@ enum RpcRequestWrapper {
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
-    storage: Store,
-    mempool: Mempool,
+    blockchain: Blockchain,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -110,7 +109,12 @@ impl RpcApiContext {
         Ok(if self.syncer.try_lock().is_err() {
             SyncStatus::Active
         // Check if there is a checkpoint left from a previous aborted sync
-        } else if self.storage.get_header_download_checkpoint()?.is_some() {
+        } else if self
+            .blockchain
+            .storage
+            .get_header_download_checkpoint()?
+            .is_some()
+        {
             SyncStatus::Pending
         // No trace of a sync being handled
         } else {
@@ -154,8 +158,7 @@ const FILTER_DURATION: Duration = {
 pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
-    storage: Store,
-    mempool: Mempool,
+    blockchain: Blockchain,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -167,8 +170,7 @@ pub async fn start_api(
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let service_context = RpcApiContext {
-        storage: storage.clone(),
-        mempool: mempool.clone(),
+        blockchain,
         jwt_secret,
         local_p2p_node,
         local_node_record,
@@ -326,14 +328,18 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_estimateGas" => EstimateGasRequest::call(req, context),
         "eth_getLogs" => LogsFilter::call(req, context),
         "eth_newFilter" => {
-            NewFilterRequest::stateful_call(req, context.storage, context.active_filters)
+            NewFilterRequest::stateful_call(req, context.blockchain.storage, context.active_filters)
         }
-        "eth_uninstallFilter" => {
-            DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
-        }
-        "eth_getFilterChanges" => {
-            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters)
-        }
+        "eth_uninstallFilter" => DeleteFilterRequest::stateful_call(
+            req,
+            context.blockchain.storage,
+            context.active_filters,
+        ),
+        "eth_getFilterChanges" => FilterChangesRequest::stateful_call(
+            req,
+            context.blockchain.storage,
+            context.active_filters,
+        ),
         "eth_sendRawTransaction" => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "based")] {
@@ -412,7 +418,7 @@ pub async fn map_engine_requests(
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(
-            context.storage,
+            context.blockchain.storage,
             context.local_p2p_node,
             context.local_node_record,
         ),
@@ -422,7 +428,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => web3::client_version(req, context.storage),
+        "web3_clientVersion" => web3::client_version(req, context.blockchain.storage),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -462,7 +468,7 @@ mod tests {
         constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
         types::{ChainConfig, Genesis},
     };
-    use ethrex_storage::EngineType;
+    use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
     use std::fs::File;
     use std::io::BufReader;
@@ -493,8 +499,7 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
-            storage: blockchain.storage,
-            mempool: blockchain.mempool,
+            blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -586,8 +591,7 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
-            storage: blockchain.storage,
-            mempool: blockchain.mempool,
+            blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -624,8 +628,7 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
-            storage: blockchain.storage,
-            mempool: blockchain.mempool,
+            blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
@@ -694,8 +697,7 @@ mod tests {
             .to_string();
         let local_p2p_node = example_p2p_node();
         let context = RpcApiContext {
-            storage: blockchain.storage,
-            mempool: blockchain.mempool,
+            blockchain,
             local_p2p_node,
             local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),

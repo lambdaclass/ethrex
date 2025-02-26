@@ -441,8 +441,7 @@ mod tests {
             .expect("Fatal: could not create in memory test db");
         let blockchain = Blockchain::default_with_store(storage);
         let context = RpcApiContext {
-            storage: blockchain.storage,
-            mempool: blockchain.mempool,
+            blockchain,
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
@@ -458,6 +457,7 @@ mod tests {
             serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
 
         context
+            .blockchain
             .storage
             .add_initial_state(genesis_config)
             .expect("Fatal: could not add test genesis in test");
@@ -507,8 +507,7 @@ mod tests {
             .expect("Fatal: could not create in memory test db");
         let blockchain = Blockchain::default_with_store(storage);
         let context = RpcApiContext {
-            storage: blockchain.storage,
-            mempool: blockchain.mempool,
+            blockchain,
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
@@ -538,8 +537,7 @@ mod tests {
             .expect("Fatal: could not create in memory test db");
         let blockchain = Blockchain::default_with_store(storage);
         let context = RpcApiContext {
-            storage: blockchain.storage,
-            mempool: blockchain.mempool,
+            blockchain,
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
             active_filters: active_filters.clone(),

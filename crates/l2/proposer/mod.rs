@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
 use ethereum_types::Address;
-use ethrex_blockchain::mempool::Mempool;
+use ethrex_blockchain::Blockchain;
 use ethrex_rpc::clients::EngineApiConfig;
 use ethrex_storage::Store;
 use tokio::task::JoinSet;
@@ -26,7 +26,7 @@ pub struct Proposer {
     jwt_secret: Vec<u8>,
 }
 
-pub async fn start_proposer(store: Store, mempool: Mempool) {
+pub async fn start_proposer(blockchain: Blockchain) {
     info!("Starting Proposer");
 
     if let Err(e) = read_env_file() {
@@ -35,10 +35,10 @@ pub async fn start_proposer(store: Store, mempool: Mempool) {
     }
 
     let mut task_set = JoinSet::new();
-    task_set.spawn(l1_watcher::start_l1_watcher(store.clone(), mempool));
-    task_set.spawn(l1_committer::start_l1_committer(store.clone()));
-    task_set.spawn(prover_server::start_prover_server(store.clone()));
-    task_set.spawn(start_proposer_server(store.clone()));
+    task_set.spawn(l1_watcher::start_l1_watcher(blockchain.clone()));
+    task_set.spawn(l1_committer::start_l1_committer(blockchain.clone()));
+    task_set.spawn(prover_server::start_prover_server(blockchain.clone()));
+    task_set.spawn(start_proposer_server(blockchain.clone()));
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer());
 
@@ -59,13 +59,13 @@ pub async fn start_proposer(store: Store, mempool: Mempool) {
     }
 }
 
-async fn start_proposer_server(store: Store) -> Result<(), ConfigError> {
+async fn start_proposer_server(blockchain: Blockchain) -> Result<(), ConfigError> {
     let proposer_config = ProposerConfig::from_env()?;
     let engine_config = EngineApiConfig::from_env().map_err(ConfigError::from)?;
     let proposer =
         Proposer::new_from_config(&proposer_config, engine_config).map_err(ConfigError::from)?;
 
-    proposer.run(store.clone()).await;
+    proposer.run(blockchain.storage.clone()).await;
     Ok(())
 }
 

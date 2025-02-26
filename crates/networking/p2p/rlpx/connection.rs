@@ -19,12 +19,12 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::mempool::{self, Mempool};
+use ethrex_blockchain::{mempool, Blockchain};
 use ethrex_common::{
     types::{MempoolTransaction, Transaction},
     H256, H512,
 };
-use ethrex_storage::Store;
+
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
@@ -73,8 +73,7 @@ pub(crate) struct RLPxConnection<S> {
     signer: SigningKey,
     node: Node,
     framed: Framed<S, RLPxCodec>,
-    storage: Store,
-    mempool: Mempool,
+    blockchain: Blockchain,
     capabilities: Vec<(Capability, u8)>,
     negotiated_eth_version: u8,
     negotiated_snap_version: u8,
@@ -98,16 +97,14 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         node: Node,
         stream: S,
         codec: RLPxCodec,
-        storage: Store,
-        mempool: Mempool,
+        blockchain: Blockchain,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
             signer,
             node,
             framed: Framed::new(stream, codec),
-            storage,
-            mempool,
+            blockchain,
             capabilities: vec![],
             negotiated_eth_version: 0,
             negotiated_snap_version: 0,
@@ -352,6 +349,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             let filter =
                 |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
             let txs: Vec<MempoolTransaction> = self
+                .blockchain
                 .mempool
                 .filter_pool_transactions(&filter)?
                 .into_values()
@@ -361,7 +359,10 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let tx_count = txs.len();
                 for tx in txs {
                     self.send(Message::NewPooledTransactionHashes(
-                        NewPooledTransactionHashes::new(vec![(*tx).clone()], &self.mempool)?,
+                        NewPooledTransactionHashes::new(
+                            vec![(*tx).clone()],
+                            &self.blockchain.mempool,
+                        )?,
                     ))
                     .await?;
                     // Possible improvement: the mempool already knows the hash but the filter function does not return it
@@ -382,7 +383,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         sender: mpsc::Sender<Message>,
     ) -> Result<(), RLPxError> {
         let peer_supports_eth = self.negotiated_eth_version != 0;
-        let is_synced = self.storage.is_synced()?;
+        let is_synced = self.blockchain.storage.is_synced()?;
         match message {
             Message::Disconnect(msg_data) => {
                 log_peer_debug(
@@ -403,11 +404,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::Status(msg_data) if !peer_supports_eth => backend::validate_status(
                 msg_data,
-                &self.storage,
+                &self.blockchain.storage,
                 self.negotiated_eth_version as u32,
             )?,
             Message::GetAccountRange(req) => {
-                let response = process_account_range_request(req, self.storage.clone())?;
+                let response = process_account_range_request(req, self.blockchain.storage.clone())?;
                 self.send(Message::AccountRange(response)).await?
             }
             // TODO(#1129) Add the transaction to the mempool once received.
@@ -415,9 +416,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if is_synced {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
-                        if let Err(e) =
-                            mempool::add_transaction(tx.clone(), &self.storage, &self.mempool)
-                        {
+                        if let Err(e) = mempool::add_transaction(tx.clone(), &self.blockchain) {
                             log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
                             continue;
                         }
@@ -429,21 +428,21 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
                 let response = BlockHeaders {
                     id: msg_data.id,
-                    block_headers: msg_data.fetch_headers(&self.storage),
+                    block_headers: msg_data.fetch_headers(&self.blockchain.storage),
                 };
                 self.send(Message::BlockHeaders(response)).await?;
             }
             Message::GetBlockBodies(msg_data) if peer_supports_eth => {
                 let response = BlockBodies {
                     id: msg_data.id,
-                    block_bodies: msg_data.fetch_blocks(&self.storage),
+                    block_bodies: msg_data.fetch_blocks(&self.blockchain.storage),
                 };
                 self.send(Message::BlockBodies(response)).await?;
             }
             Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
                 let receipts: Result<_, _> = block_hashes
                     .iter()
-                    .map(|hash| self.storage.get_receipts_for_block(hash))
+                    .map(|hash| self.blockchain.storage.get_receipts_for_block(hash))
                     .collect();
                 let response = Receipts {
                     id,
@@ -455,32 +454,33 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if peer_supports_eth =>
             {
                 //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
-                let hashes =
-                    new_pooled_transaction_hashes.get_transactions_to_request(&self.mempool)?;
+                let hashes = new_pooled_transaction_hashes
+                    .get_transactions_to_request(&self.blockchain.mempool)?;
 
                 //TODO(#1416): Evaluate keeping track of the request-id.
                 let request = GetPooledTransactions::new(random(), hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
-                let response = msg.handle(&self.mempool)?;
+                let response = msg.handle(&self.blockchain.mempool)?;
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if is_synced {
-                    msg.handle(&self.node, &self.storage, &self.mempool)?;
+                    msg.handle(&self.node, &self.blockchain)?;
                 }
             }
             Message::GetStorageRanges(req) => {
-                let response = process_storage_ranges_request(req, self.storage.clone())?;
+                let response =
+                    process_storage_ranges_request(req, self.blockchain.storage.clone())?;
                 self.send(Message::StorageRanges(response)).await?
             }
             Message::GetByteCodes(req) => {
-                let response = process_byte_codes_request(req, self.storage.clone())?;
+                let response = process_byte_codes_request(req, self.blockchain.storage.clone())?;
                 self.send(Message::ByteCodes(response)).await?
             }
             Message::GetTrieNodes(req) => {
-                let response = process_trie_nodes_request(req, self.storage.clone())?;
+                let response = process_trie_nodes_request(req, self.blockchain.storage.clone())?;
                 self.send(Message::TrieNodes(response)).await?
             }
             // Send response messages to the backend
@@ -527,7 +527,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             .capabilities
             .contains(&(Capability::Eth, self.negotiated_eth_version))
         {
-            let status = backend::get_status(&self.storage, self.negotiated_eth_version as u32)?;
+            let status =
+                backend::get_status(&self.blockchain.storage, self.negotiated_eth_version as u32)?;
             log_peer_debug(&self.node, "Sending status");
             self.send(Message::Status(status)).await?;
             // The next immediate message in the ETH protocol is the
@@ -542,7 +543,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     log_peer_debug(&self.node, "Received Status");
                     backend::validate_status(
                         msg_data,
-                        &self.storage,
+                        &self.blockchain.storage,
                         self.negotiated_eth_version as u32,
                     )?
                 }

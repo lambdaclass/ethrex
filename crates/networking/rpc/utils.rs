@@ -322,8 +322,7 @@ pub mod test_utils {
         start_api(
             http_addr,
             authrpc_addr,
-            blockchain.storage,
-            blockchain.mempool,
+            blockchain,
             jwt_secret,
             local_p2p_node,
             example_local_node_record(),

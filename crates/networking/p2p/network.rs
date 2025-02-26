@@ -11,9 +11,8 @@ use crate::{
     },
     rlpx::utils::log_peer_error,
 };
-use ethrex_blockchain::mempool::Mempool;
+use ethrex_blockchain::Blockchain;
 use ethrex_common::H512;
-use ethrex_storage::Store;
 use k256::{
     ecdsa::SigningKey,
     elliptic_curve::{sec1::ToEncodedPoint, PublicKey},
@@ -47,8 +46,7 @@ pub struct P2PContext {
     pub tracker: TaskTracker,
     pub signer: SigningKey,
     pub table: Arc<Mutex<KademliaTable>>,
-    pub storage: Store,
-    pub mempool: Mempool,
+    pub blockchain: Blockchain,
     pub(crate) broadcast: RLPxConnBroadcastSender,
     pub local_node: Node,
     pub enr_seq: u64,
@@ -60,8 +58,7 @@ pub async fn start_network(
     bootnodes: Vec<Node>,
     signer: SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
-    storage: Store,
-    mempool: Mempool,
+    blockchain: Blockchain,
 ) -> Result<(), NetworkError> {
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
         tokio::task::Id,
@@ -77,8 +74,7 @@ pub async fn start_network(
         tracker,
         signer,
         table: peer_table,
-        storage,
-        mempool,
+        blockchain,
         broadcast: channel_broadcast_send_end,
     };
     let discovery = Discv4Server::try_new(context.clone())

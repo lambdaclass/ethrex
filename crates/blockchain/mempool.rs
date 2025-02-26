@@ -10,6 +10,7 @@ use crate::{
         TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
     },
     error::MempoolError,
+    Blockchain,
 };
 use ethrex_common::{
     constants::MIN_BASE_FEE_PER_BLOB_GAS,
@@ -166,8 +167,7 @@ impl Mempool {
 pub fn add_blob_transaction(
     transaction: EIP4844Transaction,
     blobs_bundle: BlobsBundle,
-    store: &Store,
-    mempool: &Mempool,
+    blockchain: &Blockchain,
 ) -> Result<H256, MempoolError> {
     // Validate blobs bundle
     blobs_bundle.validate(&transaction)?;
@@ -176,20 +176,23 @@ pub fn add_blob_transaction(
     let sender = transaction.sender();
 
     // Validate transaction
-    validate_transaction(&transaction, sender, store.clone())?;
+    validate_transaction(&transaction, sender, blockchain.storage.clone())?;
 
     // Add transaction and blobs bundle to storage
     let hash = transaction.compute_hash();
-    mempool.add_transaction_to_pool(hash, MempoolTransaction::new(transaction, sender))?;
-    mempool.add_blobs_bundle_to_pool(hash, blobs_bundle)?;
+    blockchain
+        .mempool
+        .add_transaction_to_pool(hash, MempoolTransaction::new(transaction, sender))?;
+    blockchain
+        .mempool
+        .add_blobs_bundle_to_pool(hash, blobs_bundle)?;
     Ok(hash)
 }
 
 /// Add a transaction to the mempool
 pub fn add_transaction(
     transaction: Transaction,
-    store: &Store,
-    mempool: &Mempool,
+    blockchain: &Blockchain,
 ) -> Result<H256, MempoolError> {
     // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
     if matches!(transaction, Transaction::EIP4844Transaction(_)) {
@@ -197,12 +200,14 @@ pub fn add_transaction(
     }
     let sender = transaction.sender();
     // Validate transaction
-    validate_transaction(&transaction, sender, store.clone())?;
+    validate_transaction(&transaction, sender, blockchain.storage.clone())?;
 
     let hash = transaction.compute_hash();
 
     // Add transaction to storage
-    mempool.add_transaction_to_pool(hash, MempoolTransaction::new(transaction, sender))?;
+    blockchain
+        .mempool
+        .add_transaction_to_pool(hash, MempoolTransaction::new(transaction, sender))?;
 
     Ok(hash)
 }

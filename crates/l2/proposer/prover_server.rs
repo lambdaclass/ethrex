@@ -10,6 +10,7 @@ use crate::utils::{
         save_state::{StateFileType, StateType, *},
     },
 };
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address, H256, U256,
@@ -116,13 +117,17 @@ impl ProofData {
     }
 }
 
-pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
+pub async fn start_prover_server(blockchain: Blockchain) -> Result<(), ConfigError> {
     let server_config = ProverServerConfig::from_env()?;
     let eth_config = EthConfig::from_env()?;
     let proposer_config = CommitterConfig::from_env()?;
-    let mut prover_server =
-        ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
-            .await?;
+    let mut prover_server = ProverServer::new_from_config(
+        server_config.clone(),
+        &proposer_config,
+        eth_config,
+        blockchain.storage,
+    )
+    .await?;
     prover_server.run(&server_config).await;
     Ok(())
 }

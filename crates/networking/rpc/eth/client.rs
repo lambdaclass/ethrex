@@ -12,6 +12,7 @@ impl RpcHandler for ChainId {
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested chain id");
         let chain_spec = context
+            .blockchain
             .storage
             .get_chain_config()
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
@@ -27,7 +28,7 @@ impl RpcHandler for Syncing {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let is_synced = context.storage.is_synced()?;
+        let is_synced = context.blockchain.storage.is_synced()?;
         Ok(Value::Bool(!is_synced))
     }
 }

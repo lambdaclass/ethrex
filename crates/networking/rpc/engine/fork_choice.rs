@@ -36,7 +36,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 1)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            let chain_config = context.storage.get_chain_config()?;
+            let chain_config = context.blockchain.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV1 used to build Cancun payload".to_string(),
@@ -69,7 +69,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            let chain_config = context.storage.get_chain_config()?;
+            let chain_config = context.blockchain.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV2 used to build Cancun payload".to_string(),
@@ -226,7 +226,7 @@ fn handle_forkchoice(
                     Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
                 }
                 None => apply_fork_choice(
-                    &context.storage,
+                    &context.blockchain.storage,
                     fork_choice_state.head_block_hash,
                     fork_choice_state.safe_block_hash,
                     fork_choice_state.finalized_block_hash,
@@ -241,8 +241,13 @@ fn handle_forkchoice(
         Ok(head) => {
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            if let Ok(Some(block)) = context.storage.get_block_by_hash(head.compute_block_hash()) {
+            if let Ok(Some(block)) = context
+                .blockchain
+                .storage
+                .get_block_by_hash(head.compute_block_hash())
+            {
                 context
+                    .blockchain
                     .mempool
                     .remove_transactions_from_pool(&block.body.transactions)
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
@@ -263,24 +268,33 @@ fn handle_forkchoice(
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
                     ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        latest_canonical_block_hash(&context.storage).unwrap(),
+                        latest_canonical_block_hash(&context.blockchain.storage).unwrap(),
                     ))
                 }
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     context
+                        .blockchain
                         .storage
                         .update_sync_status(false)
                         .map_err(|e| RpcErr::Internal(e.to_string()))?;
-                    let current_head = context.storage.get_latest_canonical_block_hash()?.ok_or(
-                        RpcErr::Internal("Missing latest canonical block".to_owned()),
-                    )?;
+                    let current_head = context
+                        .blockchain
+                        .storage
+                        .get_latest_canonical_block_hash()?
+                        .ok_or(RpcErr::Internal(
+                            "Missing latest canonical block".to_owned(),
+                        ))?;
                     let sync_head = fork_choice_state.head_block_hash;
                     tokio::spawn(async move {
                         // If we can't get hold of the syncer, then it means that there is an active sync in process
                         if let Ok(mut syncer) = context.syncer.try_lock() {
                             syncer
-                                .start_sync(current_head, sync_head, context.storage.clone())
+                                .start_sync(
+                                    current_head,
+                                    sync_head,
+                                    context.blockchain.storage.clone(),
+                                )
                                 .await
                         }
                     });
@@ -301,10 +315,13 @@ fn handle_forkchoice(
                         "Invalid fork choice payload. Reason: {}",
                         reason.to_string()
                     );
-                    let latest_valid_hash =
-                        context.storage.get_latest_canonical_block_hash()?.ok_or(
-                            RpcErr::Internal("Missing latest canonical block".to_owned()),
-                        )?;
+                    let latest_valid_hash = context
+                        .blockchain
+                        .storage
+                        .get_latest_canonical_block_hash()?
+                        .ok_or(RpcErr::Internal(
+                            "Missing latest canonical block".to_owned(),
+                        ))?;
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(
                         latest_valid_hash,
                         reason.to_string(),
@@ -341,7 +358,7 @@ fn validate_attributes_v3(
     head_block: &BlockHeader,
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
+    let chain_config = context.blockchain.storage.get_chain_config()?;
     // Specification indicates this order of validations:
     // https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#specification-1
     if attributes.withdrawals.is_none() {
@@ -389,14 +406,17 @@ fn build_payload(
         version,
     };
     let payload_id = args.id();
-    let payload = match create_payload(&args, &context.storage) {
+    let payload = match create_payload(&args, &context.blockchain.storage) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),
         // Parent block is guaranteed to be present at this point,
         // so the only errors that may be returned are internal storage errors
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
-    context.storage.add_payload(payload_id, payload)?;
+    context
+        .blockchain
+        .storage
+        .add_payload(payload_id, payload)?;
 
     Ok(payload_id)
 }

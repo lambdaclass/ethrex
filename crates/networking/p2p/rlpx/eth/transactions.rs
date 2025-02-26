@@ -3,6 +3,7 @@ use bytes::Bytes;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool;
 use ethrex_blockchain::mempool::Mempool;
+use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::types::WrappedEIP4844Transaction;
@@ -11,7 +12,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::error::StoreError;
 
 use crate::rlpx::utils::log_peer_warn;
 use crate::rlpx::{
@@ -264,11 +265,10 @@ impl PooledTransactions {
 
     /// Saves every incoming pooled transaction to the mempool.
 
-    pub fn handle(self, node: &Node, store: &Store, mempool: &Mempool) -> Result<(), MempoolError> {
+    pub fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                if let Err(e) =
-                    mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, store, mempool)
+                if let Err(e) = mempool::add_blob_transaction(itx.tx, itx.blobs_bundle, blockchain)
                 {
                     log_peer_warn(node, &format!("Error adding transaction: {}", e));
                     continue;
@@ -277,7 +277,7 @@ impl PooledTransactions {
                 let regular_tx = tx
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = mempool::add_transaction(regular_tx, store, mempool) {
+                if let Err(e) = mempool::add_transaction(regular_tx, blockchain) {
                     log_peer_warn(node, &format!("Error adding transaction: {}", e));
                     continue;
                 }

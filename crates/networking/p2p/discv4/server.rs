@@ -691,8 +691,7 @@ pub(super) mod tests {
             tracker: tracker.clone(),
             signer,
             table,
-            storage: blockchain.storage,
-            mempool: blockchain.mempool.clone(),
+            blockchain,
             broadcast,
         };
 
