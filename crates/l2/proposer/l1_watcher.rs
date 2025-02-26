@@ -76,7 +76,7 @@ impl L1Watcher {
                 continue;
             }
 
-            dbg!("HAY LOGS", &logs);
+            // dbg!("HAY LOGS", &logs);
             let pending_deposit_logs = self.get_pending_deposit_logs().await?;
             let _deposit_txs = self
                 .process_logs(logs, &pending_deposit_logs, store)
