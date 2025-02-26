@@ -376,17 +376,18 @@ impl SyncManager {
                         self.invalid_ancestors.insert(hash, last_valid_hash);
                         return Err(error.into());
                     }
-                    debug!(
-                        "Executed and stored block number {} with hash {}",
-                        number, hash
-                    );
                     if !sync_head_reached {
                         store.set_canonical_block(number, hash)?;
                         store.update_latest_block_number(number)?;
                         last_valid_hash = hash;
+                        debug!(
+                            "Executed and stored block number {} with hash {}",
+                            number, hash
+                        );
                     }
                     if hash == sync_head {
                         sync_head_reached = true;
+                        debug!("Sync head reached. number: {:?} hash: {:?}", number, hash);
                     }
                 }
                 debug!("Executed & stored {} blocks", block_bodies_len);
