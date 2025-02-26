@@ -61,8 +61,8 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
+      # - name: Caching
+      #   uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         run: |
