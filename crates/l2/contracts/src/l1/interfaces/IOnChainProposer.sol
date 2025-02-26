@@ -60,13 +60,18 @@ interface IOnChainProposer {
     /// @dev This method is used by the operator when a block is ready to be
     /// verified (this is after proved).
     /// @param blockNumber is the number of the block to be verified.
-    /// @param blockProof is the proof of the block to be verified.
-    /// @param imageId Digest of the zkVM imageid.
-    /// @param journalDigest Digest of the public_inputs aka journal
     /// ----------------------------------------------------------------------
-    /// @param programVKey Public verifying key
-    /// @param publicValues Values used to perform the execution
-    /// @param proofBytes Groth16 proof
+    /// @param risc0BlockProof is the proof of the block to be verified.
+    /// @param risc0ImageId Digest of the zkVM imageid.
+    /// @param risc0JournalDigest Digest of the public_inputs aka journal
+    /// ----------------------------------------------------------------------
+    /// @param sp1ProgramVKey Public verifying key
+    /// @param sp1PublicValues Values used to perform the execution
+    /// @param sp1ProofBytes Groth16 proof
+    /// ----------------------------------------------------------------------
+    /// @param picoRiscvVkey Public verifying key
+    /// @param picoPublicValues Values used to perform the execution
+    /// @param picoProof Groth16 proof
     function verify(
         uint256 blockNumber,
         //risc0
