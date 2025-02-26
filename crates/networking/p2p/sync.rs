@@ -343,6 +343,7 @@ impl SyncManager {
         store: Store,
     ) -> Result<(), SyncError> {
         let mut last_valid_hash = H256::default();
+
         let mut current_chunk_idx = 0;
         let chunks: Vec<Vec<BlockHash>> = block_hashes
             .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
@@ -384,13 +385,13 @@ impl SyncManager {
                         self.invalid_ancestors.insert(hash, last_valid_hash);
                         return Err(error.into());
                     }
+                    store.set_canonical_block(number, hash)?;
+                    store.update_latest_block_number(number)?;
+                    last_valid_hash = hash;
                     debug!(
                         "Executed and stored block number {} with hash {}",
                         number, hash
                     );
-                    store.set_canonical_block(number, hash)?;
-                    store.update_latest_block_number(number)?;
-                    last_valid_hash = hash;
                 }
                 debug!("Executed & stored {} blocks", block_bodies_len);
 
