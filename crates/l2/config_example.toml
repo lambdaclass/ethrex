@@ -44,7 +44,7 @@ arbitrary_base_blob_gas_price = 1000000000
 sp1_prover = "mock"
 # https://dev.risczero.com/api/generating-proofs/dev-mode
 # 1/true means fake proofs
-# The RISC0_DEV_MODE=1 should only be used with DEPLOYER_CONTRACT_VERIFIER=0xAA
+# The risc0_dev_mode = 1 should only be used with *_contract_verifier = "0xAA"
 risc0_dev_mode = 1
 
 [prover.client]
@@ -54,7 +54,7 @@ interval_ms = 5000
 [prover.server]
 listen_ip = "127.0.0.1"
 listen_port = 3900
-# Not the same account as the COMMITTER_L1 Account
+# Not the same account as the [committer] l1 Account
 # The proposer is in charge of blob commitments.
 # The prover_server is in charge of verifying the zkProofs.
 verifier_address = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425"
