@@ -283,7 +283,7 @@ async fn claim_erc20_balances(
                     "Failed to assign balance to an account, tx failed: {err}"
                 ))
             }
-            Ok(_)  => {
+            Ok(_) => {
                 continue;
             }
         }
