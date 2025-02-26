@@ -1,6 +1,5 @@
 use clap::Args;
 use ethrex_l2::utils::{
-    prover::proving_systems::ProverType,
     test_data_io::{generate_program_input, read_chain_file, read_genesis_file},
 };
 use ethrex_prover_lib::prove;
@@ -34,12 +33,12 @@ impl Command {
         let program_input = generate_program_input(genesis, chain, self.block_number)?;
 
         prove(program_input).expect("proving failed");
-        println!(
-            "Total gas consumption: {}",
-            prover
-                .get_gas()
-                .expect("failed to deserialize gas consumption")
-        );
+        // TODO: implement get_gas
+        // println!(
+        //     "Total gas consumption: {}",
+        //         get_gas()
+        //         .expect("failed to deserialize gas consumption")
+        // );
         Ok(())
     }
 }
