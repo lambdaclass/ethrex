@@ -30,7 +30,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: nightly-2024-11-27
-          components: rust-src
+          components: rust-src, clippy
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: ${{ matrix.action.command }} Command
