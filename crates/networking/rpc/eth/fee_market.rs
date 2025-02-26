@@ -1,9 +1,9 @@
-use ethrex_blockchain::payload::{calc_excess_blob_gas, calc_gas_limit};
+use ethrex_blockchain::payload::calc_gas_limit;
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
-        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, Block, BlockHeader,
-        Transaction,
+        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, Block,
+        BlockHeader, Transaction,
     },
 };
 use serde::Serialize;
