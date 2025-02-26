@@ -16,10 +16,8 @@ use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 pub async fn start_l1_watcher(store: Store) -> Result<(), ConfigError> {
-    dbg!("Starting L1 Watcher");
     let eth_config = EthConfig::from_env()?;
     let watcher_config = L1WatcherConfig::from_env()?;
-    dbg!(watcher_config.bridge_address);
     let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config).await?;
     l1_watcher.run(&store).await;
     Ok(())
@@ -51,7 +49,7 @@ impl L1Watcher {
             l2_client,
             address: watcher_config.bridge_address,
             max_block_step: watcher_config.max_block_step,
-            last_block_fetched: U256::zero(), // last_block_fetched,
+            last_block_fetched,
             l2_proposer_pk: watcher_config.l2_proposer_private_key,
             check_interval: Duration::from_millis(watcher_config.check_interval_ms),
         })
@@ -71,7 +69,6 @@ impl L1Watcher {
         loop {
             sleep(self.check_interval).await;
 
-            dbg!("Loop L1 Watcher", &self.address);
             let logs = self.get_logs().await?;
 
             // We may not have a deposit nor a withdrawal, that means no events -> no logs.
