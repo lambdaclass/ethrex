@@ -60,7 +60,6 @@ impl RpcHandler for GetBalanceRequest {
         };
 
         let account = context
-            .blockchain
             .storage
             .get_account_info(block_number, self.address)?;
         let balance = account.map(|acc| acc.balance).unwrap_or_default();
@@ -132,7 +131,6 @@ impl RpcHandler for GetStorageAtRequest {
         };
 
         let storage_value = context
-            .blockchain
             .storage
             .get_storage_at(block_number, self.address, self.storage_slot)?
             .unwrap_or_default();
