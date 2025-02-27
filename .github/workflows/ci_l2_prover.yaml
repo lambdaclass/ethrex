@@ -61,7 +61,7 @@ jobs:
       - name: RISC-V SP1 toolchain install
         run: |
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.0
+          ~/.sp1/bin/sp1up
       - name: Build prover and SP1's zkVM
         run: |
           cd crates/l2/prover
