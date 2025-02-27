@@ -13,7 +13,6 @@ use keccak_hash::keccak;
 use merkle_tree::merkle_proof;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::str::FromStr;
 pub mod calldata;
 pub mod merkle_tree;
 
@@ -38,21 +37,13 @@ pub enum SdkError {
 
 /// BRIDGE_ADDRESS or 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
 pub fn bridge_address() -> Result<Address, SdkError> {
-    // let bridge = dbg!(std::env::var("BRIDGE_ADDRESS"));
-    // let bridge = bridge
-    //     .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
-    //     // .parse()
-    //     .map_err(|_| SdkError::FailedToParseAddressFromHex);
+    let bridge = dbg!(std::env::var("BRIDGE_ADDRESS"));
+    let bridge = bridge
+        .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
+        .parse()
+        .map_err(|_| SdkError::FailedToParseAddressFromHex);
 
-    // dbg!(bridge);
-
-    let bridge_from_str = Address::from_str("0x16b2ebb5ee37de8d09ef5473145d3b41c4c83b64").unwrap();
-    dbg!("Bridge from address {}", bridge_from_str);
-
-    let bridge_from_env = Address::from_str(&std::env::var("BRIDGE_ADDRESS").unwrap()).unwrap();
-    dbg!("Bridge from address {}", bridge_from_env);
-
-    Ok(bridge_from_str)
+    dbg!(bridge)
 }
 
 pub async fn wait_for_transaction_receipt(
