@@ -73,7 +73,10 @@ pub(crate) struct NewPooledTransactionHashes {
 }
 
 impl NewPooledTransactionHashes {
-    pub fn new(transactions: Vec<Transaction>, mempool: &Mempool) -> Result<Self, StoreError> {
+    pub fn new(
+        transactions: Vec<Transaction>,
+        blockchain: &Blockchain,
+    ) -> Result<Self, StoreError> {
         let transactions_len = transactions.len();
         let mut transaction_types = Vec::with_capacity(transactions_len);
         let mut transaction_sizes = Vec::with_capacity(transactions_len);
@@ -90,7 +93,8 @@ impl NewPooledTransactionHashes {
                 // Network representation for PooledTransactions
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
                 Transaction::EIP4844Transaction(eip4844_tx) => {
-                    let tx_blobs_bundle = mempool
+                    let tx_blobs_bundle = blockchain
+                        .mempool
                         .get_blobs_bundle(transaction_hash)?
                         .unwrap_or(BlobsBundle::empty());
                     eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle)
@@ -106,8 +110,13 @@ impl NewPooledTransactionHashes {
         })
     }
 
-    pub fn get_transactions_to_request(&self, mempool: &Mempool) -> Result<Vec<H256>, StoreError> {
-        mempool.filter_unknown_transactions(&self.transaction_hashes)
+    pub fn get_transactions_to_request(
+        &self,
+        blockchain: &Blockchain,
+    ) -> Result<Vec<H256>, StoreError> {
+        blockchain
+            .mempool
+            .filter_unknown_transactions(&self.transaction_hashes)
     }
 }
 
@@ -167,12 +176,12 @@ impl GetPooledTransactions {
         }
     }
 
-    pub fn handle(&self, mempool: &Mempool) -> Result<PooledTransactions, StoreError> {
+    pub fn handle(&self, blockchain: &Blockchain) -> Result<PooledTransactions, StoreError> {
         // TODO(#1615): get transactions in batch instead of iterating over them.
         let txs = self
             .transaction_hashes
             .iter()
-            .map(|hash| Self::get_p2p_transaction(hash, mempool))
+            .map(|hash| Self::get_p2p_transaction(hash, blockchain))
             // Return an error in case anything failed.
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
@@ -190,9 +199,9 @@ impl GetPooledTransactions {
     /// Gets a p2p transaction given a hash.
     fn get_p2p_transaction(
         hash: &H256,
-        mempool: &Mempool,
+        blockchain: &Blockchain,
     ) -> Result<Option<P2PTransaction>, StoreError> {
-        let Some(tx) = mempool.get_transaction_by_hash(*hash)? else {
+        let Some(tx) = blockchain.mempool.get_transaction_by_hash(*hash)? else {
             return Ok(None);
         };
         let result = match tx {
@@ -200,7 +209,7 @@ impl GetPooledTransactions {
             Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
             Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
             Transaction::EIP4844Transaction(itx) => {
-                let Some(bundle) = mempool.get_blobs_bundle(*hash)? else {
+                let Some(bundle) = blockchain.mempool.get_blobs_bundle(*hash)? else {
                     return Err(StoreError::Custom(format!(
                         "Blob transaction present without its bundle: hash {}",
                         hash
