@@ -1,7 +1,7 @@
 use std::io::{BufRead, Write};
 
 use std::backtrace::Backtrace;
-use tracing::{debug, info};
+use tracing::info;
 pub mod committer;
 pub mod eth;
 pub mod l1_watcher;
