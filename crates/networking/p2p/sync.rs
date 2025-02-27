@@ -178,7 +178,7 @@ impl SyncManager {
         };
 
         loop {
-            debug!("Requesting Block Headers from {current_head}");
+            debug!("Requesting Block Headers from {current_head} to {sync_head}");
             // Request Block Headers from Peer
             match self
                 .peers
@@ -186,6 +186,12 @@ impl SyncManager {
                 .await
             {
                 Some(mut block_headers) => {
+                    if block_headers.len() == 1 && block_headers[0].compute_block_hash() == current_head && current_head != sync_head {
+                        warn!("Already at the current head {}, and number {} but not yet synced, we are at a fork, going back one more ancestor", current_head, block_headers[0].number);
+                        current_head = block_headers[0].parent_hash;
+                        continue;
+                    }
+
                     debug!(
                         "Received {} block headers| Last Number: {}",
                         block_headers.len(),
@@ -346,6 +352,14 @@ async fn download_and_run_blocks(
             if block_hashes.is_empty() {
                 break;
             }
+        } else {
+            if block_hashes.is_empty() {
+                warn!("No hashes to fetch, aborting sync");
+            } else {
+                warn!("Failed to fetch block bodies, aborting sync");
+            }
+
+            return Ok(());
         }
     }
     Ok(())
