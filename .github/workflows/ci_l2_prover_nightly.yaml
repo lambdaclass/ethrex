@@ -33,6 +33,12 @@ jobs:
           components: rust-src, clippy
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
+      # https://pico-docs.brevis.network/getting-started/installation
+      - name: Install pico-cli
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: pico-cli
+          git: https://github.com/brevis-network/pico
       - name: ${{ matrix.action.command }} Command
         run: cargo +nightly-2024-11-27 ${{ matrix.action.command }} ${{ matrix.action.args }}
 
@@ -54,7 +60,7 @@ jobs:
         with:
           crate: pico-cli
           git: https://github.com/brevis-network/pico
-      - name: Build prover and SP1's zkVM
+      - name: Build
         run: |
           cd crates/l2/prover
           cargo +nightly-2024-11-27 build --release -F pico
