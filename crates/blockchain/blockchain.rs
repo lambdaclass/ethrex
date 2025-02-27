@@ -73,13 +73,11 @@ impl Blockchain {
         validate_gas_used(&receipts, &block.header)?;
 
         // Apply the account updates over the last block's state and compute the new state root
-        let account_updates_started_at = std::time::Instant::now();
         let new_state_root = state
             .database()
             .ok_or(ChainError::StoreError(StoreError::MissingStore))?
             .apply_account_updates(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
-        let account_updates_elapsed = account_updates_started_at.elapsed().as_secs();
 
         // Check state root matches the one in block header after execution
         validate_state_root(&block.header, new_state_root)?;
@@ -93,14 +91,15 @@ impl Blockchain {
         store_block(&self.storage, block.clone())?;
         store_receipts(&self.storage, receipts, block_hash)?;
 
-        let interval = Instant::now().duration_since(since).as_millis();
-        if interval != 0 {
+        let interval = Instant::now().duration_since(since);
+        let interval_as_ms = interval.as_millis();
+        if interval_as_ms != 0 {
             let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+            let throughput = (as_gigas) / (interval_as_ms as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval_as_ms} msecs");
         }
 
-        Ok(account_updates_elapsed)
+        Ok(interval.as_secs())
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function

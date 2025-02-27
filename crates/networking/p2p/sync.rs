@@ -375,7 +375,7 @@ impl SyncManager {
                     block_bodies_len, first_block_hash, first_block_header_number, last_block_hash, last_block_number
                 );
 
-                let mut time_spent_applying_account_updates = 0;
+                let mut time_spent_adding_blocks = 0;
                 // Execute and store blocks
                 for (hash, body) in chunk
                     .drain(..block_bodies_len)
@@ -387,7 +387,7 @@ impl SyncManager {
                     let number = header.number;
                     let block = Block::new(header, body);
                     match self.blockchain.add_block(&block) {
-                        Ok(elapsed) => time_spent_applying_account_updates += elapsed,
+                        Ok(elapsed) => time_spent_adding_blocks += elapsed,
                         Err(error) => {
                             warn!("Failed to add block during FullSync: {error}");
                             self.invalid_ancestors.insert(hash, last_valid_hash);
@@ -408,7 +408,7 @@ impl SyncManager {
                     block_bodies_len as u32,
                     last_block_number,
                     last_block_hash,
-                    time_spent_applying_account_updates,
+                    time_spent_adding_blocks,
                 );
 
                 if chunk.is_empty() {

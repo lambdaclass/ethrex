@@ -11,7 +11,7 @@ struct ExecutionCycle {
     finished_at_block_num: u64,
     finished_at_block_hash: H256,
     executed_blocks_count: u32,
-    time_applying_updates: u64,
+    add_block_time: u64,
 }
 
 impl Default for ExecutionCycle {
@@ -24,7 +24,7 @@ impl Default for ExecutionCycle {
             finished_at_block_num: 0,
             finished_at_block_hash: H256::default(),
             executed_blocks_count: 0,
-            time_applying_updates: 0,
+            add_block_time: 0,
         }
     }
 }
@@ -54,10 +54,10 @@ impl Monitor {
         executed_blocks: u32,
         block_num: u64,
         block_hash: H256,
-        time_applying_updates: u64,
+        add_block_time: u64,
     ) {
         self.current_cycle.executed_blocks_count += executed_blocks;
-        self.current_cycle.time_applying_updates += time_applying_updates;
+        self.current_cycle.add_block_time += add_block_time;
 
         if self.current_cycle.executed_blocks_count >= self.blocks_to_restart_cycle {
             self.current_cycle.finished_at = Instant::now();
@@ -81,6 +81,7 @@ impl Monitor {
             .finished_at
             .duration_since(self.current_cycle.started_at)
             .as_secs();
+
         let avg = elapsed as f64 / self.current_cycle.executed_blocks_count as f64;
 
         let prev_elapsed = self
@@ -91,20 +92,25 @@ impl Monitor {
 
         let elapsed_diff = elapsed as i128 - prev_elapsed as i128;
 
+        let add_block_time_ratio = elapsed as f64 / self.current_cycle.add_block_time as f64;
+        let blocks_per_second = self.current_cycle.executed_blocks_count as f64 / elapsed as f64;
+
         tracing::info!(
             "[SYNCING PERF] Last {} blocks performance:\n\
-            \tTotal time: {} seconds\n\
-            \tAverage block time: {:.3} seconds\n\
-            \tTime spent applying account updates: {} seconds ~= {}% of total time\n\
-            \tStarted at block: {} (hash: {:?})\n\
-            \tFinished at block: {} (hash: {:?})\n\
-            \tExecution count: {}\n\
-            \t======= Overall, this cycle took {} seconds with respect to the previous one =======",
+        \tTotal time (takes into account network requests): {} seconds\n\
+        \tTime spent adding blocks: {} seconds ~= {:.2}% of total time\n\
+        \tAverage block in total time: {:.3} seconds\n\
+        \tBlocks per second: {:.3}\n\
+        \tStarted at block: {} (hash: {:?})\n\
+        \tFinished at block: {} (hash: {:?})\n\
+        \tExecution count: {}\n\
+        \t======= Overall, this cycle took {} seconds with respect to the previous one =======",
             self.current_cycle.executed_blocks_count,
             elapsed,
+            self.current_cycle.add_block_time,
+            add_block_time_ratio * 100.0,
             avg,
-            self.current_cycle.time_applying_updates,
-            self.current_cycle.time_applying_updates as f64 / elapsed as f64,
+            blocks_per_second,
             self.current_cycle.started_at_block_num,
             self.current_cycle.started_at_block_hash,
             self.current_cycle.finished_at_block_num,
@@ -144,14 +150,14 @@ impl SyncMetrics {
         number_of_blocks_processed: u32,
         last_block_number: u64,
         last_block_hash: H256,
-        state_root_time_validation: u64,
+        add_block_time: u64,
     ) {
         for monitor in &mut self.monitors {
             monitor.log_cycle(
                 number_of_blocks_processed,
                 last_block_number,
                 last_block_hash,
-                state_root_time_validation,
+                add_block_time,
             );
         }
     }
