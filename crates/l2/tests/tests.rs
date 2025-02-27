@@ -42,6 +42,15 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 /// 9. Check balances on L1 and L2
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
+    let toml_config = std::env::var("CONFIG_FILE").unwrap_or("config.toml".to_string());
+
+    match ethrex_l2::parse_toml::read_toml(toml_config) {
+        Ok(_) => (),
+        Err(err) => {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        }
+    };
     let eth_client = eth_client();
     let proposer_client = proposer_client();
 
