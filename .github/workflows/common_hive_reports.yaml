@@ -94,9 +94,6 @@ jobs:
           pattern: "*_${{ inputs.evm }}_${{ inputs.job_type }}_logs"
           merge-multiple: true
 
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
-
       - name: Generate the hive report
         run: cargo run -p hive_report > results.md
 
