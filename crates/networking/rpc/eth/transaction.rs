@@ -14,7 +14,6 @@ use ethrex_common::{
     H256, U256,
 };
 
-use ethrex_blockchain::mempool;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
@@ -617,13 +616,14 @@ impl RpcHandler for SendRawTransactionRequest {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            mempool::add_blob_transaction(
+            context.blockchain.add_blob_transaction_to_pool(
                 wrapped_blob_tx.tx.clone(),
                 wrapped_blob_tx.blobs_bundle.clone(),
-                &context.storage,
             )
         } else {
-            mempool::add_transaction(self.to_transaction(), &context.storage)
+            context
+                .blockchain
+                .add_transaction_to_pool(self.to_transaction())
         }?;
         serde_json::to_value(format!("{:#x}", hash))
             .map_err(|error| RpcErr::Internal(error.to_string()))
