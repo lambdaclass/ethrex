@@ -37,10 +37,13 @@ pub enum SdkError {
 
 /// BRIDGE_ADDRESS or 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
 pub fn bridge_address() -> Result<Address, SdkError> {
-    std::env::var("BRIDGE_ADDRESS")
+    let bridge = dbg!(std::env::var("BRIDGE_ADDRESS"));
+    let bridge = bridge
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
         .parse()
-        .map_err(|_| SdkError::FailedToParseAddressFromHex)
+        .map_err(|_| SdkError::FailedToParseAddressFromHex);
+
+    dbg!(bridge)
 }
 
 pub async fn wait_for_transaction_receipt(
