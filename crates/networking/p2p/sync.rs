@@ -268,6 +268,7 @@ impl SyncManager {
             // Store headers and save hashes for full block retrieval
             all_block_hashes.extend_from_slice(&block_hashes[..]);
             store.add_block_headers(block_hashes.clone(), block_headers)?;
+            store.set_header_download_checkpoint(last_block_hash)?;
 
             if self.sync_mode == SyncMode::Full {
                 self.download_and_run_blocks(&mut block_hashes, store.clone())
@@ -292,11 +293,11 @@ impl SyncManager {
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
-                let store_bodies_handle = tokio::spawn(store_block_bodies(
-                    all_block_hashes[pivot_idx + 1..].to_vec(),
-                    self.peers.clone(),
-                    store.clone(),
-                ));
+                // let store_bodies_handle = tokio::spawn(store_block_bodies(
+                //     all_block_hashes[pivot_idx + 1..].to_vec(),
+                //     self.peers.clone(),
+                //     store.clone(),
+                // ));
                 // Perform snap sync
                 if !self
                     .snap_sync(pivot_header.state_root, store.clone())
@@ -306,7 +307,7 @@ impl SyncManager {
                     return Ok(());
                 }
                 // Wait for all bodies to be downloaded
-                store_bodies_handle.await??;
+                // store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
                 for hash in &all_block_hashes[pivot_idx + 1..] {
