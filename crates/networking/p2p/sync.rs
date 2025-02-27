@@ -389,8 +389,8 @@ impl SyncManager {
                     let block = Block::new(header, body);
                     match self.blockchain.add_block(&block) {
                         Ok(stats) => {
-                            time_spent_adding_blocks += stats.time_spent_as_secs;
-                            throughput += stats.throughput
+                            time_spent_adding_blocks += stats.time_spent_as_ms;
+                            throughput += stats.throughput;
                         }
                         Err(error) => {
                             warn!("Failed to add block during FullSync: {error}");
@@ -412,7 +412,7 @@ impl SyncManager {
                     block_bodies_len as u32,
                     last_block_number,
                     last_block_hash,
-                    time_spent_adding_blocks,
+                    time_spent_adding_blocks as u128,
                     throughput,
                 );
 

@@ -11,7 +11,7 @@ struct ExecutionCycle {
     finished_at_block_num: u64,
     finished_at_block_hash: H256,
     executed_blocks_count: u32,
-    add_block_time: u64,
+    add_block_time: u128,
     throughput: f64,
 }
 
@@ -56,7 +56,7 @@ impl Monitor {
         executed_blocks: u32,
         block_num: u64,
         block_hash: H256,
-        add_block_time: u64,
+        add_block_time: u128,
         throughput: f64,
     ) {
         self.current_cycle.executed_blocks_count += executed_blocks;
@@ -96,7 +96,8 @@ impl Monitor {
 
         let elapsed_diff = elapsed as i128 - prev_elapsed as i128;
 
-        let add_block_time_ratio = elapsed as f64 / self.current_cycle.add_block_time as f64;
+        let add_block_time_in_secs = self.current_cycle.add_block_time / 1000;
+        let add_block_time_ratio = add_block_time_in_secs as f64 / elapsed as f64;
         let blocks_per_second = self.current_cycle.executed_blocks_count as f64 / elapsed as f64;
         let throughput =
             self.current_cycle.throughput / self.current_cycle.executed_blocks_count as f64;
@@ -114,7 +115,7 @@ impl Monitor {
         \t======= Overall, this cycle took {} seconds with respect to the previous one =======",
             self.current_cycle.executed_blocks_count,
             elapsed,
-            self.current_cycle.add_block_time,
+            add_block_time_in_secs,
             add_block_time_ratio * 100.0,
             avg,
             blocks_per_second,
@@ -158,7 +159,7 @@ impl SyncMetrics {
         number_of_blocks_processed: u32,
         last_block_number: u64,
         last_block_hash: H256,
-        add_block_time: u64,
+        add_block_time: u128,
         throughput: f64,
     ) {
         for monitor in &mut self.monitors {

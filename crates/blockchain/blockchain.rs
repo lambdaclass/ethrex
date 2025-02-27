@@ -35,7 +35,7 @@ pub struct Blockchain {
 
 pub struct AddBlockResultStats {
     pub throughput: f64,
-    pub time_spent_as_secs: u64,
+    pub time_spent_as_ms: u128,
 }
 
 impl Blockchain {
@@ -96,18 +96,17 @@ impl Blockchain {
         store_block(&self.storage, block.clone())?;
         store_receipts(&self.storage, receipts, block_hash)?;
 
-        let interval = Instant::now().duration_since(since);
-        let interval_as_ms = interval.as_millis();
-        let mut throughput = 0_f64;
-        if interval_as_ms != 0 {
+        let interval = Instant::now().duration_since(since).as_millis();
+        let mut throughput = 0.0;
+        if interval != 0 {
             let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            throughput = (as_gigas) / (interval_as_ms as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval_as_ms} msecs");
+            throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
         }
 
         Ok(AddBlockResultStats {
             throughput,
-            time_spent_as_secs: interval.as_secs(),
+            time_spent_as_ms: interval,
         })
     }
 
