@@ -2,8 +2,7 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, BlockTotalDifficultyRLP, Rlp, TransactionHashRLP,
-    TupleRLP,
+    BlockHashRLP, BlockHeaderRLP, BlockRLP, Rlp, TransactionHashRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -159,22 +158,6 @@ impl StoreEngine for Store {
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
         self.read::<BlockNumbers>(block_hash.into())
     }
-    fn add_block_total_difficulty(
-        &self,
-        block_hash: BlockHash,
-        block_total_difficulty: U256,
-    ) -> Result<(), StoreError> {
-        self.write::<BlockTotalDifficulties>(block_hash.into(), block_total_difficulty.into())
-    }
-
-    fn get_block_total_difficulty(
-        &self,
-        block_hash: BlockHash,
-    ) -> Result<Option<U256>, StoreError> {
-        Ok(self
-            .read::<BlockTotalDifficulties>(block_hash.into())?
-            .map(|b| b.to()))
-    }
 
     fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.write::<AccountCodes>(code_hash.into(), code.into())
@@ -321,25 +304,6 @@ impl StoreEngine for Store {
 
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         match self.read::<ChainData>(ChainDataIndex::LatestBlockNumber)? {
-            None => Ok(None),
-            Some(ref rlp) => RLPDecode::decode(rlp)
-                .map(Some)
-                .map_err(|_| StoreError::DecodeError),
-        }
-    }
-
-    fn update_latest_total_difficulty(
-        &self,
-        latest_total_difficulty: U256,
-    ) -> Result<(), StoreError> {
-        self.write::<ChainData>(
-            ChainDataIndex::LatestTotalDifficulty,
-            latest_total_difficulty.encode_to_vec(),
-        )
-    }
-
-    fn get_latest_total_difficulty(&self) -> Result<Option<U256>, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::LatestTotalDifficulty)? {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(rlp)
                 .map(Some)
@@ -863,12 +827,6 @@ table!(
     ( BlockNumbers ) BlockHashRLP => BlockNumber
 );
 
-// TODO (#307): Remove TotalDifficulty.
-table!(
-    /// Block hash to total difficulties table.
-    ( BlockTotalDifficulties ) BlockHashRLP => BlockTotalDifficultyRLP
-);
-
 table!(
     /// Block headers table.
     ( Headers ) BlockHashRLP => BlockHeaderRLP
@@ -1024,8 +982,6 @@ const DB_MAX_VALUE_SIZE: usize = 2022;
 pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
     let tables = [
         table_info!(BlockNumbers),
-        // TODO (#307): Remove TotalDifficulty.
-        table_info!(BlockTotalDifficulties),
         table_info!(Headers),
         table_info!(Bodies),
         table_info!(AccountCodes),
