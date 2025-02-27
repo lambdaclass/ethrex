@@ -200,10 +200,9 @@ impl LEVM {
         block_hash: H256,
         new_state: &CacheDB,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
-        let current_db = store.clone();
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (new_state_account_address, new_state_account) in new_state {
-            let initial_account_state = current_db
+            let initial_account_state = store
                 .get_account_info_by_hash(block_hash, *new_state_account_address)
                 .expect("Error getting account info by address")
                 .unwrap_or_default();
@@ -221,7 +220,7 @@ impl LEVM {
                 // Get the code hash of the new state account bytecode
                 let potential_new_bytecode_hash = code_hash(&new_state_account.info.bytecode);
                 // Look into the current database to see if the bytecode hash is already present
-                let current_bytecode = current_db
+                let current_bytecode = store
                     .get_account_code(potential_new_bytecode_hash)
                     .expect("Error getting account code by hash");
                 let code = new_state_account.info.bytecode.clone();
@@ -265,14 +264,14 @@ impl LEVM {
                 added_storage,
             };
 
-            let block_header = current_db
+            let block_header = store
                 .get_block_header_by_hash(block_hash)?
                 .ok_or(StoreError::MissingStore)?;
             let fork_from_config = store.get_chain_config()?.fork(block_header.timestamp);
             // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
             let fork = ef_tests.unwrap_or(fork_from_config);
             if let Some(old_info) =
-                current_db.get_account_info_by_hash(block_hash, account_update.address)?
+                store.get_account_info_by_hash(block_hash, account_update.address)?
             {
                 // https://eips.ethereum.org/EIPS/eip-161
                 // if an account was empty and is now empty, after spurious dragon, it should be removed
