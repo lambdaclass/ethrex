@@ -52,6 +52,16 @@ impl<T: RLPDecode> Rlp<T> {
     }
 }
 
+impl<T> Rlp<T> {
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes, Default::default())
+    }
+
+    pub fn bytes(&self) -> &Vec<u8> {
+        &self.0
+    }
+}
+
 #[cfg(feature = "libmdbx")]
 impl<T: Send + Sync> Decodable for Rlp<T> {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
