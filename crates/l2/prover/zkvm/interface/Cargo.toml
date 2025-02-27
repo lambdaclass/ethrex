@@ -16,16 +16,18 @@ ethrex-storage = { path = "../../../../storage", default-features = false }
 ethrex-trie = { path = "../../../../common/trie", default-features = false }
 
 [build-dependencies]
-risc0-build = { version = "1.2.2" }
-sp1-build = "4.1.0"
+risc0-build = { version = "1.2.2", optional = true }
+sp1-build = { version = "4.1.1", optional = true }
+pico-cli = { git = "https://github.com/brevis-network/pico", optional = true }
 
 [package.metadata.risc0]
 methods = ["risc0"]
 
 [features]
 default = []
-build_risc0 = []
-build_sp1 = []
+risc0 = ["dep:risc0-build"]
+sp1 = ["dep:sp1-build"]
+pico = ["dep:pico-cli"]
 l2 = ["ethrex-vm/l2"]
 
 [lib]
