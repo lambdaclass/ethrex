@@ -363,10 +363,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let tx_count = txs.len();
                 for tx in txs {
                     self.send(Message::NewPooledTransactionHashes(
-                        NewPooledTransactionHashes::new(
-                            vec![(*tx).clone()],
-                            &self.blockchain.mempool,
-                        )?,
+                        NewPooledTransactionHashes::new(vec![(*tx).clone()], &self.blockchain)?,
                     ))
                     .await?;
                     // Possible improvement: the mempool already knows the hash but the filter function does not return it
@@ -458,15 +455,15 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if peer_supports_eth =>
             {
                 //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
-                let hashes = new_pooled_transaction_hashes
-                    .get_transactions_to_request(&self.blockchain.mempool)?;
+                let hashes =
+                    new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
 
                 //TODO(#1416): Evaluate keeping track of the request-id.
                 let request = GetPooledTransactions::new(random(), hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
-                let response = msg.handle(&self.blockchain.mempool)?;
+                let response = msg.handle(&self.blockchain)?;
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {

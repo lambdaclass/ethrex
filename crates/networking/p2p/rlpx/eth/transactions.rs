@@ -1,7 +1,6 @@
 use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::error::MempoolError;
-use ethrex_blockchain::mempool::Mempool;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
