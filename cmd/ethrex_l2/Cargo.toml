@@ -5,7 +5,6 @@ edition.workspace = true
 
 [dependencies]
 ethrex-l2.workspace = true
-ethrex-sdk.workspace = true
 ethrex-common.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-prover.workspace = true

@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use bytes::Bytes;
+use ethertools_sdk::l2::COMMON_BRIDGE_L2_ADDRESS;
 use ethrex_common::types::Genesis;
 use ethrex_common::types::GenesisAccount;
 use ethrex_common::U256;
 use ethrex_l2::utils::config::read_env_file;
-use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 use utils::compile_contract;
 use utils::ContractCompilationError;
 

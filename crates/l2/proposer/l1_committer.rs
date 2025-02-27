@@ -5,7 +5,19 @@ use crate::{
     },
     utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
 };
-
+use ethertools_sdk::{
+    calldata::{encode_calldata, Value},
+    client::{
+        eth::{BlockByNumber, WrappedTransaction},
+        EthClient,
+    },
+};
+use ethertools_sdk::{
+    client::Overrides,
+    l2::{
+        constants::COMMON_BRIDGE_L2_ADDRESS, merkle_tree::merkelize, withdraw::get_withdrawal_hash,
+    },
+};
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
@@ -13,11 +25,6 @@ use ethrex_common::{
         MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
-};
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize, COMMON_BRIDGE_L2_ADDRESS};
-use ethrex_rpc::clients::eth::{
-    eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, Store};
 use ethrex_vm::{backends::EVM, db::evm_state};

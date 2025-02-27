@@ -1,0 +1,59 @@
+[package]
+name = "gateway"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ethrex-common.workspace = true
+ethrex-rlp.workspace = true
+ethrex-vm.workspace = true
+ethrex-storage.workspace = true
+ethrex-rpc = { workspace = true, features = ["based"] }
+
+# Runtime
+tokio.workspace = true
+
+# CLI
+clap = { version = "4.3", features = ["derive"] }
+clap_complete = "4.5.17"
+eyre = "0.6"
+
+reqwest.workspace = true
+
+# Tracing
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender = "0.2.3"
+
+# Errors
+thiserror.workspace = true
+
+# Misc
+crossbeam-channel = "0.5.14"
+shared_memory = "^0.12"
+uuid = { version = "1.12.1", features = ["v4"] }
+strum_macros = "0.24"
+paste = "0.1.18"
+directories = "5.0.1"
+bytes.workspace = true
+
+# Timing
+quanta = "0.12.5"
+chrono = "0.4.23"
+
+# Serde
+serde.workspace = true
+serde_json.workspace = true
+
+# Crypto
+secp256k1.workspace = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+as_conversions = "deny"
+unnecessary_cast = "warn"
+panic = "deny"

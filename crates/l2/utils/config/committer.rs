@@ -1,5 +1,5 @@
 use ethereum_types::Address;
-use ethrex_l2_sdk::secret_key_deserializer;
+use ethertools_sdk::utils::secret_key_deserializer;
 use secp256k1::SecretKey;
 use serde::Deserialize;
 

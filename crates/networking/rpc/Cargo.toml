@@ -33,6 +33,7 @@ envy = "0.4.2"
 thiserror.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true
+ethertools-sdk.workspace = true
 
 cfg-if.workspace = true
 

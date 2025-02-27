@@ -19,8 +19,9 @@ lazy_static = "1.5.0"
 tracing.workspace = true
 thiserror.workspace = true
 
+ethertools-sdk.workspace = true
+
 ethrex-l2 = { path = "../../l2" }
-ethrex-sdk = { path = "../../l2/sdk" }
 ethrex-common = { path = "../../common" }
 ethrex-rpc = { path = "../../networking/rpc" }
 

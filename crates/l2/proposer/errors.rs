@@ -3,9 +3,11 @@ use std::sync::mpsc::SendError;
 use crate::utils::config::errors::ConfigError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
+use ethertools_sdk::{
+    client::{eth::errors::CalldataEncodeError, EthClientError},
+    l2::merkle_tree::MerkleError,
+};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
-use ethrex_l2_sdk::merkle_tree::MerkleError;
-use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;

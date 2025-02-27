@@ -10,12 +10,13 @@ use crate::utils::{
         save_state::{StateFileType, StateType, *},
     },
 };
+use ethertools_sdk::calldata::{encode_calldata, Value};
+use ethertools_sdk::client::eth::WrappedTransaction;
+use ethertools_sdk::client::{EthClient, Overrides};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address, H256, U256,
 };
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
 use ethrex_vm::{
     db::StoreWrapper,

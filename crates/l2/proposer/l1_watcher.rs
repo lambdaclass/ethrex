@@ -4,9 +4,9 @@ use crate::{
 };
 use bytes::Bytes;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
+use ethertools_sdk::client::{EthClient, EthClientError, Overrides};
 use ethrex_blockchain::{constants::TX_GAS_COST, mempool};
 use ethrex_common::types::{Signable, Transaction};
-use ethrex_rpc::clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_storage::Store;
 use keccak_hash::keccak;

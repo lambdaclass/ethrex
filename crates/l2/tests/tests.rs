@@ -2,8 +2,8 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
+use ethertools_sdk::calldata;
 use ethrex_l2::utils::config::read_env_file;
-use ethrex_l2_sdk::calldata;
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, from_hex_string_to_u256, BlockByNumber, EthClient,
 };
@@ -70,7 +70,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Depositing funds from L1 to L2");
 
     let deposit_value = U256::from(1000000000000000000000u128);
-    let deposit_tx = ethrex_l2_sdk::deposit(
+    let deposit_tx = ethertools_sdk::l2::deposit(
         deposit_value,
         l1_rich_wallet_address(),
         l1_rich_wallet_private_key(),
@@ -81,7 +81,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Waiting for deposit transaction receipt");
 
     let _deposit_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5).await?;
+        ethertools_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5).await?;
 
     let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
     println!(
@@ -150,7 +150,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         proposer_client.get_balance(random_account_address).await?;
     assert!(l2_random_account_initial_balance.is_zero());
     let transfer_value = U256::from(10000000000u128);
-    let transfer_tx = ethrex_l2_sdk::transfer(
+    let transfer_tx = ethertools_sdk::l2::transfer(
         transfer_value,
         l1_rich_wallet_address(),
         random_account_address,
@@ -159,7 +159,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     let transfer_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 30).await?;
+        ethertools_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 30).await?;
 
     let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
     println!(
@@ -196,7 +196,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Withdrawing funds from L2 to L1");
     let withdraw_value = U256::from(100000000000000000000u128);
-    let withdraw_tx = ethrex_l2_sdk::withdraw(
+    let withdraw_tx = ethertools_sdk::l2::withdraw(
         withdraw_value,
         l1_rich_wallet_address(),
         l1_rich_wallet_private_key(),
@@ -204,7 +204,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     let withdraw_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 30)
+        ethertools_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 30)
             .await
             .expect("Withdraw tx receipt not found");
 
@@ -258,7 +258,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::sleep(Duration::from_secs(2));
     }
 
-    let claim_tx = ethrex_l2_sdk::claim_withdraw(
+    let claim_tx = ethertools_sdk::l2::claim_withdraw(
         withdraw_tx,
         withdraw_value,
         l1_rich_wallet_address(),
@@ -269,7 +269,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     let _claim_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(claim_tx, &eth_client, 15).await?;
+        ethertools_sdk::wait_for_transaction_receipt(claim_tx, &eth_client, 15).await?;
 
     // 9. Check balances on L1 and L2
 

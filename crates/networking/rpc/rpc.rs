@@ -63,11 +63,14 @@ pub mod utils;
 mod web3;
 
 pub mod clients;
-pub use clients::{EngineClient, EthClient};
+pub use clients::EngineClient;
 
 use axum::extract::State;
 use ethrex_p2p::types::Node;
 use ethrex_storage::{error::StoreError, Store};
+
+#[cfg(feature = "based")]
+use ethertools_sdk::client::eth::EthClient;
 
 #[derive(Deserialize)]
 #[serde(untagged)]

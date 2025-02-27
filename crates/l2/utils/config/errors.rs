@@ -1,5 +1,5 @@
 use crate::proposer::errors::ProposerError;
-use ethrex_rpc::clients::{auth, eth};
+use ethrex_rpc::clients::auth;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -12,7 +12,7 @@ pub enum ConfigError {
     #[error("Error building Proposer Engine from config: {0}")]
     BuildProposerEngineServerFromConfigError(#[from] auth::errors::ConfigError),
     #[error("Error building Prover server from config: {0}")]
-    BuildProverServerFromConfigError(#[from] eth::errors::EthClientError),
+    BuildProverServerFromConfigError(#[from] ethertools_sdk::client::eth::errors::EthClientError),
     #[error("{0}")]
     Custom(String),
 }

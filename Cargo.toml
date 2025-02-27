@@ -14,7 +14,6 @@ members = [
     "crates/l2/",
     "crates/l2/contracts",
     "crates/l2/prover",
-    "crates/l2/sdk",
     "crates/networking/p2p",
     "crates/networking/rpc",
     "crates/storage",
@@ -41,8 +40,11 @@ ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }
-ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
+
+# FIXME: DO NOT USE LOCAL
+ethertools-sdk = { path = "../ethertools/sdk", package = "ethertools-sdk"}
+# ethertools-sdk = { git = "https://github.com/lambdaclass/ethertools", package = "ethertools-sdk"}
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }

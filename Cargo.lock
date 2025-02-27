@@ -2242,6 +2242,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys 0.5.0",
+]
+
+[[package]]
 name = "dirs-next"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2258,7 +2267,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b1d1d91c932ef41c0f2663aa8b0ca0342d444d842c06914aa0a7e352d0bada6"
 dependencies = [
  "libc",
- "redox_users",
+ "redox_users 0.4.6",
  "winapi",
 ]
 
@@ -2270,8 +2279,20 @@ checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users",
+ "redox_users 0.4.6",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users 0.5.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2281,7 +2302,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ebda144c4fe02d1f7ea1a7d9641b6fc6b580adcfa024ae48797ecdeb6825b4d"
 dependencies = [
  "libc",
- "redox_users",
+ "redox_users 0.4.6",
  "winapi",
 ]
 
@@ -2364,11 +2385,11 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "datatest-stable",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-vm",
+ "ethrex-blockchain 0.1.0",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-vm 0.1.0",
  "hex",
  "lazy_static",
  "serde",
@@ -2383,12 +2404,12 @@ dependencies = [
  "clap 4.5.30",
  "clap_complete",
  "colored",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-levm",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-vm",
+ "ethrex-blockchain 0.1.0",
+ "ethrex-common 0.1.0",
+ "ethrex-levm 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-vm 0.1.0",
  "hex",
  "itertools 0.13.0",
  "keccak-hash",
@@ -2570,6 +2591,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethertools-sdk"
+version = "0.1.0"
+dependencies = [
+ "dirs 6.0.0",
+ "envy",
+ "ethrex-blockchain 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-l2 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-prover 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rpc 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "hex",
+ "itertools 0.14.0",
+ "jsonwebtoken",
+ "keccak-hash",
+ "log",
+ "reqwest",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.11",
+ "tokio",
+ "toml 0.8.20",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
 name = "ethrex"
 version = "0.1.0"
 dependencies = [
@@ -2578,16 +2627,16 @@ dependencies = [
  "cfg-if",
  "clap 4.5.30",
  "directories",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-dev",
- "ethrex-l2",
- "ethrex-metrics",
- "ethrex-p2p",
- "ethrex-rlp",
- "ethrex-rpc",
- "ethrex-storage",
- "ethrex-vm",
+ "ethrex-blockchain 0.1.0",
+ "ethrex-common 0.1.0",
+ "ethrex-dev 0.1.0",
+ "ethrex-l2 0.1.0",
+ "ethrex-metrics 0.1.0",
+ "ethrex-p2p 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-rpc 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-vm 0.1.0",
  "hex",
  "k256",
  "lazy_static",
@@ -2607,14 +2656,32 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "cfg-if",
- "ethrex-common",
- "ethrex-metrics",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-vm",
+ "ethrex-common 0.1.0",
+ "ethrex-metrics 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-vm 0.1.0",
  "hex",
  "k256",
  "serde_json",
+ "sha3",
+ "thiserror 2.0.11",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-blockchain"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "bytes",
+ "cfg-if",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-metrics 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-vm 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "k256",
  "sha3",
  "thiserror 2.0.11",
  "tracing",
@@ -2628,10 +2695,35 @@ dependencies = [
  "c-kzg",
  "crc32fast",
  "ethereum-types",
- "ethrex-rlp",
- "ethrex-trie",
+ "ethrex-rlp 0.1.0",
+ "ethrex-trie 0.1.0",
  "hex",
  "hex-literal",
+ "k256",
+ "keccak-hash",
+ "lazy_static",
+ "once_cell",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sha3",
+ "thiserror 2.0.11",
+ "tinyvec",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-common"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "bytes",
+ "c-kzg",
+ "crc32fast",
+ "ethereum-types",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "hex",
  "k256",
  "keccak-hash",
  "lazy_static",
@@ -2652,7 +2744,28 @@ dependencies = [
  "bytes",
  "envy",
  "ethereum-types",
- "ethrex-rpc",
+ "ethrex-rpc 0.1.0",
+ "hex",
+ "jsonwebtoken",
+ "keccak-hash",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "thiserror 2.0.11",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-dev"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "bytes",
+ "envy",
+ "ethereum-types",
+ "ethrex-rpc 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
  "hex",
  "jsonwebtoken",
  "keccak-hash",
@@ -2673,15 +2786,15 @@ dependencies = [
  "directories",
  "envy",
  "ethereum-types",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-dev",
- "ethrex-metrics",
- "ethrex-rlp",
- "ethrex-rpc",
- "ethrex-sdk",
- "ethrex-storage",
- "ethrex-vm",
+ "ethertools-sdk",
+ "ethrex-blockchain 0.1.0",
+ "ethrex-common 0.1.0",
+ "ethrex-dev 0.1.0",
+ "ethrex-metrics 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-rpc 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-vm 0.1.0",
  "hex",
  "jsonwebtoken",
  "keccak-hash",
@@ -2697,7 +2810,42 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "zkvm_interface",
+ "zkvm_interface 0.1.0",
+]
+
+[[package]]
+name = "ethrex-l2"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "bytes",
+ "directories",
+ "envy",
+ "ethereum-types",
+ "ethrex-blockchain 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-dev 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-metrics 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rpc 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-sdk",
+ "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-vm 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "hex",
+ "jsonwebtoken",
+ "keccak-hash",
+ "reqwest",
+ "risc0-zkvm",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sp1-recursion-gnark-ffi",
+ "sp1-sdk",
+ "thiserror 2.0.11",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "zkvm_interface 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
 ]
 
 [[package]]
@@ -2708,8 +2856,8 @@ dependencies = [
  "bytes",
  "colored",
  "datatest-stable",
- "ethrex-common",
- "ethrex-rlp",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
  "hex",
  "k256",
  "keccak-hash",
@@ -2729,17 +2877,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-levm"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "bls12_381 0.8.0",
+ "bytes",
+ "datatest-stable",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "k256",
+ "keccak-hash",
+ "kzg-rs",
+ "lambdaworks-math",
+ "libsecp256k1",
+ "num-bigint 0.4.6",
+ "revm-primitives 14.0.0",
+ "ripemd",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "sha3",
+ "thiserror 2.0.11",
+ "walkdir",
+]
+
+[[package]]
 name = "ethrex-metrics"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.1",
- "ethrex-common",
+ "ethrex-common 0.1.0",
  "prometheus",
  "serde",
  "serde_json",
  "thiserror 2.0.11",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "ethrex-metrics"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.11",
 ]
 
 [[package]]
@@ -2750,14 +2935,45 @@ dependencies = [
  "bytes",
  "concat-kdf",
  "ctr",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
+ "ethrex-blockchain 0.1.0",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-trie 0.1.0",
  "futures",
  "hex",
  "hex-literal",
+ "hmac 0.12.1",
+ "k256",
+ "lazy_static",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha3",
+ "snap",
+ "thiserror 2.0.11",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-p2p"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "aes",
+ "bytes",
+ "concat-kdf",
+ "ctr",
+ "ethrex-blockchain 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "futures",
+ "hex",
  "hmac 0.12.1",
  "k256",
  "lazy_static",
@@ -2779,12 +2995,12 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "ethereum-types",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-l2",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-vm",
+ "ethrex-blockchain 0.1.0",
+ "ethrex-common 0.1.0",
+ "ethrex-l2 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-vm 0.1.0",
  "hex",
  "risc0-zkvm",
  "serde",
@@ -2796,7 +3012,32 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
- "zkvm_interface",
+ "zkvm_interface 0.1.0",
+]
+
+[[package]]
+name = "ethrex-prover"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "bytes",
+ "ethereum-types",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-l2 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-vm 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "hex",
+ "risc0-zkvm",
+ "serde",
+ "serde_json",
+ "sp1-recursion-gnark-ffi",
+ "sp1-sdk",
+ "thiserror 2.0.11",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+ "zkvm_interface 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
 ]
 
 [[package]]
@@ -2814,6 +3055,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-rlp"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "bytes",
+ "ethereum-types",
+ "hex",
+ "lazy_static",
+ "snap",
+ "thiserror 2.0.11",
+ "tinyvec",
+]
+
+[[package]]
 name = "ethrex-rpc"
 version = "0.1.0"
 dependencies = [
@@ -2822,12 +3077,13 @@ dependencies = [
  "bytes",
  "cfg-if",
  "envy",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-p2p",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-vm",
+ "ethertools-sdk",
+ "ethrex-blockchain 0.1.0",
+ "ethrex-common 0.1.0",
+ "ethrex-p2p 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-vm 0.1.0",
  "hex",
  "hex-literal",
  "jsonwebtoken",
@@ -2847,14 +3103,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-rpc"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "axum 0.8.1",
+ "axum-extra",
+ "bytes",
+ "cfg-if",
+ "envy",
+ "ethrex-blockchain 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-p2p 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-vm 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "hex",
+ "jsonwebtoken",
+ "k256",
+ "keccak-hash",
+ "rand 0.8.5",
+ "reqwest",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sha3",
+ "thiserror 2.0.11",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
 name = "ethrex-sdk"
 version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
 dependencies = [
  "bytes",
  "ethereum-types",
- "ethrex-common",
- "ethrex-rlp",
- "ethrex-rpc",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rpc 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
  "eyre",
  "hex",
  "itertools 0.13.0",
@@ -2875,9 +3165,9 @@ dependencies = [
  "anyhow",
  "bytes",
  "ethereum-types",
- "ethrex-common",
- "ethrex-rlp",
- "ethrex-trie",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-trie 0.1.0",
  "hex",
  "hex-literal",
  "libmdbx",
@@ -2891,6 +3181,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-storage"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "ethereum-types",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha3",
+ "thiserror 2.0.11",
+ "tracing",
+]
+
+[[package]]
 name = "ethrex-trie"
 version = "0.1.0"
 dependencies = [
@@ -2899,7 +3208,7 @@ dependencies = [
  "cita_trie",
  "digest 0.10.7",
  "ethereum-types",
- "ethrex-rlp",
+ "ethrex-rlp 0.1.0",
  "hasher",
  "hex",
  "hex-literal",
@@ -2916,6 +3225,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-trie"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "digest 0.10.7",
+ "ethereum-types",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "hex",
+ "lazy_static",
+ "serde",
+ "serde_json",
+ "sha3",
+ "smallvec",
+ "thiserror 2.0.11",
+ "tracing",
+]
+
+[[package]]
 name = "ethrex-vm"
 version = "0.1.0"
 dependencies = [
@@ -2924,11 +3253,36 @@ dependencies = [
  "bytes",
  "cfg-if",
  "ethereum-types",
- "ethrex-common",
- "ethrex-levm",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
+ "ethrex-common 0.1.0",
+ "ethrex-levm 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-trie 0.1.0",
+ "hex",
+ "lazy_static",
+ "revm 19.5.0",
+ "revm-inspectors",
+ "revm-primitives 15.2.0",
+ "serde",
+ "thiserror 2.0.11",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-vm"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "alloy-rpc-types-eth",
+ "bincode",
+ "bytes",
+ "cfg-if",
+ "ethereum-types",
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-levm 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
  "hex",
  "lazy_static",
  "revm 19.5.0",
@@ -2946,10 +3300,10 @@ dependencies = [
  "bytes",
  "colored",
  "ethereum-types",
- "ethrex-common",
- "ethrex-l2",
- "ethrex-rpc",
- "ethrex-sdk",
+ "ethertools-sdk",
+ "ethrex-common 0.1.0",
+ "ethrex-l2 0.1.0",
+ "ethrex-rpc 0.1.0",
  "hex",
  "keccak-hash",
  "lazy_static",
@@ -2972,13 +3326,12 @@ dependencies = [
  "dialoguer",
  "dirs 5.0.1",
  "ethereum-types",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-l2",
- "ethrex-prover",
- "ethrex-rlp",
- "ethrex-rpc",
- "ethrex-sdk",
+ "ethrex-blockchain 0.1.0",
+ "ethrex-common 0.1.0",
+ "ethrex-l2 0.1.0",
+ "ethrex-prover 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-rpc 0.1.0",
  "eyre",
  "hex",
  "itertools 0.13.0",
@@ -6066,6 +6419,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_users"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd6f9d3d47bdd2ad6945c5015a226ec6155d0bcdfd8f7cd29f86b71f8de99d2b"
+dependencies = [
+ "getrandom 0.2.15",
+ "libredox",
+ "thiserror 2.0.11",
+]
+
+[[package]]
 name = "regex"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6355,8 +6719,8 @@ name = "revm_comparison"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "ethrex-common",
- "ethrex-levm",
+ "ethrex-common 0.1.0",
+ "ethrex-levm 0.1.0",
  "hex",
  "revm 9.0.0",
  "sha3",
@@ -9485,11 +9849,29 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
- "ethrex-common",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-trie",
- "ethrex-vm",
+ "ethrex-common 0.1.0",
+ "ethrex-rlp 0.1.0",
+ "ethrex-storage 0.1.0",
+ "ethrex-trie 0.1.0",
+ "ethrex-vm 0.1.0",
+ "risc0-build",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sp1-build",
+ "thiserror 2.0.11",
+]
+
+[[package]]
+name = "zkvm_interface"
+version = "0.1.0"
+source = "git+https://github.com/lambdaclass/ethrex#9b2f4c9ea0a39b6af80ae234cef3b8f7dd889f1e"
+dependencies = [
+ "ethrex-common 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-rlp 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-storage 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-trie 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
+ "ethrex-vm 0.1.0 (git+https://github.com/lambdaclass/ethrex)",
  "risc0-build",
  "serde",
  "serde_json",
