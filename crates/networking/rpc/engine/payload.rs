@@ -559,7 +559,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
             Err(RpcErr::Internal(e.to_string()))
         }
         Ok(()) => {
-            info!("Block with hash {block_hash} executed and added to storage succesfully");
+            info!("Block with hash {block_hash} and number {} executed and added to storage succesfully", block.header.number);
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }
     }
