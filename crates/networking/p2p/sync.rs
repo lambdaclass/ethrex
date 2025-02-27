@@ -233,8 +233,13 @@ impl SyncManager {
                 }
             }
 
-            // Check if we already found the sync head
-            let sync_head_found = block_hashes.contains(&sync_head);
+            // Filter out everything after the sync_head
+            let mut sync_head_found = false;
+            if let Some(index) = block_hashes.iter().position(|&hash| hash == sync_head) {
+                sync_head_found = true;
+                block_hashes = block_hashes.iter().take(index + 1).cloned().collect();
+            }
+
             // Update current fetch head if needed
             let last_block_hash = last_block_header.compute_block_hash();
             if !sync_head_found {
