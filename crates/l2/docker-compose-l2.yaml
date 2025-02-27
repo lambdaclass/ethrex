@@ -13,6 +13,7 @@ services:
       dockerfile: ./crates/l2/contracts/Dockerfile
     volumes:
       - ./contracts:/contracts
+      - ./config.toml:/config.toml
       - .env:/.env
     env_file:
       - .env
@@ -20,6 +21,7 @@ services:
       - ETH_RPC_URL=http://ethrex_l1:8545
       - DEPLOYER_CONTRACTS_PATH=/contracts
       - ENV_FILE=/.env
+      - CONFIG_FILE=/config.toml
     depends_on:
       - ethrex
     restart: on-failure:3
@@ -42,6 +44,7 @@ services:
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
       - .env:/.env:ro
+      - ./config.toml:/config.toml:ro
     command: --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8552
     depends_on:
       contract_deployer:
