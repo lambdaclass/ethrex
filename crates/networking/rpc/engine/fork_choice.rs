@@ -241,11 +241,7 @@ fn handle_forkchoice(
         Ok(head) => {
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            if let Ok(Some(block)) = context
-                .blockchain
-                .storage
-                .get_block_by_hash(head.compute_block_hash())
-            {
+            if let Ok(Some(block)) = context.storage.get_block_by_hash(head.compute_block_hash()) {
                 for tx in &block.body.transactions {
                     context
                         .blockchain
@@ -275,17 +271,12 @@ fn handle_forkchoice(
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     context
-                        .blockchain
                         .storage
                         .update_sync_status(false)
                         .map_err(|e| RpcErr::Internal(e.to_string()))?;
-                    let current_head = context
-                        .blockchain
-                        .storage
-                        .get_latest_canonical_block_hash()?
-                        .ok_or(RpcErr::Internal(
-                            "Missing latest canonical block".to_owned(),
-                        ))?;
+                    let current_head = context.storage.get_latest_canonical_block_hash()?.ok_or(
+                        RpcErr::Internal("Missing latest canonical block".to_owned()),
+                    )?;
                     let sync_head = fork_choice_state.head_block_hash;
                     tokio::spawn(async move {
                         // If we can't get hold of the syncer, then it means that there is an active sync in process
@@ -312,13 +303,10 @@ fn handle_forkchoice(
                         "Invalid fork choice payload. Reason: {}",
                         reason.to_string()
                     );
-                    let latest_valid_hash = context
-                        .blockchain
-                        .storage
-                        .get_latest_canonical_block_hash()?
-                        .ok_or(RpcErr::Internal(
-                            "Missing latest canonical block".to_owned(),
-                        ))?;
+                    let latest_valid_hash =
+                        context.storage.get_latest_canonical_block_hash()?.ok_or(
+                            RpcErr::Internal("Missing latest canonical block".to_owned()),
+                        )?;
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(
                         latest_valid_hash,
                         reason.to_string(),
@@ -410,10 +398,7 @@ fn build_payload(
         // so the only errors that may be returned are internal storage errors
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
-    context
-        .blockchain
-        .storage
-        .add_payload(payload_id, payload)?;
+    context.storage.add_payload(payload_id, payload)?;
 
     Ok(payload_id)
 }
