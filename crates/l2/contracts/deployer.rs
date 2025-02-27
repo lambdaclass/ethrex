@@ -617,18 +617,18 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
     for pk in private_keys.iter() {
         let pk_str = pk.strip_prefix("0x").unwrap_or(pk);
         let Ok(pk_h256) = pk_str.parse::<H256>() else {
-            return;
+            continue;
         };
         let pk_bytes = pk_h256.as_bytes();
         let Ok(secret_key) = SecretKey::from_slice(pk_bytes) else {
-            return;
+            continue;
         };
         let Ok(address) = get_address_from_secret_key(&secret_key) else {
-            return;
+            continue;
         };
         let values = vec![Value::Address(address)];
         let Ok(calldata) = encode_calldata("deposit(address)", &values) else {
-            return;
+            continue;
         };
         let Some(acc) = genesis.alloc.get(&address) else {
             dbg!("No hay address en genesis ⏭️", address);
@@ -641,6 +641,7 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
+            gas_limit: Some(21000 * 5),
             ..Overrides::default()
         };
 
@@ -650,11 +651,6 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
         else {
             continue;
         };
-
-        // let gas_estimate = eth_client.estimate_gas(build.clone().into()).await;
-        // dbg!("===========================");
-        // dbg!(gas_estimate);
-        // dbg!("===========================");
 
         match eth_client
             .send_eip1559_transaction(&build, &secret_key)
@@ -669,16 +665,6 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
                 continue;
             }
         }
-        // let Ok(_) = dbg!(
-        //     eth_client
-        //         .send_eip1559_transaction(&build, &secret_key)
-        //         .await
-        // ) else {
-        //     dbg!("===========================");
-        //     dbg!("Failed to send transaction");
-        //     dbg!("===========================");
-        //     continue;
-        // };
     }
 }
 

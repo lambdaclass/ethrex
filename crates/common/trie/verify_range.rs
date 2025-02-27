@@ -331,7 +331,7 @@ fn remove_internal_references_inner(
                 }
                 // If both paths are greater or lesser than the node's prefix then the range is empty
                 (Ordering::Greater, Ordering::Greater) | (Ordering::Less, Ordering::Less) => {
-                    return Err(TrieError::Verify("empty range".to_string()))
+                    return Err(TrieError::Verify("empty range".to_string()));
                 }
                 // None of the paths fit the prefix, remove the entire subtrie
                 (left, right) if left.is_ne() && right.is_ne() => {
