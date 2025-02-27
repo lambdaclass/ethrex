@@ -60,6 +60,7 @@ impl Monitor {
         throughput: f64,
     ) {
         self.current_cycle.executed_blocks_count += executed_blocks;
+        self.current_cycle.throughput += throughput;
         self.current_cycle.add_block_time += add_block_time;
 
         if self.current_cycle.executed_blocks_count >= self.blocks_to_restart_cycle {
