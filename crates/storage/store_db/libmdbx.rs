@@ -71,6 +71,40 @@ impl Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
+    fn write_batch_with_txn<T: Table>(
+        txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+        key_values: impl Iterator<Item = (T::Key, T::Value)>,
+    ) -> Result<(), StoreError> {
+        for (key, value) in key_values {
+            txn.upsert::<T>(key, value)
+                .map_err(StoreError::LibmdbxError)?;
+        }
+
+        Ok(())
+    }
+
+    fn begin(&self) -> Result<libmdbx::orm::Transaction<'_, libmdbx::RW>, StoreError> {
+        let txn = self.db.begin_readwrite().map_err(StoreError::LibmdbxError);
+        txn
+    }
+
+    fn commit(&self, txn: libmdbx::orm::Transaction<'_, libmdbx::RW>) -> Result<(), StoreError> {
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    fn rollback(&self, txn: libmdbx::orm::Transaction<'_, libmdbx::RW>) {
+        drop(txn);
+    }
+
+    fn write_with_closure(
+        &self,
+        f: impl FnOnce(&mut libmdbx::orm::Transaction<'_, libmdbx::RW>) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let mut txn = self.begin()?;
+        f(&mut txn)?;
+        self.commit(txn)
+    }
+
     // Helper method to read from a libmdbx table
     fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
@@ -82,6 +116,27 @@ impl Store {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         Ok(self.read::<CanonicalBlockHashes>(number)?.map(|a| a.to()))
+    }
+
+    fn add_transaction_locations_with_txn(
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+        write_txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+    ) -> Result<(), StoreError> {
+        #[allow(clippy::type_complexity)]
+        let key_values = locations
+            .into_iter()
+            .map(|(tx_hash, block_number, block_hash, index)| {
+                (tx_hash.into(), (block_number, block_hash, index).into())
+            });
+
+        Self::write_batch_with_txn::<TransactionLocations>(write_txn, key_values)
+    }
+
+    fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> Result<(), StoreError> {
+        self.write_with_closure(move |txn| Self::add_transaction_locations_with_txn(locations, txn))
     }
 }
 
@@ -442,14 +497,7 @@ impl StoreEngine for Store {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        #[allow(clippy::type_complexity)]
-        let key_values = locations
-            .into_iter()
-            .map(|(tx_hash, block_number, block_hash, index)| {
-                (tx_hash.into(), (block_number, block_hash, index).into())
-            });
-
-        self.write_batch::<TransactionLocations>(key_values)
+        self.add_transaction_locations(locations)
     }
 
     fn add_receipts(
