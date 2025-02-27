@@ -169,14 +169,14 @@ impl Store {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        self.write_with_closure(move |txn| Self::add_transaction_locations_with_txn(locations, txn))
+        self.write_with_closure(|txn| Self::add_transaction_locations_with_txn(locations, txn))
     }
 
     pub fn add_block_body_and_header(&self, block: Block) -> Result<(), StoreError> {
         let header = block.header;
         let number = header.number;
         let hash = header.compute_block_hash();
-        self.write_with_closure(move |txn| {
+        self.write_with_closure(|txn| {
             Self::add_block_body_with_txn(hash, block.body, txn)?;
             Self::add_block_header_with_txn(hash, header, txn)?;
             Self::add_block_number_with_txn(hash, number, txn)
@@ -190,7 +190,9 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.write::<Headers>(block_hash.into(), block_header.into())
+        self.write_with_closure(|txn| {
+            Self::add_block_header_with_txn(block_hash, block_header, txn)
+        })
     }
 
     fn add_block_headers(
@@ -221,7 +223,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        self.write::<Bodies>(block_hash.into(), block_body.into())
+        self.write_with_closure(|txn| Self::add_block_body_with_txn(block_hash, block_body, txn))
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
@@ -251,7 +253,9 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.write::<BlockNumbers>(block_hash.into(), block_number)
+        self.write_with_closure(|txn| {
+            Self::add_block_number_with_txn(block_hash, block_number, txn)
+        })
     }
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
