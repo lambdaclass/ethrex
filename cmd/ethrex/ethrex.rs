@@ -387,6 +387,7 @@ async fn main() {
                 bootnodes,
                 signer,
                 peer_table.clone(),
+                store,
                 blockchain,
             )
             .await.expect("Network starts");
