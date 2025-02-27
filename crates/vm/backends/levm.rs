@@ -294,7 +294,7 @@ impl LEVM {
     pub fn process_withdrawals(
         block_cache: &mut CacheDB,
         withdrawals: &[Withdrawal],
-        store: Option<&Store>,
+        store: &Store,
         parent_hash: H256,
     ) -> Result<(), ethrex_storage::error::StoreError> {
         // For every withdrawal we increment the target account's balance
@@ -306,11 +306,9 @@ impl LEVM {
             // We check if it was in block_cache, if not, we get it from DB.
             let mut account = block_cache.get(&address).cloned().unwrap_or({
                 let acc_info = store
-                    .ok_or(StoreError::MissingStore)?
                     .get_account_info_by_hash(parent_hash, address)?
                     .unwrap_or_default();
                 let acc_code = store
-                    .ok_or(StoreError::MissingStore)?
                     .get_account_code(acc_info.code_hash)?
                     .unwrap_or_default();
 
