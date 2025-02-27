@@ -755,8 +755,10 @@ impl<T: Send + Sync + RLPEncode + RLPDecode> Encodable for IndexedChunk<T> {
 impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
     /// Splits a value into a indexed chunks if it exceeds the maximum storage size.
     /// Each chunk is assigned an index to ensure correct ordering when retrieved.
-    ///! Warning: The current implementation supports a maximum of 256 chunks per value  
-    // because the index is stored as a u8.
+    ///
+    /// Warning: The current implementation supports a maximum of 256 chunks per value
+    /// because the index is stored as a u8.
+    ///
     /// If the data exceeds this limit, `None` is returned to indicate that it cannot be stored.
     pub fn from<Tab: Table>(key: Tab::Key, bytes: &[u8]) -> Option<Vec<(Tab::Key, Self)>>
     where
@@ -1294,8 +1296,7 @@ mod tests {
         let receipt = generate_big_receipt(10000, 100, 10);
         let key = (block_hash, 0).into();
         let receipt_rlp = receipt.encode_to_vec();
-        let res: Option<Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)>> =
-            IndexedChunk::from::<Receipts>(key, &receipt_rlp);
+        let res = IndexedChunk::<Receipt>::from::<Receipts>(key, &receipt_rlp);
 
         assert!(res.is_none());
     }
