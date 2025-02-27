@@ -23,7 +23,6 @@ revm-inspectors = { version = "0.15.0" }
 revm-primitives = { version = "15.2.0", features = [
   "std",
 ], default-features = false }
-alloy-rpc-types-eth = "0.11.1"
 bytes.workspace = true
 thiserror.workspace = true
 hex.workspace = true
