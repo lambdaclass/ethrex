@@ -168,7 +168,7 @@ fn setup() -> Result<SetupResult, DeployError> {
     .to_path_buf();
 
     // If not set, randomize the SALT
-    let input = std::env::var("DEPLOYER_SALT_IS_ZERO").unwrap_or("false".to_owned());
+    let input = dbg!(std::env::var("DEPLOYER_SALT_IS_ZERO").unwrap_or("false".to_owned()));
     match input.trim().to_lowercase().as_str() {
         "true" | "1" => (),
         "false" | "0" => {

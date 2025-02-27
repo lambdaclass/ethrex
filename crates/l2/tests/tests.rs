@@ -42,10 +42,11 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 /// 9. Check balances on L1 and L2
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
-    let eth_client = eth_client();
-    let proposer_client = proposer_client();
+    let eth_client = dbg!(eth_client());
+    let proposer_client = dbg!(proposer_client());
 
     read_env_file()?;
+    dbg!(std::env::vars());
 
     // 1. Check balances on L1 and L2
 
