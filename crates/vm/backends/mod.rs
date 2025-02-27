@@ -5,10 +5,8 @@ pub mod revm_b;
 use crate::db::evm_state;
 use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState, SpecId};
 use ethrex_common::types::requests::Requests;
-use ethrex_common::types::{
-    Block, BlockHeader, ChainConfig, Fork, Receipt, Transaction, Withdrawal,
-};
-use ethrex_common::{types::AccountInfo, Address, BigEndianHash, H256, U256};
+use ethrex_common::types::{Block, BlockHeader, Fork, Receipt, Transaction, Withdrawal};
+use ethrex_common::H256;
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
@@ -17,48 +15,41 @@ use revm_b::REVM;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use revm::db::states::bundle_state::BundleRetention;
-use revm::db::{AccountState, AccountStatus};
-use revm::primitives::B256;
-
 #[derive(Debug, Default, Clone)]
-pub enum EVM {
+pub enum EvmImplementation {
     #[default]
     REVM,
     LEVM,
 }
 
-impl FromStr for EVM {
-    type Err = EvmError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "levm" => Ok(EVM::LEVM),
-            "revm" => Ok(EVM::REVM),
-            _ => Err(EvmError::InvalidEVM(s.to_string())),
-        }
-    }
-}
-
-pub struct BlockExecutionResult {
-    pub receipts: Vec<Receipt>,
-    pub requests: Vec<Requests>,
-    pub account_updates: Vec<AccountUpdate>,
+#[derive(Debug, Clone)]
+pub struct EVM {
+    pub evm_impl: EvmImplementation,
+    pub storage: Store,
 }
 
 impl EVM {
-    /// Wraps [REVM::execute_block] and [LEVM::execute_block].
-    /// The output is [BlockExecutionResult].
-    pub fn execute_block(
-        &self,
-        block: &Block,
-        storage: Store,
-    ) -> Result<BlockExecutionResult, EvmError> {
-        match self {
-            EVM::REVM => {
-                let mut state = evm_state(storage.clone(), block.header.parent_hash);
+    pub fn new(evm: EvmImplementation, storage: Store) -> Self {
+        Self {
+            evm_impl: evm,
+            storage,
+        }
+    }
+
+    pub fn default_with_storage(storage: Store) -> Self {
+        Self {
+            evm_impl: EvmImplementation::REVM,
+            storage,
+        }
+    }
+
+    pub fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
+        match self.evm_impl {
+            EvmImplementation::REVM => {
+                let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
                 REVM::execute_block(block, &mut state)
             }
-            EVM::LEVM => LEVM::execute_block(block, storage),
+            EvmImplementation::LEVM => LEVM::execute_block(block, self.storage.clone()),
         }
     }
 
@@ -71,18 +62,18 @@ impl EVM {
         tx: &Transaction,
         block_header: &BlockHeader,
         block_cache: &mut CacheDB,
-        chain_config: &ChainConfig,
         remaining_gas: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
-        match self {
-            EVM::REVM => {
+        let chain_config = self.storage.get_chain_config()?;
+
+        match self.evm_impl {
+            EvmImplementation::REVM => {
                 let execution_result = REVM::execute_tx(
                     tx,
                     block_header,
                     state,
-                    spec_id(chain_config, block_header.timestamp),
-                    sender,
+                    spec_id(&chain_config, block_header.timestamp),
                 )?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
@@ -96,9 +87,9 @@ impl EVM {
 
                 Ok((receipt, execution_result.gas_used()))
             }
-            EVM::LEVM => {
+            EvmImplementation::LEVM => {
                 let store_wrapper = Arc::new(StoreWrapper {
-                    store: state.database().unwrap().clone(),
+                    store: self.storage.clone(),
                     block_hash: block_header.parent_hash,
                 });
 
@@ -107,7 +98,7 @@ impl EVM {
                     block_header,
                     store_wrapper.clone(),
                     block_cache.clone(),
-                    chain_config,
+                    &chain_config,
                 )?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
@@ -142,11 +133,11 @@ impl EVM {
         state: &mut EvmState,
         block_header: &BlockHeader,
         block_cache: &mut CacheDB,
-        chain_config: &ChainConfig,
     ) -> Result<(), EvmError> {
-        match self {
-            EVM::REVM => {
-                let spec_id = spec_id(chain_config, block_header.timestamp);
+        let chain_config = self.storage.get_chain_config()?;
+        match self.evm_impl {
+            EvmImplementation::REVM => {
+                let spec_id = spec_id(&chain_config, block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                     REVM::beacon_root_contract_call(block_header, state)?;
                 }
@@ -156,10 +147,10 @@ impl EVM {
                 }
                 Ok(())
             }
-            EVM::LEVM => {
+            EvmImplementation::LEVM => {
                 let fork = chain_config.fork(block_header.timestamp);
                 let mut new_state = CacheDB::new();
-                let store = state.database().unwrap().clone(); //TODO: Change this in apply_system_calls maybe...
+                let store = self.storage.clone();
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     LEVM::beacon_root_contract_call(block_header, &store, &mut new_state)?;
@@ -197,14 +188,11 @@ impl EVM {
         parent_hash: H256,
         block_cache: &CacheDB,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
-        match self {
-            EVM::REVM => REVM::get_state_transitions(state),
-            EVM::LEVM => LEVM::get_state_transitions(
-                None,
-                state.database().unwrap(),
-                parent_hash,
-                block_cache,
-            ),
+        match self.evm_impl {
+            EvmImplementation::REVM => Ok(REVM::get_state_transitions(state)),
+            EvmImplementation::LEVM => {
+                LEVM::get_state_transitions(None, &self.storage, parent_hash, block_cache)
+            }
         }
     }
 
@@ -217,17 +205,12 @@ impl EVM {
         block_header: &BlockHeader,
         block_cache: &mut CacheDB,
     ) -> Result<(), StoreError> {
-        match self {
-            EVM::REVM => REVM::process_withdrawals(state, withdrawals),
-            EVM::LEVM => {
+        match self.evm_impl {
+            EvmImplementation::REVM => REVM::process_withdrawals(state, withdrawals),
+            EvmImplementation::LEVM => {
                 let parent_hash = block_header.parent_hash;
                 let mut new_state = CacheDB::new();
-                LEVM::process_withdrawals(
-                    &mut new_state,
-                    withdrawals,
-                    state.database(),
-                    parent_hash,
-                )?;
+                LEVM::process_withdrawals(&mut new_state, withdrawals, &self.storage, parent_hash)?;
                 block_cache.extend(new_state);
                 Ok(())
             }
@@ -241,139 +224,28 @@ impl EVM {
         header: &BlockHeader,
         cache: &mut CacheDB,
     ) -> Result<Vec<Requests>, EvmError> {
-        match self {
-            EVM::LEVM => {
-                levm::extract_all_requests_levm(receipts, state.database().unwrap(), header, cache)
+        match self.evm_impl {
+            EvmImplementation::LEVM => {
+                levm::extract_all_requests_levm(receipts, &self.storage, header, cache)
             }
-            EVM::REVM => revm_b::extract_all_requests(receipts, state, header),
+            EvmImplementation::REVM => revm_b::extract_all_requests(receipts, state, header),
         }
     }
 }
 
-/// Gets the state_transitions == [AccountUpdate] from the [EvmState].
-/// This function is primarily used in [LEVM::execute_block] and [REVM::execute_block].
-pub fn get_state_transitions(initial_state: &mut EvmState) -> Vec<ethrex_storage::AccountUpdate> {
-    match initial_state {
-        EvmState::Store(db) => {
-            db.merge_transitions(BundleRetention::PlainState);
-            let bundle = db.take_bundle();
-
-            // Update accounts
-            let mut account_updates = Vec::new();
-            for (address, account) in bundle.state() {
-                if account.status.is_not_modified() {
-                    continue;
-                }
-                let address = Address::from_slice(address.0.as_slice());
-                // Remove account from DB if destroyed (Process DestroyedChanged as changed account)
-                if matches!(
-                    account.status,
-                    AccountStatus::Destroyed | AccountStatus::DestroyedAgain
-                ) {
-                    account_updates.push(AccountUpdate::removed(address));
-                    continue;
-                }
-
-                // If account is empty, do not add to the database
-                if account
-                    .account_info()
-                    .is_some_and(|acc_info| acc_info.is_empty())
-                {
-                    continue;
-                }
-
-                // Apply account changes to DB
-                let mut account_update = AccountUpdate::new(address);
-                // If the account was changed then both original and current info will be present in the bundle account
-                if account.is_info_changed() {
-                    // Update account info in DB
-                    if let Some(new_acc_info) = account.account_info() {
-                        let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
-                        let account_info = AccountInfo {
-                            code_hash,
-                            balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
-                            nonce: new_acc_info.nonce,
-                        };
-                        account_update.info = Some(account_info);
-                        if account.is_contract_changed() {
-                            // Update code in db
-                            if let Some(code) = new_acc_info.code {
-                                account_update.code = Some(code.original_bytes().clone().0);
-                            }
-                        }
-                    }
-                }
-                // Update account storage in DB
-                for (key, slot) in account.storage.iter() {
-                    if slot.is_changed() {
-                        // TODO check if we need to remove the value from our db when value is zero
-                        // if slot.present_value().is_zero() {
-                        //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
-                        // }
-                        account_update.added_storage.insert(
-                            H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
-                            U256::from_little_endian(slot.present_value().as_le_slice()),
-                        );
-                    }
-                }
-                account_updates.push(account_update)
-            }
-            account_updates
-        }
-        EvmState::Execution(db) => {
-            // Update accounts
-            let mut account_updates = Vec::new();
-            for (revm_address, account) in &db.accounts {
-                if account.account_state == AccountState::None {
-                    // EVM didn't interact with this account
-                    continue;
-                }
-
-                let address = Address::from_slice(revm_address.0.as_slice());
-                // Remove account from DB if destroyed
-                if account.account_state == AccountState::NotExisting {
-                    account_updates.push(AccountUpdate::removed(address));
-                    continue;
-                }
-
-                // If account is empty, do not add to the database
-                if account.info().is_some_and(|acc_info| acc_info.is_empty()) {
-                    continue;
-                }
-
-                // Apply account changes to DB
-                let mut account_update = AccountUpdate::new(address);
-                // Update account info in DB
-                if let Some(new_acc_info) = account.info() {
-                    // If code changed, update
-                    if matches!(db.db.accounts.get(&address), Some(account) if B256::from(account.code_hash.0) != new_acc_info.code_hash)
-                    {
-                        account_update.code = new_acc_info
-                            .code
-                            .map(|code| bytes::Bytes::copy_from_slice(code.bytes_slice()));
-                    }
-
-                    let account_info = AccountInfo {
-                        code_hash: H256::from_slice(new_acc_info.code_hash.as_slice()),
-                        balance: U256::from_little_endian(new_acc_info.balance.as_le_slice()),
-                        nonce: new_acc_info.nonce,
-                    };
-                    account_update.info = Some(account_info);
-                }
-                // Update account storage in DB
-                for (key, slot) in account.storage.iter() {
-                    // TODO check if we need to remove the value from our db when value is zero
-                    // if slot.present_value().is_zero() {
-                    //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
-                    // }
-                    account_update.added_storage.insert(
-                        H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
-                        U256::from_little_endian(slot.as_le_slice()),
-                    );
-                }
-                account_updates.push(account_update)
-            }
-            account_updates
+impl FromStr for EvmImplementation {
+    type Err = EvmError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "levm" => Ok(EvmImplementation::LEVM),
+            "revm" => Ok(EvmImplementation::REVM),
+            _ => Err(EvmError::InvalidEVM(s.to_string())),
         }
     }
+}
+
+pub struct BlockExecutionResult {
+    pub receipts: Vec<Receipt>,
+    pub requests: Vec<Requests>,
+    pub account_updates: Vec<AccountUpdate>,
 }
