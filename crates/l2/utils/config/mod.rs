@@ -1,6 +1,6 @@
 use std::io::{BufRead, Write};
 
-use std::backtrace::Backtrace;
+// use std::backtrace::Backtrace;
 use tracing::info;
 pub mod committer;
 pub mod eth;
@@ -64,7 +64,7 @@ fn open_readable(path: String) -> std::io::Result<std::fs::File> {
 }
 
 pub fn write_env(lines: Vec<String>) -> Result<(), errors::ConfigError> {
-    println!("Custom backtrace: {}", Backtrace::force_capture());
+    // println!("Custom backtrace: {}", Backtrace::force_capture());
     let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
     let env_file = match std::fs::OpenOptions::new()
         .write(true)
