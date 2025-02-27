@@ -126,6 +126,7 @@ async fn main() -> Result<(), DeployError> {
         wr_lines.push(line);
     }
     write_env(wr_lines).map_err(DeployError::EnvFileError)?;
+
     Ok(())
 }
 
