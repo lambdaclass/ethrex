@@ -33,6 +33,11 @@ pub struct Blockchain {
     pub storage: Store,
 }
 
+pub struct AddBlockResultStats {
+    pub throughput: f64,
+    pub time_spent_as_secs: u64,
+}
+
 impl Blockchain {
     pub fn new(evm: EVM, store: Store) -> Self {
         Self {
@@ -48,7 +53,7 @@ impl Blockchain {
         }
     }
 
-    pub fn add_block(&self, block: &Block) -> Result<u64, ChainError> {
+    pub fn add_block(&self, block: &Block) -> Result<AddBlockResultStats, ChainError> {
         let since = Instant::now();
 
         let block_hash = block.header.compute_block_hash();
@@ -93,13 +98,17 @@ impl Blockchain {
 
         let interval = Instant::now().duration_since(since);
         let interval_as_ms = interval.as_millis();
+        let mut throughput = 0_f64;
         if interval_as_ms != 0 {
             let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (interval_as_ms as f64) * 1000_f64;
+            throughput = (as_gigas) / (interval_as_ms as f64) * 1000_f64;
             info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval_as_ms} msecs");
         }
 
-        Ok(interval.as_secs())
+        Ok(AddBlockResultStats {
+            throughput,
+            time_spent_as_secs: interval.as_secs(),
+        })
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function

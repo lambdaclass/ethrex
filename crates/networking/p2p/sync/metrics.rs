@@ -12,6 +12,7 @@ struct ExecutionCycle {
     finished_at_block_hash: H256,
     executed_blocks_count: u32,
     add_block_time: u64,
+    throughput: u64,
 }
 
 impl Default for ExecutionCycle {
@@ -25,6 +26,7 @@ impl Default for ExecutionCycle {
             finished_at_block_hash: H256::default(),
             executed_blocks_count: 0,
             add_block_time: 0,
+            throughput: 0,
         }
     }
 }
@@ -55,6 +57,7 @@ impl Monitor {
         block_num: u64,
         block_hash: H256,
         add_block_time: u64,
+        throughput: u64,
     ) {
         self.current_cycle.executed_blocks_count += executed_blocks;
         self.current_cycle.add_block_time += add_block_time;
@@ -94,6 +97,8 @@ impl Monitor {
 
         let add_block_time_ratio = elapsed as f64 / self.current_cycle.add_block_time as f64;
         let blocks_per_second = self.current_cycle.executed_blocks_count as f64 / elapsed as f64;
+        let throughput =
+            self.current_cycle.throughput as f64 / self.current_cycle.executed_blocks_count as f64;
 
         tracing::info!(
             "[SYNCING PERF] Last {} blocks performance:\n\
@@ -101,6 +106,7 @@ impl Monitor {
         \tTime spent adding blocks: {} seconds ~= {:.2}% of total time\n\
         \tAverage block in total time: {:.3} seconds\n\
         \tBlocks per second: {:.3}\n\
+        \tThroughput: {:.3}\n\
         \tStarted at block: {} (hash: {:?})\n\
         \tFinished at block: {} (hash: {:?})\n\
         \tExecution count: {}\n\
@@ -111,6 +117,7 @@ impl Monitor {
             add_block_time_ratio * 100.0,
             avg,
             blocks_per_second,
+            throughput,
             self.current_cycle.started_at_block_num,
             self.current_cycle.started_at_block_hash,
             self.current_cycle.finished_at_block_num,
@@ -151,6 +158,7 @@ impl SyncMetrics {
         last_block_number: u64,
         last_block_hash: H256,
         add_block_time: u64,
+        throughput: u64,
     ) {
         for monitor in &mut self.monitors {
             monitor.log_cycle(
@@ -158,6 +166,7 @@ impl SyncMetrics {
                 last_block_number,
                 last_block_hash,
                 add_block_time,
+                throughput,
             );
         }
     }
