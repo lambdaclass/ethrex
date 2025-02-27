@@ -74,6 +74,7 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
+    dbg!("RUNNNING DEPLOYER");
     let setup_result = setup()?;
     download_contract_deps(&setup_result.contracts_path)?;
     compile_contracts(&setup_result.contracts_path)?;
