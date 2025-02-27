@@ -392,7 +392,6 @@ impl RpcHandler for GetRawTransaction {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let tx = context
-            .blockchain
             .storage
             .get_transaction_by_hash(self.transaction_hash)?;
 

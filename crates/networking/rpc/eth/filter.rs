@@ -458,7 +458,6 @@ mod tests {
             serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
 
         context
-            .blockchain
             .storage
             .add_initial_state(genesis_config)
             .expect("Fatal: could not add test genesis in test");

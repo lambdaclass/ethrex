@@ -207,7 +207,6 @@ impl RpcHandler for GetRawHeaderRequest {
             _ => return Ok(Value::Null),
         };
         let header = context
-            .blockchain
             .storage
             .get_block_header(block_number)?
             .ok_or(RpcErr::BadParams("Header not found".to_owned()))?;

@@ -12,7 +12,6 @@ impl RpcHandler for ChainId {
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested chain id");
         let chain_spec = context
-            .blockchain
             .storage
             .get_chain_config()
             .map_err(|error| RpcErr::Internal(error.to_string()))?;

@@ -177,7 +177,6 @@ impl RpcHandler for GetTransactionCountRequest {
                 };
 
                 context
-                    .blockchain
                     .storage
                     .get_nonce_by_account_address(block_number, self.address)?
                     .unwrap_or_default()

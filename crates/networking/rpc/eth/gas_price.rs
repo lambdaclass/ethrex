@@ -23,7 +23,6 @@ impl RpcHandler for GasPrice {
         let estimated_gas_tip = estimate_gas_tip(&context.storage)?;
 
         let base_fee = context
-            .blockchain
             .storage
             .get_block_header(latest_block_number)
             .ok()

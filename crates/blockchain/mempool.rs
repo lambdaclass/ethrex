@@ -19,8 +19,8 @@ use ethrex_storage::error::StoreError;
 
 #[derive(Debug, Clone, Default)]
 pub struct Mempool {
-    pub transaction_pool: Arc<RwLock<HashMap<H256, MempoolTransaction>>>,
-    pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
+    transaction_pool: Arc<RwLock<HashMap<H256, MempoolTransaction>>>,
+    blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
 }
 impl Mempool {
     pub fn new() -> Self {
