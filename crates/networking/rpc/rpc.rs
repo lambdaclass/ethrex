@@ -485,11 +485,8 @@ mod tests {
         let local_p2p_node = example_p2p_node();
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage.set_chain_config(&example_chain_config()).unwrap();
         let blockchain = Blockchain::default_with_store(storage.clone());
-        blockchain
-            .storage
-            .set_chain_config(&example_chain_config())
-            .unwrap();
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
@@ -577,8 +574,7 @@ mod tests {
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let blockchain = Blockchain::default_with_store(storage.clone());
         let genesis = read_execution_api_genesis_file();
-        blockchain
-            .storage
+        storage
             .add_initial_state(genesis)
             .expect("Failed to add genesis block to DB");
         let local_p2p_node = example_p2p_node();
@@ -615,8 +611,7 @@ mod tests {
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let blockchain = Blockchain::default_with_store(storage.clone());
         let genesis = read_execution_api_genesis_file();
-        blockchain
-            .storage
+        storage
             .add_initial_state(genesis)
             .expect("Failed to add genesis block to DB");
         let local_p2p_node = example_p2p_node();
@@ -681,13 +676,9 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage.set_chain_config(&example_chain_config()).unwrap();
         let blockchain = Blockchain::default_with_store(storage.clone());
-        blockchain
-            .storage
-            .set_chain_config(&example_chain_config())
-            .unwrap();
-        let chain_id = blockchain
-            .storage
+        let chain_id = storage
             .get_chain_config()
             .expect("failed to get chain_id")
             .chain_id
