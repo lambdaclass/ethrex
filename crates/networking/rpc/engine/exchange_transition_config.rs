@@ -59,7 +59,6 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
         };
 
         let block = context
-            .blockchain
             .storage
             .get_block_header(payload.terminal_block_number)?;
         let terminal_block_hash = block.map_or(H256::zero(), |block| block.compute_block_hash());
