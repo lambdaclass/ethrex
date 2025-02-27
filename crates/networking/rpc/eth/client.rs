@@ -28,7 +28,7 @@ impl RpcHandler for Syncing {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let is_synced = context.blockchain.storage.is_synced()?;
+        let is_synced = context.storage.is_synced()?;
         Ok(Value::Bool(!is_synced))
     }
 }

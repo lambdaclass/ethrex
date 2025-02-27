@@ -53,10 +53,7 @@ impl RpcHandler for GetBalanceRequest {
             self.address, self.block
         );
 
-        let Some(block_number) = self
-            .block
-            .resolve_block_number(&context.blockchain.storage)?
-        else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
@@ -92,17 +89,13 @@ impl RpcHandler for GetCodeRequest {
             self.address, self.block
         );
 
-        let Some(block_number) = self
-            .block
-            .resolve_block_number(&context.blockchain.storage)?
-        else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
         };
 
         let code = context
-            .blockchain
             .storage
             .get_code_by_account_address(block_number, self.address)?
             .unwrap_or_default();
@@ -132,10 +125,7 @@ impl RpcHandler for GetStorageAtRequest {
             self.storage_slot, self.address, self.block
         );
 
-        let Some(block_number) = self
-            .block
-            .resolve_block_number(&context.blockchain.storage)?
-        else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
@@ -181,10 +171,7 @@ impl RpcHandler for GetTransactionCountRequest {
         let nonce = match pending_nonce {
             Some(nonce) => nonce,
             None => {
-                let Some(block_number) = self
-                    .block
-                    .resolve_block_number(&context.blockchain.storage)?
-                else {
+                let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
                     return serde_json::to_value("0x0")
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 };
@@ -220,7 +207,7 @@ impl RpcHandler for GetProofRequest {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.blockchain.storage;
+        let storage = &context.storage;
         info!(
             "Requested proof for account {} at block {} with storage keys: {:?}",
             self.address, self.block, self.storage_keys

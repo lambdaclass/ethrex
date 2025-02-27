@@ -36,7 +36,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 1)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            let chain_config = context.blockchain.storage.get_chain_config()?;
+            let chain_config = context.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV1 used to build Cancun payload".to_string(),
@@ -69,7 +69,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            let chain_config = context.blockchain.storage.get_chain_config()?;
+            let chain_config = context.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
                 return Err(RpcErr::UnsuportedFork(
                     "forkChoiceV2 used to build Cancun payload".to_string(),
@@ -226,7 +226,7 @@ fn handle_forkchoice(
                     Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
                 }
                 None => apply_fork_choice(
-                    &context.blockchain.storage,
+                    &context.storage,
                     fork_choice_state.head_block_hash,
                     fork_choice_state.safe_block_hash,
                     fork_choice_state.finalized_block_hash,
@@ -269,7 +269,7 @@ fn handle_forkchoice(
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
                     ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        latest_canonical_block_hash(&context.blockchain.storage).unwrap(),
+                        latest_canonical_block_hash(&context.storage).unwrap(),
                     ))
                 }
                 InvalidForkChoice::Syncing => {
@@ -291,11 +291,7 @@ fn handle_forkchoice(
                         // If we can't get hold of the syncer, then it means that there is an active sync in process
                         if let Ok(mut syncer) = context.syncer.try_lock() {
                             syncer
-                                .start_sync(
-                                    current_head,
-                                    sync_head,
-                                    context.blockchain.storage.clone(),
-                                )
+                                .start_sync(current_head, sync_head, context.storage.clone())
                                 .await
                         }
                     });
@@ -359,7 +355,7 @@ fn validate_attributes_v3(
     head_block: &BlockHeader,
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
-    let chain_config = context.blockchain.storage.get_chain_config()?;
+    let chain_config = context.storage.get_chain_config()?;
     // Specification indicates this order of validations:
     // https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#specification-1
     if attributes.withdrawals.is_none() {
@@ -407,7 +403,7 @@ fn build_payload(
         version,
     };
     let payload_id = args.id();
-    let payload = match create_payload(&args, &context.blockchain.storage) {
+    let payload = match create_payload(&args, &context.storage) {
         Ok(payload) => payload,
         Err(ChainError::EvmError(error)) => return Err(error.into()),
         // Parent block is guaranteed to be present at this point,

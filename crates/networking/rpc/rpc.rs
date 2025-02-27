@@ -68,7 +68,7 @@ pub use clients::{EngineClient, EthClient};
 
 use axum::extract::State;
 use ethrex_p2p::types::Node;
-use ethrex_storage::error::StoreError;
+use ethrex_storage::{error::StoreError, Store};
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -79,6 +79,7 @@ enum RpcRequestWrapper {
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
+    storage: Store,
     blockchain: Blockchain,
     jwt_secret: Bytes,
     local_p2p_node: Node,
@@ -158,6 +159,7 @@ const FILTER_DURATION: Duration = {
 pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
+    storage: Store,
     blockchain: Blockchain,
     jwt_secret: Bytes,
     local_p2p_node: Node,
@@ -170,6 +172,7 @@ pub async fn start_api(
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let service_context = RpcApiContext {
+        storage,
         blockchain,
         jwt_secret,
         local_p2p_node,
@@ -328,18 +331,14 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_estimateGas" => EstimateGasRequest::call(req, context),
         "eth_getLogs" => LogsFilter::call(req, context),
         "eth_newFilter" => {
-            NewFilterRequest::stateful_call(req, context.blockchain.storage, context.active_filters)
+            NewFilterRequest::stateful_call(req, context.storage, context.active_filters)
         }
-        "eth_uninstallFilter" => DeleteFilterRequest::stateful_call(
-            req,
-            context.blockchain.storage,
-            context.active_filters,
-        ),
-        "eth_getFilterChanges" => FilterChangesRequest::stateful_call(
-            req,
-            context.blockchain.storage,
-            context.active_filters,
-        ),
+        "eth_uninstallFilter" => {
+            DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
+        }
+        "eth_getFilterChanges" => {
+            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters)
+        }
         "eth_sendRawTransaction" => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "based")] {
@@ -418,7 +417,7 @@ pub async fn map_engine_requests(
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(
-            context.blockchain.storage,
+            context.storage,
             context.local_p2p_node,
             context.local_node_record,
         ),
@@ -428,7 +427,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => web3::client_version(req, context.blockchain.storage),
+        "web3_clientVersion" => web3::client_version(req, context.storage),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -491,7 +490,7 @@ mod tests {
         let local_p2p_node = example_p2p_node();
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Blockchain::default_with_store(storage);
+        let blockchain = Blockchain::default_with_store(storage.clone());
         blockchain
             .storage
             .set_chain_config(&example_chain_config())
@@ -499,6 +498,7 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
+            storage,
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
@@ -580,7 +580,7 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Blockchain::default_with_store(storage);
+        let blockchain = Blockchain::default_with_store(storage.clone());
         let genesis = read_execution_api_genesis_file();
         blockchain
             .storage
@@ -591,6 +591,7 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
+            storage,
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
@@ -617,7 +618,7 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Blockchain::default_with_store(storage);
+        let blockchain = Blockchain::default_with_store(storage.clone());
         let genesis = read_execution_api_genesis_file();
         blockchain
             .storage
@@ -628,6 +629,7 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
+            storage,
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
@@ -684,7 +686,7 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Blockchain::default_with_store(storage);
+        let blockchain = Blockchain::default_with_store(storage.clone());
         blockchain
             .storage
             .set_chain_config(&example_chain_config())
@@ -697,6 +699,7 @@ mod tests {
             .to_string();
         let local_p2p_node = example_p2p_node();
         let context = RpcApiContext {
+            storage,
             blockchain,
             local_p2p_node,
             local_node_record: example_local_node_record(),

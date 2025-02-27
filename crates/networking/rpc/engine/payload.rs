@@ -46,7 +46,7 @@ impl RpcHandler for NewPayloadV2Request {
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let chain_config = &context.blockchain.storage.get_chain_config()?;
+        let chain_config = &context.storage.get_chain_config()?;
         if chain_config.is_shanghai_activated(self.payload.timestamp) {
             validate_execution_payload_v2(&self.payload)?;
         } else {
@@ -187,7 +187,7 @@ impl RpcHandler for NewPayloadV4Request {
             Some(requests_hash),
         )?;
 
-        let chain_config = context.blockchain.storage.get_chain_config()?;
+        let chain_config = context.storage.get_chain_config()?;
 
         if !chain_config.is_prague_activated(block.header.timestamp) {
             return Err(RpcErr::UnsuportedFork(format!(
@@ -341,7 +341,7 @@ impl RpcHandler for GetPayloadBodiesByHashV1Request {
         let bodies = self
             .hashes
             .iter()
-            .map(|hash| context.blockchain.storage.get_block_body_by_hash(*hash))
+            .map(|hash| context.storage.get_block_body_by_hash(*hash))
             .collect::<Result<Vec<Option<BlockBody>>, _>>()?;
         build_payload_body_response(bodies)
     }
@@ -375,10 +375,10 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         if self.count as usize >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.blockchain.storage.get_latest_block_number()?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         let last = latest_block_number.min(self.start + self.count - 1);
         let bodies = (self.start..=last)
-            .map(|block_num| context.blockchain.storage.get_block_body(block_num))
+            .map(|block_num| context.storage.get_block_body(block_num))
             .collect::<Result<Vec<Option<BlockBody>>, _>>()?;
         build_payload_body_response(bodies)
     }
@@ -448,7 +448,7 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
 }
 
 fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
-    let chain_config = &context.blockchain.storage.get_chain_config()?;
+    let chain_config = &context.storage.get_chain_config()?;
     if chain_config.is_cancun_activated(block.header.timestamp) {
         return Err(RpcErr::UnsuportedFork(
             "Cancun payload received".to_string(),
@@ -560,7 +560,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
 
 fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
-    let storage = &context.blockchain.storage;
+    let storage = &context.storage;
     // Return the valid message directly if we have it.
     if storage.get_block_by_hash(block_hash)?.is_some() {
         return Ok(PayloadStatus::valid_with_hash(block_hash));
@@ -568,13 +568,13 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // Execute and store the block
     info!("Executing payload with block hash: {block_hash:#x}");
-    let latest_valid_hash = context
-        .blockchain
-        .storage
-        .get_latest_canonical_block_hash()?
-        .ok_or(RpcErr::Internal(
-            "Missing latest canonical block".to_owned(),
-        ))?;
+    let latest_valid_hash =
+        context
+            .storage
+            .get_latest_canonical_block_hash()?
+            .ok_or(RpcErr::Internal(
+                "Missing latest canonical block".to_owned(),
+            ))?;
 
     // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
     let add_block_to_invalid_ancestor = || {
@@ -667,7 +667,7 @@ fn get_payload(
     context: &RpcApiContext,
 ) -> Result<(Block, U256, BlobsBundle, bool), RpcErr> {
     info!("Requested payload with id: {:#018x}", payload_id);
-    let payload = context.blockchain.storage.get_payload(payload_id)?;
+    let payload = context.storage.get_payload(payload_id)?;
 
     let Some((payload_block, block_value, blobs_bundle, completed)) = payload else {
         return Err(RpcErr::UnknownPayload(format!(
@@ -680,7 +680,7 @@ fn get_payload(
 
 fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(), RpcErr> {
     // Check timestamp matches valid fork
-    let chain_config = &context.blockchain.storage.get_chain_config()?;
+    let chain_config = &context.storage.get_chain_config()?;
     let current_fork = chain_config.get_fork(block.header.timestamp);
 
     if current_fork != fork {
@@ -715,7 +715,7 @@ fn build_execution_payload_response(
                 .map_err(|err| RpcErr::Internal(err.to_string()))?
         };
 
-        context.blockchain.storage.update_payload(
+        context.storage.update_payload(
             payload_id,
             payload_block.clone(),
             block_value,

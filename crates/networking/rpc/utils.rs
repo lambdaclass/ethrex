@@ -312,7 +312,7 @@ pub mod test_utils {
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
             .expect("Failed to build test genesis");
-        let blockchain = Blockchain::default_with_store(storage);
+        let blockchain = Blockchain::default_with_store(storage.clone());
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         #[cfg(feature = "based")]
@@ -322,6 +322,7 @@ pub mod test_utils {
         start_api(
             http_addr,
             authrpc_addr,
+            storage,
             blockchain,
             jwt_secret,
             local_p2p_node,

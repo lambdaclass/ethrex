@@ -439,8 +439,9 @@ mod tests {
     ) -> u64 {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Blockchain::default_with_store(storage);
+        let blockchain = Blockchain::default_with_store(storage.clone());
         let context = RpcApiContext {
+            storage,
             blockchain,
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
@@ -505,8 +506,9 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Blockchain::default_with_store(storage);
+        let blockchain = Blockchain::default_with_store(storage.clone());
         let context = RpcApiContext {
+            storage,
             blockchain,
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
@@ -535,8 +537,9 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Blockchain::default_with_store(storage);
+        let blockchain = Blockchain::default_with_store(storage.clone());
         let context = RpcApiContext {
+            storage,
             blockchain,
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
