@@ -160,6 +160,7 @@ rm-db-l2: ## 🛑 Removes the DB used by the L2
 ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
+	touch .env
 	BRIDGE_ADDRESS=$$(grep 'bridge_address' /config.toml | cut -d= -f2 | sed 's/[" ]//'g) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'on_chain_proposer_address' /config.toml | cut -d= -f2 | sed 's/[" ]//'g) cargo test l2 --release -- --nocapture --test-threads=1
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 
