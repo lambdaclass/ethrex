@@ -186,7 +186,7 @@ pub mod trie {
             let hashed_address = hash_address(&update.address);
             if update.removed {
                 // Remove account from trie
-                state_trie.remove(hashed_address)?;
+                state_trie.remove(&hashed_address)?;
             } else {
                 // Add or update AccountState in the trie
                 // Fetch current state or create a new state to be inserted
@@ -220,7 +220,7 @@ pub mod trie {
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
                         if storage_value.is_zero() {
-                            storage_trie.remove(hashed_key)?;
+                            storage_trie.remove(&hashed_key)?;
                         } else {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
