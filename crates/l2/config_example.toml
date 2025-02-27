@@ -21,7 +21,7 @@ rpc_url = "http://localhost:8552"
 jwt_path = "./jwt.hex"
 
 [watcher]
-bridge_address = "0x16b2ebb5ee37de8d09ef5473145d3b41c4c83b64"
+bridge_address = "0xf737726457b5dd5d0c935dda51b12e50f09723ec"
 
 check_interval_ms = 1000
 max_block_step = 5000
