@@ -115,6 +115,44 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
         })
     }
 
+    #[cfg(feature = "based")]
+    async fn relay_to_gateway_or_fallback(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<Value, RpcErr> {
+        info!("Relaying engine_forkchoiceUpdatedV3 to gateway");
+
+        let request = Self::parse(&req.params)?;
+
+        let gateway_auth_client = context.gateway_auth_client.clone();
+
+        let gateway_request = gateway_auth_client
+            .engine_forkchoice_updated_v3(request.fork_choice_state, request.payload_attributes);
+
+        // Parse it again as it was consumed for gateway_response and it is the same as cloning it.
+        let request = Self::parse(&req.params)?;
+        let client_response = request.handle(context);
+
+        let gateway_response = gateway_request
+            .await
+            .map_err(|err| {
+                RpcErr::Internal(format!(
+                    "Could not relay engine_forkchoiceUpdatedV3 to gateway: {err}",
+                ))
+            })
+            .and_then(|response| {
+                serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+            });
+
+        if gateway_response.is_err() {
+            warn!(error = ?gateway_response, "Gateway engine_forkchoiceUpdatedV3 failed, falling back to local node");
+        } else {
+            info!("Successfully relayed engine_forkchoiceUpdatedV3 to gateway");
+        }
+
+        gateway_response.or(client_response)
+    }
+
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 3)?;
@@ -200,12 +238,27 @@ fn handle_forkchoice(
     };
 
     match fork_choice_res {
-        Ok(head) => Ok((
-            Some(head),
-            ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                fork_choice_state.head_block_hash,
-            )),
-        )),
+        Ok(head) => {
+            // Remove included transactions from the mempool after we accept the fork choice
+            // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
+            if let Ok(Some(block)) = context.storage.get_block_by_hash(head.compute_block_hash()) {
+                context
+                    .storage
+                    .remove_transactions_from_pool(&block.body.transactions)
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            } else {
+                return Err(RpcErr::Internal(
+                    "Failed to get block by hash to remove transactions from the mempool"
+                        .to_string(),
+                ));
+            }
+            Ok((
+                Some(head),
+                ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
+                    fork_choice_state.head_block_hash,
+                )),
+            ))
+        }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
