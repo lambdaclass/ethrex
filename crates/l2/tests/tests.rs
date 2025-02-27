@@ -51,11 +51,10 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Check balances on L1 and L2
 
     println!("Checking initial balances on L1 and L2");
+    let l1_rich_wallet_address = dbg!(l1_rich_wallet_address());
 
-    let l1_initial_balance = eth_client.get_balance(l1_rich_wallet_address()).await?;
-    let l2_initial_balance = proposer_client
-        .get_balance(l1_rich_wallet_address())
-        .await?;
+    let l1_initial_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
+    let l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
 
     println!("L1 initial balance: {l1_initial_balance}");
     println!("L2 initial balance: {l2_initial_balance}");
@@ -73,7 +72,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let deposit_value = U256::from(1000000000000000000000u128);
     let deposit_tx = ethrex_l2_sdk::deposit(
         dbg!(deposit_value),
-        dbg!(l1_rich_wallet_address()),
+        dbg!(l1_rich_wallet_address),
         dbg!(l1_rich_wallet_private_key()),
         dbg!(&eth_client),
     )
@@ -94,10 +93,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Checking balances on L1 and L2 after deposit");
 
-    let l1_after_deposit_balance = eth_client.get_balance(l1_rich_wallet_address()).await?;
-    let mut l2_after_deposit_balance = proposer_client
-        .get_balance(l1_rich_wallet_address())
-        .await?;
+    let l1_after_deposit_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
+    let mut l2_after_deposit_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
 
     println!("Waiting for L2 balance to update");
 
@@ -107,9 +104,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     while retries < 30 && l2_after_deposit_balance < l2_initial_balance + deposit_value {
         std::thread::sleep(std::time::Duration::from_secs(2));
         println!("[{retries}/30] Waiting for L2 balance to update after deposit");
-        l2_after_deposit_balance = proposer_client
-            .get_balance(l1_rich_wallet_address())
-            .await?;
+        l2_after_deposit_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
         retries += 1;
     }
 
@@ -153,7 +148,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let transfer_value = U256::from(10000000000u128);
     let transfer_tx = ethrex_l2_sdk::transfer(
         transfer_value,
-        l1_rich_wallet_address(),
+        l1_rich_wallet_address,
         random_account_address,
         l1_rich_wallet_private_key(),
         &proposer_client,
@@ -172,9 +167,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Checking balances on L2 after transfer");
 
-    let l2_balance_after_transfer = proposer_client
-        .get_balance(l1_rich_wallet_address())
-        .await?;
+    let l2_balance_after_transfer = proposer_client.get_balance(l1_rich_wallet_address).await?;
     let l2_random_account_balance_after_transfer =
         proposer_client.get_balance(random_account_address).await?;
 
@@ -199,7 +192,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let withdraw_value = U256::from(100000000000000000000u128);
     let withdraw_tx = ethrex_l2_sdk::withdraw(
         withdraw_value,
-        l1_rich_wallet_address(),
+        l1_rich_wallet_address,
         l1_rich_wallet_private_key(),
         &proposer_client,
     )
@@ -213,10 +206,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Checking balances on L1 and L2 after withdrawal");
 
-    let l1_after_withdrawal_balance = eth_client.get_balance(l1_rich_wallet_address()).await?;
-    let l2_after_withdrawal_balance = proposer_client
-        .get_balance(l1_rich_wallet_address())
-        .await?;
+    let l1_after_withdrawal_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
+    let l2_after_withdrawal_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
 
     println!("L1 balance after withdrawal: {l1_after_withdrawal_balance}");
     println!("L2 balance after withdrawal: {l2_after_withdrawal_balance}");
@@ -262,7 +253,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let claim_tx = ethrex_l2_sdk::claim_withdraw(
         withdraw_tx,
         withdraw_value,
-        l1_rich_wallet_address(),
+        l1_rich_wallet_address,
         l1_rich_wallet_private_key(),
         &proposer_client,
         &eth_client,
@@ -276,10 +267,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Checking balances on L1 and L2 after claim");
 
-    let l1_after_claim_balance = eth_client.get_balance(l1_rich_wallet_address()).await?;
-    let l2_after_claim_balance = proposer_client
-        .get_balance(l1_rich_wallet_address())
-        .await?;
+    let l1_after_claim_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
+    let l2_after_claim_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
 
     println!("L1 balance after claim: {l1_after_claim_balance}");
     println!("L2 balance after claim: {l2_after_claim_balance}");
