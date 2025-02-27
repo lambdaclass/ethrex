@@ -24,8 +24,8 @@ use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
-use ethrex_vm::backends::BlockExecutionResult;
-use ethrex_vm::backends::EVM;
+use ethrex_vm::backends::EvmImplementation;
+use ethrex_vm::backends::{BlockExecutionResult, EVM};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
 
@@ -50,7 +50,7 @@ impl Blockchain {
 
     pub fn default_with_store(store: Store) -> Self {
         Self {
-            vm: Default::default(),
+            vm: EVM::new(EvmImplementation::REVM, store.clone()),
             storage: store,
             mempool: Mempool::new(),
         }
@@ -72,7 +72,7 @@ impl Blockchain {
             self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
         };
-        // let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
+
         let chain_config = self.storage.get_chain_config()?;
 
         // Validate the block pre-execution
@@ -81,7 +81,7 @@ impl Blockchain {
             receipts,
             requests,
             account_updates,
-        } = self.vm.execute_block(block, self.storage.clone())?;
+        } = self.vm.execute_block(block)?;
 
         validate_gas_used(&receipts, &block.header)?;
 
@@ -150,12 +150,12 @@ impl Blockchain {
         }
         if let Some(last_block) = blocks.last() {
             let hash = last_block.hash();
-            match self.vm {
-                EVM::LEVM => {
+            match self.vm.evm_impl {
+                EvmImplementation::LEVM => {
                     // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
                     let _ = apply_fork_choice(&self.storage, hash, hash, hash);
                 }
-                EVM::REVM => {
+                EvmImplementation::REVM => {
                     apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
                 }
             }

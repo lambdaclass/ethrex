@@ -163,7 +163,7 @@ pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
 
 pub struct PayloadBuildContext<'a> {
     pub payload: &'a mut Block,
-    pub evm_state: &'a mut EvmState,
+    pub evm_state: EvmState,
     pub block_cache: CacheDB,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
@@ -175,8 +175,9 @@ pub struct PayloadBuildContext<'a> {
 }
 
 impl<'a> PayloadBuildContext<'a> {
-    fn new(payload: &'a mut Block, evm_state: &'a mut EvmState) -> Result<Self, EvmError> {
-        let config = evm_state.chain_config()?;
+    fn new(payload: &'a mut Block, storage: &Store) -> Result<Self, EvmError> {
+        let config = storage.get_chain_config()?;
+        let evm_state = evm_state(storage.clone(), payload.header.parent_hash);
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -229,8 +230,7 @@ impl Blockchain {
         let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
-        let mut evm_state = evm_state(self.storage.clone(), payload.header.parent_hash);
-        let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
+        let mut context = PayloadBuildContext::new(payload, &self.storage)?;
         self.apply_system_operations(&mut context)?;
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
@@ -264,7 +264,7 @@ impl Blockchain {
         self.vm
             .process_withdrawals(
                 withdrawals,
-                context.evm_state,
+                &mut context.evm_state,
                 &context.payload.header,
                 &mut context.block_cache,
             )
@@ -278,12 +278,10 @@ impl Blockchain {
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(), EvmError> {
-        let chain_config = context.chain_config()?;
         self.vm.apply_system_calls(
-            context.evm_state,
+            &mut context.evm_state,
             &context.payload.header,
             &mut context.block_cache,
-            &chain_config,
         )
     }
 
@@ -474,13 +472,11 @@ impl Blockchain {
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
-        let chain_config = context.chain_config()?;
         let (report, gas_used) = self.vm.execute_tx(
-            context.evm_state,
+            &mut context.evm_state,
             &head.tx,
             &context.payload.header,
             &mut context.block_cache,
-            &chain_config,
             &mut context.remaining_gas,
             head.tx.sender(),
         )?;
@@ -498,7 +494,7 @@ impl Blockchain {
 
         let requests = self.vm.extract_requests(
             &context.receipts,
-            context.evm_state,
+            &mut context.evm_state,
             &context.payload.header,
             &mut context.block_cache,
         );
@@ -511,9 +507,10 @@ impl Blockchain {
     }
 
     fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        let parent_hash = context.payload.header.parent_hash;
         let account_updates = self.vm.get_state_transitions(
-            context.evm_state,
-            context.parent_hash(),
+            &mut context.evm_state,
+            parent_hash,
             &context.block_cache,
         )?;
 

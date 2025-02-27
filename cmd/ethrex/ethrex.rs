@@ -10,7 +10,7 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::backends::EVM;
+use ethrex_vm::backends::{EvmImplementation, EVM};
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -157,8 +157,6 @@ async fn main() {
     };
 
     let sync_mode = sync_mode(&matches);
-
-    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
 
     let path = path::PathBuf::from(data_dir.clone());
     let store: Store = if path.ends_with("memory") {
