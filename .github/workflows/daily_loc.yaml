@@ -22,6 +22,9 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Restore cache
         id: cache-loc-report
         uses: actions/cache@v4

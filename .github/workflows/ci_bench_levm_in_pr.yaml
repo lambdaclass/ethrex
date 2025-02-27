@@ -21,6 +21,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Set up cargo cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Install hyperfine
         uses: taiki-e/install-action@v2
         with:
@@ -71,6 +74,9 @@ jobs:
         uses: dtolnay/rust-toolchain@1.81.0
         with:
           components: rustfmt, clippy
+
+      - name: Set up cargo cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Install hyperfine
         uses: taiki-e/install-action@v2
