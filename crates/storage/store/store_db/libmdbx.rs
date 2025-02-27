@@ -191,7 +191,9 @@ impl StoreEngine for Store {
         receipt: Receipt,
     ) -> Result<(), StoreError> {
         let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
-        let entries = IndexedChunk::from::<Receipts>(key, &receipt.encode_to_vec());
+        let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt.encode_to_vec()) else {
+            return Err(StoreError::Custom("Invalid size".to_string()));
+        };
         self.write_batch::<Receipts>(entries.into_iter())
     }
 
@@ -496,7 +498,10 @@ impl StoreEngine for Store {
         for (index, receipt) in receipts.clone().into_iter().enumerate() {
             let key = (block_hash, index as u64).into();
             let receipt_rlp = receipt.encode_to_vec();
-            let mut entries = IndexedChunk::from::<Receipts>(key, &receipt_rlp);
+            let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                continue;
+            };
+
             key_values.append(&mut entries);
         }
 
@@ -786,7 +791,10 @@ impl<T: Send + Sync + RLPEncode + RLPDecode> Encodable for IndexedChunk<T> {
 impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
     /// Splits a value into a indexed chunks if it exceeds the maximum storage size.
     /// Each chunk is assigned an index to ensure correct ordering when retrieved.
-    pub fn from<Tab: Table>(key: Tab::Key, bytes: &[u8]) -> Vec<(Tab::Key, Self)>
+    ///! Warning: The current implementation supports a maximum of 256 chunks per value  
+    // because the index is stored as a u8.
+    /// If the data exceeds this limit, `None` is returned to indicate that it cannot be stored.
+    pub fn from<Tab: Table>(key: Tab::Key, bytes: &[u8]) -> Option<Vec<(Tab::Key, Self)>>
     where
         Tab::Key: Clone,
     {
@@ -795,7 +803,12 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
             .chunks(DB_MAX_VALUE_SIZE - 1)
             .map(|i| i.to_vec())
             .collect();
-        chunks
+
+        if chunks.len() > 256 {
+            return None;
+        }
+
+        let chunks = chunks
             .into_iter()
             .enumerate()
             .map(|(index, chunk)| {
@@ -807,7 +820,9 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
                     },
                 )
             })
-            .collect()
+            .collect();
+
+        Some(chunks)
     }
 
     /// Reads multiple stored chunks and reconstructs the original full value.
@@ -1267,7 +1282,9 @@ mod tests {
         for (i, receipt) in receipts.iter().enumerate() {
             let key = (block_hash, i as u64).into();
             let receipt_rlp = receipt.encode_to_vec();
-            let mut entries = IndexedChunk::from::<Receipts>(key, &receipt_rlp);
+            let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                continue;
+            };
             key_values.append(&mut entries);
         }
 
@@ -1292,6 +1309,39 @@ mod tests {
         }
 
         assert_eq!(receipts, stored_receipts);
+    }
+
+    // This test verifies the 256-chunk-per-value limitation on indexed chunks.
+    // Given a value size of 2022 bytes, we can store up to 256 * 2022 = 517,632 - 256 bytes.
+    // The 256 subtraction accounts for the index byte overhead.
+    // We expect that exceeding this storage limit results in a `None` when writing.
+    #[test]
+    fn indexed_chunk_storage_limit_exceeded() {
+        dupsort!(
+            /// Receipts table.
+            ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+        );
+
+        let tables = [table_info!(Receipts)].into_iter().collect();
+        let options = DatabaseOptions {
+            page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
+            mode: Mode::ReadWrite(ReadWriteOptions {
+                max_size: Some(1024_isize.pow(4)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let _ = Database::create_with_options(None, options, &tables).unwrap();
+
+        let block_hash = H256::random();
+
+        let receipt = generate_big_receipt(10000, 100, 10);
+        let key = (block_hash, 0).into();
+        let receipt_rlp = receipt.encode_to_vec();
+        let res: Option<Vec<(Rlp<(H256, u64)>, IndexedChunk<Receipt>)>> =
+            IndexedChunk::from::<Receipts>(key, &receipt_rlp);
+
+        assert!(res.is_none());
     }
 
     fn generate_big_receipt(
