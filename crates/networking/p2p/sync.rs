@@ -376,7 +376,7 @@ impl SyncManager {
                 );
 
                 let mut time_spent_adding_blocks = 0;
-                let mut throughput = 0;
+                let mut throughput = 0.0;
                 // Execute and store blocks
                 for (hash, body) in chunk
                     .drain(..block_bodies_len)
