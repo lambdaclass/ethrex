@@ -71,6 +71,15 @@ impl Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
+    fn write_with_txn<T: Table>(
+        txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+        key: T::Key,
+        value: T::Value,
+    ) -> Result<(), StoreError> {
+        txn.upsert::<T>(key, value)
+            .map_err(StoreError::LibmdbxError)
+    }
+
     fn write_batch_with_txn<T: Table>(
         txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
         key_values: impl Iterator<Item = (T::Key, T::Value)>,
@@ -118,6 +127,30 @@ impl Store {
         Ok(self.read::<CanonicalBlockHashes>(number)?.map(|a| a.to()))
     }
 
+    fn add_block_header_with_txn(
+        block_hash: BlockHash,
+        block_header: BlockHeader,
+        write_txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+    ) -> Result<(), StoreError> {
+        Self::write_with_txn::<Headers>(write_txn, block_hash.into(), block_header.into())
+    }
+
+    fn add_block_number_with_txn(
+        block_hash: BlockHash,
+        block_number: BlockNumber,
+        write_txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+    ) -> Result<(), StoreError> {
+        Self::write_with_txn::<BlockNumbers>(write_txn, block_hash.into(), block_number)
+    }
+
+    fn add_block_body_with_txn(
+        block_hash: BlockHash,
+        block_body: BlockBody,
+        write_txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+    ) -> Result<(), StoreError> {
+        Self::write_with_txn::<Bodies>(write_txn, block_hash.into(), block_body.into())
+    }
+
     fn add_transaction_locations_with_txn(
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
         write_txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
@@ -137,6 +170,17 @@ impl Store {
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
         self.write_with_closure(move |txn| Self::add_transaction_locations_with_txn(locations, txn))
+    }
+
+    pub fn add_block_body_and_header(&self, block: Block) -> Result<(), StoreError> {
+        let header = block.header;
+        let number = header.number;
+        let hash = header.compute_block_hash();
+        self.write_with_closure(move |txn| {
+            Self::add_block_body_with_txn(hash, block.body, txn)?;
+            Self::add_block_header_with_txn(hash, header, txn)?;
+            Self::add_block_number_with_txn(hash, number, txn)
+        })
     }
 }
 
