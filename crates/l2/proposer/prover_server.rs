@@ -38,7 +38,8 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-const VERIFY_FUNCTION_SIGNATURE: &str = "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)";
+const VERIFY_FUNCTION_SIGNATURE: &str =
+    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -502,18 +503,24 @@ impl ProverServer {
             let calldata_values = vec![
                 // blockNumber
                 Value::Uint(U256::from(last_verified_block + 1)),
-                // blockProof
+                // risc0BlockProof
                 Value::Bytes(vec![].into()),
-                // imageId
+                // risc0ImageId
                 Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // journalDigest
+                // risco0JournalDigest
                 Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // programVKey
+                // sp1ProgramVKey
                 Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // publicValues
+                // sp1PublicValues
                 Value::Bytes(vec![].into()),
-                // proofBytes
+                // sp1Bytes
                 Value::Bytes(vec![].into()),
+                // picoRiscvVkey
+                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
+                // picoPublicValues
+                Value::Bytes(vec![].into()),
+                // picoProof
+                Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
             ];
 
             let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
