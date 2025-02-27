@@ -31,6 +31,8 @@ pub fn read_env_file() -> Result<(), errors::ConfigError> {
                     dbg!("Env var {key} already set, skipping");
                     continue;
                 }
+                dbg!(&key);
+                dbg!(&value);
                 dbg!("Setting env var from .env: {key}={value}");
                 std::env::set_var(key, value)
             }
