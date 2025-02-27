@@ -70,6 +70,49 @@ impl Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
+    fn write_with_txn<T: Table>(
+        txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+        key: T::Key,
+        value: T::Value,
+    ) -> Result<(), StoreError> {
+        txn.upsert::<T>(key, value)
+            .map_err(StoreError::LibmdbxError)
+    }
+
+    fn write_batch_with_txn<T: Table>(
+        txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+        key_values: impl Iterator<Item = (T::Key, T::Value)>,
+    ) -> Result<(), StoreError> {
+        for (key, value) in key_values {
+            txn.upsert::<T>(key, value)
+                .map_err(StoreError::LibmdbxError)?;
+        }
+
+        Ok(())
+    }
+
+    fn begin(&self) -> Result<libmdbx::orm::Transaction<'_, libmdbx::RW>, StoreError> {
+        let txn = self.db.begin_readwrite().map_err(StoreError::LibmdbxError);
+        txn
+    }
+
+    fn commit(&self, txn: libmdbx::orm::Transaction<'_, libmdbx::RW>) -> Result<(), StoreError> {
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    fn rollback(&self, txn: libmdbx::orm::Transaction<'_, libmdbx::RW>) {
+        drop(txn);
+    }
+
+    fn write_with_closure(
+        &self,
+        f: impl FnOnce(&mut libmdbx::orm::Transaction<'_, libmdbx::RW>) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let mut txn = self.begin()?;
+        f(&mut txn)?;
+        self.commit(txn)
+    }
+
     // Helper method to read from a libmdbx table
     fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
@@ -82,6 +125,62 @@ impl Store {
     ) -> Result<Option<BlockHash>, StoreError> {
         Ok(self.read::<CanonicalBlockHashes>(number)?.map(|a| a.to()))
     }
+
+    fn add_block_header_with_txn(
+        block_hash: BlockHash,
+        block_header: BlockHeader,
+        write_txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+    ) -> Result<(), StoreError> {
+        Self::write_with_txn::<Headers>(write_txn, block_hash.into(), block_header.into())
+    }
+
+    fn add_block_number_with_txn(
+        block_hash: BlockHash,
+        block_number: BlockNumber,
+        write_txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+    ) -> Result<(), StoreError> {
+        Self::write_with_txn::<BlockNumbers>(write_txn, block_hash.into(), block_number)
+    }
+
+    fn add_block_body_with_txn(
+        block_hash: BlockHash,
+        block_body: BlockBody,
+        write_txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+    ) -> Result<(), StoreError> {
+        Self::write_with_txn::<Bodies>(write_txn, block_hash.into(), block_body.into())
+    }
+
+    fn add_transaction_locations_with_txn(
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+        write_txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
+    ) -> Result<(), StoreError> {
+        #[allow(clippy::type_complexity)]
+        let key_values = locations
+            .into_iter()
+            .map(|(tx_hash, block_number, block_hash, index)| {
+                (tx_hash.into(), (block_number, block_hash, index).into())
+            });
+
+        Self::write_batch_with_txn::<TransactionLocations>(write_txn, key_values)
+    }
+
+    fn add_transaction_locations(
+        &self,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> Result<(), StoreError> {
+        self.write_with_closure(|txn| Self::add_transaction_locations_with_txn(locations, txn))
+    }
+
+    pub fn add_block_body_and_header(&self, block: Block) -> Result<(), StoreError> {
+        let header = block.header;
+        let number = header.number;
+        let hash = header.compute_block_hash();
+        self.write_with_closure(|txn| {
+            Self::add_block_body_with_txn(hash, block.body, txn)?;
+            Self::add_block_header_with_txn(hash, header, txn)?;
+            Self::add_block_number_with_txn(hash, number, txn)
+        })
+    }
 }
 
 impl StoreEngine for Store {
@@ -90,7 +189,9 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.write::<Headers>(block_hash.into(), block_header.into())
+        self.write_with_closure(|txn| {
+            Self::add_block_header_with_txn(block_hash, block_header, txn)
+        })
     }
 
     fn add_block_headers(
@@ -121,7 +222,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        self.write::<Bodies>(block_hash.into(), block_body.into())
+        self.write_with_closure(|txn| Self::add_block_body_with_txn(block_hash, block_body, txn))
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
@@ -151,7 +252,9 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.write::<BlockNumbers>(block_hash.into(), block_number)
+        self.write_with_closure(|txn| {
+            Self::add_block_number_with_txn(block_hash, block_number, txn)
+        })
     }
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
@@ -434,14 +537,7 @@ impl StoreEngine for Store {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        #[allow(clippy::type_complexity)]
-        let key_values = locations
-            .into_iter()
-            .map(|(tx_hash, block_number, block_hash, index)| {
-                (tx_hash.into(), (block_number, block_hash, index).into())
-            });
-
-        self.write_batch::<TransactionLocations>(key_values)
+        self.add_transaction_locations(locations)
     }
 
     fn add_receipts(
