@@ -15,7 +15,7 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct EFTests(pub Vec<EFTest>);
@@ -35,7 +35,7 @@ impl From<&EFTest> for Genesis {
     fn from(test: &EFTest) -> Self {
         Genesis {
             alloc: {
-                let mut alloc = BTreeMap::new();
+                let mut alloc = HashMap::new();
                 for (account, ef_test_pre_value) in test.pre.0.iter() {
                     alloc.insert(*account, ef_test_pre_value.into());
                 }
