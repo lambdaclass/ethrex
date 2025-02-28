@@ -12,17 +12,17 @@ services:
         - BUILDPLATFORM=linux/amd64
       dockerfile: ./crates/l2/contracts/Dockerfile
     volumes:
-      # NOTE: ETHREX_WORKDIR is defined in crates/l2/Makefile
-      - ./contracts:${ETHREX_WORKDIR}/contracts
-      - ./config.toml:${ETHREX_WORKDIR}/config.toml
-      - ./.env:${ETHREX_WORKDIR}/.env
+      # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
+      - ./contracts:${CI_ETHREX_WORKDIR}/contracts
+      - ./config.toml:${CI_ETHREX_WORKDIR}/config.toml
+      - ./.env:${CI_ETHREX_WORKDIR}/.env
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those
       # specified in the `volumes:` section
-      - DEPLOYER_CONTRACTS_PATH=${ETHREX_WORKDIR}/contracts
-      - ENV_FILE=${ETHREX_WORKDIR}/.env
-      - CONFIG_FILE=${ETHREX_WORKDIR}/config.toml
+      - DEPLOYER_CONTRACTS_PATH=${CI_ETHREX_WORKDIR}/contracts
+      - ENV_FILE=${CI_ETHREX_WORKDIR}/.env
+      - CONFIG_FILE=${CI_ETHREX_WORKDIR}/config.toml
     depends_on:
       - ethrex
     restart: on-failure:3
