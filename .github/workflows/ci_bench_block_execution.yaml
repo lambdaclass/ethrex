@@ -19,26 +19,26 @@ jobs:
         path: bin/ethrex-${{ matrix.branch }}
         key: binary-${{ github.event.pull_request[matrix.branch].sha }}
 
-    - name: Install Rust
-      if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-      uses: dtolnay/rust-toolchain@stable
+    # - name: Install Rust
+    #   if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+    #   uses: dtolnay/rust-toolchain@stable
 
-    - name: Checkout
-      if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-      uses: actions/checkout@v3
-      with:
-        ref: ${{ github.event.pull_request[matrix.branch].sha }}
+    # - name: Checkout
+    #   if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+    #   uses: actions/checkout@v3
+    #   with:
+    #     ref: ${{ github.event.pull_request[matrix.branch].sha }}
 
-    - name: Fetch Rust cache
-      if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-      uses: Swatinem/rust-cache@v2
+    # - name: Fetch Rust cache
+    #   if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+    #   uses: Swatinem/rust-cache@v2
 
-    - name: Build binary
-      if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-      run: |
-        cargo b --release -p ethrex
-        mkdir bin
-        cp target/release/ethrex bin/ethrex-${{ matrix.branch }}
+    # - name: Build binary
+    #   if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+    #   run: |
+    #     cargo b --release --bin ethrex
+    #     mkdir bin
+    #     cp target/release/ethrex bin/ethrex-${{ matrix.branch }}
 
   # run-hyperfine:
   #   name: Run benchmark against main
