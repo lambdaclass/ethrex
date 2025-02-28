@@ -520,7 +520,7 @@ impl Store {
 
     pub fn set_chain_config(&self, mut chain_config: ChainConfig) -> Result<(), StoreError> {
         if chain_config.deposit_contract_address.is_none() {
-            if chain_config.chain_id != 1 {
+            if chain_config.chain_id != 1 && chain_config.chain_id != 0 {
                 return Err(StoreError::MissingDepositContractAddress);
             }
             warn!("Missing deposit contract address. Using mainnet address instead.");
@@ -1057,7 +1057,7 @@ mod tests {
     use ethereum_types::{H256, U256};
     use ethrex_common::{
         types::{Transaction, TxType, EMPTY_KECCACK_HASH},
-        Bloom,
+        Bloom, H160,
     };
     use ethrex_rlp::decode::RLPDecode;
     use std::{fs, panic, str::FromStr};
@@ -1350,6 +1350,9 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(58750000000000000000000),
             terminal_total_difficulty_passed: true,
+            deposit_contract_address: Some(
+                H160::from_str("0x4242424242424242424242424242424242424242").unwrap(),
+            ),
             ..Default::default()
         }
     }

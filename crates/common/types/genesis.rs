@@ -377,6 +377,8 @@ mod tests {
     use std::str::FromStr;
     use std::{fs::File, io::BufReader};
 
+    use ethereum_types::H160;
+
     use crate::types::INITIAL_BASE_FEE;
 
     use super::*;
@@ -409,6 +411,9 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
+            deposit_contract_address: Some(
+                H160::from_str("0x4242424242424242424242424242424242424242").unwrap(),
+            ),
             // Note this BlobSchedule config is not the default
             blob_schedule: BlobSchedule {
                 cancun: ForkBlobSchedule {
