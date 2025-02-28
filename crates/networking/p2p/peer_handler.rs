@@ -76,9 +76,10 @@ impl PeerHandler {
         None
     }
 
-    async fn send_request<T: crate::rlpx::message::RLPxMessage>(
+    async fn send_request<T: crate::rlpx::message::RLPxMessage + 'static>(
         &self,
         cap: Capability,
+        // using a function to not derive Clone in RLPxMessage
         build_request: impl Fn() -> RLPxMessage,
     ) -> Option<T> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
@@ -123,7 +124,8 @@ impl PeerHandler {
                     .await
                     .peer_responded_successfully(node_id, scoring_points);
 
-                return T::from_msg(response);
+                let casted_response = response.as_any().downcast::<T>().ok()?;
+                return Some(*casted_response);
             }
         }
 
