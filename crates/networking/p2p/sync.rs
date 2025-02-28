@@ -269,7 +269,10 @@ impl SyncManager {
             // Store headers and save hashes for full block retrieval
             all_block_hashes.extend_from_slice(&block_hashes[..]);
             store.add_block_headers(block_hashes.clone(), block_headers)?;
-            store.set_header_download_checkpoint(last_block_hash)?;
+
+            if self.sync_mode == SyncMode::Snap {
+                store.set_header_download_checkpoint(last_block_hash)?;
+            }
 
             if self.sync_mode == SyncMode::Full {
                 self.download_and_run_blocks(&mut block_hashes, store.clone())
