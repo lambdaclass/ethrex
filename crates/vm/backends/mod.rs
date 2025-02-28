@@ -59,6 +59,7 @@ impl EVM {
 
     /// Wraps [REVM::execute_tx] and [LEVM::execute_tx].
     /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_tx(
         &self,
         state: &mut EvmState,
