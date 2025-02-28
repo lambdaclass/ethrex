@@ -604,8 +604,12 @@ async fn wait_for_transaction_receipt(
 }
 
 async fn make_deposits(bridge: Address, eth_client: &EthClient) {
-    let genesis = read_genesis_file("../../test_data/genesis-l1.json");
-    let Ok(pks) = fs::read_to_string("../../test_data/private_keys_l1.txt") else {
+    let genesis_l1_path = std::env::var("GENESIS_L1_PATH")
+        .unwrap_or("../../test_data/genesis-l1-dev.json".to_string());
+    let pks_path = std::env::var("PRIVATE_KEYS_PATH")
+        .unwrap_or("../../test_data/private_keys_l1.txt".to_string());
+    let genesis = read_genesis_file(&genesis_l1_path);
+    let Ok(pks) = fs::read_to_string(&pks_path) else {
         return;
     };
     let private_keys: Vec<String> = pks

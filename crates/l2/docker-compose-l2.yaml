@@ -14,12 +14,16 @@ services:
     volumes:
       - ./contracts:/contracts
       - .env:/.env
+      - ../../test_data/genesis-l1-dev.json:/test_data/genesis-l1-dev.json
+      - ../../test_data/private_keys_l1.txt:/test_data/private_keys_l1.txt
     env_file:
       - .env
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
       - DEPLOYER_CONTRACTS_PATH=/contracts
       - ENV_FILE=/.env
+      - GENESIS_L1_PATH=/test_data/genesis-l1-dev.json
+      - PRIVATE_KEYS_PATH=/test_data/private_keys_l1.txt
     depends_on:
       - ethrex
     restart: on-failure:3
