@@ -74,8 +74,7 @@ jobs:
         BINS="base,head"
         hyperfine -w 5 -N -r 10 --export-markdown "benchmark_comparison_against_main.md" \
         -L bin "$BINS" -n "{bin}" \
-        "./bin/ethrex-{bin} --network test_data/genesis-l2.json \
-        --import ./test_data/l2-loadtest.rlp --only_import"
+        "./bin/ethrex-{bin} --network test_data/genesis-l2.json --import ./test_data/l2-loadtest.rlp --only_import"
 
     - name: Upload PR results
       uses: actions/upload-artifact@v4
