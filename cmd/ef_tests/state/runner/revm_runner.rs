@@ -330,8 +330,7 @@ pub fn ensure_post_state(
             let store_wrapper = load_initial_state_levm(test);
             let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                 Some(*fork),
-                &store_wrapper.store,
-                store_wrapper.block_hash,
+                &store_wrapper,
                 &levm_execution_report.new_state,
             )
             .map_err(|_| {
