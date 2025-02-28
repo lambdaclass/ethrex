@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -19,7 +23,7 @@ use crate::{
             },
             receipts::{GetReceipts, Receipts},
         },
-        message::Message as RLPxMessage,
+        message::{Message as RLPxMessage, RLPxMessage},
         p2p::Capability,
         snap::{
             AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
@@ -29,7 +33,7 @@ use crate::{
     snap::encodable_to_proof,
 };
 use tracing::info;
-pub const PEER_REPLY_TIMOUT: Duration = Duration::from_secs(45);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
@@ -53,18 +57,76 @@ impl PeerHandler {
     /// Returns the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(&self, capability: Capability) -> Option<PeerChannels> {
+    async fn get_peer_channel_with_retry(
+        &mut self,
+        capability: Capability,
+    ) -> Option<(PeerChannels, H512)> {
         for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
-            let table = self.peer_table.lock().await;
-            if let Some(channels) = table.get_peer_channels(capability.clone()) {
-                return Some(channels);
+            let table_lock = self.peer_table.lock().await;
+            if let Some(peer) = table_lock.get_idle_peer_with_capability_mut(capability.clone()) {
+                peer.set_as_busy();
+                return Some((peer.channels.clone(), peer.node.node_id));
             };
             // drop the lock early to no block the rest of processes
-            drop(table);
+            drop(table_lock);
             info!("[Sync] No peers available, retrying in 10 sec");
             // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
+        None
+    }
+
+    async fn send_request<T: RLPxMessage, R: RLPxMessage>(
+        &mut self,
+        cap: Capability,
+        request: T,
+    ) -> Option<R> {
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let channels = self.get_peer_channel_with_retry(cap).await;
+            let Some((channel, node_id)) = channels else {
+                return None;
+            };
+
+            let mut receiver = channel.receiver.lock().await;
+            channel.sender.send(request).await.ok();
+            let since = Instant::now();
+            if let Some(response) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                loop {
+                    match receiver.recv().await {
+                        Some(res) if id == request_id => return Some(res),
+                        // Ignore replies that don't match the expected id (such as late responses)
+                        Some(_) => {
+                            self.peer_table.lock().await.peer_failed_to_respond(node_id);
+                            continue;
+                        }
+                        None => {
+                            self.peer_table.lock().await.peer_failed_to_respond(node_id);
+                            return None;
+                        }
+                    }
+                }
+            })
+            .await
+            .ok()
+            .flatten()
+            {
+                // we give 1 point for successful response
+                // and 2 for a quick response
+                let scoring_points = 1;
+                let ttl = since.elapsed().as_millis();
+                if ttl < 300 {
+                    scoring_points += 2;
+                }
+
+                self.peer_table
+                    .lock()
+                    .await
+                    .peer_responded_successfully(node_id, scoring_points);
+
+                return Some(response);
+            }
+        }
+
         None
     }
 
@@ -77,39 +139,23 @@ impl PeerHandler {
         start: H256,
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-                id: request_id,
-                startblock: start.into(),
-                limit: BLOCK_HEADER_LIMIT,
-                skip: 0,
-                reverse: matches!(order, BlockRequestOrder::NewToOld),
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                            if id == request_id =>
-                        {
-                            return Some(block_headers)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|headers| (!headers.is_empty()).then_some(headers))
-            {
-                return Some(block_headers);
-            }
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: start.into(),
+            limit: BLOCK_HEADER_LIMIT,
+            skip: 0,
+            reverse: matches!(order, BlockRequestOrder::NewToOld),
+        });
+        let Some(response): Option<BlockHeaders> =
+            self.send_request(Capability::Eth, request).await
+        else {
+            return None;
+        };
+
+        match !response.block_headers.is_empty() {
+            true => Some(headers),
+            false => None,
         }
         None
     }
@@ -120,39 +166,21 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_bodies(&self, block_hashes: Vec<H256>) -> Option<Vec<BlockBody>> {
         let block_hashes_len = block_hashes.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
-                id: request_id,
-                block_hashes: block_hashes.clone(),
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
-                            if id == request_id =>
-                        {
-                            return Some(block_bodies)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|bodies| {
-                // Check that the response is not empty and does not contain more bodies than the ones requested
-                (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
-            }) {
-                return Some(block_bodies);
-            }
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
+            id: request_id,
+            block_hashes: block_hashes.clone(),
+        });
+        let Some(response): Option<BlockBodies> = self.send_request(Capability::Eth, request).await
+        else {
+            return None;
+        };
+
+        match !response.block_bodies.is_empty() && response.block_bodies.len() <= block_hashes_len {
+            true => Some(response.block_bodies),
+            false => None,
         }
+
         None
     }
 
@@ -162,39 +190,21 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         let block_hashes_len = block_hashes.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetReceipts(GetReceipts {
-                id: request_id,
-                block_hashes: block_hashes.clone(),
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::Receipts(Receipts { id, receipts }))
-                            if id == request_id =>
-                        {
-                            return Some(receipts)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|receipts|
-                // Check that the response is not empty and does not contain more bodies than the ones requested
-                (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
-            {
-                return Some(receipts);
-            }
+        let request_id = rand::random();
+        let request = RLPxMessage::GetReceipts(GetReceipts {
+            id: request_id,
+            block_hashes: block_hashes.clone(),
+        });
+        let Some(response): Option<Receipts> = self.send_request(Capability::Eth, request).await
+        else {
+            return None;
+        };
+
+        match !response.receipts.is_empty() && response.receipts.len() <= block_hashes_len {
+            true => Some(response.block_bodies),
+            false => None,
         }
+
         None
     }
 
@@ -210,57 +220,43 @@ impl PeerHandler {
         start: H256,
         limit: H256,
     ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetAccountRange(GetAccountRange {
-                id: request_id,
-                root_hash: state_root,
-                starting_hash: start,
-                limit_hash: limit,
-                response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some((accounts, proof)) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::AccountRange(AccountRange {
-                            id,
-                            accounts,
-                            proof,
-                        })) if id == request_id => return Some((accounts, proof)),
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
-            {
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
-                    .into_iter()
-                    .map(|unit| (unit.hash, AccountState::from(unit.account)))
-                    .unzip();
-                let encoded_accounts = accounts
-                    .iter()
-                    .map(|acc| acc.encode_to_vec())
-                    .collect::<Vec<_>>();
-                if let Ok(should_continue) = verify_range(
-                    state_root,
-                    &start,
-                    &account_hashes,
-                    &encoded_accounts,
-                    &proof,
-                ) {
-                    return Some((account_hashes, accounts, should_continue));
-                }
-            }
+        let block_hashes_len = block_hashes.len();
+        let request_id = rand::random();
+        let request = RLPxMessage::GetAccountRange(GetAccountRange {
+            id: request_id,
+            root_hash: state_root,
+            starting_hash: start,
+            limit_hash: limit,
+            response_bytes: MAX_RESPONSE_BYTES,
+        });
+        let Some(response): Option<AccountRange> =
+            self.send_request(Capability::Eth, request).await
+        else {
+            return None;
+        };
+
+        let (account, proof) = (response.accounts, response.proof);
+
+        // Unzip & validate response
+        let proof = encodable_to_proof(&proof);
+        let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
+            .into_iter()
+            .map(|unit| (unit.hash, AccountState::from(unit.account)))
+            .unzip();
+        let encoded_accounts = accounts
+            .iter()
+            .map(|acc| acc.encode_to_vec())
+            .collect::<Vec<_>>();
+        if let Ok(should_continue) = verify_range(
+            state_root,
+            &start,
+            &account_hashes,
+            &encoded_accounts,
+            &proof,
+        ) {
+            return Some((account_hashes, accounts, should_continue));
         }
+
         None
     }
 
