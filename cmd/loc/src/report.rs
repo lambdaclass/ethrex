@@ -28,17 +28,7 @@ pub fn pr_message(
     new_report: HashMap<String, usize>,
 ) -> String {
     let sorted_file_paths = {
-        let mut keys: Vec<_> = new_report
-            .keys()
-            .map(|path| {
-                if let Some(idx) = path.find("/ethrex/") {
-                    &path[idx + 1..]
-                } else {
-                    path
-                }
-            })
-            .collect();
-
+        let mut keys: Vec<_> = new_report.keys().collect();
         keys.sort();
         keys
     };
@@ -68,8 +58,14 @@ pub fn pr_message(
 
         total_lines_changed += loc_diff.abs();
 
+        let file_path_printable = if let Some(idx) = file_path.find("/ethrex/") {
+            &file_path[idx + 1..]
+        } else {
+            &file_path
+        };
+
         table.add_row(row![
-            file_path,
+            file_path_printable,
             current_loc,
             match current_loc.cmp(&previous_loc) {
                 std::cmp::Ordering::Greater => format!("+{loc_diff}"),
