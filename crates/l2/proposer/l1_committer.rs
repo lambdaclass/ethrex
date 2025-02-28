@@ -20,7 +20,7 @@ use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, Store};
-use ethrex_vm::backends::EVM;
+use ethrex_vm::backends::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, str::FromStr, time::Duration};
@@ -254,7 +254,7 @@ impl Committer {
     ) -> Result<StateDiff, CommitterError> {
         info!("Preparing state diff for block {}", block.header.number);
 
-        let result = EVM::default_with_storage(store.clone())
+        let result = Evm::default(store.clone())
             .execute_block(block)
             .map_err(CommitterError::from)?;
         let account_updates = result.account_updates;
