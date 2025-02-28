@@ -15,17 +15,20 @@ serde_json.workspace = true
 bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
+rand = "0.8"
 
 [dev-dependencies]
 datatest-stable = "0.2.9"
+criterion = "0.3"
 
 [lib]
 path = "./lib.rs"
 
 [features]
-default = ["c-kzg", "blst"]
+default = ["c-kzg", "blst", "libmdbx"]
 blst = ["ethrex-vm/blst"]
 c-kzg = ["ethrex-blockchain/c-kzg"]
+libmdbx = ["ethrex-storage/libmdbx"]
 
 [[test]]
 name = "cancun"
@@ -37,4 +40,8 @@ harness = false
 
 [[test]]
 name = "prague"
+harness = false
+
+[[bench]]
+name = "import8k"
 harness = false
