@@ -1,5 +1,6 @@
 use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
+use std::any::Any;
 use std::fmt::Display;
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
@@ -193,6 +194,10 @@ impl Message {
                 msg.encode(buf)
             }
         }
+    }
+
+    pub fn as_any(self) -> Box<dyn Any> {
+        Box::new(self)
     }
 }
 
