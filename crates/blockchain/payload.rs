@@ -428,7 +428,7 @@ impl Blockchain {
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
-        sender: Address
+        sender: Address,
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
@@ -484,7 +484,7 @@ impl Blockchain {
             &mut context.block_cache,
             &chain_config,
             &mut context.remaining_gas,
-            sender
+            sender,
         )?;
         context.block_value += U256::from(gas_used) * head.tip;
         Ok(report)
@@ -547,7 +547,6 @@ struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HeadTransaction {
     tx: MempoolTransaction,
-    sender: Address,
     tip: u64,
 }
 
@@ -584,7 +583,6 @@ impl TransactionQueue {
                         InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
                     ))?,
                 tx: head_tx,
-                sender: *address,
             });
         }
         // Sort heads by higest tip (and lowest timestamp if tip is equal)
@@ -616,7 +614,7 @@ impl TransactionQueue {
     /// Removes current head transaction and all transactions from the given sender
     fn pop(&mut self) {
         if !self.is_empty() {
-            let sender = self.heads.remove(0).sender;
+            let sender = self.heads.remove(0).tx.sender();
             self.txs.remove(&sender);
         }
     }
@@ -625,7 +623,7 @@ impl TransactionQueue {
     /// Add a tx from the same sender to the head transactions
     fn shift(&mut self) -> Result<(), ChainError> {
         let tx = self.heads.remove(0);
-        if let Some(txs) = self.txs.get_mut(&tx.sender) {
+        if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {
             // Fetch next head
             if !txs.is_empty() {
                 let head_tx = txs.remove(0);
@@ -637,7 +635,6 @@ impl TransactionQueue {
                         ),
                     )?,
                     tx: head_tx,
-                    sender: tx.sender,
                 };
                 // Insert head into heads list while maintaing order
                 let index = match self.heads.binary_search(&head) {
