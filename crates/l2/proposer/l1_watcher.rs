@@ -40,7 +40,7 @@ impl L1Watcher {
     ) -> Result<Self, EthClientError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let l2_client = EthClient::new("http://localhost:1729");
-        let last_block_fetched: U256 =
+        let last_block_fetched =
             EthClient::get_last_fetched_l1_block(&eth_client, watcher_config.bridge_address)
                 .await?
                 .into();
@@ -78,6 +78,9 @@ impl L1Watcher {
             // We may not have a deposit nor a withdrawal, that means no events -> no logs.
             if logs.is_empty() {
                 continue;
+            }
+            for log in &logs {
+                dbg!(log.block_number);
             }
             let pending_deposit_logs = self.get_pending_deposit_logs().await?;
             let _deposit_txs = self
@@ -194,13 +197,16 @@ impl L1Watcher {
                     "Failed to parse beneficiary from log: log.topics[2] out of bounds".to_owned(),
                 ))?
                 .into_uint();
-            let beneficiary = format!("{beneficiary_uint:#x}")
-                .parse::<Address>()
-                .map_err(|e| {
-                    L1WatcherError::FailedToDeserializeLog(format!(
-                        "Failed to parse beneficiary from log: {e:#?}"
-                    ))
-                })?;
+            let str_ben = format!("{:#x}", beneficiary_uint)
+                .strip_prefix("0x")
+                .unwrap_or_default()
+                .to_string();
+            let a = format!("0x{:0>40}", str_ben).to_string();
+            let beneficiary = a.parse::<Address>().map_err(|e| {
+                L1WatcherError::FailedToDeserializeLog(format!(
+                    "Failed to parse beneficiary from log: {e:#?}"
+                ))
+            })?;
 
             let deposit_id =
                 log.log
