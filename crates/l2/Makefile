@@ -41,7 +41,7 @@ ethrex_L2_DOCKER_COMPOSE_PATH=./docker-compose-l2.yaml
 ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics.yaml
 ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l1-dev.overrides.yaml
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l2.overrides.yaml
-
+ETHREX_WORKDIR := /usr/local/bin
 
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
@@ -157,7 +157,6 @@ rm-db-l2: ## 🛑 Removes the DB used by the L2
 # cargo test l2 will match tests that has l2 in the function.
 # Tests are at `crates/l2/tests/tests.rs`
 # https://doc.rust-lang.org/book/ch11-02-running-tests.html#filtering-to-run-multiple-tests
-ETHREX_WORKDIR := /usr/local/bin
 ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	@echo "\n\033[0;33mWARNING: \033[0m Running the tests inside docker takes \033[1mA LOT\033[0m of time. If possible (especially when running the tests locally), consider running the tests with the 'make test' directive\n"
 
