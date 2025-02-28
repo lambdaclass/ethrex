@@ -150,8 +150,8 @@ async fn test_connection(cfg: EthrexL2Config) -> Result<(), EthClientError> {
                 dbg!(retry);
                 break Err(err);
             }
-            _ => {
-                println!("Couldn't establish connection to L2, retrying {retry}/{RETRIES}");
+            Err(err) => {
+                println!("Couldn't establish connection to L2: {err}, retrying {retry}/{RETRIES}");
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 retry += 1
             }
