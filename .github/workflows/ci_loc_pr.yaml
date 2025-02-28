@@ -37,8 +37,12 @@ jobs:
     steps:
       - name: Checkout Base
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.base.sha }} # Use PR base commit
+
+      - name: Checkout Base Commit
+        run: |
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          echo "Checking out base commit: $BASE_SHA"
+          git checkout $BASE_SHA
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.82.0

@@ -61,7 +61,7 @@ pub fn pr_message(
         let file_path_printable = if let Some(idx) = file_path.find("/ethrex/") {
             &file_path[idx + 1..]
         } else {
-            &file_path
+            file_path
         };
 
         table.add_row(row![
@@ -78,7 +78,7 @@ pub fn pr_message(
     let mut pr_message = String::new();
 
     pr_message.push_str("<h2>Lines of code report</h2>\n");
-    pr_message.push_str("\n");
+    pr_message.push('\n');
 
     pr_message.push_str(&pr_message_summary(
         total_lines_added,
@@ -87,10 +87,10 @@ pub fn pr_message(
     ));
 
     if total_lines_changed > 0 {
-        pr_message.push_str("\n");
+        pr_message.push('\n');
         pr_message.push_str("<details>\n");
         pr_message.push_str("<summary>Detailed view</summary>\n");
-        pr_message.push_str("\n");
+        pr_message.push('\n');
         pr_message.push_str("```\n");
         pr_message.push_str(&format!("{table}\n"));
         pr_message.push_str("```\n");
