@@ -19,11 +19,12 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::mempool::{self};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     types::{MempoolTransaction, Transaction},
     H256, H512,
 };
+
 use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
@@ -74,6 +75,7 @@ pub(crate) struct RLPxConnection<S> {
     node: Node,
     framed: Framed<S, RLPxCodec>,
     storage: Store,
+    blockchain: Blockchain,
     capabilities: Vec<(Capability, u8)>,
     negotiated_eth_version: u8,
     negotiated_snap_version: u8,
@@ -98,6 +100,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         stream: S,
         codec: RLPxCodec,
         storage: Store,
+        blockchain: Blockchain,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
@@ -105,6 +108,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             node,
             framed: Framed::new(stream, codec),
             storage,
+            blockchain,
             capabilities: vec![],
             negotiated_eth_version: 0,
             negotiated_snap_version: 0,
@@ -349,8 +353,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             let filter =
                 |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
             let txs: Vec<MempoolTransaction> = self
-                .storage
-                .filter_pool_transactions(&filter)?
+                .blockchain
+                .mempool
+                .filter_transactions_with_filter_fn(&filter)?
                 .into_values()
                 .flatten()
                 .collect();
@@ -358,7 +363,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let tx_count = txs.len();
                 for tx in txs {
                     self.send(Message::NewPooledTransactionHashes(
-                        NewPooledTransactionHashes::new(vec![(*tx).clone()], &self.storage)?,
+                        NewPooledTransactionHashes::new(vec![(*tx).clone()], &self.blockchain)?,
                     ))
                     .await?;
                     // Possible improvement: the mempool already knows the hash but the filter function does not return it
@@ -412,7 +417,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if is_synced {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
-                        if let Err(e) = mempool::add_transaction(tx.clone(), &self.storage) {
+                        if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()) {
                             log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
                             continue;
                         }
@@ -451,19 +456,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             {
                 //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
                 let hashes =
-                    new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
+                    new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
 
                 //TODO(#1416): Evaluate keeping track of the request-id.
                 let request = GetPooledTransactions::new(random(), hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
-                let response = msg.handle(&self.storage)?;
+                let response = msg.handle(&self.blockchain)?;
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if is_synced {
-                    msg.handle(&self.node, &self.storage)?;
+                    msg.handle(&self.node, &self.blockchain)?;
                 }
             }
             Message::GetStorageRanges(req) => {
