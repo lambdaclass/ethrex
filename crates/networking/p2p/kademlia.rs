@@ -236,6 +236,13 @@ impl KademliaTable {
         self.buckets.iter().flat_map(|bucket| bucket.peers.iter())
     }
 
+    /// Returns an mutable iterator for all peers in the table
+    pub fn iter_peers_mut(&mut self) -> impl Iterator<Item = &mut PeerData> {
+        self.buckets
+            .iter_mut()
+            .flat_map(|bucket| bucket.peers.iter_mut())
+    }
+
     /// Returns an iterator for all peers in the table that match the filter
     fn filter_peers<'a>(
         &'a self,
@@ -327,21 +334,18 @@ impl KademliaTable {
         &mut self,
         capability: Capability,
     ) -> Option<&mut PeerData> {
-        let filter = |peer: &PeerData| -> bool {
+        let filter = |peer: &&mut PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
             !peer.busy
                 && peer.channels.is_some()
                 && peer.supported_capabilities.contains(&capability)
         };
 
-        let mut peers_sorted_by_score = self.filter_peers(&filter).collect::<Vec<PeerData>>();
+        let mut peers_sorted_by_score: Vec<&mut PeerData> =
+            self.iter_peers_mut().filter(filter).collect();
         peers_sorted_by_score.sort_by(|a, b| b.scoring.cmp(&a.scoring));
-
-        if peers_sorted_by_score.len() == 0 {
-            return None;
-        }
-
-        peers_sorted_by_score[0].channels
+        // take the peer with the highest score
+        peers_sorted_by_score.into_iter().next()
     }
 
     pub fn peer_failed_to_respond(&mut self, node_id: H512) {
