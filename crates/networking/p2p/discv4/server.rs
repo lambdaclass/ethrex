@@ -678,7 +678,7 @@ pub(super) mod tests {
 
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let table = Arc::new(Mutex::new(KademliaTable::new(node_id)));
         let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
             MAX_MESSAGES_TO_BROADCAST,

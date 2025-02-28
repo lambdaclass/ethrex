@@ -439,7 +439,7 @@ mod tests {
     ) -> u64 {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             storage,
             blockchain,
@@ -505,7 +505,7 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             storage,
             blockchain,
@@ -536,7 +536,7 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             storage,
             blockchain,

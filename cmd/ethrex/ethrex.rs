@@ -180,7 +180,7 @@ async fn main() {
         .unwrap_or(&EvmImplementation::REVM);
     let evm = EVM::new(evm_impl.clone(), store.clone());
 
-    let blockchain = Blockchain::new(evm, store.clone());
+    let blockchain = Arc::new(Blockchain::new(evm, store.clone()));
 
     let genesis = read_genesis_file(&network);
     store
