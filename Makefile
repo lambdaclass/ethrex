@@ -126,6 +126,9 @@ run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --docker.output
 
+run-hive-debug-levm: build-image setup-hive ## 🐞 Run Hive testing suite with LEVM in debug mode
+	cd hive && ./hive --client ethrex --ethrex.flags "--evm levm" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --docker.output
+
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
 
