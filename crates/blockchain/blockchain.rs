@@ -426,11 +426,11 @@ pub fn validate_block(
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
 
     if chain_config.is_prague_activated(block.header.timestamp) {
-        validate_prague_header_fields(&block.header, parent_header)
+        validate_prague_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
     } else if chain_config.is_cancun_activated(block.header.timestamp) {
-        validate_cancun_header_fields(&block.header, parent_header)
+        validate_cancun_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
     } else {

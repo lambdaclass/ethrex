@@ -6,7 +6,7 @@ use crate::db::evm_state;
 use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState, SpecId};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{Block, BlockHeader, Fork, Receipt, Transaction, Withdrawal};
-use ethrex_common::H256;
+use ethrex_common::{Address, H256};
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
@@ -89,11 +89,13 @@ impl Evm {
 
     /// Wraps [REVM::execute_tx] and [LEVM::execute_tx].
     /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_tx(
         &mut self,
         tx: &Transaction,
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
+        sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
             Evm::REVM { state } => {
@@ -103,6 +105,7 @@ impl Evm {
                     block_header,
                     state,
                     spec_id(&chain_config, block_header.timestamp),
+                    sender,
                 )?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
