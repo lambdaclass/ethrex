@@ -40,7 +40,7 @@ impl L1Watcher {
     ) -> Result<Self, EthClientError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let l2_client = EthClient::new("http://localhost:1729");
-        let last_block_fetched =
+        let last_block_fetched: U256 =
             EthClient::get_last_fetched_l1_block(&eth_client, watcher_config.bridge_address)
                 .await?
                 .into();
@@ -79,7 +79,6 @@ impl L1Watcher {
             if logs.is_empty() {
                 continue;
             }
-
             let pending_deposit_logs = self.get_pending_deposit_logs().await?;
             let _deposit_txs = self
                 .process_logs(logs, &pending_deposit_logs, store, blockchain)
