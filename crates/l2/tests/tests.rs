@@ -336,6 +336,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "L2 balance should not change after claim"
     );
 
+    println!("l2_integration_test is done");
     Ok(())
 }
 

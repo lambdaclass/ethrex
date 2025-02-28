@@ -18,7 +18,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, RwLock};
 use tracing::info;
@@ -484,7 +484,7 @@ impl Store {
     /// Adds all genesis accounts and returns the genesis block's state_root
     pub fn setup_genesis_state_trie(
         &self,
-        genesis_accounts: HashMap<Address, GenesisAccount>,
+        genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH);
         for (address, account) in genesis_accounts {
