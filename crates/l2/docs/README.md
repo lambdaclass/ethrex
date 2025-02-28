@@ -31,7 +31,25 @@ Configuration is done through env vars. A detailed list is available in each par
 
 ## Testing
 
-Load tests are available via L2 CLI. The test take a list of private keys and send a bunch of transactions from each of them to some address. 
+Load tests are available via L2 CLI and Makefile targets.
+
+### Makefile
+
+There are currently three different load tests you can run:
+
+```
+make load-test
+make load-test-fibonacci
+make load-test-io
+```
+
+The first one sends regular transfers between accounts, the second runs an EVM-heavy contract that computes fibonacci numbers, the third a heavy IO contract that writes to 100 storage slots per transaction.
+
+### CLI
+
+To have more control over the load tests and its parameters, you can use the CLI (the Makefile targets use the CLI underneath).
+
+The tests take a list of private keys and send a bunch of transactions from each of them to some address (either the address of some account to send eth to or the address of the contract that we're interacting with). 
 
 The CLI can be installed with the `cli` target:
 
