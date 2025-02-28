@@ -92,7 +92,7 @@ pub struct SyncManager {
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
-    pub blockchain: Blockchain,
+    pub blockchain: Arc<Blockchain>,
 }
 
 impl SyncManager {
@@ -100,7 +100,7 @@ impl SyncManager {
         peer_table: Arc<Mutex<KademliaTable>>,
         sync_mode: SyncMode,
         cancel_token: CancellationToken,
-        blockchain: Blockchain,
+        blockchain: Arc<Blockchain>,
     ) -> Self {
         Self {
             sync_mode,
@@ -125,9 +125,9 @@ impl SyncManager {
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
-            blockchain: Blockchain::default_with_store(
+            blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).unwrap(),
-            ),
+            )),
         }
     }
 

@@ -179,7 +179,7 @@ async fn main() {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
-    let blockchain = Blockchain::new(evm.clone(), store.clone());
+    let blockchain = Arc::new(Blockchain::new(evm.clone(), store.clone()));
 
     let genesis = read_genesis_file(&network);
     store
