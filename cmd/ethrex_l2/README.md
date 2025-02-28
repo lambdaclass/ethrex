@@ -39,6 +39,7 @@ Commands:
   config        CLI config commands.
   autocomplete  Generate shell completion scripts.
   help          Print this message or the help of the given subcommand(s)
+  test          Run a load test
 
 Options:
   -h, --help     Print help
@@ -122,6 +123,22 @@ Commands:
   generate  Generate autocomplete shell script.
   install   Generate and install autocomplete shell script.
   help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+```
+
+### `test`
+
+```
+Run tests.
+
+Usage: ethrex_l2 test <COMMAND>
+
+Commands:
+  load   Make a load test sending transactions from a list of private keys.
+  erc20  Load test that deploys an ERC20 and runs transactions
+  help   Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help  Print help
