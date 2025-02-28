@@ -179,7 +179,7 @@ async fn transfer_from(
     retries
 }
 
-async fn test_connection(cfg: EthrexL2Config) -> Result<(), EthClientError> {
+async fn test_connection(cfg: EthrexL2Config) -> Result<(), ethrex_rpc::clients::EthClientError> {
     const RETRIES: usize = 5;
 
     let client = EthClient::new(&cfg.network.l2_rpc_url);
@@ -363,7 +363,7 @@ impl Command {
                 let lines = read_lines(path)?;
 
                 if let Err(err) = test_connection(cfg.clone()).await {
-                    bail!("Couldn't establish connection to L2: {err}")
+                    eyre::bail!("Couldn't establish connection to L2: {err}")
                 }
 
                 let mut to_address = match to {
