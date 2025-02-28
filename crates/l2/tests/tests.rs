@@ -42,19 +42,15 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 /// 9. Check balances on L1 and L2
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
-    dbg!("Env variables before");
-    dbg!(std::env::vars());
-    let eth_client = dbg!(eth_client());
-    let proposer_client = dbg!(proposer_client());
+    let eth_client = eth_client();
+    let proposer_client = proposer_client();
 
     read_env_file()?;
-    dbg!("Env variables after");
-    dbg!(std::env::vars());
 
     // 1. Check balances on L1 and L2
 
     println!("Checking initial balances on L1 and L2");
-    let l1_rich_wallet_address = dbg!(l1_rich_wallet_address());
+    let l1_rich_wallet_address = l1_rich_wallet_address();
 
     let l1_initial_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
     let l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
@@ -74,10 +70,10 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     let deposit_value = U256::from(1000000000000000000000u128);
     let deposit_tx = ethrex_l2_sdk::deposit(
-        dbg!(deposit_value),
-        dbg!(l1_rich_wallet_address),
-        dbg!(l1_rich_wallet_private_key()),
-        dbg!(&eth_client),
+        deposit_value,
+        l1_rich_wallet_address,
+        l1_rich_wallet_private_key(),
+        &eth_client,
     )
     .await?;
 

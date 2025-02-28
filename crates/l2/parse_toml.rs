@@ -250,7 +250,6 @@ pub fn write_to_env(config: String) -> Result<(), ConfigError> {
         .open(env_file_name);
     match env_file {
         Ok(mut file) => {
-            dbg!("LO PUDE ABRIR");
             file.write_all(&config.into_bytes()).map_err(|_| {
                 ConfigError::EnvWriteError(format!(
                     "Couldn't write file in {}, line: {}",
@@ -258,12 +257,11 @@ pub fn write_to_env(config: String) -> Result<(), ConfigError> {
                     line!()
                 ))
             })?;
-            dbg!("LO PUDE ESCRIBIR");
         }
         Err(err) => {
-            dbg!(err);
             return Err(ConfigError::EnvWriteError(format!(
-                "Couldn't write file in {}, line: {}",
+                "Error: {}. Couldn't write file in {}, line: {}",
+                err,
                 file!(),
                 line!()
             )));

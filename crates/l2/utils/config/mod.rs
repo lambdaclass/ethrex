@@ -1,7 +1,7 @@
 use std::io::{BufRead, Write};
 
 // use std::backtrace::Backtrace;
-use tracing::info;
+use tracing::{debug, info};
 pub mod committer;
 pub mod eth;
 pub mod l1_watcher;
@@ -23,17 +23,13 @@ pub fn read_env_file() -> Result<(), errors::ConfigError> {
             // Skip comments
             continue;
         };
-        dbg!(&line);
 
         match line.split_once('=') {
             Some((key, value)) => {
                 if std::env::vars().any(|(k, _)| k == key) {
-                    dbg!("Env var {key} already set, skipping");
                     continue;
                 }
-                dbg!(&key);
-                dbg!(&value);
-                dbg!("Setting env var from .env: {key}={value}");
+                debug!("Setting env var from .env: {key}={value}");
                 std::env::set_var(key, value)
             }
             None => continue,

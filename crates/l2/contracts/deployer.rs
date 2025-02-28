@@ -74,8 +74,6 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
-    dbg!("RUNNNING DEPLOYER");
-
     let toml_config = std::env::var("CONFIG_FILE").unwrap_or("config.toml".to_string());
     match ethrex_l2::parse_toml::read_toml(toml_config) {
         Ok(_) => (),
@@ -179,7 +177,7 @@ fn setup() -> Result<SetupResult, DeployError> {
     .to_path_buf();
 
     // If not set, randomize the SALT
-    let input = dbg!(std::env::var("DEPLOYER_SALT_IS_ZERO").unwrap_or("false".to_owned()));
+    let input = std::env::var("DEPLOYER_SALT_IS_ZERO").unwrap_or("false".to_owned());
     match input.trim().to_lowercase().as_str() {
         "true" | "1" => (),
         "false" | "0" => {
