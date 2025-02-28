@@ -45,7 +45,7 @@ jobs:
           BASE_BRANCH=${{ github.base_ref }}
           echo "Base branch: $BASE_BRANCH"
           git fetch origin $BASE_BRANCH
-          git checkout $(git merge-base HEAD origin/$BASE_BRANCH)
+          git checkout "$(git merge-base HEAD origin/$BASE_BRANCH)"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.82.0
