@@ -257,6 +257,7 @@ impl SyncManager {
                     < MIN_FULL_BLOCKS as u64
                 {
                     // Too few blocks for a snap sync, switching to full sync
+                    info!("Too few blocks for a snap sync, switching to full sync");
                     store.clear_snap_state()?;
                     self.sync_mode = SyncMode::Full
                 }
@@ -306,10 +307,12 @@ impl SyncManager {
                     // Snap sync was not completed, abort and resume it on the next cycle
                     return Ok(());
                 }
+                info!("Snap sync completed");
                 // Wait for all bodies to be downloaded
                 // store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
+                info!("For all blocks after the pivot: Process them fully");
                 for hash in &all_block_hashes[pivot_idx + 1..] {
                     let block = store
                         .get_block_by_hash(*hash)?
@@ -320,6 +323,7 @@ impl SyncManager {
                 }
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
+                info!("Finished a sync cycle without aborting halfway, clear current checkpoint");
                 store.clear_snap_state()?;
                 // Next sync will be full-sync
                 self.sync_mode = SyncMode::Full;
