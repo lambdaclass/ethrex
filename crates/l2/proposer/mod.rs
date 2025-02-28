@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_env_file};
 use errors::ProposerError;
@@ -26,7 +26,7 @@ pub struct Proposer {
     jwt_secret: Vec<u8>,
 }
 
-pub async fn start_proposer(store: Store, blockchain: Blockchain) {
+pub async fn start_proposer(store: Store, blockchain: Arc<Blockchain>) {
     info!("Starting Proposer");
 
     if let Err(e) = read_env_file() {
@@ -35,10 +35,7 @@ pub async fn start_proposer(store: Store, blockchain: Blockchain) {
     }
 
     let mut task_set = JoinSet::new();
-    task_set.spawn(l1_watcher::start_l1_watcher(
-        store.clone(),
-        blockchain.clone(),
-    ));
+    task_set.spawn(l1_watcher::start_l1_watcher(store.clone(), blockchain));
     task_set.spawn(l1_committer::start_l1_committer(store.clone()));
     task_set.spawn(prover_server::start_prover_server(store.clone()));
     task_set.spawn(start_proposer_server(store.clone()));
