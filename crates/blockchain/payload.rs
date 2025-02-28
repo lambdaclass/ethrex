@@ -18,11 +18,7 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_vm::{
-    backends::levm::CacheDB,
-    db::{evm_state, EvmState},
-    EvmError,
-};
+use ethrex_vm::EvmError;
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, Store};
@@ -177,8 +173,6 @@ pub fn calc_excess_blob_gas(
 
 pub struct PayloadBuildContext<'a> {
     pub payload: &'a mut Block,
-    pub evm_state: EvmState,
-    pub block_cache: CacheDB,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
@@ -186,12 +180,12 @@ pub struct PayloadBuildContext<'a> {
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
+    pub store: Store,
 }
 
 impl<'a> PayloadBuildContext<'a> {
     fn new(payload: &'a mut Block, storage: &Store) -> Result<Self, EvmError> {
         let config = storage.get_chain_config()?;
-        let evm_state = evm_state(storage.clone(), payload.header.parent_hash);
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -208,9 +202,8 @@ impl<'a> PayloadBuildContext<'a> {
             block_value: U256::zero(),
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
-            evm_state,
             blobs_bundle: BlobsBundle::default(),
-            block_cache: CacheDB::new(),
+            store: storage.clone(),
         })
     }
 }
@@ -224,12 +217,8 @@ impl<'a> PayloadBuildContext<'a> {
         self.payload.header.number
     }
 
-    fn store(&self) -> Option<&Store> {
-        self.evm_state.database()
-    }
-
     fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.evm_state.chain_config()
+        Ok(self.store.get_chain_config()?)
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {
@@ -516,8 +505,7 @@ impl Blockchain {
         let account_updates = self.vm.get_state_transitions(parent_hash)?;
 
         context.payload.header.state_root = context
-            .store()
-            .ok_or(StoreError::MissingStore)?
+            .store
             .apply_account_updates(context.parent_hash(), &account_updates)?
             .unwrap_or_default();
         context.payload.header.transactions_root =
