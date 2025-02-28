@@ -302,9 +302,9 @@ async fn erc20_load_test(
         .iter()
         .map(|pk| (pk.clone(), pk.public_key(secp256k1::SECP256K1)))
         .collect_vec();
-    let transfer_number = Arc::new(AtomicU64::new(0));
     for (sk, pk) in accounts {
-        for _ in 0..tx_amount {
+        let nonce = client.get_nonce(address_from_pub_key(pk)).await.unwrap();
+        for i in 0..tx_amount {
             let send_calldata = calldata::encode_calldata(
                 "transfer(address,uint256)",
                 &[Value::Address(H160::random()), Value::Uint(U256::one())],
@@ -315,33 +315,22 @@ async fn erc20_load_test(
                     contract_address,
                     address_from_pub_key(pk),
                     send_calldata.into(),
-                    Default::default(),
+                    Overrides {
+                        chain_id: Some(config.network.l2_chain_id),
+                        nonce: Some(nonce + i),
+                        max_fee_per_gas: Some(3121115334),
+                        max_priority_fee_per_gas: Some(3000000000),
+                        gas_limit: Some(TX_GAS_COST * 100),
+                        ..Default::default()
+                    },
                     1,
                 )
                 .await?;
             let client = client.clone();
-            let transfer_number = transfer_number.clone();
+            tokio::time::sleep(Duration::from_millis(10)).await;
             tasks.spawn(async move {
-                let tx_number = transfer_number.fetch_add(1, Ordering::Relaxed);
-                let sent = client.send_eip1559_transaction(&send_tx, &sk).await;
-                match sent {
-                    Ok(hash) => {
-                        println!("ERC-20 transfer number {tx_number} sent! Waiting for receipt...");
-                        let retries = 10_u64;
-                        'retry_loop: for _ in 0..retries {
-                            match client.get_transaction_receipt(hash).await {
-                                Ok(Some(RpcReceipt { receipt, .. })) if receipt.status => {
-                                    println!("ERC-20 transfer number {tx_number} was sucessful");
-                                    break 'retry_loop;
-                                }
-                                _ => {
-                                    let _ = tokio::time::sleep(Duration::from_secs(1)).await;
-                                }
-                            }
-                        }
-                    }
-                    Err(_) => println!("ERC-20 transfer number {tx_number} FAILED"),
-                }
+                let _sent = client.send_eip1559_transaction(&send_tx, &sk).await.unwrap();
+                println!("ERC-20 transfer number {} sent!", nonce + i + 1);
             });
         }
     }
