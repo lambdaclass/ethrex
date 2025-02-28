@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Populate cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         id: cache
         with:
           path: bin/ethrex-${{ matrix.branch }}
@@ -25,7 +25,7 @@ jobs:
   
       - name: Checkout
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request[matrix.branch].sha }}
   
@@ -75,7 +75,7 @@ jobs:
         hyperfine -w 5 -N -r 10 --export-markdown "benchmark_comparison_against_main.md" \
         -L bin "$BINS" -n "{bin}" \
         "./bin/ethrex-{bin} --network test_data/genesis-l2.json \
-        --import ./test_data/l2-loadtest.rlp --only_import""
+        --import ./test_data/l2-loadtest.rlp --only_import"
 
     - name: Upload PR results
       uses: actions/upload-artifact@v4
