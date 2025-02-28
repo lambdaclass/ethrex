@@ -20,6 +20,7 @@ use ethrex_common::types::{
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
+use std::sync::Mutex;
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
@@ -33,7 +34,7 @@ use tracing::{error, info, warn};
 
 #[derive(Debug)]
 pub struct Blockchain {
-    pub vm: Evm,
+    pub vm: Mutex<Evm>,
     storage: Store,
     pub mempool: Mempool,
 }
@@ -41,7 +42,7 @@ pub struct Blockchain {
 impl Blockchain {
     pub fn new(evm: Evm, store: Store) -> Self {
         Self {
-            vm: evm,
+            vm: Mutex::new(evm),
             storage: store,
             mempool: Mempool::new(),
         }
@@ -49,13 +50,13 @@ impl Blockchain {
 
     pub fn default_with_store(store: Store) -> Self {
         Self {
-            vm: Evm::default(store.clone()),
+            vm: Mutex::new(Evm::default(store.clone())),
             storage: store,
             mempool: Mempool::new(),
         }
     }
 
-    pub fn add_block(&mut self, block: &Block) -> Result<(), ChainError> {
+    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         info!(
             "Add block: Adding block {} with hash {:#x}.",
             block.header.number,
@@ -80,7 +81,7 @@ impl Blockchain {
             receipts,
             requests,
             account_updates,
-        } = self.vm.execute_block(block)?;
+        } = self.vm.lock().unwrap().execute_block(block)?;
 
         validate_gas_used(&receipts, &block.header)?;
 
@@ -113,7 +114,7 @@ impl Blockchain {
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks(&mut self, blocks: &Vec<Block>) {
+    pub fn import_blocks(&self, blocks: &Vec<Block>) {
         let size = blocks.len();
         for block in blocks {
             let hash = block.hash();
@@ -149,7 +150,7 @@ impl Blockchain {
         }
         if let Some(last_block) = blocks.last() {
             let hash = last_block.hash();
-            match &self.vm {
+            match *self.vm.lock().unwrap() {
                 Evm::LEVM {
                     store: _,
                     block_cache: _,
