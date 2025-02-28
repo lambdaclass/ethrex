@@ -31,14 +31,14 @@ jobs:
           name: pr-loc-data
           path: current_detailed_loc_report.json
 
-  detailed-loc-main:
-    name: Detailed Lines of Code Count for main
+  detailed-loc-base:
+    name: Detailed Lines of Code Count for PR Base
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
+      - name: Checkout Base
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.base.sha }} # Use PR base commit
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.82.0
@@ -48,21 +48,21 @@ jobs:
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Lines of Code Counter for main
+      - name: Run Lines of Code Counter for base
         run: |
           make loc-detailed
           mv current_detailed_loc_report.json previous_detailed_loc_report.json
 
-      - name: Upload main Detailed Lines of Code Count Data
+      - name: Upload base Detailed Lines of Code Count Data
         uses: actions/upload-artifact@v4
         with:
-          name: main-loc-data
+          name: base-loc-data
           path: previous_detailed_loc_report.json
 
   detailed-loc-comparison:
     name: Compare Detailed Lines of Code Count
     runs-on: ubuntu-latest
-    needs: [detailed-loc-pr, detailed-loc-main]
+    needs: [detailed-loc-pr, detailed-loc-base]
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -75,10 +75,10 @@ jobs:
           name: pr-loc-data
           path: .
 
-      - name: Download main Detailed Lines of Code Count Data
+      - name: Download base Detailed Lines of Code Count Data
         uses: actions/download-artifact@v4
         with:
-          name: main-loc-data
+          name: base-loc-data
           path: .
 
       - name: Compare Detailed Lines of Code Count
