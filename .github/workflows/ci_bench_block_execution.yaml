@@ -1,0 +1,56 @@
+name: Benchmark Block execution against main
+
+on:
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  benchmark-pr:
+    name: Benchmark for PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.81.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Set up cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install hyperfine
+        uses: taiki-e/install-action@v2
+        with:
+          tool: hyperfine@1.16
+
+      - name: Run PR benchmarks
+        run: make bench-ci
+
+      - name: Upload PR results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-result
+          path: bench_pr_comparison.md
+
+      - name: Find comment
+        continue-on-error: true
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Benchmark Block Execution Results Comparison Against Main"
+
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: bench_pr_comparison.md
+          edit-mode: replace
+
