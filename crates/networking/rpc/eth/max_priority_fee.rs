@@ -56,7 +56,7 @@ mod tests {
 
     fn default_context() -> RpcApiContext {
         let storage = setup_store();
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         RpcApiContext {
             storage,
             blockchain,
