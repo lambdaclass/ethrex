@@ -327,16 +327,19 @@ async fn erc20_load_test(
                         nonce: Some(nonce + i),
                         max_fee_per_gas: Some(3121115334),
                         max_priority_fee_per_gas: Some(3000000000),
-                        gas_limit: Some(TX_GAS_COST * 100),
+                        gas_limit: Some(TX_GAS_COST * 3),
                         ..Default::default()
                     },
                     1,
                 )
                 .await?;
             let client = client.clone();
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_micros(100)).await;
             tasks.spawn(async move {
-                let _sent = client.send_eip1559_transaction(&send_tx, &sk).await.unwrap();
+                let _sent = client
+                    .send_eip1559_transaction(&send_tx, &sk)
+                    .await
+                    .unwrap();
                 println!("ERC-20 transfer number {} sent!", nonce + i + 1);
             });
         }
