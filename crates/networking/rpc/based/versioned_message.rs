@@ -110,11 +110,13 @@ impl SignedMessage {
         let message = libsecp256k1::Message::parse(&self.message.tree_hash_root().0);
         let signature = libsecp256k1::Signature::parse_standard_slice(&self.signature[..64])
             .map_err(|e| RpcErr::InvalidBasedMessage(format!("Invalid signature: {e}")))?;
-        let recovery_id = libsecp256k1::RecoveryId::parse_rpc(self.signature.0[64])
-            .map_err(|_| RpcErr::InvalidBasedMessage(format!("Invalid signature recovery ID")))?;
+        let recovery_id =
+            libsecp256k1::RecoveryId::parse_rpc(self.signature.0[64]).map_err(|_| {
+                RpcErr::InvalidBasedMessage("Invalid signature recovery ID").to_string()
+            })?;
 
         let signer = libsecp256k1::recover(&message, &signature, &recovery_id)
-            .map_err(|_| RpcErr::InvalidBasedMessage(format!("Invalid signature")))?;
+            .map_err(|_| RpcErr::InvalidBasedMessage("Invalid signature").to_string())?;
 
         // First byte is compression flag, which is always 0x04 for uncompressed keys
         if signer.serialize()[1..] != expected.0 {
