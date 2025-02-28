@@ -38,13 +38,13 @@ jobs:
       - name: Checkout Base
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: ${{ github.head_ref }}
 
       - name: Checkout Base Commit
         run: |
-          BASE_SHA=${{ github.event.pull_request.base.sha }}
-          echo "Checking out base commit: $BASE_SHA"
-          git checkout $BASE_SHA
+          BASE_BRANCH=${{ github.base_ref }}
+          echo "Base branch: $BASE_BRANCH"
+          git merge-base HEAD $BASE_BRANCH
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.82.0
