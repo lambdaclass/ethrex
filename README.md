@@ -327,11 +327,12 @@ At a high level, the following new parts are added to the node:
 | 3         | The network now commits to state diffs instead of the full state, lowering the commit transactions costs. These diffs are also submitted in compressed form, further reducing costs. It also supports EIP 4844 for L1 commit transactions, which means state diffs are sent as blob sidecars instead of calldata. | 🏗️     |
 | 4         | Use our own EVM implementation | 🏗️     |
 | 5         | The L2 supports native account abstraction following [EIP 7701](https://eips.ethereum.org/EIPS/eip-7701) and [EIP 7702](https://eips.ethereum.org/EIPS/eip-7702), allowing for custom transaction validation logic and paymaster flows.                                                                                                                                                             | ❌     |
-| 6         | Support multiple L2s sharing the same bridge contract on L1 for seamless interoperability.               | ❌     |
+| 6         | The network can be run as a Based Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.                                                                                                                                                                  | ❌     |
 | 7         | The L2 can also be deployed using a custom native token, meaning that a certain ERC20 can be the common currency that's used for paying network fees.                                                                                                                                                                              | ❌     |
 | 8         | The L2 has added security mechanisms in place, running on Trusted Execution Environments and Multi Prover setup where multiple guarantees (Execution on TEEs, zkVMs/proving systems) are required for settlement on the L1. This better protects against possible security bugs on implementations.                                                         | ❌     |
 | 9         | The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.                                                                                                                                                                  | ❌     |
-| 10         | The network can be run as a Based Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.                                                                                                                                                                  | ❌     |
+| 10         | Support multiple L2s sharing the same bridge contract on L1 for seamless interoperability.               | ❌     |
+
 
 ### Milestone 0
 
@@ -414,18 +415,17 @@ The L2 supports native account abstraction following EIPs [7701](https://eips.et
 | Add support for `SET_CODE_TX_TYPE` transactions (i.e. implement EIP 7702). | ❌      |
 | Add examples of WebAuthn signing and paymaster flows using EIP 7702        | ❌      |
 
-### Milestone 6: L2s interoperability
+### Milestone 6: Based Contestable Rollup
 
-Support multiple L2s sharing the same bridge contract on L1 for seamless interoperability.
+The network can be run as a Based Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.
 
 #### Status
 
-| Task Description                                                                           | Status |
-| ------------------------------------------------------------------------------------------ | ------ |
-| Change state of the `commonBridge` and `onChainProposer` to be a mapping over `chainId`    | ❌      |
-| Adapt sequencer to be aware of its chain id and interact with the L1 contracts accordingly | ❌      |
+| Task Description                                                                                                    | Status |
+| ------------------------------------------------------------------------------------------------------------------- | ------ |
+| Add methods on the `onChainProposer` L1 contract for proposing new blocks so the sequencing can be done from the L1 | ❌      |
 
-TODO: Expand on tasks about proper interoperability between chains (seamlessly bridging between chains, etc).
+TODO: Expand on this.
 
 ### Milestone 7: Custom Native token
 
@@ -455,18 +455,6 @@ The L2 has added security mechanisms in place, running on Trusted Execution Envi
 
 The L2 can be initialized in Validium Mode, meaning the Data Availability layer is no longer the L1, but rather a DA layer of the user's choice.
 
-### Milestone 10: Based Contestable Rollup
-
-The network can be run as a Based Rollup, meaning sequencing is done by the Ethereum Validator set; transactions are sent to a private mempool and L1 Validators that opt into the L2 sequencing propose blocks for the L2 on every L1 block.
-
-#### Status
-
-| Task Description                                                                                                    | Status |
-| ------------------------------------------------------------------------------------------------------------------- | ------ |
-| Add methods on the `onChainProposer` L1 contract for proposing new blocks so the sequencing can be done from the L1 | ❌      |
-
-TODO: Expand on this.
-
 #### Status
 
 | Task Description                                                                                                                  | Status |
@@ -474,6 +462,19 @@ TODO: Expand on this.
 | Make the `onChainProposer` L1 contract conditional on the data availability mode. On validium, don't check for data availability. | ❌      |
 | The sequencer can initialize on Validium mode, not sending state diff data on `commit` transactions                               | ❌      |
 | Add a DA integration example for Validium mode                                                                                    | ❌      |
+
+### Milestone 10: L2s interoperability
+
+Support multiple L2s sharing the same bridge contract on L1 for seamless interoperability.
+
+#### Status
+
+| Task Description                                                                           | Status |
+| ------------------------------------------------------------------------------------------ | ------ |
+| Change state of the `commonBridge` and `onChainProposer` to be a mapping over `chainId`    | ❌      |
+| Adapt sequencer to be aware of its chain id and interact with the L1 contracts accordingly | ❌      |
+
+TODO: Expand on tasks about proper interoperability between chains (seamlessly bridging between chains, etc).
 
 ## Prerequisites
 

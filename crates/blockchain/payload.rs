@@ -8,8 +8,8 @@ use std::{
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
-        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_transactions_root, compute_withdrawals_root,
+        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
+        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{compute_requests_hash, EncodedRequests, Requests},
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
         MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
@@ -37,7 +37,7 @@ use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRI
 use crate::{
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
-    mempool::{self, PendingTxFilter},
+    mempool::PendingTxFilter,
     Blockchain,
 };
 
@@ -159,20 +159,6 @@ pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
         }
     }
     limit
-}
-
-pub fn calc_excess_blob_gas(
-    parent_excess_blob_gas: u64,
-    parent_blob_gas_used: u64,
-    target: u64,
-) -> u64 {
-    let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
-    let target_blob_gas_per_block = target * GAS_PER_BLOB;
-    if excess_blob_gas < target_blob_gas_per_block {
-        0
-    } else {
-        excess_blob_gas - target_blob_gas_per_block
-    }
 }
 
 pub struct PayloadBuildContext<'a> {
@@ -321,18 +307,15 @@ impl Blockchain {
             only_blob_txs: true,
             ..tx_filter
         };
-        let store = context.store().ok_or(StoreError::Custom(
-            "no store in the context (is an ExecutionDB being used?)".to_string(),
-        ))?;
         Ok((
             // Plain txs
             TransactionQueue::new(
-                mempool::filter_transactions(&plain_tx_filter, store)?,
+                self.mempool.filter_transactions(&plain_tx_filter)?,
                 context.base_fee_per_gas(),
             )?,
             // Blob txs
             TransactionQueue::new(
-                mempool::filter_transactions(&blob_tx_filter, store)?,
+                self.mempool.filter_transactions(&blob_tx_filter)?,
                 context.base_fee_per_gas(),
             )?,
         ))
@@ -397,12 +380,7 @@ impl Blockchain {
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
                 txs.pop();
-                mempool::remove_transaction(
-                    &head_tx.tx.compute_hash(),
-                    context
-                        .store()
-                        .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
-                )?;
+                self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
                 continue;
             }
 
@@ -416,12 +394,7 @@ impl Blockchain {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
-                    mempool::remove_transaction(
-                        &head_tx.tx.compute_hash(),
-                        context
-                            .store()
-                            .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
-                    )?;
+                    self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
                     metrics!(METRICS_TX.inc_tx_with_status_and_type(
                         MetricsTxStatus::Succeeded,
@@ -476,12 +449,7 @@ impl Blockchain {
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
             .unwrap_or_default() as usize;
-
-        let Some(blobs_bundle) = context
-            .store()
-            .ok_or(ChainError::StoreError(StoreError::MissingStore))?
-            .get_blobs_bundle_from_pool(tx_hash)?
-        else {
+        let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
             // No blob tx should enter the mempool without its blobs bundle so this is an internal error
             return Err(
                 StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),
