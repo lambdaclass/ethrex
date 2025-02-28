@@ -218,6 +218,12 @@ impl Blockchain {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
+        // Clear the EVM before starting the payload building
+        {
+            let mut vm = self.vm.lock().unwrap();
+            vm.clear_state(payload.header.parent_hash);
+        }
+
         debug!("Building payload");
         let mut context = PayloadBuildContext::new(payload, &self.storage)?;
         self.apply_system_operations(&mut context)?;

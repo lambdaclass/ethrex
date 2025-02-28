@@ -36,10 +36,10 @@ pub struct LEVM;
 
 impl LEVM {
     pub fn execute_block(block: &Block, store: Store) -> Result<BlockExecutionResult, EvmError> {
-        let store_wrapper = Arc::new(StoreWrapper {
+        let store_wrapper = StoreWrapper {
             store: store.clone(),
             block_hash: block.header.parent_hash,
-        });
+        };
 
         let mut block_cache: CacheDB = HashMap::new();
         let block_header = &block.header;
@@ -60,8 +60,7 @@ impl LEVM {
 
         // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
         // Here we get the state_transitions from the db and then we get the state_transitions from the cache_db.
-        let mut account_updates =
-            Self::get_state_transitions(None, &store, block.header.parent_hash, &block_cache)?;
+        let mut account_updates = Self::get_state_transitions(None, &store_wrapper, &block_cache)?;
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -69,7 +68,7 @@ impl LEVM {
             let report = Self::execute_tx(
                 tx,
                 block_header,
-                store_wrapper.clone(),
+                Arc::new(store_wrapper.clone()),
                 block_cache.clone(),
                 &config,
             )
@@ -124,8 +123,7 @@ impl LEVM {
 
         account_updates.extend(Self::get_state_transitions(
             None,
-            &store,
-            block.header.parent_hash,
+            &store_wrapper,
             &block_cache,
         )?);
 
@@ -196,11 +194,12 @@ impl LEVM {
         // Warning only pass the fork if running the ef-tests.
         // ISSUE #2021: https://github.com/lambdaclass/ethrex/issues/2021
         ef_tests: Option<Fork>,
-        store: &Store,
-        block_hash: H256,
+        store_wrapper: &StoreWrapper,
         new_state: &CacheDB,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
+        let store = store_wrapper.store.clone();
+        let block_hash = store_wrapper.block_hash;
         for (new_state_account_address, new_state_account) in new_state {
             let initial_account_state = store
                 .get_account_info_by_hash(block_hash, *new_state_account_address)

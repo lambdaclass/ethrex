@@ -180,10 +180,8 @@ async fn main() {
         .get_one::<String>("evm")
         .unwrap_or(&"revm".to_string())
         .clone();
-    let evm = Evm::new(evm_impl.clone(), store.clone()).expect(&format!(
-        "Failed to create EVM with implementation: {}",
-        evm_impl
-    ));
+    let evm = Evm::new(evm_impl.clone(), store.clone())
+        .unwrap_or_else(|_| panic!("Failed to create EVM with implementation: {}", evm_impl));
 
     let blockchain = Arc::new(Blockchain::new(evm, store.clone()));
 
