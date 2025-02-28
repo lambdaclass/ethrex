@@ -67,6 +67,7 @@ impl EVM {
         block_cache: &mut CacheDB,
         chain_config: &ChainConfig,
         remaining_gas: &mut u64,
+        sender: Address
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
             EVM::REVM => {
@@ -75,6 +76,7 @@ impl EVM {
                     block_header,
                     state,
                     spec_id(chain_config, block_header.timestamp),
+                    sender
                 )?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
