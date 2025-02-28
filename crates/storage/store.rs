@@ -18,7 +18,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
 use tracing::info;
