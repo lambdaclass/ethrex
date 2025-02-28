@@ -14,9 +14,7 @@ use crate::{
     kademlia::{KademliaTable, PeerChannels},
     rlpx::{
         eth::{
-            blocks::{
-                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, BLOCK_HEADER_LIMIT,
-            },
+            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders},
             receipts::{GetReceipts, Receipts},
         },
         message::Message as RLPxMessage,
@@ -29,11 +27,20 @@ use crate::{
     snap::encodable_to_proof,
 };
 use tracing::info;
-pub const PEER_REPLY_TIMOUT: Duration = Duration::from_secs(45);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
+
+// Ask as much as 128 block bodies and 192 block headers per request
+// these magic numbers are not part of the protocol and are taken from geth, see:
+// https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
+//
+// Note: We noticed that while bigger values are supported
+// increasing them may be the cause of peers disconnection
+pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
+pub const MAX_BLOCK_HEADERS_TO_REQUEST: usize = 192;
 
 /// An abstraction over the [KademliaTable] containing logic to make requests to peers
 #[derive(Debug, Clone)]
@@ -76,20 +83,21 @@ impl PeerHandler {
         &self,
         start: H256,
         order: BlockRequestOrder,
+        limit: u64,
     ) -> Option<Vec<BlockHeader>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
                 id: request_id,
                 startblock: start.into(),
-                limit: BLOCK_HEADER_LIMIT,
+                limit,
                 skip: 0,
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             });
             let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
             let mut receiver = peer.receiver.lock().await;
             peer.sender.send(request).await.ok()?;
-            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
@@ -129,7 +137,7 @@ impl PeerHandler {
             let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
             let mut receiver = peer.receiver.lock().await;
             peer.sender.send(request).await.ok()?;
-            if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
@@ -171,7 +179,7 @@ impl PeerHandler {
             let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
             let mut receiver = peer.receiver.lock().await;
             peer.sender.send(request).await.ok()?;
-            if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::Receipts(Receipts { id, receipts }))
@@ -222,7 +230,7 @@ impl PeerHandler {
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
             peer.sender.send(request).await.ok()?;
-            if let Some((accounts, proof)) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            if let Some((accounts, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::AccountRange(AccountRange {
@@ -280,7 +288,7 @@ impl PeerHandler {
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
             peer.sender.send(request).await.ok()?;
-            if let Some(codes) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            if let Some(codes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
@@ -332,7 +340,7 @@ impl PeerHandler {
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
             peer.sender.send(request).await.ok()?;
-            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
@@ -428,7 +436,7 @@ impl PeerHandler {
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
             peer.sender.send(request).await.ok()?;
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
@@ -497,7 +505,7 @@ impl PeerHandler {
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
             peer.sender.send(request).await.ok()?;
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
@@ -559,7 +567,7 @@ impl PeerHandler {
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
             peer.sender.send(request).await.ok()?;
-            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
+            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
