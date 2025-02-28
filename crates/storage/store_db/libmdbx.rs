@@ -1276,11 +1276,11 @@ mod tests {
     #[test]
     fn indexed_chunk_storage_limit_exceeded() {
         dupsort!(
-            /// Receipts table.
-            ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+            /// example table.
+            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
         );
 
-        let tables = [table_info!(Receipts)].into_iter().collect();
+        let tables = [table_info!(Example)].into_iter().collect();
         let options = DatabaseOptions {
             page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
             mode: Mode::ReadWrite(ReadWriteOptions {
@@ -1293,12 +1293,52 @@ mod tests {
 
         let block_hash = H256::random();
 
-        let receipt = generate_big_receipt(10000, 100, 10);
-        let key = (block_hash, 0).into();
-        let receipt_rlp = receipt.encode_to_vec();
-        let res = IndexedChunk::<Receipt>::from::<Receipts>(key, &receipt_rlp);
+        // we want to store the maximum
+        let max_data_bytes: usize = 517377;
+        let data = Bytes::from(vec![1u8; max_data_bytes]);
+        let key = block_hash.into();
+        let entries = IndexedChunk::<Vec<u8>>::from::<Example>(key, &data);
 
-        assert!(res.is_none());
+        assert!(entries.is_none());
+    }
+
+    // This test verifies the 256-chunk-per-value limitation on indexed chunks.
+    // Given a value size of 2022 bytes, we can store up to 256 * 2022 = 517,632 - 256 bytes.
+    // The 256 subtraction accounts for the index byte overhead.
+    // We expect that we can write up to that storage limit.
+    #[test]
+    fn indexed_chunk_storage_store_max_limit() {
+        dupsort!(
+            /// example table.
+            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
+        );
+
+        let tables = [table_info!(Example)].into_iter().collect();
+        let options = DatabaseOptions {
+            page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
+            mode: Mode::ReadWrite(ReadWriteOptions {
+                max_size: Some(1024_isize.pow(4)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let db = Database::create_with_options(None, options, &tables).unwrap();
+
+        let block_hash = H256::random();
+
+        // we want to store the maximum
+        let max_data_bytes: usize = 517376;
+        let data = Bytes::from(vec![1u8; max_data_bytes]);
+        let key = block_hash.into();
+        let entries = IndexedChunk::<Vec<u8>>::from::<Example>(key, &data).unwrap();
+
+        // store values
+        let txn = db.begin_readwrite().unwrap();
+        let mut cursor = txn.cursor::<Example>().unwrap();
+        for (k, v) in entries {
+            cursor.upsert(k, v).unwrap();
+        }
+        txn.commit().unwrap();
     }
 
     fn generate_big_receipt(
