@@ -7,7 +7,7 @@ use std::{
 use bytes::Bytes;
 use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt},
-    H256, U256,
+    H256, H512, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
@@ -23,7 +23,7 @@ use crate::{
             },
             receipts::{GetReceipts, Receipts},
         },
-        message::{Message as RLPxMessage, RLPxMessage},
+        message::Message as RLPxMessage,
         p2p::Capability,
         snap::{
             AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
@@ -57,15 +57,15 @@ impl PeerHandler {
     /// Returns the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(
-        &mut self,
+    async fn get_peer_with_cap_retry(
+        &self,
         capability: Capability,
     ) -> Option<(PeerChannels, H512)> {
         for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
-            let table_lock = self.peer_table.lock().await;
+            let mut table_lock = self.peer_table.lock().await;
             if let Some(peer) = table_lock.get_idle_peer_with_capability_mut(capability.clone()) {
                 peer.set_as_busy();
-                return Some((peer.channels.clone(), peer.node.node_id));
+                return Some((peer.channels.clone().unwrap(), peer.node.node_id));
             };
             // drop the lock early to no block the rest of processes
             drop(table_lock);
@@ -76,31 +76,31 @@ impl PeerHandler {
         None
     }
 
-    async fn send_request<T: RLPxMessage, R: RLPxMessage>(
-        &mut self,
+    async fn send_request<T: crate::rlpx::message::RLPxMessage>(
+        &self,
         cap: Capability,
-        request: T,
-    ) -> Option<R> {
+        build_request: impl Fn() -> RLPxMessage,
+    ) -> Option<T> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let channels = self.get_peer_channel_with_retry(cap).await;
+            let channels = self.get_peer_with_cap_retry(cap.clone()).await;
             let Some((channel, node_id)) = channels else {
                 return None;
             };
 
             let mut receiver = channel.receiver.lock().await;
-            channel.sender.send(request).await.ok();
+            channel.sender.send(build_request()).await.ok();
             let since = Instant::now();
+            let self_clone = self.clone();
             if let Some(response) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
-                        Some(res) if id == request_id => return Some(res),
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => {
-                            self.peer_table.lock().await.peer_failed_to_respond(node_id);
-                            continue;
-                        }
+                        Some(res) => return Some(res),
                         None => {
-                            self.peer_table.lock().await.peer_failed_to_respond(node_id);
+                            self_clone
+                                .peer_table
+                                .lock()
+                                .await
+                                .peer_failed_to_respond(node_id);
                             return None;
                         }
                     }
@@ -112,7 +112,7 @@ impl PeerHandler {
             {
                 // we give 1 point for successful response
                 // and 2 for a quick response
-                let scoring_points = 1;
+                let mut scoring_points = 1;
                 let ttl = since.elapsed().as_millis();
                 if ttl < 300 {
                     scoring_points += 2;
@@ -123,7 +123,7 @@ impl PeerHandler {
                     .await
                     .peer_responded_successfully(node_id, scoring_points);
 
-                return Some(response);
+                return T::from_msg(response);
             }
         }
 
@@ -140,24 +140,26 @@ impl PeerHandler {
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
         let request_id = rand::random();
-        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
-            id: request_id,
-            startblock: start.into(),
-            limit: BLOCK_HEADER_LIMIT,
-            skip: 0,
-            reverse: matches!(order, BlockRequestOrder::NewToOld),
-        });
-        let Some(response): Option<BlockHeaders> =
-            self.send_request(Capability::Eth, request).await
+        let request = || {
+            RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+                id: request_id,
+                startblock: start.into(),
+                limit: BLOCK_HEADER_LIMIT,
+                skip: 0,
+                reverse: matches!(order, BlockRequestOrder::NewToOld),
+            })
+        };
+        let Some(response) = self
+            .send_request::<BlockHeaders>(Capability::Eth, request)
+            .await
         else {
             return None;
         };
 
         match !response.block_headers.is_empty() {
-            true => Some(headers),
+            true => Some(response.block_headers),
             false => None,
         }
-        None
     }
 
     /// Requests block bodies from any suitable peer given their block hashes
@@ -167,11 +169,15 @@ impl PeerHandler {
     pub async fn request_block_bodies(&self, block_hashes: Vec<H256>) -> Option<Vec<BlockBody>> {
         let block_hashes_len = block_hashes.len();
         let request_id = rand::random();
-        let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
-            id: request_id,
-            block_hashes: block_hashes.clone(),
-        });
-        let Some(response): Option<BlockBodies> = self.send_request(Capability::Eth, request).await
+        let request = || {
+            RLPxMessage::GetBlockBodies(GetBlockBodies {
+                id: request_id,
+                block_hashes: block_hashes.clone(),
+            })
+        };
+        let Some(response) = self
+            .send_request::<BlockBodies>(Capability::Eth, request)
+            .await
         else {
             return None;
         };
@@ -180,8 +186,6 @@ impl PeerHandler {
             true => Some(response.block_bodies),
             false => None,
         }
-
-        None
     }
 
     /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
@@ -191,21 +195,23 @@ impl PeerHandler {
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         let block_hashes_len = block_hashes.len();
         let request_id = rand::random();
-        let request = RLPxMessage::GetReceipts(GetReceipts {
-            id: request_id,
-            block_hashes: block_hashes.clone(),
-        });
-        let Some(response): Option<Receipts> = self.send_request(Capability::Eth, request).await
+        let request = || {
+            RLPxMessage::GetReceipts(GetReceipts {
+                id: request_id,
+                block_hashes: block_hashes.clone(),
+            })
+        };
+        let Some(response) = self
+            .send_request::<Receipts>(Capability::Eth, request)
+            .await
         else {
             return None;
         };
 
         match !response.receipts.is_empty() && response.receipts.len() <= block_hashes_len {
-            true => Some(response.block_bodies),
+            true => Some(response.receipts),
             false => None,
         }
-
-        None
     }
 
     /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
@@ -220,22 +226,23 @@ impl PeerHandler {
         start: H256,
         limit: H256,
     ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
-        let block_hashes_len = block_hashes.len();
         let request_id = rand::random();
-        let request = RLPxMessage::GetAccountRange(GetAccountRange {
-            id: request_id,
-            root_hash: state_root,
-            starting_hash: start,
-            limit_hash: limit,
-            response_bytes: MAX_RESPONSE_BYTES,
-        });
+        let request = || {
+            RLPxMessage::GetAccountRange(GetAccountRange {
+                id: request_id,
+                root_hash: state_root,
+                starting_hash: start,
+                limit_hash: limit,
+                response_bytes: MAX_RESPONSE_BYTES,
+            })
+        };
         let Some(response): Option<AccountRange> =
             self.send_request(Capability::Eth, request).await
         else {
             return None;
         };
 
-        let (account, proof) = (response.accounts, response.proof);
+        let (accounts, proof) = (response.accounts, response.proof);
 
         // Unzip & validate response
         let proof = encodable_to_proof(&proof);
@@ -266,39 +273,26 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_bytecodes(&self, hashes: Vec<H256>) -> Option<Vec<Bytes>> {
         let hashes_len = hashes.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetByteCodes(GetByteCodes {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetByteCodes(GetByteCodes {
                 id: request_id,
                 hashes: hashes.clone(),
                 bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(codes) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
-                            if id == request_id =>
-                        {
-                            return Some(codes)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
+        };
+
+        let Some(response): Option<ByteCodes> = self
+            .send_request::<ByteCodes>(Capability::Eth, request)
             .await
-            .ok()
-            .flatten()
-            .and_then(|codes| (!codes.is_empty() && codes.len() <= hashes_len).then_some(codes))
-            {
-                return Some(codes);
-            }
+        else {
+            return None;
+        };
+
+        match !(response.codes.is_empty() && response.codes.len() <= hashes_len) {
+            true => Some(response.codes),
+            false => None,
         }
-        None
     }
 
     /// Requests storage ranges for accounts given their hashed address and storage roots, and the root of their state trie
@@ -309,94 +303,79 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
-        &self,
+        &mut self,
         state_root: H256,
         mut storage_roots: Vec<H256>,
         account_hashes: Vec<H256>,
         start: H256,
     ) -> Option<(Vec<Vec<H256>>, Vec<Vec<U256>>, bool)> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetStorageRanges(GetStorageRanges {
                 id: request_id,
                 root_hash: state_root,
                 account_hashes: account_hashes.clone(),
                 starting_hash: start,
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
-                            if id == request_id =>
-                        {
-                            return Some((slots, proof))
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
+        };
+
+        let Some(response) = self
+            .send_request::<StorageRanges>(Capability::Eth, request)
             .await
-            .ok()
-            .flatten()
-            {
-                // Check we got a reasonable amount of storage ranges
-                if slots.len() > storage_roots.len() || slots.is_empty() {
-                    return None;
-                }
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let mut storage_keys = vec![];
-                let mut storage_values = vec![];
-                let mut should_continue = false;
-                // Validate each storage range
-                while !slots.is_empty() {
-                    let (hashed_keys, values): (Vec<_>, Vec<_>) = slots
-                        .remove(0)
-                        .into_iter()
-                        .map(|slot| (slot.hash, slot.data))
-                        .unzip();
-                    // We won't accept empty storage ranges
-                    if hashed_keys.is_empty() {
-                        continue;
-                    }
-                    let encoded_values = values
-                        .iter()
-                        .map(|val| val.encode_to_vec())
-                        .collect::<Vec<_>>();
-                    let storage_root = storage_roots.remove(0);
+        else {
+            return None;
+        };
 
-                    // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
-                    if slots.is_empty() && !proof.is_empty() {
-                        let Ok(sc) = verify_range(
-                            storage_root,
-                            &start,
-                            &hashed_keys,
-                            &encoded_values,
-                            &proof,
-                        ) else {
-                            continue;
-                        };
-                        should_continue = sc;
-                    } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
-                        .is_err()
-                    {
-                        continue;
-                    }
+        let (mut slots, proof) = (response.slots, response.proof);
 
-                    storage_keys.push(hashed_keys);
-                    storage_values.push(values);
-                }
-                return Some((storage_keys, storage_values, should_continue));
+        // Check we got a reasonable amount of storage ranges
+        if slots.len() > storage_roots.len() || slots.is_empty() {
+            return None;
+        };
+
+        // Unzip & validate response
+        let proof = encodable_to_proof(&proof);
+        let mut storage_keys = vec![];
+        let mut storage_values = vec![];
+        let mut should_continue = false;
+
+        // Validate each storage range
+        while !slots.is_empty() {
+            let (hashed_keys, values): (Vec<_>, Vec<_>) = slots
+                .remove(0)
+                .into_iter()
+                .map(|slot| (slot.hash, slot.data))
+                .unzip();
+            // We won't accept empty storage ranges
+            if hashed_keys.is_empty() {
+                continue;
             }
+            let encoded_values = values
+                .iter()
+                .map(|val| val.encode_to_vec())
+                .collect::<Vec<_>>();
+            let storage_root = storage_roots.remove(0);
+
+            // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
+            if slots.is_empty() && !proof.is_empty() {
+                let Ok(sc) =
+                    verify_range(storage_root, &start, &hashed_keys, &encoded_values, &proof)
+                else {
+                    continue;
+                };
+                should_continue = sc;
+            } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
+                .is_err()
+            {
+                continue;
+            }
+
+            storage_keys.push(hashed_keys);
+            storage_values.push(values);
         }
-        None
+        return Some((storage_keys, storage_values, should_continue));
     }
 
     /// Requests state trie nodes given the root of the trie where they are contained and their path (be them full or partial)
@@ -409,9 +388,9 @@ impl PeerHandler {
         paths: Vec<Nibbles>,
     ) -> Option<Vec<Node>> {
         let expected_nodes = paths.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetTrieNodes(GetTrieNodes {
                 id: request_id,
                 root_hash: state_root,
                 // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
@@ -420,42 +399,25 @@ impl PeerHandler {
                     .map(|vec| vec![Bytes::from(vec.encode_compact())])
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
-                            if id == request_id =>
-                        {
-                            return Some(nodes)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
+        };
+
+        let Some(response) = self
+            .send_request::<TrieNodes>(Capability::Eth, request)
             .await
-            .ok()
-            .flatten()
-            .and_then(|nodes| {
-                (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                    .then(|| {
-                        nodes
-                            .iter()
-                            .map(|node| Node::decode_raw(node))
-                            .collect::<Result<Vec<_>, _>>()
-                            .ok()
-                    })
-                    .flatten()
-            }) {
-                return Some(nodes);
-            }
+        else {
+            return None;
+        };
+
+        let nodes = response.nodes;
+        match !nodes.is_empty() && nodes.len() <= expected_nodes {
+            true => nodes
+                .iter()
+                .map(|node| Node::decode_raw(node))
+                .collect::<Result<Vec<_>, _>>()
+                .ok(),
+            false => None,
         }
-        None
     }
 
     /// Requests storage trie nodes given the root of the state trie where they are contained and
@@ -468,10 +430,10 @@ impl PeerHandler {
         state_root: H256,
         paths: BTreeMap<H256, Vec<Nibbles>>,
     ) -> Option<Vec<Node>> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let expected_nodes = paths.iter().fold(0, |acc, item| acc + item.1.len());
-            let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
+        let request_id = rand::random();
+        let expected_nodes = paths.iter().fold(0, |acc, item| acc + item.1.len());
+        let request = || {
+            RLPxMessage::GetTrieNodes(GetTrieNodes {
                 id: request_id,
                 root_hash: state_root,
                 // {acc_path: [path, path, ...]} -> [[acc_path, path, path, ...]]
@@ -489,42 +451,26 @@ impl PeerHandler {
                     })
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
-                            if id == request_id =>
-                        {
-                            return Some(nodes)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
+        };
+
+        let Some(response) = self
+            .send_request::<TrieNodes>(Capability::Eth, request)
             .await
-            .ok()
-            .flatten()
-            .and_then(|nodes| {
-                (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                    .then(|| {
-                        nodes
-                            .iter()
-                            .map(|node| Node::decode_raw(node))
-                            .collect::<Result<Vec<_>, _>>()
-                            .ok()
-                    })
-                    .flatten()
-            }) {
-                return Some(nodes);
-            }
+        else {
+            return None;
+        };
+
+        let nodes = response.nodes;
+
+        match !nodes.is_empty() && nodes.len() <= expected_nodes {
+            true => nodes
+                .iter()
+                .map(|node| Node::decode_raw(node))
+                .collect::<Result<Vec<_>, _>>()
+                .ok(),
+            false => None,
         }
-        None
     }
 
     /// Requests a single storage range for an accouns given its hashed address and storage root, and the root of its state trie
@@ -542,60 +488,48 @@ impl PeerHandler {
         account_hash: H256,
         start: H256,
     ) -> Option<(Vec<H256>, Vec<U256>, bool)> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetStorageRanges(GetStorageRanges {
                 id: request_id,
                 root_hash: state_root,
                 account_hashes: vec![account_hash],
                 starting_hash: start,
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
-                            if id == request_id =>
-                        {
-                            return Some((slots, proof))
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
+        };
+
+        let Some(response) = self
+            .send_request::<StorageRanges>(Capability::Eth, request)
             .await
-            .ok()
-            .flatten()
-            {
-                // Check we got a reasonable amount of storage ranges
-                if slots.len() != 1 {
-                    return None;
-                }
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let (storage_keys, storage_values): (Vec<H256>, Vec<U256>) = slots
-                    .remove(0)
-                    .into_iter()
-                    .map(|slot| (slot.hash, slot.data))
-                    .unzip();
-                let encoded_values = storage_values
-                    .iter()
-                    .map(|val| val.encode_to_vec())
-                    .collect::<Vec<_>>();
-                // Verify storage range
-                if let Ok(should_continue) =
-                    verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof)
-                {
-                    return Some((storage_keys, storage_values, should_continue));
-                }
-            }
+        else {
+            return None;
+        };
+
+        let (mut slots, proof) = (response.slots, response.proof);
+
+        if slots.len() != 1 {
+            return None;
         }
+        // Unzip & validate response
+        let proof = encodable_to_proof(&proof);
+        let (storage_keys, storage_values): (Vec<H256>, Vec<U256>) = slots
+            .remove(0)
+            .into_iter()
+            .map(|slot| (slot.hash, slot.data))
+            .unzip();
+        let encoded_values = storage_values
+            .iter()
+            .map(|val| val.encode_to_vec())
+            .collect::<Vec<_>>();
+        // Verify storage range
+        if let Ok(should_continue) =
+            verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof)
+        {
+            return Some((storage_keys, storage_values, should_continue));
+        }
+
         None
     }
 }

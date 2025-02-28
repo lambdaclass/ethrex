@@ -20,6 +20,8 @@ pub trait RLPxMessage: Sized {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError>;
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>;
+
+    fn from_msg(msg: Message) -> Option<Self>;
 }
 #[derive(Debug)]
 pub(crate) enum Message {
