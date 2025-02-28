@@ -19,6 +19,7 @@ pub struct Genesis {
     /// Chain configuration
     pub config: ChainConfig,
     /// The initial state of the accounts in the genesis block.
+    /// This is a BTreeMap because: https://github.com/lambdaclass/ethrex/issues/2070
     pub alloc: BTreeMap<Address, GenesisAccount>,
     /// Genesis header values
     pub coinbase: Address,
