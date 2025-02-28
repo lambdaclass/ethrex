@@ -65,23 +65,21 @@ pub async fn launch(matches: clap::ArgMatches) {
 
     init_metrics(&matches, tracker.clone());
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "dev")] {
-            init_dev_network(&matches, &store, tracker.clone());
-        } else {
-            init_network(
-                &matches,
-                &network,
-                &data_dir,
-                local_p2p_node,
-                signer,
-                peer_table.clone(),
-                store,
-                tracker.clone(),
-            )
-            .await;
-        }
-    }
+    #[cfg(feature = "dev")]
+    init_dev_network(&matches, &store, tracker.clone());
+
+    #[cfg(not(feature = "dev"))]
+    init_network(
+        &matches,
+        &network,
+        &data_dir,
+        local_p2p_node,
+        signer,
+        peer_table.clone(),
+        store,
+        tracker.clone(),
+    )
+    .await;
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
