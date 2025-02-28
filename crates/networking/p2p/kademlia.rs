@@ -323,13 +323,46 @@ impl KademliaTable {
 
     /// Returns the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    pub fn get_peer_channels(&self, capability: Capability) -> Option<PeerChannels> {
+    pub fn get_idle_peer_with_capability_mut(
+        &mut self,
+        capability: Capability,
+    ) -> Option<&mut PeerData> {
         let filter = |peer: &PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
-            peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
+            !peer.busy
+                && peer.channels.is_some()
+                && peer.supported_capabilities.contains(&capability)
         };
-        self.get_random_peer_with_filter(&filter)
-            .and_then(|peer| peer.channels.clone())
+
+        let mut peers_sorted_by_score = self.filter_peers(&filter).collect::<Vec<PeerData>>();
+        peers_sorted_by_score.sort_by(|a, b| b.scoring.cmp(&a.scoring));
+
+        if peers_sorted_by_score.len() == 0 {
+            return None;
+        }
+
+        peers_sorted_by_score[0].channels
+    }
+
+    pub fn peer_failed_to_respond(&mut self, node_id: H512) {
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
+            return;
+        };
+
+        peer.set_as_idle();
+        peer.scoring.saturating_sub(1);
+        if peer.scoring <= 0 {
+            self.replace_peer(node_id);
+        }
+    }
+
+    pub fn peer_responded_successfully(&mut self, node_id: H512, scoring_points: u16) {
+        let Some(peer) = self.get_by_node_id_mut(node_id) else {
+            return;
+        };
+
+        peer.set_as_idle();
+        peer.scoring.saturating_add(scoring_points);
     }
 }
 
@@ -364,6 +397,11 @@ pub struct PeerData {
     /// Starts as false when a node is added. Set to true when a connection si active. When a
     /// connection fails, the peer record is removed, so no need to set it to false.
     pub is_connected: bool,
+    /// A number to track the scoring of peer
+    /// Higher number means it has given better responses
+    pub scoring: u16,
+    /// Whether a request has been made to this peer
+    pub busy: bool,
 }
 
 impl PeerData {
@@ -382,6 +420,8 @@ impl PeerData {
             channels: None,
             supported_capabilities: vec![],
             is_connected: false,
+            scoring: 2,
+            busy: false,
         }
     }
 
@@ -400,6 +440,14 @@ impl PeerData {
 
     pub fn decrement_liveness(&mut self) {
         self.liveness /= 3;
+    }
+
+    pub fn set_as_busy(&mut self) {
+        self.busy = true;
+    }
+
+    pub fn set_as_idle(&mut self) {
+        self.busy = false;
     }
 }
 
