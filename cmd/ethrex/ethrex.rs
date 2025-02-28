@@ -1,10 +1,9 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{
-    types::{Block, Genesis},
-    Public,
-};
+use ethrex_common::types::{Block, Genesis};
+#[cfg(feature = "based")]
+use ethrex_common::Public;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{node_id_from_signing_key, peer_table},
@@ -264,11 +263,12 @@ async fn main() {
         peer_table.clone(),
         sync_mode,
         cancel_token.clone(),
-        blockchain,
+        blockchain.clone(),
     );
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
+    let jwt_secret_clone = jwt_secret.clone();
     cfg_if::cfg_if! {
         if #[cfg(feature = "based")] {
             use ethrex_rpc::{EngineClient, EthClient};
@@ -304,7 +304,8 @@ async fn main() {
                 http_socket_addr,
                 authrpc_socket_addr,
                 store.clone(),
-                jwt_secret,
+                blockchain.clone(),
+                jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
                 syncer,
@@ -320,7 +321,8 @@ async fn main() {
                 http_socket_addr,
                 authrpc_socket_addr,
                 store.clone(),
-                jwt_secret,
+                blockchain.clone(),
+                jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
                 syncer,
@@ -355,7 +357,7 @@ async fn main() {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
-            let l2_proposer = ethrex_l2::start_proposer(store).into_future();
+            let l2_proposer = ethrex_l2::start_proposer(store.clone(), blockchain.clone()).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
             use ethrex_dev;
@@ -393,6 +395,7 @@ async fn main() {
                 signer,
                 peer_table.clone(),
                 store,
+                blockchain,
             )
             .await.expect("Network starts");
             tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
