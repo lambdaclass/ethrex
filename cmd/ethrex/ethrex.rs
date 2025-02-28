@@ -264,7 +264,7 @@ async fn main() {
         peer_table.clone(),
         sync_mode,
         cancel_token.clone(),
-        blockchain,
+        blockchain.clone(),
     );
 
     // TODO: Check every module starts properly.
@@ -301,6 +301,7 @@ async fn main() {
                 http_socket_addr,
                 authrpc_socket_addr,
                 store.clone(),
+                blockchain.clone(),
                 jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
@@ -316,6 +317,7 @@ async fn main() {
                 http_socket_addr,
                 authrpc_socket_addr,
                 store.clone(),
+                blockchain.clone(),
                 jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
@@ -351,7 +353,7 @@ async fn main() {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
-            let l2_proposer = ethrex_l2::start_proposer(store).into_future();
+            let l2_proposer = ethrex_l2::start_proposer(store.clone(), blockchain.clone()).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
             use ethrex_dev;
@@ -389,6 +391,7 @@ async fn main() {
                 signer,
                 peer_table.clone(),
                 store,
+                blockchain,
             )
             .await.expect("Network starts");
             tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
