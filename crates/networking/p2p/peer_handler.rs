@@ -158,7 +158,7 @@ impl PeerHandler {
             return None;
         };
 
-        match !response.block_headers.is_empty() {
+        match response.id == request_id && !response.block_headers.is_empty() {
             true => Some(response.block_headers),
             false => None,
         }
@@ -184,7 +184,10 @@ impl PeerHandler {
             return None;
         };
 
-        match !response.block_bodies.is_empty() && response.block_bodies.len() <= block_hashes_len {
+        match response.id == request_id
+            && !response.block_bodies.is_empty()
+            && response.block_bodies.len() <= block_hashes_len
+        {
             true => Some(response.block_bodies),
             false => None,
         }
@@ -210,7 +213,10 @@ impl PeerHandler {
             return None;
         };
 
-        match !response.receipts.is_empty() && response.receipts.len() <= block_hashes_len {
+        match response.id == request_id
+            && !response.receipts.is_empty()
+            && response.receipts.len() <= block_hashes_len
+        {
             true => Some(response.receipts),
             false => None,
         }
@@ -241,6 +247,10 @@ impl PeerHandler {
         let Some(response): Option<AccountRange> =
             self.send_request(Capability::Eth, request).await
         else {
+            return None;
+        };
+
+        if response.id != request_id {
             return None;
         };
 
@@ -291,7 +301,10 @@ impl PeerHandler {
             return None;
         };
 
-        match !(response.codes.is_empty() && response.codes.len() <= hashes_len) {
+        match response.id == request_id
+            && !response.codes.is_empty()
+            && response.codes.len() <= hashes_len
+        {
             true => Some(response.codes),
             false => None,
         }
@@ -329,6 +342,10 @@ impl PeerHandler {
         else {
             return None;
         };
+
+        if response.id != request_id {
+            return None;
+        }
 
         let (mut slots, proof) = (response.slots, response.proof);
 
@@ -412,7 +429,7 @@ impl PeerHandler {
         };
 
         let nodes = response.nodes;
-        match !nodes.is_empty() && nodes.len() <= expected_nodes {
+        match response.id == request_id && !nodes.is_empty() && nodes.len() <= expected_nodes {
             true => nodes
                 .iter()
                 .map(|node| Node::decode_raw(node))
@@ -465,7 +482,7 @@ impl PeerHandler {
 
         let nodes = response.nodes;
 
-        match !nodes.is_empty() && nodes.len() <= expected_nodes {
+        match response.id != request_id && !nodes.is_empty() && nodes.len() <= expected_nodes {
             true => nodes
                 .iter()
                 .map(|node| Node::decode_raw(node))
@@ -508,6 +525,10 @@ impl PeerHandler {
         else {
             return None;
         };
+
+        if response.id != request_id {
+            return None;
+        }
 
         let (mut slots, proof) = (response.slots, response.proof);
 
