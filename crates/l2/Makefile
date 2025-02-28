@@ -157,15 +157,20 @@ rm-db-l2: ## 🛑 Removes the DB used by the L2
 # cargo test l2 will match tests that has l2 in the function.
 # Tests are at `crates/l2/tests/tests.rs`
 # https://doc.rust-lang.org/book/ch11-02-running-tests.html#filtering-to-run-multiple-tests
+ETHREX_WORKDIR := /usr/local/bin
 ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
+	@echo "\n\033[0;33mWARNING: \033[0m Running the tests inside docker takes \033[1mA LOT\033[0m of time. If possible (especially when running the tests locally), consider running the tests with the 'make test' directive\n"
+
+	# We create an empty .env file simply because if the file
+	# does not exists, the container fails to write to it.
 	touch .env
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
+	ETHREX_WORKDIR=${ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	ETHREX_WORKDIR=${ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
 	cargo test l2 --release -- --nocapture --test-threads=1
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	ETHREX_WORKDIR=${ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	BRIDGE_ADDRESS=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) cargo test l2 --release -- --nocapture --test-threads=1
+	cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
 
 # Purge L2's state

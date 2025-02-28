@@ -31,7 +31,10 @@ COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 
 FROM ubuntu:24.04
-WORKDIR /usr/local/bin
+
+
+ENV ETHREX_WORKDIR=$ETHREX_WORKDIR
+WORKDIR $ETHREX_WORKDIR
 
 COPY cmd/ethrex/networks ./cmd/ethrex/networks
 COPY --from=builder ethrex/target/release/ethrex .
