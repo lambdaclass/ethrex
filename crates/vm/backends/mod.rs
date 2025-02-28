@@ -12,61 +12,66 @@ use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm_b::REVM;
-use std::str::FromStr;
 use std::sync::Arc;
 
-#[derive(Debug, Default, Clone)]
-pub enum EvmImplementation {
-    #[default]
-    REVM,
-    LEVM,
+pub enum Evm {
+    REVM { state: EvmState },
+    LEVM { store: Store, block_cache: CacheDB },
 }
 
-#[derive(Debug, Clone)]
-pub struct EVM {
-    pub evm_impl: EvmImplementation,
-    pub storage: Store,
-}
-
-impl EVM {
-    pub fn new(evm: EvmImplementation, storage: Store) -> Self {
-        Self {
-            evm_impl: evm,
-            storage,
-        }
-    }
-
-    pub fn default_with_storage(storage: Store) -> Self {
-        Self {
-            evm_impl: EvmImplementation::REVM,
-            storage,
-        }
-    }
-
-    pub fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
-        match self.evm_impl {
-            EvmImplementation::REVM => {
-                let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
-                REVM::execute_block(block, &mut state)
+impl std::fmt::Debug for Evm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Evm::REVM { state: _ } => write!(f, "REVM"),
+            Evm::LEVM {
+                store: _,
+                block_cache: _,
+            } => {
+                write!(f, "LEVM")
             }
-            EvmImplementation::LEVM => LEVM::execute_block(block, self.storage.clone()),
+        }
+    }
+}
+
+impl Evm {
+    pub fn new(implementation: String, store: Store) -> Result<Self, EvmError> {
+        match implementation.as_str() {
+            "revm" => Ok(Evm::REVM {
+                state: evm_state(store.clone(), H256::zero()),
+            }),
+            "levm" => Ok(Evm::LEVM {
+                store,
+                block_cache: CacheDB::new(),
+            }),
+            _ => Err(EvmError::InvalidEVM(implementation)),
+        }
+    }
+
+    pub fn default(store: Store) -> Self {
+        Self::new("revm".to_string(), store).expect("This shouldn't fail. Check the implementation")
+    }
+
+    pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
+        match self {
+            Evm::REVM { state } => REVM::execute_block(block, state),
+            Evm::LEVM {
+                store,
+                block_cache: _,
+            } => LEVM::execute_block(block, store.clone()),
         }
     }
 
     /// Wraps [REVM::execute_tx] and [LEVM::execute_tx].
     /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
     pub fn execute_tx(
-        &self,
-        state: &mut EvmState,
+        &mut self,
         tx: &Transaction,
         block_header: &BlockHeader,
-        block_cache: &mut CacheDB,
         remaining_gas: &mut u64,
     ) -> Result<(Receipt, u64), EvmError> {
-        let chain_config = self.storage.get_chain_config()?;
-
-        match self.evm_impl {
-            EvmImplementation::REVM => {
+        match self {
+            Evm::REVM { state } => {
+                let chain_config = state.chain_config()?;
                 let execution_result = REVM::execute_tx(
                     tx,
                     block_header,
@@ -85,11 +90,12 @@ impl EVM {
 
                 Ok((receipt, execution_result.gas_used()))
             }
-            EvmImplementation::LEVM => {
+            Evm::LEVM { store, block_cache } => {
                 let store_wrapper = Arc::new(StoreWrapper {
-                    store: self.storage.clone(),
+                    store: store.clone(),
                     block_hash: block_header.parent_hash,
                 });
+                let chain_config = store.get_chain_config()?;
 
                 let execution_report = LEVM::execute_tx(
                     tx,
@@ -126,15 +132,10 @@ impl EVM {
     /// Wraps [REVM::beacon_root_contract_call], [REVM::process_block_hash_history]
     /// and [LEVM::beacon_root_contract_call], [LEVM::process_block_hash_history].
     /// This function is used to run/apply all the system contracts to the state.
-    pub fn apply_system_calls(
-        &self,
-        state: &mut EvmState,
-        block_header: &BlockHeader,
-        block_cache: &mut CacheDB,
-    ) -> Result<(), EvmError> {
-        let chain_config = self.storage.get_chain_config()?;
-        match self.evm_impl {
-            EvmImplementation::REVM => {
+    pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
+        match self {
+            Evm::REVM { state } => {
+                let chain_config = state.chain_config()?;
                 let spec_id = spec_id(&chain_config, block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
                     REVM::beacon_root_contract_call(block_header, state)?;
@@ -145,10 +146,10 @@ impl EVM {
                 }
                 Ok(())
             }
-            EvmImplementation::LEVM => {
+            Evm::LEVM { store, block_cache } => {
+                let chain_config = store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
                 let mut new_state = CacheDB::new();
-                let store = self.storage.clone();
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     LEVM::beacon_root_contract_call(block_header, &store, &mut new_state)?;
@@ -181,15 +182,13 @@ impl EVM {
     ///
     /// They may have the same name, but they serve for different purposes.
     pub fn get_state_transitions(
-        &self,
-        state: &mut EvmState,
+        &mut self,
         parent_hash: H256,
-        block_cache: &CacheDB,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
-        match self.evm_impl {
-            EvmImplementation::REVM => Ok(REVM::get_state_transitions(state)),
-            EvmImplementation::LEVM => {
-                LEVM::get_state_transitions(None, &self.storage, parent_hash, block_cache)
+        match self {
+            Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
+            Evm::LEVM { store, block_cache } => {
+                LEVM::get_state_transitions(None, &store, parent_hash, block_cache)
             }
         }
     }
@@ -197,18 +196,16 @@ impl EVM {
     /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
     pub fn process_withdrawals(
-        &self,
+        &mut self,
         withdrawals: &[Withdrawal],
-        state: &mut EvmState,
         block_header: &BlockHeader,
-        block_cache: &mut CacheDB,
     ) -> Result<(), StoreError> {
-        match self.evm_impl {
-            EvmImplementation::REVM => REVM::process_withdrawals(state, withdrawals),
-            EvmImplementation::LEVM => {
+        match self {
+            Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
+            Evm::LEVM { store, block_cache } => {
                 let parent_hash = block_header.parent_hash;
                 let mut new_state = CacheDB::new();
-                LEVM::process_withdrawals(&mut new_state, withdrawals, &self.storage, parent_hash)?;
+                LEVM::process_withdrawals(&mut new_state, withdrawals, &store, parent_hash)?;
                 block_cache.extend(new_state);
                 Ok(())
             }
@@ -216,28 +213,15 @@ impl EVM {
     }
 
     pub fn extract_requests(
-        &self,
+        &mut self,
         receipts: &[Receipt],
-        state: &mut EvmState,
         header: &BlockHeader,
-        cache: &mut CacheDB,
     ) -> Result<Vec<Requests>, EvmError> {
-        match self.evm_impl {
-            EvmImplementation::LEVM => {
-                levm::extract_all_requests_levm(receipts, &self.storage, header, cache)
+        match self {
+            Evm::LEVM { store, block_cache } => {
+                levm::extract_all_requests_levm(receipts, &store, header, block_cache)
             }
-            EvmImplementation::REVM => revm_b::extract_all_requests(receipts, state, header),
-        }
-    }
-}
-
-impl FromStr for EvmImplementation {
-    type Err = EvmError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "levm" => Ok(EvmImplementation::LEVM),
-            "revm" => Ok(EvmImplementation::REVM),
-            _ => Err(EvmError::InvalidEVM(s.to_string())),
+            Evm::REVM { state } => revm_b::extract_all_requests(receipts, state, header),
         }
     }
 }
