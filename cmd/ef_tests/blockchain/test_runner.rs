@@ -87,8 +87,11 @@ pub fn parse_test_file(path: &Path) -> HashMap<String, TestUnit> {
 
 /// Creats a new in-memory store and adds the genesis state
 pub fn build_store_for_test(test: &TestUnit) -> Store {
-    let store =
-        Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+    let store = Store::new(
+        &format!("store_{}.db", rand::random::<u64>()),
+        EngineType::Libmdbx,
+    )
+    .expect("Failed to build DB for testing");
     let genesis = test.get_genesis();
     store
         .add_initial_state(genesis)
