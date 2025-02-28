@@ -57,7 +57,7 @@ impl PeerHandler {
     /// Returns the channel ends to an active peer connection that supports the given capability
     /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
     /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_with_cap_retry(
+    async fn get_peer_channel_with_retry(
         &self,
         capability: Capability,
     ) -> Option<(PeerChannels, H512)> {
@@ -83,7 +83,7 @@ impl PeerHandler {
         build_request: impl Fn() -> RLPxMessage,
     ) -> Option<T> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let channels = self.get_peer_with_cap_retry(cap.clone()).await;
+            let channels = self.get_peer_channel_with_retry(cap.clone()).await;
             let Some((channel, node_id)) = channels else {
                 return None;
             };
