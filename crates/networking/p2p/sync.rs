@@ -294,11 +294,11 @@ impl SyncManager {
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );
-                // let store_bodies_handle = tokio::spawn(store_block_bodies(
-                //     all_block_hashes[pivot_idx + 1..].to_vec(),
-                //     self.peers.clone(),
-                //     store.clone(),
-                // ));
+                let store_bodies_handle = tokio::spawn(store_block_bodies(
+                    all_block_hashes[pivot_idx + 1..].to_vec(),
+                    self.peers.clone(),
+                    store.clone(),
+                ));
                 // Perform snap sync
                 if !self
                     .snap_sync(pivot_header.state_root, store.clone())
@@ -309,7 +309,8 @@ impl SyncManager {
                 }
                 info!("Snap sync completed");
                 // Wait for all bodies to be downloaded
-                // store_bodies_handle.await??;
+                info!("Wait for all bodies to be downloaded");
+                store_bodies_handle.await??;
                 // For all blocks before the pivot: Store the bodies and fetch the receipts (TODO)
                 // For all blocks after the pivot: Process them fully
                 info!("For all blocks after the pivot: Process them fully");
