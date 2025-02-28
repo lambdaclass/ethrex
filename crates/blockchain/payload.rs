@@ -8,8 +8,8 @@ use std::{
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
-        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_transactions_root, compute_withdrawals_root,
+        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
+        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{compute_requests_hash, EncodedRequests, Requests},
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
         MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
@@ -159,20 +159,6 @@ pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
         }
     }
     limit
-}
-
-pub fn calc_excess_blob_gas(
-    parent_excess_blob_gas: u64,
-    parent_blob_gas_used: u64,
-    target: u64,
-) -> u64 {
-    let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
-    let target_blob_gas_per_block = target * GAS_PER_BLOB;
-    if excess_blob_gas < target_blob_gas_per_block {
-        0
-    } else {
-        excess_blob_gas - target_blob_gas_per_block
-    }
 }
 
 pub struct PayloadBuildContext<'a> {
@@ -496,6 +482,7 @@ impl Blockchain {
             &mut context.block_cache,
             &chain_config,
             &mut context.remaining_gas,
+            head.tx.sender(),
         )?;
         context.block_value += U256::from(gas_used) * head.tip;
         Ok(report)
@@ -558,7 +545,6 @@ struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HeadTransaction {
     tx: MempoolTransaction,
-    sender: Address,
     tip: u64,
 }
 
@@ -583,7 +569,7 @@ impl TransactionQueue {
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
         let mut heads = Vec::new();
-        for (address, txs) in txs.iter_mut() {
+        for (_, txs) in txs.iter_mut() {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element
             let head_tx = txs.remove(0);
@@ -595,7 +581,6 @@ impl TransactionQueue {
                         InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
                     ))?,
                 tx: head_tx,
-                sender: *address,
             });
         }
         // Sort heads by higest tip (and lowest timestamp if tip is equal)
@@ -627,7 +612,7 @@ impl TransactionQueue {
     /// Removes current head transaction and all transactions from the given sender
     fn pop(&mut self) {
         if !self.is_empty() {
-            let sender = self.heads.remove(0).sender;
+            let sender = self.heads.remove(0).tx.sender();
             self.txs.remove(&sender);
         }
     }
@@ -636,7 +621,7 @@ impl TransactionQueue {
     /// Add a tx from the same sender to the head transactions
     fn shift(&mut self) -> Result<(), ChainError> {
         let tx = self.heads.remove(0);
-        if let Some(txs) = self.txs.get_mut(&tx.sender) {
+        if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {
             // Fetch next head
             if !txs.is_empty() {
                 let head_tx = txs.remove(0);
@@ -648,7 +633,6 @@ impl TransactionQueue {
                         ),
                     )?,
                     tx: head_tx,
-                    sender: tx.sender,
                 };
                 // Insert head into heads list while maintaing order
                 let index = match self.heads.binary_search(&head) {

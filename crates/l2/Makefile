@@ -3,7 +3,7 @@
 .DEFAULT_GOAL := help
 
 L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
-L1_GENESIS_FILE_PATH=../../test_data/genesis-l1.json
+L1_GENESIS_FILE_PATH=../../test_data/genesis-l1-dev.json
 
 # Basic
 help: ## 📚 Show help for each of the Makefile recipes

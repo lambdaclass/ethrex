@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
-	loc-compare-detailed
+	loc-compare-detailed load-test-fibonacci load-test-io
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -193,16 +193,14 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--dev \
 	--datadir test_ethrex
 
-load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	@if [ -z "$$C" ]; then \
-		CONTRACT_INTERACTION=""; \
-		echo "Running the load-test without contract interaction"; \
-		echo "If you want to interact with contracts to load the evm, run the target with a C at the end: make <target> C=1"; \
-	else \
-		CONTRACT_INTERACTION="-c"; \
-		echo "Running the load-test with contract interaction"; \
-	fi; \
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 $$CONTRACT_INTERACTION
+load-test: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000
+
+load-test-fibonacci:
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --fibonacci
+
+load-test-io:
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --io
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex

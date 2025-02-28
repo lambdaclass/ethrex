@@ -75,7 +75,7 @@ pub(crate) struct RLPxConnection<S> {
     node: Node,
     framed: Framed<S, RLPxCodec>,
     storage: Store,
-    blockchain: Blockchain,
+    blockchain: Arc<Blockchain>,
     capabilities: Vec<(Capability, u8)>,
     negotiated_eth_version: u8,
     negotiated_snap_version: u8,
@@ -100,7 +100,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         stream: S,
         codec: RLPxCodec,
         storage: Store,
-        blockchain: Blockchain,
+        blockchain: Arc<Blockchain>,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
