@@ -37,16 +37,6 @@ tasks:
       configVars:
         validatorNamePattern: "validatorPairName"
 
-<<<<<<< HEAD
-=======
-- name: check_consensus_block_proposals
-  title: "Check the tx spammer is working as expected for block proposal with >= 240 transactions"
-  timeout: 6m
-  config:
-    minTransactionCount: 240
-    validatorNamePattern: "[\\d]-ethrex-lighthouse"
-
->>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990))
 - name: run_tasks_concurrent
   title: "Check chain stability (reorgs and forks)"
   timeout: 7m

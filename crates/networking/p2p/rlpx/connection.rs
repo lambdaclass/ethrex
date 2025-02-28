@@ -19,7 +19,6 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::mempool::{self};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     types::{MempoolTransaction, Transaction},

@@ -1,11 +1,7 @@
 use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::error::MempoolError;
-<<<<<<< HEAD
 use ethrex_blockchain::Blockchain;
-=======
-use ethrex_blockchain::mempool;
->>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990))
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::types::WrappedEIP4844Transaction;
@@ -76,14 +72,10 @@ pub(crate) struct NewPooledTransactionHashes {
 }
 
 impl NewPooledTransactionHashes {
-<<<<<<< HEAD
     pub fn new(
         transactions: Vec<Transaction>,
         blockchain: &Blockchain,
     ) -> Result<Self, StoreError> {
-=======
-    pub fn new(transactions: Vec<Transaction>, storage: &Store) -> Result<Self, StoreError> {
->>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990))
         let transactions_len = transactions.len();
         let mut transaction_types = Vec::with_capacity(transactions_len);
         let mut transaction_sizes = Vec::with_capacity(transactions_len);
@@ -100,14 +92,9 @@ impl NewPooledTransactionHashes {
                 // Network representation for PooledTransactions
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
                 Transaction::EIP4844Transaction(eip4844_tx) => {
-<<<<<<< HEAD
                     let tx_blobs_bundle = blockchain
                         .mempool
                         .get_blobs_bundle(transaction_hash)?
-=======
-                    let tx_blobs_bundle = storage
-                        .get_blobs_bundle_from_pool(transaction_hash)?
->>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990))
                         .unwrap_or(BlobsBundle::empty());
                     eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle)
                 }
@@ -213,11 +200,7 @@ impl GetPooledTransactions {
         hash: &H256,
         blockchain: &Blockchain,
     ) -> Result<Option<P2PTransaction>, StoreError> {
-<<<<<<< HEAD
         let Some(tx) = blockchain.mempool.get_transaction_by_hash(*hash)? else {
-=======
-        let Some(tx) = store.get_transaction_by_hash_from_pool(*hash)? else {
->>>>>>> 1713914d (fix(l1): p2p pooled transactions (#1990))
             return Ok(None);
         };
         let result = match tx {
