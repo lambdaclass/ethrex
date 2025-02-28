@@ -252,8 +252,9 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 
 #[cfg(test)]
 pub mod test_utils {
-    use std::{net::SocketAddr, str::FromStr};
+    use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
+    use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
         sync::SyncManager,
@@ -311,7 +312,7 @@ pub mod test_utils {
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
             .expect("Failed to build test genesis");
-
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
         #[cfg(feature = "based")]
@@ -322,6 +323,7 @@ pub mod test_utils {
             http_addr,
             authrpc_addr,
             storage,
+            blockchain,
             jwt_secret,
             local_p2p_node,
             example_local_node_record(),
