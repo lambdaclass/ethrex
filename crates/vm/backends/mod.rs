@@ -76,7 +76,11 @@ impl Evm {
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
-            Evm::REVM { state } => REVM::execute_block(block, state),
+            Evm::REVM { state } => {
+                let mut state =
+                    evm_state(state.database().unwrap().clone(), block.header.parent_hash);
+                REVM::execute_block(block, &mut state)
+            }
             Evm::LEVM { store_wrapper, .. } => {
                 LEVM::execute_block(block, store_wrapper.store.clone())
             }
