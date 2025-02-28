@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 ethrex-common.workspace = true
 ethrex-rlp.workspace = true
+derive_more = { version = "1.0.0", features = ["full"] }
 revm-primitives = { version = "14.0.0", features = [
   "std",
 ], default-features = false }

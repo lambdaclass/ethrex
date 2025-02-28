@@ -15,12 +15,12 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_VERSION: 1.82.0
-  RUST_RETH_VERSION: 1.84.0
+  RUST_VERSION: 1.85.0
+  RUST_RETH_VERSION: 1.85.0
 
 jobs:
   generate-flamegraph-evm:
-    name: Generate Flamegraph LEVM
+    name: Generate Flamegraph
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -157,8 +157,8 @@ jobs:
           path: time_revm.txt
       - name: echo Output
         run: |
-          echo "LevM Time: $(grep "time_levm" time_levm.txt/time_levm.txt | cut -d '=' -f2)"
-          echo "Revm Time: $(grep "time_revm" time_revm.txt/time_revm.txt | cut -d '=' -f2)"
+          echo "LEVM Time: $(grep "time_levm" time_levm.txt | cut -d '=' -f2)"
+          echo "REVM Time: $(grep "time_revm" time_revm.txt | cut -d '=' -f2)"
 
   flamegraph-ethrex:
     name: Generate Flamegraph for Ethrex
@@ -435,37 +435,37 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: flamegraph_ethrex.svg
-          path: flamegraph_ethrex.svg
+          path: ./
 
       - name: Download reth flamegraph artifact
         uses: actions/download-artifact@v4
         with:
           name: flamegraph_reth.svg
-          path: flamegraph_reth.svg
+          path: ./
 
       - name: Download levm flamegraph artifact
         uses: actions/download-artifact@v4
         with:
           name: flamegraph_levm.svg
-          path: flamegraph_levm.svg
+          path: ./
 
       - name: Download revm flamegraph artifact
         uses: actions/download-artifact@v4
         with:
           name: flamegraph_revm.svg
-          path: flamegraph_revm.svg
+          path: ./
 
       - name: Download levm time artifact
         uses: actions/download-artifact@v4
         with:
           name: time_levm.txt
-          path: time_levm.txt
+          path: ./
 
       - name: Download revm time artifact
         uses: actions/download-artifact@v4
         with:
           name: time_revm.txt
-          path: time_revm.txt
+          path: ./
 
       - name: Update static page locally with new data
         shell: bash
@@ -482,7 +482,7 @@ jobs:
 
           # LEVM HTML
           sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" pages/levm.html
-          time_levm=$(grep "time_levm" time_levm.txt/time_levm.txt | cut -d '=' -f2)
+          time_levm=$(grep "time_levm" time_levm.txt | cut -d '=' -f2)
 
           minutes=$(bc -l <<< "scale=0; $time_levm / 60")
           seconds=$(bc -l <<< "scale=0; $time_levm % 60")
@@ -490,7 +490,7 @@ jobs:
           time_levm_str="${minutes} minutes ${seconds} seconds"
           sed -i "s/{{LEVM_TIME}}/${time_levm_str}/g" pages/levm.html
 
-          time_revm=$(grep "time_revm" time_revm.txt/time_revm.txt | cut -d '=' -f2)
+          time_revm=$(grep "time_revm" time_revm.txt | cut -d '=' -f2)
 
           minutes=$(bc -l <<< "scale=0; $time_revm / 60")
           seconds=$(bc -l <<< "scale=0; $time_revm % 60")
