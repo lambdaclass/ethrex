@@ -92,7 +92,7 @@ pub struct SyncManager {
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
-    blockchain: Arc<Blockchain>,
+    pub blockchain: Arc<Blockchain>,
 }
 
 impl SyncManager {

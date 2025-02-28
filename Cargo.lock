@@ -2931,7 +2931,6 @@ dependencies = [
 name = "ethrex-vm"
 version = "0.1.0"
 dependencies = [
- "alloy-rpc-types-eth",
  "bincode",
  "bytes",
  "cfg-if",

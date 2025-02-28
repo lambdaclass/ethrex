@@ -175,12 +175,7 @@ async fn main() {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
-    let evm_impl = matches
-        .get_one::<EvmImplementation>("evm")
-        .unwrap_or(&EvmImplementation::REVM);
-    let evm = EVM::new(evm_impl.clone(), store.clone());
-
-    let blockchain = Blockchain::new(evm, store.clone());
+    let blockchain = Arc::new(Blockchain::new(evm.clone(), store.clone()));
 
     let genesis = read_genesis_file(&network);
     store
