@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex, RwLock},
+    sync::{Mutex, RwLock},
 };
 
 use crate::{
@@ -17,10 +17,10 @@ use ethrex_common::{
 };
 use ethrex_storage::error::StoreError;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct Mempool {
-    transaction_pool: Arc<RwLock<HashMap<H256, MempoolTransaction>>>,
-    blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
+    transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
+    blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
 }
 impl Mempool {
     pub fn new() -> Self {
