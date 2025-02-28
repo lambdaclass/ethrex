@@ -8,7 +8,7 @@ jobs:
   build-binaries:
     strategy:
       matrix:
-        branch: [ base, head ]
+        branch: [ head ]
     name: Build ethrex for ${{ matrix.branch }}
     runs-on: ubuntu-22.04
     steps:
