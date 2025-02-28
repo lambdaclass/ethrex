@@ -243,7 +243,9 @@ impl SyncManager {
                     last_block_hash
                 );
                 current_head = last_block_hash;
-                store.set_header_download_checkpoint(current_head)?;
+                if self.sync_mode == SyncMode::Snap {
+                    store.set_header_download_checkpoint(current_head)?;
+                }
             }
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
