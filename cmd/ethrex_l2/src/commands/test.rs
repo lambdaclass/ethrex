@@ -334,7 +334,7 @@ async fn erc20_load_test(
                 )
                 .await?;
             let client = client.clone();
-            tokio::time::sleep(Duration::from_micros(100)).await;
+            tokio::time::sleep(Duration::from_micros(800)).await;
             tasks.spawn(async move {
                 let _sent = client
                     .send_eip1559_transaction(&send_tx, &sk)
