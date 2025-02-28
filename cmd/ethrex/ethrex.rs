@@ -10,7 +10,7 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::backends::{EvmImplementation, EVM};
+use ethrex_vm::backends::{Evm, EvmImplementation, EVM};
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -175,7 +175,13 @@ async fn main() {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
-    let blockchain = Arc::new(Blockchain::new(evm.clone(), store.clone()));
+
+    let evm_impl = matches
+        .get_one::<EvmImplementation>("evm")
+        .unwrap_or(&Evm::new("revm".to_string(), store.clone()));
+    let evm = Evm::new(evm_impl.clone(), store.clone());
+
+    let blockchain = Arc::new(Blockchain::new(evm, store.clone()));
 
     let genesis = read_genesis_file(&network);
     store
