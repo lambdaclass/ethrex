@@ -105,7 +105,7 @@ impl REVM {
         header: &BlockHeader,
         state: &mut EvmState,
         spec_id: SpecId,
-        sender: Address
+        sender: Address,
     ) -> Result<ExecutionResult, EvmError> {
         let block_env = block_env(header, spec_id);
         let tx_env = tx_env(tx, sender);
