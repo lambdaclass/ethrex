@@ -233,7 +233,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         eth_client
             .call(
                 Address::from_str(
-                    &std::env::var("ON_CHAIN_PROPOSER_ADDRESS")
+                    &std::env::var("COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
                         .expect("ON_CHAIN_PROPOSER env var not set"),
                 )
                 .unwrap(),
