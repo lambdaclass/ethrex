@@ -190,6 +190,11 @@ async fn main() {
         blockchain.import_blocks(&blocks);
     }
 
+    let only_import = *matches.get_one::<bool>("only_import").unwrap_or(&false);
+    if only_import {
+        return;
+    }
+
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
         info!(
             "Importing blocks from individual block files in directory: {}",
