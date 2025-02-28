@@ -38,7 +38,7 @@ jobs:
       - name: Checkout Base
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: ${{ github.head_ref }}
 
       - name: Checkout Base Commit
         run: |
