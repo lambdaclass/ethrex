@@ -5,6 +5,8 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
+use ethrex_rpc::clients::EthClientError;
+use eyre::bail;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::time::Instant;
@@ -135,23 +137,26 @@ async fn transfer_from(
     retries
 }
 
-async fn test_connection(cfg: EthrexL2Config) -> bool {
+async fn test_connection(cfg: EthrexL2Config) -> Result<(), EthClientError> {
+    const RETRIES: usize = 5;
+
     let client = EthClient::new(&cfg.network.l2_rpc_url);
-    let mut retries = 0;
-    while retries < 50 {
+
+    let mut retry = 1;
+    loop {
         match client.get_chain_id().await {
-            Ok(_) => {
-                return true;
+            Ok(_) => break Ok(()),
+            Err(err) if retry == RETRIES => {
+                dbg!(retry);
+                break Err(err);
             }
-            Err(err) => {
-                println!("Connection to server failed: {err}, retrying ({retries}/50)");
-                retries += 1;
-                sleep(std::time::Duration::from_secs(30));
+            _ => {
+                println!("Couldn't establish connection to L2, retrying {retry}/{RETRIES}");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                retry += 1
             }
         }
     }
-    println!("Failed to establish connection to the server");
-    false
 }
 
 impl Command {
@@ -165,12 +170,10 @@ impl Command {
                 verbose,
                 contract,
             } => {
-                let Ok(lines) = read_lines(path) else {
-                    return Ok(());
-                };
-                if !test_connection(cfg.clone()).await {
-                    println!("Test failed to establish connection to server");
-                    return Ok(());
+                let lines = read_lines(path)?;
+
+                if let Err(err) = test_connection(cfg.clone()).await {
+                    bail!("Couldn't establish connection to L2: {err}")
                 }
 
                 let mut to_address = match to {
