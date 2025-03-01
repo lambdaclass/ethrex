@@ -220,9 +220,14 @@ fn handle_forkchoice(
                 }
             };
 
+            info!("Applying fork choice with head: {:#x}", fork_choice_state.head_block_hash);
             // Check if the block has already been invalidated
             match invalid_ancestors.get(&fork_choice_state.head_block_hash) {
                 Some(latest_valid_hash) => {
+                    warn!(
+                        "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
+                        latest_valid_hash
+                    );
                     Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
                 }
                 None => apply_fork_choice(
@@ -230,6 +235,7 @@ fn handle_forkchoice(
                     fork_choice_state.head_block_hash,
                     fork_choice_state.safe_block_hash,
                     fork_choice_state.finalized_block_hash,
+                    invalid_ancestors.clone(),
                 ),
             }
         }

@@ -64,6 +64,7 @@ mod blockchain_integration_test {
             block_2.hash(),
             genesis_header.compute_block_hash(),
             genesis_header.compute_block_hash(),
+            std::collections::HashMap::new(),
         )
         .unwrap();
 
@@ -86,7 +87,7 @@ mod blockchain_integration_test {
         let block_1 = new_block(&store, &genesis_header);
         let hash_1 = block_1.header.compute_block_hash();
         blockchain.add_block(&block_1).unwrap();
-        apply_fork_choice(&store, hash_1, H256::zero(), H256::zero()).unwrap();
+        apply_fork_choice(&store, hash_1, H256::zero(), H256::zero(), std::collections::HashMap::new()).unwrap();
 
         // Build a child, then change its parent, making it effectively a pending block.
         let mut block_2 = new_block(&store, &block_1.header);
@@ -98,7 +99,7 @@ mod blockchain_integration_test {
         // block 2 should now be pending.
         assert!(store.get_pending_block(hash_2).unwrap().is_some());
 
-        let fc_result = apply_fork_choice(&store, hash_2, H256::zero(), H256::zero());
+        let fc_result = apply_fork_choice(&store, hash_2, H256::zero(), H256::zero(), std::collections::HashMap::new());
         assert!(matches!(fc_result, Err(InvalidForkChoice::Syncing)));
 
         // block 2 should still be pending.
@@ -129,7 +130,7 @@ mod blockchain_integration_test {
         blockchain
             .add_block(&block_1b)
             .expect("Could not add block 1b.");
-        apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash, std::collections::HashMap::new()).unwrap();
         let retrieved_1b = store.get_block_header(1).unwrap().unwrap();
 
         assert_ne!(retrieved_1a, retrieved_1b);
@@ -143,7 +144,7 @@ mod blockchain_integration_test {
         blockchain
             .add_block(&block_2)
             .expect("Could not add block 2.");
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash, std::collections::HashMap::new()).unwrap();
         let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
@@ -157,6 +158,7 @@ mod blockchain_integration_test {
             block_1a.hash(),
             genesis_header.compute_block_hash(),
             genesis_header.compute_block_hash(),
+            std::collections::HashMap::new()
         )
         .unwrap();
 
@@ -195,12 +197,12 @@ mod blockchain_integration_test {
         assert!(!is_canonical(&store, 2, hash_2).unwrap());
 
         // Make that chain the canonical one.
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash, std::collections::HashMap::new()).unwrap();
 
         assert!(is_canonical(&store, 1, hash_1).unwrap());
         assert!(is_canonical(&store, 2, hash_2).unwrap());
 
-        let result = apply_fork_choice(&store, hash_1, hash_1, hash_1);
+        let result = apply_fork_choice(&store, hash_1, hash_1, hash_1, std::collections::HashMap::new());
 
         assert!(matches!(
             result,
@@ -242,7 +244,7 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), genesis_hash);
 
         // Make that chain the canonical one.
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash, std::collections::HashMap::new()).unwrap();
 
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
@@ -257,7 +259,7 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
         // if we apply fork choice to the new one, then we should
-        apply_fork_choice(&store, hash_b, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_b, genesis_hash, genesis_hash, std::collections::HashMap::new()).unwrap();
 
         // The latest block should now be the new head.
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_b);

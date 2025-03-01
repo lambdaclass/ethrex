@@ -188,6 +188,7 @@ impl SyncManager {
                 Some(mut block_headers) => {
                     if block_headers.len() == 1 && block_headers[0].compute_block_hash() == current_head && current_head != sync_head {
                         warn!("Already at the current head {}, and number {} but not yet synced, we are at a fork, going back one more ancestor", current_head, block_headers[0].number);
+                        store.unset_canonical_block(block_headers[0].number)?;
                         current_head = block_headers[0].parent_hash;
                         continue;
                     }
@@ -299,6 +300,7 @@ impl SyncManager {
                 self.sync_mode = SyncMode::Full;
             }
             SyncMode::Full => {
+                info!("Starting full sync of headers");
                 // full-sync: Fetch all block bodies and execute them sequentially to build the state
                 download_and_run_blocks(
                     all_block_hashes,
@@ -334,12 +336,17 @@ async fn download_and_run_blocks(
                 .drain(..block_bodies_len)
                 .zip(block_bodies.into_iter())
             {
+                info!("Processing block {}", hash);
                 let header = store
                     .get_block_header_by_hash(hash)?
                     .ok_or(SyncError::CorruptDB)?;
                 let number = header.number;
                 let block = Block::new(header, body);
                 if let Err(error) = blockchain.add_block(&block) {
+                    warn!(
+                        "Failed to execute block {} with hash {}: {}",
+                        number, hash, error
+                    );
                     invalid_ancestors.insert(hash, last_valid_hash);
                     return Err(error.into());
                 }
@@ -350,6 +357,7 @@ async fn download_and_run_blocks(
             info!("Executed & stored {} blocks", block_bodies_len);
             // Check if we need to ask for another batch
             if block_hashes.is_empty() {
+                info!("block_hashes is empty, breaking");
                 break;
             }
         } else {
