@@ -85,6 +85,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError>;
 
+    /// Store block
+    fn add_block(&self, block: Block) -> Result<(), StoreError>;
+
     /// Add receipt
     fn add_receipt(
         &self,

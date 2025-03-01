@@ -419,13 +419,14 @@ impl Store {
 
     pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
         // TODO Maybe add both in a single tx?
-        let header = block.header;
-        let number = header.number;
-        let hash = header.compute_block_hash();
-        self.add_transaction_locations(&block.body.transactions, number, hash)?;
-        self.add_block_body(hash, block.body)?;
-        self.add_block_header(hash, header)?;
-        self.add_block_number(hash, number)
+        // let header = block.header;
+        // let number = header.number;
+        // let hash = header.compute_block_hash();
+        // self.add_transaction_locations(&block.body.transactions, number, hash)?;
+        // self.add_block_body(hash, block.body)?;
+        // self.add_block_header(hash, header)?;
+        // self.add_block_number(hash, number)
+        self.engine.add_block(block)
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {

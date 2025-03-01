@@ -186,6 +186,22 @@ impl StoreEngine for Store {
             }))
     }
 
+    fn add_block(&self, block: Block) -> Result<(), StoreError> {
+        let header = block.header;
+        let hash = header.compute_block_hash(); 
+        let number = header.number;
+        let mut locations = vec![];
+
+        for (index, transaction) in block.body.transactions.iter().enumerate() {
+            locations.push((transaction.compute_hash(), number, hash, index as Index));
+        }
+        self.add_transaction_locations(locations)?;
+        self.add_block_header(hash, header)?;
+        self.add_block_body(hash, block.body)?;
+        self.add_block_number(hash, number)?;
+        Ok(())
+    }
+
     fn add_receipt(
         &self,
         block_hash: BlockHash,

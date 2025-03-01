@@ -150,6 +150,80 @@ impl RedBStore {
         Ok(())
     }
 
+    fn write_with_txn<'k, 'v, 'a, K, V>(
+        txn: &mut redb::WriteTransaction,
+        table: TableDefinition<'a, K, V>,
+        key: impl Borrow<K::SelfType<'k>>,
+        value: impl Borrow<V::SelfType<'v>>,
+    ) -> Result<(), StoreError>
+    where
+        K: Key + 'static,
+        V: Value + 'static,
+    {
+        txn.open_table(table)?.insert(key, value)?;
+        Ok(())
+    }
+
+    fn write_batch_with_txn<'k, 'v, 'a, K, V>(
+        txn: &mut redb::WriteTransaction,
+        table: TableDefinition<'a, K, V>,
+        key_values: Vec<(impl Borrow<K::SelfType<'k>>, impl Borrow<V::SelfType<'v>>)>,
+    ) -> Result<(), StoreError>
+    where
+        K: Key + 'static,
+        V: Value + 'static,
+    {
+        {
+            let mut table = txn.open_table(table)?;
+            for (key, value) in key_values {
+                table.insert(key, value)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn write_to_multi_batch_with_txn<'k, 'v, 'a, K, V>(
+        txn: &mut redb::WriteTransaction,
+        table: MultimapTableDefinition<'a, K, V>,
+        key_values: Vec<(impl Borrow<K::SelfType<'k>>, impl Borrow<V::SelfType<'v>>)>,
+    ) -> Result<(), StoreError> 
+    where
+        K: Key + 'static,
+        V: Key + 'static,
+    {
+
+        {
+            let mut table = txn.open_multimap_table(table)?;
+            for (key, value) in key_values {
+                table.insert(key, value)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn begin(&self) -> Result<redb::WriteTransaction, StoreError> {
+        let txn = self.db.begin_write()?;
+        Ok(txn)
+    }
+
+    fn commit(&self, txn: redb::WriteTransaction) -> Result<(), StoreError> {
+        txn.commit()?;
+        Ok(())
+    }
+
+    fn rollback(&self, txn: redb::WriteTransaction) {
+        let _ =txn.abort();
+    }
+
+    fn write_with_closure(
+        &self,
+        f: impl FnOnce(&mut redb::WriteTransaction) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let mut txn = self.begin()?;
+        f(&mut txn)?;
+        self.commit(txn)
+    }
+
     // Helper method to read from a redb table
     fn read<'k, 'a, K, V>(
         &self,
@@ -191,6 +265,85 @@ impl RedBStore {
         Ok(self
             .read(CANONICAL_BLOCK_HASHES_TABLE, number)?
             .map(|a| a.value().to()))
+    }
+
+    fn add_block_header_with_txn(
+        txn: &mut redb::WriteTransaction,
+        block_hash: BlockHash,
+        block_header: BlockHeader,
+    ) -> Result<(), StoreError> {
+        Self::write_with_txn(
+            txn,
+            HEADERS_TABLE,
+            <H256 as Into<BlockHashRLP>>::into(block_hash),
+            <BlockHeader as Into<BlockHeaderRLP>>::into(block_header),
+        )
+    }
+
+    fn add_block_number_with_txn(
+        txn: &mut redb::WriteTransaction,
+        block_hash: BlockHash,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        Self::write_with_txn(
+            txn,
+            BLOCK_NUMBERS_TABLE,
+            <H256 as Into<BlockHashRLP>>::into(block_hash),
+            block_number,
+        )
+    }
+
+    fn add_block_body_with_txn(
+        txn: &mut redb::WriteTransaction,
+        block_hash: BlockHash,
+        block_body: BlockBody,
+    ) -> Result<(), StoreError> {
+        Self::write_with_txn(
+            txn,
+            BLOCK_BODIES_TABLE,
+            <H256 as Into<BlockHashRLP>>::into(block_hash),
+            <BlockBody as Into<BlockBodyRLP>>::into(block_body),
+        )
+    }
+
+    fn add_transaction_locations_with_txn(
+        txn: &mut redb::WriteTransaction,
+        locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
+    ) -> Result<(), StoreError> {
+        let key_values = locations
+            .into_iter()
+            .map(|(tx_hash, block_number, block_hash, index)| {
+                (
+                    <H256 as Into<TransactionHashRLP>>::into(tx_hash),
+                    <(u64, H256, u64) as Into<Rlp<(BlockNumber, BlockHash, Index)>>>::into((
+                        block_number,
+                        block_hash,
+                        index,
+                    )),
+                )
+            })
+            .collect();
+
+        Self::write_to_multi_batch_with_txn(txn, TRANSACTION_LOCATIONS_TABLE, key_values)
+    }
+
+    fn add_block(&self, block: Block) -> Result<(), StoreError> {
+        let header = block.header;
+        let number = header.number;
+        let hash = header.compute_block_hash();
+
+        let mut locations = vec![];
+
+        for (index, transaction) in block.body.transactions.iter().enumerate() {
+            locations.push((transaction.compute_hash(), number, hash, index as Index));
+        }
+
+        self.write_with_closure(|txn| {
+            Self::add_transaction_locations_with_txn(txn, locations)?;
+            Self::add_block_body_with_txn(txn, hash, block.body)?;
+            Self::add_block_number_with_txn(txn, hash, number)?;
+            Self::add_block_header_with_txn(txn, hash, header)
+        })
     }
 }
 
@@ -611,6 +764,11 @@ impl StoreEngine for RedBStore {
 
         Ok(())
     }
+
+    fn add_block(&self, block: Block) -> Result<(), StoreError> {
+        self.add_block(block)
+    }
+
     fn update_payload(
         &self,
         payload_id: u64,

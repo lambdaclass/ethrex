@@ -84,8 +84,10 @@ impl Store {
         txn: &mut libmdbx::orm::Transaction<'_, libmdbx::RW>,
         key_values: impl Iterator<Item = (T::Key, T::Value)>,
     ) -> Result<(), StoreError> {
+        let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
         for (key, value) in key_values {
-            txn.upsert::<T>(key, value)
+            cursor
+                .upsert(key, value)
                 .map_err(StoreError::LibmdbxError)?;
         }
 
@@ -172,11 +174,23 @@ impl Store {
         self.write_with_closure(|txn| Self::add_transaction_locations_with_txn(locations, txn))
     }
 
-    pub fn add_block_body_and_header(&self, block: Block) -> Result<(), StoreError> {
+    pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
         let header = block.header;
         let number = header.number;
         let hash = header.compute_block_hash();
+
+        let mut locations = vec![];
+
+        for (index, transaction) in block.body.transactions.iter().enumerate() {
+            locations.push((
+                transaction.compute_hash(),
+                number,
+                hash,
+                index as Index,
+            ));
+        }
         self.write_with_closure(|txn| {
+            Self::add_transaction_locations_with_txn(locations, txn)?;
             Self::add_block_body_with_txn(hash, block.body, txn)?;
             Self::add_block_header_with_txn(hash, header, txn)?;
             Self::add_block_number_with_txn(hash, number, txn)
@@ -326,6 +340,10 @@ impl StoreEngine for Store {
                 self.get_block_hash_by_block_number(*number)
                     .is_ok_and(|o| o == Some(*hash))
             }))
+    }
+
+    fn add_block(&self, block: Block) -> Result<(), StoreError> {
+        self.add_block(block)
     }
 
     /// Stores the chain config serialized as json
