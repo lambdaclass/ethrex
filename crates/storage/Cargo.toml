@@ -38,5 +38,5 @@ rand = "0.8.5"
 path = "./lib.rs"
 
 [[bench]]
-name = "storage_benchmark"
+name = "bench_add_block"
 harness = false
