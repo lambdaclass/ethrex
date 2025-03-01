@@ -31,6 +31,12 @@ redb = ["dep:redb"]
 hex.workspace = true
 hex-literal.workspace = true
 tempdir = "0.3.7"
+criterion = "0.5.1"
+rand = "0.8.5"
 
 [lib]
 path = "./lib.rs"
+
+[[bench]]
+name = "storage_benchmark"
+harness = false
