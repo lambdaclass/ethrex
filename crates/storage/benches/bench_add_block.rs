@@ -173,6 +173,37 @@ fn bench_add_blocks(c: &mut Criterion) {
             );
         }
 
+        // Benchmark Redb store if available
+        #[cfg(feature = "redb")]
+        {
+            let (store, _temp_dir) = create_test_store(EngineType::RedB);
+            let genesis_header = store.get_block_header(0).unwrap().unwrap();
+            let genesis_hash = genesis_header.compute_block_hash();
+
+            group.bench_with_input(
+                BenchmarkId::new("Redb", num_blocks),
+                num_blocks,
+                |b, &num_blocks| {
+                    b.iter(|| {
+                        // Create a sequence of blocks
+                        let mut parent_hash = genesis_hash;
+                        let mut parent_number = 0;
+
+                        for i in 0..num_blocks {
+                            let block = create_block_with_random_transactions(
+                                parent_hash,
+                                parent_number + 1,
+                                10, // 10 transactions per block
+                                base_seed + i as u64,
+                            );
+                            parent_hash = block.hash();
+                            parent_number = block.header.number;
+                            black_box(store.add_block(block).unwrap());
+                        }
+                    });
+                },
+            );
+        }
     }
     group.finish();
 }
