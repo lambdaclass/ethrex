@@ -24,6 +24,9 @@ ethrex-metrics = { path = "./metrics", default-features = false }
 [dev-dependencies]
 serde_json.workspace = true
 hex = "0.4.3"
+criterion = "0.5.1"
+rand = "0.8.5"
+secp256k1.workspace = true
 
 [lib]
 path = "./blockchain.rs"
@@ -32,3 +35,7 @@ path = "./blockchain.rs"
 default = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
+
+[[bench]]
+name = "bench_add_block"
+harness = false
