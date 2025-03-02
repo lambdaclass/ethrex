@@ -75,6 +75,10 @@ pub fn pr_message(
         ]);
     }
 
+    if total_lines_changed == 0 {
+        return "".to_string();
+    }
+
     let mut pr_message = String::new();
 
     pr_message.push_str("<h2>Lines of code report</h2>\n");
@@ -86,16 +90,14 @@ pub fn pr_message(
         total_lines_changed,
     ));
 
-    if total_lines_changed > 0 {
-        pr_message.push('\n');
-        pr_message.push_str("<details>\n");
-        pr_message.push_str("<summary>Detailed view</summary>\n");
-        pr_message.push('\n');
-        pr_message.push_str("```\n");
-        pr_message.push_str(&format!("{table}\n"));
-        pr_message.push_str("```\n");
-        pr_message.push_str("</details>\n");
-    }
+    pr_message.push('\n');
+    pr_message.push_str("<details>\n");
+    pr_message.push_str("<summary>Detailed view</summary>\n");
+    pr_message.push('\n');
+    pr_message.push_str("```\n");
+    pr_message.push_str(&format!("{table}\n"));
+    pr_message.push_str("```\n");
+    pr_message.push_str("</details>\n");
 
     pr_message
 }

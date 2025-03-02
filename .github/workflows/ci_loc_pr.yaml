@@ -91,7 +91,17 @@ jobs:
       - name: Compare Detailed Lines of Code Count
         run: make loc-compare-detailed
 
+      - name: Check if report exists
+        id: check_report
+        run: |
+          if [ -s detailed_loc_report.txt ]; then
+            echo "report_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "report_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Find comment
+        if: steps.check_report.outputs.report_exists == 'true'
         continue-on-error: true
         uses: peter-evans/find-comment@v3
         id: fc
@@ -101,6 +111,7 @@ jobs:
           body-includes: "Total lines changed"
 
       - name: Create Comment
+        if: steps.check_report.outputs.report_exists == 'true'
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
