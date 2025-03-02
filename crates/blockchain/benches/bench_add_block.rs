@@ -296,43 +296,43 @@ fn new_block(
 
 fn bench_add_blocks(c: &mut Criterion) {
     let mut group = c.benchmark_group("blockchain_add_blocks");
-    group.measurement_time(Duration::from_secs(30));
+    group.measurement_time(Duration::from_secs(15));
+    group.sample_size(10);
 
     // Use the same base seed for consistent results across runs
 
-    let num_blocks = 100; // We'll benchmark adding 100 blocks
+    let num_blocks = 1000; // We'll benchmark adding 1000 blocks
     let txs_per_block = 5; // Number of transactions per block
 
-    group.throughput(Throughput::Elements(num_blocks as u64));
-
-    group.bench_with_input(
-        BenchmarkId::new("add_100_blocks", num_blocks),
-        &num_blocks,
-        |b, _| {
-            b.iter(|| {
-                // Create a new store and blockchain for each iteration
+    let group_id = BenchmarkId::new("add_1000_blocks", num_blocks);
+    group.bench_function(group_id, |b| {
+        b.iter_with_setup(
+            || {
+                // Setup: Create store, blockchain, and generate all blocks before benchmarking
                 let store = test_store();
                 let blockchain = Blockchain::new(ethrex_vm::backends::EVM::LEVM, store.clone());
-
                 let signers = test_signers();
 
                 // Get genesis block header
                 let genesis_header = store.get_latest_block_number().unwrap();
-                let mut parent_header = store.get_block_header(genesis_header).unwrap().unwrap();
+                let parent_header = store.get_block_header(genesis_header).unwrap().unwrap();
 
-                // Create and add blocks in sequence
-                for i in 0..num_blocks {
-                    let block = new_block(&store, &parent_header, txs_per_block, i, &signers);
+                (store, blockchain, signers, parent_header)
+            },
+            |(store,blockchain,signers,mut parent_header)| {
+                // Only benchmark the actual block addition process
+                    // Only measuring the addition of blocks
+                    for i in 0..num_blocks {
+                        let block = new_block(&store, &parent_header, txs_per_block, i as u64, &signers);
+                        parent_header = block.header.clone();
+                        black_box(blockchain.add_block(&block)).expect("Failed to add block");
+                        black_box(store.update_latest_block_number(block.header.number)).expect("Failed to update latest block number");
+                        black_box(store.set_canonical_block(block.header.number, block.hash())).expect("Failed to set canonical block");
+                    }
+            },
+        );
+    });
 
-                    parent_header = block.header.clone();
-
-                    black_box(blockchain.add_block(&block)).expect("Failed to add block");
-                    black_box(store.update_latest_block_number(block.header.number)).expect("Failed to update latest block number");
-                    black_box(store.set_canonical_block(block.header.number, block.hash())).expect("Failed to set canonical block");
-                }
-            });
-        },
-    );
 
     group.finish();
 }
