@@ -17,7 +17,7 @@ use rand::rngs::OsRng;
 use std::{
     fs::{self, File},
     future::IntoFuture,
-    io,
+    io::{self, Write},
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
     path::{self, Path, PathBuf},
     str::FromStr as _,
@@ -36,14 +36,25 @@ const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
 async fn main() {
     let matches = cli::cli().get_matches();
-
     if let Some(matches) = matches.subcommand_matches("removedb") {
         let data_dir = matches
             .get_one::<String>("datadir")
             .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
         let path = Path::new(&data_dir);
+
         if path.exists() {
-            std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+            print!("Are you sure you want to remove the database? (y/n): ");
+            io::stdout().flush().unwrap();
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).unwrap();
+
+            if input.trim().eq_ignore_ascii_case("y") {
+                std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+                println!("Database removed successfully.");
+            } else {
+                println!("Operation canceled.");
+            }
         } else {
             warn!("Data directory does not exist: {}", data_dir);
         }
