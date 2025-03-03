@@ -23,7 +23,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Lines of Code Counter for PR
-        run: make loc-detailed
+        run: cd cmd/loc && make loc-detailed
 
       - name: Upload PR Detailed Lines of Code Count Data
         uses: actions/upload-artifact@v4
@@ -57,7 +57,7 @@ jobs:
 
       - name: Run Lines of Code Counter for base
         run: |
-          make loc-detailed
+          cd cmd/loc && make loc-detailed
           mv current_detailed_loc_report.json previous_detailed_loc_report.json
 
       - name: Upload base Detailed Lines of Code Count Data
@@ -89,7 +89,7 @@ jobs:
           path: .
 
       - name: Compare Detailed Lines of Code Count
-        run: make loc-compare-detailed
+        run: cd cmd/loc && make loc-compare-detailed
 
       - name: Check if report exists
         id: check_report
