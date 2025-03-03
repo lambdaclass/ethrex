@@ -122,7 +122,7 @@ run-hive-levm: build-image setup-hive ## 🧪 Run Hive testing suite with LEVM
 	cd hive && ./hive --client ethrex --ethrex.flags "--evm levm" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM)
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism 16
+	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM)
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
 	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --docker.output
@@ -145,22 +145,6 @@ loc-detailed:
 
 loc-compare-detailed:
 	cargo run --release -p loc --bin loc -- --compare-detailed
-
-hive-stats:
-	make hive QUIET=true
-	make setup-hive QUIET=true
-	rm -rf hive/workspace $(FILE_NAME)_logs
-	make run-hive-all SIMULATION=ethereum/rpc-compat || exit 0
-	make run-hive-all SIMULATION=devp2p || exit 0
-	make run-hive-all SIMULATION=ethereum/engine || exit 0
-	make run-hive-all SIMULATION=ethereum/sync || exit 0
-
-stats:
-	make loc-stats QUIET=true && echo
-	cd crates/vm/levm && make download-evm-ef-tests
-	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
-	make hive-stats
-	cargo run --quiet --release -p hive_report
 
 install-cli: ## 🛠️ Installs the ethrex-l2 cli
 	cargo install --path cmd/ethrex_l2/ --force
