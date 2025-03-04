@@ -224,7 +224,10 @@ impl<'a> PayloadBuildContext<'a> {
 
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub fn build_payload(&self, payload: &mut Block) -> Result<(BlobsBundle, U256), ChainError> {
+    pub fn build_payload(
+        &self,
+        payload: &mut Block,
+    ) -> Result<(BlobsBundle, U256, EvmState, CacheDB, Vec<Receipt>), ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -250,7 +253,15 @@ impl Blockchain {
             }
         }
 
-        Ok((context.blobs_bundle, context.block_value))
+        let PayloadBuildContext {
+            blobs_bundle,
+            block_value,
+            block_cache,
+            receipts,
+            ..
+        } = context;
+
+        Ok((blobs_bundle, block_value, evm_state, block_cache, receipts))
     }
 
     pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {

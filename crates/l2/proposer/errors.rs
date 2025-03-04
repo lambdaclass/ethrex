@@ -3,6 +3,7 @@ use std::sync::mpsc::SendError;
 use crate::utils::config::errors::ConfigError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
+use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
@@ -71,12 +72,16 @@ pub enum SigIntError {
 pub enum ProposerError {
     #[error("Proposer failed because of an EngineClient error: {0}")]
     EngineClientError(#[from] EngineClientError),
+    #[error("Proposer failed because of a ChainError error: {0}")]
+    ChainError(#[from] ChainError),
+    #[error("Proposer failed because of a EvmError error: {0}")]
+    EvmError(#[from] EvmError),
     #[error("Proposer failed to produce block: {0}")]
     FailedToProduceBlock(String),
     #[error("Proposer failed to prepare PayloadAttributes timestamp: {0}")]
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
-    #[error("Proposer failed retrieve block from storage: {0}")]
-    FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    #[error("Proposer failed because of a store error: {0}")]
+    StoreError(#[from] StoreError),
     #[error("Proposer failed retrieve block from storaga, data is None.")]
     StorageDataIsNone,
     #[error("Proposer failed to read jwt_secret: {0}")]
