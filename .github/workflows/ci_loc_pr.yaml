@@ -1,18 +1,19 @@
-name: PR Lines of Code
+name: PR Lines of Code Analysis
 
 on:
   pull_request:
     branches: ["**"]
 
 jobs:
-  detailed-loc-pr:
-    name: Detailed Lines of Code Count for PR
+  report-loc-changes:
+    name: Calculate and Report PR Line Changes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout PR
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
+          fetch-depth: 0 # Fetch all history to allow base comparison
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.82.0
@@ -24,78 +25,40 @@ jobs:
 
       - name: Run Lines of Code Counter for PR
         run: cd cmd/loc && make loc-detailed
+        # This creates current_detailed_loc_report.json
 
-      - name: Upload PR Detailed Lines of Code Count Data
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr-loc-data
-          path: cmd/loc/current_detailed_loc_report.json
+      - name: Save PR detailed report
+        run: cp cmd/loc/current_detailed_loc_report.json cmd/loc/pr_detailed_loc_report.json
 
-  detailed-loc-base:
-    name: Detailed Lines of Code Count for PR Base
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Base
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-
-      - name: Checkout Base Commit
+      - name: Checkout base branch commit
         run: |
           BASE_BRANCH=${{ github.base_ref }}
           echo "Base branch: $BASE_BRANCH"
           git fetch origin $BASE_BRANCH
           git checkout $(git merge-base HEAD origin/$BASE_BRANCH)
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.82.0
-        with:
-          components: rustfmt, clippy
-
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Run Lines of Code Counter for base
-        run: |
-          cd cmd/loc
-          make loc-detailed
-          mv current_detailed_loc_report.json previous_detailed_loc_report.json
+        run: cd cmd/loc && make loc-detailed
+        # This creates current_detailed_loc_report.json for the base branch
 
-      - name: Upload base Detailed Lines of Code Count Data
-        uses: actions/upload-artifact@v4
-        with:
-          name: base-loc-data
-          path: cmd/loc/previous_detailed_loc_report.json
+      - name: Rename base report to previous_detailed_loc_report.json
+        run: mv cmd/loc/current_detailed_loc_report.json cmd/loc/previous_detailed_loc_report.json
 
-  detailed-loc-comparison:
-    name: Compare Detailed Lines of Code Count
-    runs-on: ubuntu-latest
-    needs: [detailed-loc-pr, detailed-loc-base]
-    steps:
-      - name: Checkout PR
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
+      - name: Checkout back to PR branch for comparison
+        run: git checkout ${{ github.head_ref }}
 
-      - name: Download PR Detailed Lines of Code Count Data
-        uses: actions/download-artifact@v4
-        with:
-          name: pr-loc-data
-          path: cmd/loc
-
-      - name: Download base Detailed Lines of Code Count Data
-        uses: actions/download-artifact@v4
-        with:
-          name: base-loc-data
-          path: cmd/loc
+      - name: Restore PR detailed report
+        run: mv cmd/loc/pr_detailed_loc_report.json cmd/loc/current_detailed_loc_report.json
 
       - name: Compare Detailed Lines of Code Count
         run: cd cmd/loc && make loc-compare-detailed
+        # This reads current_detailed_loc_report.json and previous_detailed_loc_report.json
+        # and outputs detailed_loc_report.txt
 
       - name: Check if report exists
         id: check_report
         run: |
-          if [ -s detailed_loc_report.txt ]; then
+          if [ -s cmd/loc/detailed_loc_report.txt ]; then
             echo "report_exists=true" >> $GITHUB_OUTPUT
           else
             echo "report_exists=false" >> $GITHUB_OUTPUT
@@ -118,5 +81,5 @@ jobs:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: detailed_loc_report.txt
+          body-path: cmd/loc/detailed_loc_report.txt
           edit-mode: replace
