@@ -77,7 +77,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config)?;
 
-        let mut vm = Evm::new(self.evm_engine, self.storage.clone())?;
+        let mut vm = Evm::new(self.evm_engine, self.storage.clone());
         let BlockExecutionResult {
             receipts,
             requests,
