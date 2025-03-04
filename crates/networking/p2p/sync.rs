@@ -94,7 +94,7 @@ pub struct SyncManager {
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
-    pub blockchain: Blockchain,
+    pub blockchain: Arc<Blockchain>,
     metrics: SyncMetrics,
 }
 
@@ -103,7 +103,7 @@ impl SyncManager {
         peer_table: Arc<Mutex<KademliaTable>>,
         sync_mode: SyncMode,
         cancel_token: CancellationToken,
-        blockchain: Blockchain,
+        blockchain: Arc<Blockchain>,
     ) -> Self {
         Self {
             sync_mode,
@@ -129,9 +129,9 @@ impl SyncManager {
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
-            blockchain: Blockchain::default_with_store(
+            blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).unwrap(),
-            ),
+            )),
             metrics: SyncMetrics::default(),
         }
     }
@@ -173,8 +173,8 @@ impl SyncManager {
         // This step is not parallelized
         let mut all_block_hashes = vec![];
         // Check if we have some blocks downloaded from a previous sync attempt
-        // We only check for snap syncing as full sync will start fetching headers starting from the canonical block
-        // which is update every time a new block is added which is done as we fetch block headers
+        // This applies only to snap sync—full sync always starts fetching headers
+        // from the canonical block, which updates as new block headers are fetched.
         if matches!(self.sync_mode, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
@@ -244,8 +244,13 @@ impl SyncManager {
                 }
             }
 
-            // Check if we already found the sync head
-            let sync_head_found = block_hashes.contains(&sync_head);
+            // Filter out everything after the sync_head
+            let mut sync_head_found = false;
+            if let Some(index) = block_hashes.iter().position(|&hash| hash == sync_head) {
+                sync_head_found = true;
+                block_hashes = block_hashes.iter().take(index + 1).cloned().collect();
+            }
+
             // Update current fetch head if needed
             let last_block_hash = last_block_header.compute_block_hash();
             if !sync_head_found {
@@ -254,6 +259,9 @@ impl SyncManager {
                     last_block_hash
                 );
                 current_head = last_block_hash;
+                if self.sync_mode == SyncMode::Snap {
+                    store.set_header_download_checkpoint(current_head)?;
+                }
             }
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync

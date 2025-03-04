@@ -35,7 +35,7 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
 // Ask as much as 128 block bodies and 192 block headers per request
 // these magic numbers are not part of the protocol and are taken from geth, see:
-// https://github.com/ethereum/go-ethereum/blob/master/eth/downloader/downloader.go#L42
+// https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
 //
 // Note: We noticed that while bigger values are supported
 // increasing them may be the cause of peers disconnection
