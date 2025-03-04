@@ -367,11 +367,11 @@ impl Store {
         }
 
         let time_to_apply_updates_ms = since.elapsed().as_millis();
-        info!("Account updates took: {}", time_to_apply_updates_ms / 1000);
+        info!("Account updates took: {}", time_to_apply_updates_ms);
         since = Instant::now();
         let state_root = state_trie.hash()?;
         let time_to_commit_updates_ms = since.elapsed().as_millis();
-        info!("Committing trie took: {}", time_to_commit_updates_ms / 1000);
+        info!("Committing trie took: {}", time_to_commit_updates_ms);
 
         Ok(Some(state_root))
     }
