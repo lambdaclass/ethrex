@@ -14,6 +14,31 @@ use levm::LEVM;
 use revm_b::REVM;
 use std::sync::Arc;
 
+#[derive(Debug, Clone, Copy)]
+pub enum EvmEngine {
+    REVM,
+    LEVM,
+}
+
+impl Default for EvmEngine {
+    fn default() -> Self {
+        EvmEngine::REVM
+    }
+}
+
+// Allow conversion from string for backward compatibility
+impl TryFrom<String> for EvmEngine {
+    type Error = EvmError;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        match s.to_lowercase().as_str() {
+            "revm" => Ok(EvmEngine::REVM),
+            "levm" => Ok(EvmEngine::LEVM),
+            _ => Err(EvmError::InvalidEVM(s)),
+        }
+    }
+}
+
 pub enum Evm {
     REVM {
         state: EvmState,
@@ -37,24 +62,30 @@ impl std::fmt::Debug for Evm {
 
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new(implementation: String, store: Store) -> Result<Self, EvmError> {
-        match implementation.as_str() {
-            "revm" => Ok(Evm::REVM {
+    pub fn new(engine: EvmEngine, store: Store) -> Result<Self, EvmError> {
+        match engine {
+            EvmEngine::REVM => Ok(Evm::REVM {
                 state: evm_state(store.clone(), H256::zero()),
             }),
-            "levm" => Ok(Evm::LEVM {
+            EvmEngine::LEVM => Ok(Evm::LEVM {
                 store_wrapper: StoreWrapper {
                     store: store.clone(),
                     block_hash: H256::zero(),
                 },
                 block_cache: CacheDB::new(),
             }),
-            _ => Err(EvmError::InvalidEVM(implementation)),
         }
     }
 
+    // For backward compatibility
+    pub fn new_from_string(implementation: String, store: Store) -> Result<Self, EvmError> {
+        let engine = EvmEngine::try_from(implementation)?;
+        Self::new(engine, store)
+    }
+
     pub fn default(store: Store) -> Self {
-        Self::new("revm".to_string(), store).expect("This shouldn't fail. Check the implementation")
+        Self::new(EvmEngine::default(), store)
+            .expect("This shouldn't fail. Check the implementation")
     }
 
     /// Clears state of the Evm and sets the block hash.
