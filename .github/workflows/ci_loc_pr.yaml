@@ -57,7 +57,9 @@ jobs:
 
       - name: Run Lines of Code Counter for base
         run: |
-          cd cmd/loc && make loc-detailed
+          cd cmd/loc
+          make loc-detailed
+          mv current_detailed_loc_report.json previous_detailed_loc_report.json
 
       - name: Upload base Detailed Lines of Code Count Data
         uses: actions/upload-artifact@v4
@@ -79,13 +81,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: pr-loc-data
-          path: .
+          path: cmd/loc
 
       - name: Download base Detailed Lines of Code Count Data
         uses: actions/download-artifact@v4
         with:
           name: base-loc-data
-          path: .
+          path: cmd/loc
 
       - name: Compare Detailed Lines of Code Count
         run: cd cmd/loc && make loc-compare-detailed
