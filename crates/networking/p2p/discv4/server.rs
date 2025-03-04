@@ -42,7 +42,7 @@ pub enum DiscoveryError {
 }
 
 /// Implements the discv4 protocol see: https://github.com/ethereum/devp2p/blob/master/discv4.md
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Discv4Server {
     pub(super) ctx: P2PContext,
     pub(super) udp_socket: Arc<UdpSocket>,

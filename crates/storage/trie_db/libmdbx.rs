@@ -24,6 +24,7 @@ where
 impl<T> TrieDB for LibmdbxTrieDB<T>
 where
     T: Table<Key = Vec<u8>, Value = Vec<u8>>,
+    T: std::panic::RefUnwindSafe,
 {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;

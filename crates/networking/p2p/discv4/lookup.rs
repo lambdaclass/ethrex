@@ -15,7 +15,7 @@ use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
 use tracing::debug;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Discv4LookupHandler {
     ctx: P2PContext,
     udp_socket: Arc<UdpSocket>,

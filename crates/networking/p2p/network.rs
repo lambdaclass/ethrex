@@ -42,7 +42,7 @@ pub enum NetworkError {
     DiscoveryStart(DiscoveryError),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct P2PContext {
     pub tracker: TaskTracker,
     pub signer: SigningKey,

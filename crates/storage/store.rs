@@ -20,8 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
@@ -30,9 +29,18 @@ pub const STATE_TRIE_SEGMENTS: usize = 2;
 // This will always be the amount yielded by snapshot reads unless there are less elements left
 pub const MAX_SNAPSHOT_READS: usize = 100;
 
-#[derive(Debug, Clone)]
+const MAX_TRIES_IN_MEMORY: usize = 128;
+
+#[derive(Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+    // todo also store them on program exit
+    // todo interval to store them every x minutes
+    // or if they surpass certain memory limit
+    state_tries_in_memory: Arc<Mutex<Vec<Trie>>>,
+    // todo interval to store them every x minutes
+    // or if they surpass certain memory limit
+    storage_tries_in_memory: Arc<Mutex<Vec<Trie>>>,
 }
 
 #[allow(dead_code)]
@@ -82,13 +90,19 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
+                state_tries_in_memory: Arc::new(Mutex::new(vec![])),
+                storage_tries_in_memory: Arc::new(Mutex::new(vec![])),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                state_tries_in_memory: Arc::new(Mutex::new(vec![])),
+                storage_tries_in_memory: Arc::new(Mutex::new(vec![])),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
+                state_tries_in_memory: Arc::new(Mutex::new(vec![])),
+                storage_tries_in_memory: Arc::new(Mutex::new(vec![])),
             },
         };
         info!("Started store engine");
@@ -321,13 +335,12 @@ impl Store {
                 .map(|a| a.added_storage.len())
                 .sum::<usize>()
         );
-        let mut since = Instant::now();
+
+        // todo check if it is available in memory
+        // otherwise get it from db
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-
-        let mut storage_updates_interval: u128 = 0;
-        let mut storage_updates_commit_interval: u128 = 0;
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -352,7 +365,8 @@ impl Store {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
-                    let since_storage_update = Instant::now();
+                    // todo check first if is available in memory
+                    // otherwise get it from the db
                     let mut storage_trie = self.engine.open_storage_trie(
                         H256::from_slice(&hashed_address),
                         account_state.storage_root,
@@ -365,37 +379,30 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
-                    storage_updates_interval += Instant::now()
-                        .duration_since(since_storage_update)
-                        .as_millis();
 
-                    let since_storage_root_commit = Instant::now();
-                    account_state.storage_root = storage_trie.hash()?;
-                    storage_updates_commit_interval += Instant::now()
-                        .duration_since(since_storage_root_commit)
-                        .as_millis();
+                    account_state.storage_root = storage_trie.hash_no_commit();
+                    self.state_tries_in_memory
+                        .lock()
+                        .unwrap()
+                        .push(storage_trie);
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
 
-        let time_to_apply_updates_ms = Instant::now().duration_since(since).as_millis();
-        info!("Account updates took: {} ms", time_to_apply_updates_ms);
-        since = Instant::now();
-        let state_root = state_trie.hash()?;
-        let time_to_commit_updates_ms = Instant::now().duration_since(since).as_millis();
-        info!("Committing trie took: {} ms", time_to_commit_updates_ms);
-        info!(
-            "Updating storage root took: {} ms",
-            storage_updates_interval
-        );
-        info!(
-            "Committing storage trie took: {} ms",
-            storage_updates_commit_interval
-        );
+        let state_root = state_trie.hash_no_commit();
+        self.storage_tries_in_memory
+            .lock()
+            .unwrap()
+            .push(state_trie);
+
+        self.should_commit_tries_in_memory_to_disk();
 
         Ok(Some(state_root))
     }
+
+    /// checks if we surpass the max tries in memory and whether we should commit the tries to disk
+    pub fn should_commit_tries_in_memory_to_disk(&self) {}
 
     /// Adds all genesis accounts and returns the genesis block's state_root
     pub fn setup_genesis_state_trie(

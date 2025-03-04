@@ -77,7 +77,7 @@ enum RpcRequestWrapper {
     Multiple(Vec<RpcRequest>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RpcApiContext {
     storage: Store,
     blockchain: Arc<Blockchain>,

@@ -33,7 +33,6 @@ use tracing::{error, info, warn};
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-#[derive(Debug)]
 pub struct Blockchain {
     pub vm: EVM,
     storage: Store,

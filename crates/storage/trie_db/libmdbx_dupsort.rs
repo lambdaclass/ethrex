@@ -11,7 +11,7 @@ use libmdbx::orm::{Database, DupSort, Encodable};
 pub struct LibmdbxDupsortTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
-    SK: Clone + Encodable,
+    SK: Clone + Encodable + std::panic::RefUnwindSafe,
 {
     db: Arc<Database>,
     fixed_key: SK,
@@ -21,7 +21,8 @@ where
 impl<T, SK> LibmdbxDupsortTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
-    SK: Clone + Encodable,
+    T: std::panic::RefUnwindSafe,
+    SK: Clone + Encodable + std::panic::RefUnwindSafe,
 {
     pub fn new(db: Arc<Database>, fixed_key: T::SeekKey) -> Self {
         Self {
@@ -35,7 +36,8 @@ where
 impl<T, SK> TrieDB for LibmdbxDupsortTrieDB<T, SK>
 where
     T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
-    SK: Clone + Encodable,
+    T: std::panic::RefUnwindSafe,
+    SK: Clone + Encodable + std::panic::RefUnwindSafe,
 {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
