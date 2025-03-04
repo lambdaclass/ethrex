@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
-	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
-	loc-compare-detailed
+		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
+		load-test-fibonacci load-test-io
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -139,22 +139,6 @@ run-hive-report: build-image setup-hive clean-hive-logs ## 🐝 Run Hive and Bui
 	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
 	cargo run --release -p hive_report
 
-loc:
-	cargo run -p loc
-
-loc-stats:
-	if [ "$(QUIET)" = "true" ]; then \
-		cargo run --quiet -p loc -- --summary;\
-	else \
-		cargo run -p loc -- --summary;\
-	fi
-
-loc-detailed:
-	cargo run --release -p loc --bin loc -- --detailed
-
-loc-compare-detailed:
-	cargo run --release -p loc --bin loc -- --compare-detailed
-
 hive-stats:
 	make hive QUIET=true
 	make setup-hive QUIET=true
@@ -165,7 +149,6 @@ hive-stats:
 	make run-hive-all SIMULATION=ethereum/sync || exit 0
 
 stats:
-	make loc-stats QUIET=true && echo
 	cd crates/vm/levm && make download-evm-ef-tests
 	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
 	make hive-stats
@@ -193,16 +176,14 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--dev \
 	--datadir test_ethrex
 
-load-node: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	@if [ -z "$$C" ]; then \
-		CONTRACT_INTERACTION=""; \
-		echo "Running the load-test without contract interaction"; \
-		echo "If you want to interact with contracts to load the evm, run the target with a C at the end: make <target> C=1"; \
-	else \
-		CONTRACT_INTERACTION="-c"; \
-		echo "Running the load-test with contract interaction"; \
-	fi; \
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 $$CONTRACT_INTERACTION
+load-test: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000
+
+load-test-fibonacci:
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --fibonacci
+
+load-test-io:
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --io
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
