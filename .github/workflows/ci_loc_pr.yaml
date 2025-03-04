@@ -6,7 +6,7 @@ on:
 
 jobs:
   report-loc-changes:
-    name: Calculate and Report PR Line Changes
+    name: Report PR Line Changes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout PR
@@ -32,10 +32,10 @@ jobs:
 
       - name: Checkout base branch commit
         run: |
-          BASE_BRANCH=${{ github.base_ref }}
-          echo "Base branch: $BASE_BRANCH"
-          git fetch origin $BASE_BRANCH
-          git checkout $(git merge-base HEAD origin/$BASE_BRANCH)
+          BASE_REF=${{ github.base_ref }}
+          echo "Base branch: $BASE_REF"
+          git fetch origin $BASE_REF
+          git checkout $(git merge-base HEAD origin/$BASE_REF)
 
       - name: Run Lines of Code Counter for base
         run: cd cmd/loc && make loc-detailed
@@ -45,7 +45,9 @@ jobs:
         run: mv cmd/loc/current_detailed_loc_report.json cmd/loc/previous_detailed_loc_report.json
 
       - name: Checkout back to PR branch for comparison
-        run: git checkout ${{ github.head_ref }}
+        env:
+          PR_HEAD_REF: ${{ github.head_ref }}
+        run: git checkout "$PR_HEAD_REF"
 
       - name: Restore PR detailed report
         run: mv cmd/loc/pr_detailed_loc_report.json cmd/loc/current_detailed_loc_report.json
