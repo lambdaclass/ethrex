@@ -21,6 +21,7 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
@@ -312,6 +313,15 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<H256>, StoreError> {
+        info!(
+            "Number of account updates {}, Number of storage changes {}",
+            account_updates.len(),
+            account_updates
+                .iter()
+                .map(|a| a.added_storage.len())
+                .sum::<usize>()
+        );
+        let mut since = Instant::now();
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -355,7 +365,15 @@ impl Store {
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
-        Ok(Some(state_trie.hash()?))
+
+        let time_to_apply_updates_ms = since.elapsed().as_millis();
+        info!("Account updates took: {}", time_to_apply_updates_ms / 1000);
+        since = Instant::now();
+        let state_root = state_trie.hash()?;
+        let time_to_commit_updates_ms = since.elapsed().as_millis();
+        info!("Committing trie took: {}", time_to_commit_updates_ms / 1000);
+
+        Ok(Some(state_root))
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
