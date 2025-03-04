@@ -65,7 +65,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: base-loc-data
-          path: cmd/loc/current_detailed_loc_report.json
+          path: cmd/loc/previous_detailed_loc_report.json
 
   detailed-loc-comparison:
     name: Compare Detailed Lines of Code Count
