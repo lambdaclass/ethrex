@@ -62,23 +62,47 @@ impl std::fmt::Debug for Evm {
 
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new(engine: EvmEngine, store: Store, block_hash: H256) -> Self {
+    pub fn new(engine: EvmEngine, store: Store) -> Result<Self, EvmError> {
         match engine {
-            EvmEngine::REVM => Evm::REVM {
-                state: evm_state(store.clone(), block_hash),
-            },
-            EvmEngine::LEVM => Evm::LEVM {
+            EvmEngine::REVM => Ok(Evm::REVM {
+                state: evm_state(store.clone(), H256::zero()),
+            }),
+            EvmEngine::LEVM => Ok(Evm::LEVM {
                 store_wrapper: StoreWrapper {
                     store: store.clone(),
                     block_hash,
                 },
                 block_cache: CacheDB::new(),
-            },
+            }),
         }
     }
 
-    pub fn default(store: Store, block_hash: H256) -> Self {
-        Self::new(EvmEngine::default(), store, block_hash)
+    // For backward compatibility
+    pub fn new_from_string(implementation: String, store: Store) -> Result<Self, EvmError> {
+        let engine = EvmEngine::try_from(implementation)?;
+        Self::new(engine, store)
+    }
+
+    pub fn default(store: Store) -> Self {
+        Self::new(EvmEngine::default(), store)
+            .expect("This shouldn't fail. Check the implementation")
+    }
+
+    /// Clears state of the Evm and sets the block hash.
+    /// This is mandatory for using it in a new block, otherwise it can lead to unexpected results.
+    pub fn clear_state(&mut self, block_hash: H256) {
+        match self {
+            Evm::REVM { ref mut state } => {
+                *state = evm_state(state.database().unwrap().clone(), block_hash);
+            }
+            Evm::LEVM {
+                block_cache,
+                store_wrapper,
+            } => {
+                block_cache.clear();
+                store_wrapper.block_hash = block_hash;
+            }
+        }
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
