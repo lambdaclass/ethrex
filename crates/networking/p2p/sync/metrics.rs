@@ -108,7 +108,7 @@ impl Monitor {
         \tTime spent adding blocks: {} seconds ~= {:.2}% of total time\n\
         \tAverage block in total time: {:.3} seconds\n\
         \tBlocks per second: {:.3}\n\
-        \tThroughput: {:.3}\n\
+        \tThroughput: {:.3} Gigagas/s\n\
         \tStarted at block: {} (hash: {:?})\n\
         \tFinished at block: {} (hash: {:?})\n\
         \tExecution count: {}\n\
