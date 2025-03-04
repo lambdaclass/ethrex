@@ -29,7 +29,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pr-loc-data
-          path: current_detailed_loc_report.json
+          path: cmd/loc/current_detailed_loc_report.json
 
   detailed-loc-base:
     name: Detailed Lines of Code Count for PR Base
@@ -58,13 +58,13 @@ jobs:
       - name: Run Lines of Code Counter for base
         run: |
           cd cmd/loc && make loc-detailed
-          mv current_detailed_loc_report.json previous_detailed_loc_report.json
+          mv cmd/loc/current_detailed_loc_report.json cmd/loc/previous_detailed_loc_report.json
 
       - name: Upload base Detailed Lines of Code Count Data
         uses: actions/upload-artifact@v4
         with:
           name: base-loc-data
-          path: previous_detailed_loc_report.json
+          path: cmd/loc/previous_detailed_loc_report.json
 
   detailed-loc-comparison:
     name: Compare Detailed Lines of Code Count
