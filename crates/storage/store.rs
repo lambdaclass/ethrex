@@ -325,6 +325,10 @@ impl Store {
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
+
+        let mut storage_updates_interval: u128 = 0;
+        let mut storage_updates_commit_interval: u128 = 0;
+
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -348,6 +352,7 @@ impl Store {
                 }
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
+                    let since_storage_update = Instant::now();
                     let mut storage_trie = self.engine.open_storage_trie(
                         H256::from_slice(&hashed_address),
                         account_state.storage_root,
@@ -360,18 +365,34 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
+                    storage_updates_interval += Instant::now()
+                        .duration_since(since_storage_update)
+                        .as_millis();
+
+                    let since_storage_root_commit = Instant::now();
                     account_state.storage_root = storage_trie.hash()?;
+                    storage_updates_commit_interval += Instant::now()
+                        .duration_since(since_storage_root_commit)
+                        .as_millis();
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
 
-        let time_to_apply_updates_ms = since.elapsed().as_millis();
-        info!("Account updates took: {}", time_to_apply_updates_ms);
+        let time_to_apply_updates_ms = Instant::now().duration_since(since).as_millis();
+        info!("Account updates took: {} ms", time_to_apply_updates_ms);
         since = Instant::now();
         let state_root = state_trie.hash()?;
-        let time_to_commit_updates_ms = since.elapsed().as_millis();
-        info!("Committing trie took: {}", time_to_commit_updates_ms);
+        let time_to_commit_updates_ms = Instant::now().duration_since(since).as_millis();
+        info!("Committing trie took: {} ms", time_to_commit_updates_ms);
+        info!(
+            "Updating storage root took: {} ms",
+            storage_updates_interval
+        );
+        info!(
+            "Committing storage trie took: {} ms",
+            storage_updates_commit_interval
+        );
 
         Ok(Some(state_root))
     }
