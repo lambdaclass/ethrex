@@ -68,7 +68,7 @@ impl REVM {
         let mut cumulative_gas_used = 0;
 
         for tx in block.body.transactions.iter() {
-            let result = Self::execute_tx(tx, block_header, state, spec_id)?;
+            let result = Self::execute_tx(tx, block_header, state, spec_id, tx.sender())?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -105,9 +105,10 @@ impl REVM {
         header: &BlockHeader,
         state: &mut EvmState,
         spec_id: SpecId,
+        sender: Address,
     ) -> Result<ExecutionResult, EvmError> {
         let block_env = block_env(header, spec_id);
-        let tx_env = tx_env(tx);
+        let tx_env = tx_env(tx, sender);
         run_evm(tx_env, block_env, state, spec_id)
     }
 
@@ -374,14 +375,14 @@ pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
 
 // Used for the L2
 pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
-pub fn tx_env(tx: &Transaction) -> TxEnv {
+pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
     let max_fee_per_blob_gas = tx
         .max_fee_per_blob_gas()
         .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
         caller: match tx {
             Transaction::PrivilegedL2Transaction(_tx) => RevmAddress::ZERO,
-            _ => RevmAddress(tx.sender().0.into()),
+            _ => RevmAddress(sender.0.into()),
         },
         gas_limit: tx.gas_limit(),
         gas_price: RevmU256::from(tx.gas_price()),
