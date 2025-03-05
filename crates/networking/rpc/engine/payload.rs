@@ -537,12 +537,6 @@ fn handle_new_payload_v3(
         return Ok(PayloadStatus::invalid_with_err(&error_msg));
     }
 
-    debug!(
-        "Block hash {} is about to check for invalid ancestors and its parent {}",
-        block.hash(),
-        block.header.parent_hash
-    );
-
     // Check for invalid ancestors
     if let Some(status) = validate_ancestors(&block, &context)? {
         return Ok(status);
