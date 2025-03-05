@@ -1,4 +1,4 @@
-name: "Pull Request Changelog Workflow"
+name: "Perf Changelog"
 on:
   merge_group:
   pull_request:
