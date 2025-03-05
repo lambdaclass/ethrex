@@ -480,6 +480,7 @@ TODO: Expand on tasks about proper interoperability between chains (seamlessly b
 
 - [Rust (explained in L1 requirements section above)](#build)
 - [Docker](https://docs.docker.com/engine/install/) (with [Docker Compose](https://docs.docker.com/compose/install/))
+- [The Solidity Compiler](https://docs.soliditylang.org/en/latest/installing-solidity.html) (solc)
 
 ## How to run
 
