@@ -306,6 +306,7 @@ pub fn get_network(matches: &ArgMatches) -> String {
     network
 }
 
+#[cfg(not(feature = "dev"))]
 pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = matches
         .get_many("bootnodes")
