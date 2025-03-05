@@ -214,7 +214,10 @@ impl SyncManager {
             };
 
             // This is just for testing the solution
-            if first_block_header == last_block_header && block_headers[0].compute_block_hash() == current_head && current_head != sync_head {
+            if first_block_header == last_block_header
+                && block_headers[0].compute_block_hash() == current_head
+                && current_head != sync_head
+            {
                 // There is no path to the sync head this goes back until it find a common ancerstor
                 warn!("Sync failed to find target block header, going back to the previous parent");
                 current_head = block_headers[0].parent_hash;
@@ -382,37 +385,38 @@ impl SyncManager {
 
                 // Execute and store blocks
                 // This change is just for testing the hipotesis that invalidating the remaining blocks on the sync fixes the issue
-                iterator.try_for_each(|(hash, body)| {
-                    let header = store
-                        .get_block_header_by_hash(hash)?
-                        .ok_or(SyncError::CorruptDB)?;
-                    let number = header.number;
-                    let block = Block::new(header, body);
-                    if let Err(error) = self.blockchain.add_block(&block) {
-                        warn!("Failed to add block during FullSync: {error}");
-                        warn!("Marking block {} as invalid", hash);
-                        self.invalid_ancestors.insert(hash, last_valid_hash);
+                iterator
+                    .try_for_each(|(hash, body)| {
+                        let header = store
+                            .get_block_header_by_hash(hash)?
+                            .ok_or(SyncError::CorruptDB)?;
+                        let number = header.number;
+                        let block = Block::new(header, body);
+                        if let Err(error) = self.blockchain.add_block(&block) {
+                            warn!("Failed to add block during FullSync: {error}");
+                            warn!("Marking block {} as invalid", hash);
+                            self.invalid_ancestors.insert(hash, last_valid_hash);
 
-                        return Err(error.into());
-                    }
-                    store.set_canonical_block(number, hash)?;
-                    store.update_latest_block_number(number)?;
-                    last_valid_hash = hash;
-                    debug!(
-                        "Executed and stored block number {} with hash {}",
-                        number, hash
-                    );
-                    Ok(())
-                }).or_else(|err: SyncError| {
-                    warn!("Mark invalid blocks as invalid and abort sync: {err}");
-                    iterator.for_each(|(hash, _)| {
-                        warn!("Marking block {} as invalid", hash);
-                        self.invalid_ancestors.insert(hash, last_valid_hash);
-                    });
+                            return Err(error.into());
+                        }
+                        store.set_canonical_block(number, hash)?;
+                        store.update_latest_block_number(number)?;
+                        last_valid_hash = hash;
+                        debug!(
+                            "Executed and stored block number {} with hash {}",
+                            number, hash
+                        );
+                        Ok(())
+                    })
+                    .or_else(|err: SyncError| {
+                        warn!("Mark invalid blocks as invalid and abort sync: {err}");
+                        iterator.for_each(|(hash, _)| {
+                            warn!("Marking block {} as invalid", hash);
+                            self.invalid_ancestors.insert(hash, last_valid_hash);
+                        });
 
-
-                    Err(err)
-                })?;
+                        Err(err)
+                    })?;
 
                 debug!("Executed & stored {} blocks", block_bodies_len);
 

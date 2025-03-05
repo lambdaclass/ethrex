@@ -505,13 +505,18 @@ fn handle_new_payload_v3(
                 return Ok(PayloadStatus::invalid_with_err(&error_msg));
             }
             // We want to check for the current block and its parent if any of those are already invalidated, this is just for testing
-            debug!("Block hash {} is about to check for invalid ancestors and his parent {}", block.hash(), block.header.parent_hash);
-            if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()){
+            debug!(
+                "Block hash {} is about to check for invalid ancestors and his parent {}",
+                block.hash(),
+                block.header.parent_hash
+            );
+            if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
                 Ok(PayloadStatus::invalid_with(
                     *latest_valid_hash,
                     "Header has been previously invalidated.".into(),
                 ))
-            } else if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash){
+            } else if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash)
+            {
                 Ok(PayloadStatus::invalid_with(
                     *latest_valid_hash,
                     "Parent header has been previously invalidated.".into(),

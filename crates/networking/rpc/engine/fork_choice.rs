@@ -220,7 +220,10 @@ fn handle_forkchoice(
                 }
             };
 
-            info!("Applying fork choice with head: {:#x}", fork_choice_state.head_block_hash);
+            info!(
+                "Applying fork choice with head: {:#x}",
+                fork_choice_state.head_block_hash
+            );
             // Check if the block has already been invalidated
             match invalid_ancestors.get(&fork_choice_state.head_block_hash) {
                 Some(latest_valid_hash) => {
@@ -238,23 +241,29 @@ fn handle_forkchoice(
 
                     match head_block {
                         Some(head_block) => {
-                            warn!("FORKCHOICE: Checking parent for invalid ancestor {}", head_block.parent_hash);
-                            if let Some(latest_valid_hash) = invalid_ancestors.get(&head_block.parent_hash) {
+                            warn!(
+                                "FORKCHOICE: Checking parent for invalid ancestor {}",
+                                head_block.parent_hash
+                            );
+                            if let Some(latest_valid_hash) =
+                                invalid_ancestors.get(&head_block.parent_hash)
+                            {
                                 Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
                             } else {
                                 apply_fork_choice(
-                                &context.storage,
-                                fork_choice_state.head_block_hash,
-                                fork_choice_state.safe_block_hash,
-                                fork_choice_state.finalized_block_hash,
-                            )}
+                                    &context.storage,
+                                    fork_choice_state.head_block_hash,
+                                    fork_choice_state.safe_block_hash,
+                                    fork_choice_state.finalized_block_hash,
+                                )
+                            }
                         }
                         None => apply_fork_choice(
                             &context.storage,
                             fork_choice_state.head_block_hash,
                             fork_choice_state.safe_block_hash,
                             fork_choice_state.finalized_block_hash,
-                        )
+                        ),
                     }
                 }
             }
