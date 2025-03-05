@@ -212,8 +212,9 @@ impl SyncManager {
                 Some(header) => header.clone(),
                 None => continue,
             };
-
-            // This is just for testing the solution
+            
+            // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
+            // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
             if first_block_header == last_block_header
                 && block_headers[0].compute_block_hash() == current_head
                 && current_head != sync_head
@@ -285,7 +286,7 @@ impl SyncManager {
             store.add_block_headers(block_hashes.clone(), block_headers)?;
 
             if self.sync_mode == SyncMode::Full {
-                self.download_and_run_blocks(&mut block_hashes, store.clone())
+                self.download_and_run_blocks(&mut block_hashes, sync_head, store.clone())
                     .await?;
             }
 
@@ -349,6 +350,7 @@ impl SyncManager {
     async fn download_and_run_blocks(
         &mut self,
         block_hashes: &mut [BlockHash],
+        sync_head: BlockHash,
         store: Store,
     ) -> Result<(), SyncError> {
         let mut last_valid_hash = H256::default();
@@ -379,45 +381,35 @@ impl SyncManager {
                     block_bodies_len, first_block_hash, first_block_header_number
                 );
 
-                let mut iterator = chunk
-                    .drain(..block_bodies_len)
-                    .zip(block_bodies.into_iter());
-
                 // Execute and store blocks
-                // This change is just for testing the hipotesis that invalidating the remaining blocks on the sync fixes the issue
-                iterator
-                    .try_for_each(|(hash, body)| {
-                        let header = store
-                            .get_block_header_by_hash(hash)?
-                            .ok_or(SyncError::CorruptDB)?;
-                        let number = header.number;
-                        let block = Block::new(header, body);
-                        if let Err(error) = self.blockchain.add_block(&block) {
-                            warn!("Failed to add block during FullSync: {error}");
-                            warn!("Marking block {} as invalid", hash);
-                            self.invalid_ancestors.insert(hash, last_valid_hash);
+                for (hash, body) in chunk
+                    .drain(..block_bodies_len)
+                    .zip(block_bodies.into_iter())
+                {
+                    let header = store
+                        .get_block_header_by_hash(hash)?
+                        .ok_or(SyncError::CorruptDB)?;
+                    let number = header.number;
+                    let block = Block::new(header, body);
+                    if let Err(error) = self.blockchain.add_block(&block) {
+                        warn!("Failed to add block during FullSync: {error}");
+                        self.invalid_ancestors.insert(hash, last_valid_hash);
 
-                            return Err(error.into());
-                        }
-                        store.set_canonical_block(number, hash)?;
-                        store.update_latest_block_number(number)?;
-                        last_valid_hash = hash;
-                        debug!(
-                            "Executed and stored block number {} with hash {}",
-                            number, hash
-                        );
-                        Ok(())
-                    })
-                    .map_err(|err: SyncError| {
-                        warn!("Mark invalid blocks as invalid and abort sync: {err}");
-                        iterator.for_each(|(hash, _)| {
-                            warn!("Marking block {} as invalid", hash);
-                            self.invalid_ancestors.insert(hash, last_valid_hash);
-                        });
+                        // TODO(#2127): Just marking the failing ancestor and the sync head is enough
+                        // to fix the Missing Ancestors hive test, we want to look at a more robust
+                        // solution in the future if needed.
+                        self.invalid_ancestors.insert(sync_head, last_valid_hash);
 
-                        err
-                    })?;
-
+                        return Err(error.into());
+                    }
+                    store.set_canonical_block(number, hash)?;
+                    store.update_latest_block_number(number)?;
+                    last_valid_hash = hash;
+                    debug!(
+                        "Executed and stored block number {} with hash {}",
+                        number, hash
+                    );
+                }
                 debug!("Executed & stored {} blocks", block_bodies_len);
 
                 if chunk.is_empty() {
