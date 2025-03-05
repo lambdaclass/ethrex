@@ -110,6 +110,7 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 4
 EVM_BACKEND := revm
+SIM_PARALLELISM := 16
 
 # Runs a hive testing suite
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
@@ -126,30 +127,6 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
-
-SIM_PARALLELISM := 48
-# `make run-hive-report SIM_PARALLELISM=24 EVM_BACKEND="levm"`
-run-hive-report: build-image setup-hive clean-hive-logs ## 🐝 Run Hive and Build report
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cargo run --release -p hive_report
-
-hive-stats:
-	make hive QUIET=true
-	make setup-hive QUIET=true
-	rm -rf hive/workspace $(FILE_NAME)_logs
-	make run-hive-all SIMULATION=ethereum/rpc-compat || exit 0
-	make run-hive-all SIMULATION=devp2p || exit 0
-	make run-hive-all SIMULATION=ethereum/engine || exit 0
-	make run-hive-all SIMULATION=ethereum/sync || exit 0
-
-stats:
-	cd crates/vm/levm && make download-evm-ef-tests
-	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
-	make hive-stats
-	cargo run --quiet --release -p hive_report
 
 install-cli: ## 🛠️ Installs the ethrex-l2 cli
 	cargo install --path cmd/ethrex_l2/ --force
