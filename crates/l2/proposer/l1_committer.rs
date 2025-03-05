@@ -263,6 +263,7 @@ impl Committer {
 
         let mut modified_accounts = HashMap::new();
         for account_update in &account_updates {
+            // dbg!("MANDARINA");
             let prev_nonce = match state
                 .database()
                 .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?
@@ -276,6 +277,7 @@ impl Committer {
                 None => 0,
             };
 
+            // dbg!("AZUCAR");
             modified_accounts.insert(
                 account_update.address,
                 AccountStateDiff {
@@ -283,7 +285,7 @@ impl Committer {
                     nonce_diff: (account_update
                         .info
                         .clone()
-                        .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?
+                        .ok_or(CommitterError::FailedToRetrieveDataJAMONFromStorage)?
                         .nonce
                         - prev_nonce)
                         .try_into()

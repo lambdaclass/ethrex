@@ -1038,6 +1038,7 @@ impl EthClient {
         let mut receipt = self.get_transaction_receipt(tx_hash).await?;
         let mut r#try = 1;
         while receipt.is_none() {
+            dbg!("rpc/clients/eth/mod.rs");
             println!("[{try}/{max_retries}] Retrying to get transaction receipt for {tx_hash:#x}");
 
             if max_retries == r#try {
