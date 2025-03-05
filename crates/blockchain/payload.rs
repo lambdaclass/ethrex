@@ -187,9 +187,7 @@ impl<'a> PayloadBuildContext<'a> {
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
-        let mut vm = Evm::new(evm_engine, storage.clone());
-        // TODO this should probably be set at vm creation
-        vm.clear_state(payload.header.parent_hash);
+        let vm = Evm::new(evm_engine, storage.clone(), payload.header.parent_hash);
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
