@@ -672,10 +672,10 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
             .send_eip1559_transaction(&build, &secret_key)
             .await
         {
-            Ok(_) => {
+            Ok(hash) => {
                 println!(
-                    "A deposit was completed to {:?} with value {:?}",
-                    address, value_to_deposit
+                    "A deposit was completed to {:?} with value {:?} with hash {:?}",
+                    address, value_to_deposit, hash
                 );
             }
             Err(e) => {
