@@ -376,11 +376,13 @@ impl SyncManager {
                     block_bodies_len, first_block_hash, first_block_header_number
                 );
 
-                // Execute and store blocks
-                for (hash, body) in chunk
+                let mut iterator = chunk
                     .drain(..block_bodies_len)
-                    .zip(block_bodies.into_iter())
-                {
+                    .zip(block_bodies.into_iter());
+
+                // Execute and store blocks
+                // This change is just for testing the hipotesis that invalidating the remaining blocks on the sync fixes the issue
+                iterator.try_for_each(|(hash, body)| {
                     let header = store
                         .get_block_header_by_hash(hash)?
                         .ok_or(SyncError::CorruptDB)?;
@@ -388,7 +390,9 @@ impl SyncManager {
                     let block = Block::new(header, body);
                     if let Err(error) = self.blockchain.add_block(&block) {
                         warn!("Failed to add block during FullSync: {error}");
+                        warn!("Marking block {} as invalid", hash);
                         self.invalid_ancestors.insert(hash, last_valid_hash);
+
                         return Err(error.into());
                     }
                     store.set_canonical_block(number, hash)?;
@@ -398,7 +402,18 @@ impl SyncManager {
                         "Executed and stored block number {} with hash {}",
                         number, hash
                     );
-                }
+                    Ok(())
+                }).or_else(|err: SyncError| {
+                    warn!("Mark invalid blocks as invalid and abort sync: {err}");
+                    iterator.for_each(|(hash, _)| {
+                        warn!("Marking block {} as invalid", hash);
+                        self.invalid_ancestors.insert(hash, last_valid_hash);
+                    });
+
+
+                    Err(err)
+                })?;
+
                 debug!("Executed & stored {} blocks", block_bodies_len);
 
                 if chunk.is_empty() {
