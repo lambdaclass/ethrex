@@ -618,6 +618,8 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
         .map(|line| line.trim().to_string())
         .collect();
 
+    let mut total_deposited = U256::zero();
+
     for pk in private_keys.iter() {
         let pk_str = pk.strip_prefix("0x").unwrap_or(pk);
         let Ok(pk_h256) = pk_str.parse::<H256>() else {
@@ -640,8 +642,10 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
         };
         let value_to_deposit = acc
             .balance
-            .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
+            .checked_div(U256::from_str("3").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
+        total_deposited += value_to_deposit;
+        // let value_to_deposit = U256::one();
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
@@ -670,6 +674,7 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
             }
         }
     }
+    dbg!(total_deposited);
 }
 
 #[allow(clippy::unwrap_used)]

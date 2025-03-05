@@ -82,9 +82,6 @@ impl L1Watcher {
             if logs.is_empty() {
                 continue;
             }
-            for log in &logs {
-                dbg!(log.block_number);
-            }
             let pending_deposit_logs = self.get_pending_deposit_logs().await?;
             let _deposit_txs = self
                 .process_logs(logs, &pending_deposit_logs, store, blockchain)
@@ -272,7 +269,7 @@ impl L1Watcher {
                         // Otherwise, the transaction is not included in the mempool.
                         // We should override the blockchain to always include the transaction.
                         max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(0),
                         ..Default::default()
                     },
                     10,

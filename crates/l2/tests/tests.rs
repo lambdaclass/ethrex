@@ -55,9 +55,11 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let l2_initial_balance = proposer_client
         .get_balance(l1_rich_wallet_address())
         .await?;
+    let common_bridge_initial_balance = eth_client.get_balance(common_bridge_address()).await?;
 
     println!("L1 initial balance: {l1_initial_balance}");
     println!("L2 initial balance: {l2_initial_balance}");
+    println!("Common Bridge initial balance: {common_bridge_initial_balance}");
 
     let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
     println!(
@@ -116,7 +118,10 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     let common_bridge_locked_balance = eth_client.get_balance(common_bridge_address()).await?;
     // Check that the deposit amount is the amount locked by the CommonBridge
-    assert_eq!(common_bridge_locked_balance, deposit_value);
+    assert_eq!(
+        common_bridge_locked_balance,
+        common_bridge_initial_balance + deposit_value
+    );
 
     println!("L2 deposit received");
 
@@ -314,7 +319,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     // Check that we only have the amount left after the withdrawal
     assert_eq!(
         common_bridge_locked_balance,
-        deposit_value - withdraw_value,
+        common_bridge_initial_balance + deposit_value - withdraw_value,
         "Amount after withdrawal differs"
     );
 
@@ -322,7 +327,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     // Check that we only have the amount left after the withdrawal
     assert_eq!(
         common_bridge_locked_balance,
-        total_locked_l2_value_with_recoverable_fees + total_burned_fees,
+        common_bridge_initial_balance
+            + total_locked_l2_value_with_recoverable_fees
+            + total_burned_fees,
         "Amount calculated after withdrawal differs"
     );
 
