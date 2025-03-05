@@ -1,7 +1,7 @@
 use clap::Parser;
 use report::{shell_summary, LinesOfCodeReport, LinesOfCodeReporterOptions};
 use spinoff::{spinners::Dots, Color, Spinner};
-use std::{collections::HashMap, env::current_dir, fs::DirEntry, path::PathBuf};
+use std::{collections::HashMap, fs::DirEntry, path::PathBuf};
 use tokei::{Config, Language, LanguageType, Languages};
 
 mod report;
@@ -60,7 +60,11 @@ fn main() {
 
     let mut spinner = Spinner::new(Dots, "Counting lines of code...", Color::Cyan);
 
-    let ethrex_path = current_dir().unwrap();
+    // Find the root of the ethrex repo
+    let ethrex_path = std::env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .map(|path| path.parent().unwrap().parent().unwrap().to_path_buf())
+        .unwrap();
     let ethrex_crates_path = ethrex_path.join("crates");
     let levm_path = ethrex_crates_path.join("vm");
     let ethrex_l2_path = ethrex_crates_path.join("l2");

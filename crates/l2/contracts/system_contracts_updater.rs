@@ -13,10 +13,16 @@ use utils::ContractCompilationError;
 
 fn main() -> Result<(), ContractCompilationError> {
     read_env_file()?;
+    #[allow(clippy::expect_fun_call, clippy::expect_used)]
     let contracts_path = Path::new(
-        std::env::var("DEPLOYER_CONTRACTS_PATH")
-            .unwrap_or(".".to_string())
+        &std::env::var("DEPLOYER_CONTRACTS_PATH").expect(
+            format!(
+                "DEPLOYER_CONTRACTS environment variable not defined. Expected in {}, line: {}",
+                file!(),
+                line!()
+            )
             .as_str(),
+        ),
     )
     .to_path_buf();
 
