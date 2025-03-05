@@ -8,7 +8,7 @@ use crate::{
 
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
+        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockNumber,
         PrivilegedL2Transaction, Receipt, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
         MIN_BASE_FEE_PER_BLOB_GAS,
     },
@@ -19,15 +19,19 @@ use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize, COMMON_BRIDGE_L
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
-use ethrex_storage::{error::StoreError, Store};
-use ethrex_vm::{backends::EVM, db::evm_state};
+use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_vm::{
+    backends::{BlockExecutionResult, EVM},
+    db::evm_state,
+    ExecutionResult,
+};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, str::FromStr, time::Duration};
-use tokio::time::sleep;
-use tracing::{error, info};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use tokio::{sync::broadcast::Receiver, time::sleep};
+use tracing::{error, info, warn};
 
-use super::errors::BlobEstimationError;
+use super::{errors::BlobEstimationError, execution_cache::ExecutionCache};
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
 
@@ -39,12 +43,18 @@ pub struct Committer {
     l1_private_key: SecretKey,
     interval_ms: u64,
     arbitrary_base_blob_gas_price: u64,
+    exec_recv: Receiver<(BlockNumber, BlockExecutionResult)>,
 }
 
-pub async fn start_l1_committer(store: Store) -> Result<(), ConfigError> {
+pub async fn start_l1_committer(
+    store: Store,
+    execution_cache: Receiver<(BlockNumber, BlockExecutionResult)>,
+) -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
-    let committer = Committer::new_from_config(&committer_config, eth_config, store);
+
+    let mut committer =
+        Committer::new_from_config(&committer_config, eth_config, store, execution_cache);
     committer.run().await;
     Ok(())
 }
@@ -54,6 +64,7 @@ impl Committer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
+        exec_recv: Receiver<(BlockNumber, BlockExecutionResult)>,
     ) -> Self {
         Self {
             eth_client: EthClient::new(&eth_config.rpc_url),
@@ -63,10 +74,11 @@ impl Committer {
             l1_private_key: committer_config.l1_private_key,
             interval_ms: committer_config.interval_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
+            exec_recv,
         }
     }
 
-    pub async fn run(&self) {
+    pub async fn run(&mut self) {
         loop {
             if let Err(err) = self.main_logic().await {
                 error!("L1 Committer Error: {}", err);
@@ -76,22 +88,20 @@ impl Committer {
         }
     }
 
-    async fn main_logic(&self) -> Result<(), CommitterError> {
-        loop {
-            let block_number_to_fetch = EthClient::get_next_block_to_commit(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
+    async fn main_logic(&mut self) -> Result<(), CommitterError> {
+        let block_number =
+            EthClient::get_next_block_to_commit(&self.eth_client, self.on_chain_proposer_address)
+                .await?;
 
+        loop {
             if let Some(block_to_commit_body) = self
                 .store
-                .get_block_body(block_number_to_fetch)
+                .get_block_body(block_number)
                 .map_err(CommitterError::from)?
             {
                 let block_to_commit_header = self
                     .store
-                    .get_block_header(block_number_to_fetch)
+                    .get_block_header(block_number)
                     .map_err(CommitterError::from)?
                     .ok_or(CommitterError::FailedToGetInformationFromStorage(
                         "Failed to get_block_header() after get_block_body()".to_owned(),
@@ -101,7 +111,7 @@ impl Committer {
                 for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
                     let receipt = self
                         .store
-                        .get_receipt(block_number_to_fetch, index.try_into()?)?
+                        .get_receipt(block_number, index.try_into()?)?
                         .ok_or(CommitterError::InternalError(
                             "Transactions in a block should have a receipt".to_owned(),
                         ))?;
@@ -130,11 +140,28 @@ impl Committer {
                         .collect(),
                 )?;
 
+                let account_updates = match ExecutionCache::get(&mut self.exec_recv, block_number)
+                    .await
+                {
+                    Some(u) => u.account_updates,
+                    None => {
+                        warn!(
+                            "Could not find execution cache result for block {block_number}, falling back to re-execution"
+                        );
+                        let mut state =
+                            evm_state(self.store.clone(), block_to_commit.header.parent_hash);
+                        EVM::default()
+                            .execute_block(&block_to_commit, &mut state)
+                            .map(|result| result.account_updates)?
+                    }
+                };
+
                 let state_diff = self.prepare_state_diff(
                     &block_to_commit,
                     self.store.clone(),
                     withdrawals,
                     deposits,
+                    &account_updates,
                 )?;
 
                 let blobs_bundle = self.generate_blobs_bundle(&state_diff)?;
@@ -159,8 +186,6 @@ impl Committer {
                     }
                 }
             }
-
-            sleep(Duration::from_millis(self.interval_ms)).await;
         }
     }
 
@@ -251,21 +276,13 @@ impl Committer {
         store: Store,
         withdrawals: Vec<(H256, Transaction)>,
         deposits: Vec<PrivilegedL2Transaction>,
+        account_updates: &[AccountUpdate],
     ) -> Result<StateDiff, CommitterError> {
         info!("Preparing state diff for block {}", block.header.number);
 
-        let mut state = evm_state(store.clone(), block.header.parent_hash);
-
-        let result = EVM::default()
-            .execute_block(block, &mut state)
-            .map_err(CommitterError::from)?;
-        let account_updates = result.account_updates;
-
         let mut modified_accounts = HashMap::new();
-        for account_update in &account_updates {
-            let prev_nonce = match state
-                .database()
-                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?
+        for account_update in account_updates {
+            let prev_nonce = match store
                 // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
                 // and we may have to keep track of the latestCommittedBlock (last block of the batch),
                 // the batch_size and the latestCommittedBatch in the contract.

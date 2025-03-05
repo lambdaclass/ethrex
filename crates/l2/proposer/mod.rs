@@ -17,9 +17,10 @@ use ethrex_blockchain::{
 use ethrex_rpc::clients::EngineApiConfig;
 use ethrex_storage::Store;
 use ethrex_vm::backends::BlockExecutionResult;
+use execution_cache::ExecutionCache;
 use keccak_hash::H256;
-use tokio::task::JoinSet;
 use tokio::time::sleep;
+use tokio::{sync::broadcast, task::JoinSet};
 use tracing::{debug, error, info};
 
 pub mod l1_committer;
@@ -29,11 +30,14 @@ pub mod metrics;
 pub mod prover_server;
 pub mod state_diff;
 
+pub mod execution_cache;
+
 pub mod errors;
 
 pub struct Proposer {
     interval_ms: u64,
     coinbase_address: Address,
+    execution_cache: ExecutionCache,
 }
 
 pub async fn start_proposer(store: Store, blockchain: Arc<Blockchain>) {
@@ -44,14 +48,24 @@ pub async fn start_proposer(store: Store, blockchain: Arc<Blockchain>) {
         return;
     }
 
+    const EXECUTION_CACHE_LEN: usize = 16;
+    let execution_cache = ExecutionCache::new(EXECUTION_CACHE_LEN);
+
     let mut task_set = JoinSet::new();
     task_set.spawn(l1_watcher::start_l1_watcher(
         store.clone(),
         blockchain.clone(),
     ));
-    task_set.spawn(l1_committer::start_l1_committer(store.clone()));
+    task_set.spawn(l1_committer::start_l1_committer(
+        store.clone(),
+        execution_cache.subscribe(),
+    ));
     task_set.spawn(prover_server::start_prover_server(store.clone()));
-    task_set.spawn(start_proposer_server(store.clone(), blockchain));
+    task_set.spawn(start_proposer_server(
+        store.clone(),
+        blockchain,
+        execution_cache,
+    ));
     #[cfg(feature = "metrics")]
     task_set.spawn(metrics::start_metrics_gatherer());
 
@@ -75,16 +89,21 @@ pub async fn start_proposer(store: Store, blockchain: Arc<Blockchain>) {
 async fn start_proposer_server(
     store: Store,
     blockchain: Arc<Blockchain>,
+    execution_cache: ExecutionCache,
 ) -> Result<(), ConfigError> {
     let proposer_config = ProposerConfig::from_env()?;
-    let proposer = Proposer::new_from_config(proposer_config).map_err(ConfigError::from)?;
+    let proposer =
+        Proposer::new_from_config(proposer_config, execution_cache).map_err(ConfigError::from)?;
 
     proposer.run(store.clone(), blockchain).await;
     Ok(())
 }
 
 impl Proposer {
-    pub fn new_from_config(config: ProposerConfig) -> Result<Self, ProposerError> {
+    pub fn new_from_config(
+        config: ProposerConfig,
+        execution_cache: ExecutionCache,
+    ) -> Result<Self, ProposerError> {
         let ProposerConfig {
             interval_ms,
             coinbase_address,
@@ -92,6 +111,7 @@ impl Proposer {
         Ok(Self {
             interval_ms,
             coinbase_address,
+            execution_cache,
         })
     }
 
@@ -149,15 +169,18 @@ impl Proposer {
         let chain_config = store.get_chain_config()?;
         validate_block(&block, &parent_header, &chain_config)?;
 
-        blockchain.store_block(
-            &block,
-            BlockExecutionResult {
-                account_updates,
-                receipts: payload_build_result.receipts,
-                requests: Vec::new(),
-            },
-        )?;
+        let execution_result = BlockExecutionResult {
+            account_updates,
+            receipts: payload_build_result.receipts,
+            requests: Vec::new(),
+        };
+
+        blockchain.store_block(&block, execution_result.clone())?;
         info!("Stored new block {}", block.hash());
+
+        // Cache execution result
+        self.execution_cache
+            .push(block.header.number, execution_result);
 
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
