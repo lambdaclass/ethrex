@@ -408,14 +408,14 @@ impl SyncManager {
                         );
                         Ok(())
                     })
-                    .or_else(|err: SyncError| {
+                    .map_err(|err: SyncError| {
                         warn!("Mark invalid blocks as invalid and abort sync: {err}");
                         iterator.for_each(|(hash, _)| {
                             warn!("Marking block {} as invalid", hash);
                             self.invalid_ancestors.insert(hash, last_valid_hash);
                         });
 
-                        Err(err)
+                        err
                     })?;
 
                 debug!("Executed & stored {} blocks", block_bodies_len);
