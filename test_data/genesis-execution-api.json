@@ -19,7 +19,8 @@
     "cancunTime": 0,
     "terminalTotalDifficulty": 131072,
     "terminalTotalDifficultyPassed": true,
-    "ethash": {}
+    "ethash": {},
+    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa"
   },
   "nonce": "0x0",
   "timestamp": "0x0",

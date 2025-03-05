@@ -297,7 +297,7 @@ mod tests {
         store.add_block_header(block_hash, header)?;
         store.set_canonical_block(block_number, block_hash)?;
         store.update_latest_block_number(block_number)?;
-        store.set_chain_config(&config)?;
+        store.set_chain_config(config)?;
 
         Ok(store)
     }
