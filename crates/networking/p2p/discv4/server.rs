@@ -630,6 +630,7 @@ pub(super) mod tests {
         network::{node_id_from_signing_key, serve_p2p_requests, MAX_MESSAGES_TO_BROADCAST},
         rlpx::message::Message as RLPxMessage,
     };
+    use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
@@ -677,6 +678,7 @@ pub(super) mod tests {
 
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let table = Arc::new(Mutex::new(KademliaTable::new(node_id)));
         let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
             MAX_MESSAGES_TO_BROADCAST,
@@ -690,6 +692,7 @@ pub(super) mod tests {
             signer,
             table,
             storage,
+            blockchain,
             broadcast,
         };
 

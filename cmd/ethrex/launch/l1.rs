@@ -4,6 +4,7 @@ use std::{
     net::Ipv4Addr,
     path::{self, Path, PathBuf},
     str::FromStr,
+    sync::Arc,
     time::Duration,
 };
 
@@ -169,7 +170,7 @@ pub async fn launch(matches: clap::ArgMatches) {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
-    let blockchain = Blockchain::new(evm.clone(), store.clone());
+    let blockchain = Arc::new(Blockchain::new(evm.clone(), store.clone()));
 
     let genesis = read_genesis_file(&network);
     store
@@ -253,7 +254,7 @@ pub async fn launch(matches: clap::ArgMatches) {
         peer_table.clone(),
         sync_mode,
         cancel_token.clone(),
-        blockchain,
+        blockchain.clone(),
     );
 
     // TODO: Check every module starts properly.
@@ -290,6 +291,7 @@ pub async fn launch(matches: clap::ArgMatches) {
                 http_socket_addr,
                 authrpc_socket_addr,
                 store.clone(),
+                blockchain.clone(),
                 jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
@@ -305,6 +307,7 @@ pub async fn launch(matches: clap::ArgMatches) {
                 http_socket_addr,
                 authrpc_socket_addr,
                 store.clone(),
+                blockchain.clone(),
                 jwt_secret_clone,
                 local_p2p_node,
                 local_node_record,
@@ -333,8 +336,16 @@ pub async fn launch(matches: clap::ArgMatches) {
     }
 
     let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
+    // We do not want to start the networking module if the l2 feature is enabled.
     cfg_if::cfg_if! {
-        if #[cfg(feature = "dev")] {
+        if #[cfg(feature = "l2")] {
+            if dev_mode {
+                error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
+                panic!("Run without the --dev argument.");
+            }
+            let l2_proposer = ethrex_l2::start_proposer(store.clone(), blockchain.clone()).into_future();
+            tracker.spawn(l2_proposer);
+        } else if #[cfg(feature = "dev")] {
             use ethrex_dev;
             // Start the block_producer module if devmode was set
             if dev_mode {
@@ -370,11 +381,13 @@ pub async fn launch(matches: clap::ArgMatches) {
                 signer,
                 peer_table.clone(),
                 store,
+                blockchain,
             )
             .await.expect("Network starts");
             tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
         }
     }
+
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("Server shut down started...");

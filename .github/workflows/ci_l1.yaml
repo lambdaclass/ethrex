@@ -117,7 +117,7 @@ jobs:
           - name: Transaction Check
             enclave_name: "ethrex-assertoor-tx"
             ethereum_package_args: "./.github/config/assertoor/network_params_tx.yaml"
-          - name: Stability Check
+          - name: Blob & Stability Check
             enclave_name: "ethrex-assertoor-blob"
             ethereum_package_args: "./.github/config/assertoor/network_params_blob.yaml"
 
@@ -155,17 +155,9 @@ jobs:
             simulation: ethereum/rpc-compat
             test_pattern: ""
             ethrex_flags: ""
-          - name: "Devp2p discv4 tests"
+          - name: "Devp2p tests"
             simulation: devp2p
-            test_pattern: discv4
-            ethrex_flags: ""
-          - name: "Devp2p snap tests"
-            simulation: devp2p
-            test_pattern: /AccountRange|StorageRanges|ByteCodes|TrieNodes
-            ethrex_flags: ""
-          - name: "Devp2p eth tests"
-            simulation: devp2p
-            test_pattern: eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest
+            test_pattern: discv4|eth|snap/Ping|Findnode|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest # InvalidTxs|BlobViolations
             ethrex_flags: ""
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
@@ -212,7 +204,7 @@ jobs:
 
       # By default ethrex uses revm as evm backend.
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 4
+        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
