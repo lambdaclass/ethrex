@@ -19,13 +19,13 @@ use ethrex_common::{
 };
 
 use ethrex_vm::{
-    backends::levm::CacheDB,
+    backends::{levm::CacheDB, EVM},
     db::{evm_state, EvmState},
     EvmError,
 };
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 
 use sha3::{Digest, Keccak256};
 
@@ -222,18 +222,33 @@ impl<'a> PayloadBuildContext<'a> {
     }
 }
 
+pub struct PayloadBuildResult {
+    pub blobs_bundle: BlobsBundle,
+    pub block_value: U256,
+    pub receipts: Vec<Receipt>,
+    block_cache: CacheDB,
+    state: EvmState,
+}
+
+impl PayloadBuildResult {
+    pub fn get_state_transitions(
+        &mut self,
+        parent_hash: H256,
+        vm: EVM,
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
+        vm.get_state_transitions(&mut self.state, parent_hash, &self.block_cache)
+    }
+}
+
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub fn build_payload(
-        &self,
-        payload: &mut Block,
-    ) -> Result<(BlobsBundle, U256, EvmState, CacheDB, Vec<Receipt>), ChainError> {
+    pub fn build_payload(&self, payload: &mut Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
-        let mut evm_state = evm_state(self.storage.clone(), payload.header.parent_hash);
-        let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
+        let mut state = evm_state(self.storage.clone(), payload.header.parent_hash);
+        let mut context = PayloadBuildContext::new(payload, &mut state)?;
         self.apply_system_operations(&mut context)?;
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
@@ -261,7 +276,13 @@ impl Blockchain {
             ..
         } = context;
 
-        Ok((blobs_bundle, block_value, evm_state, block_cache, receipts))
+        Ok(PayloadBuildResult {
+            blobs_bundle,
+            block_value,
+            block_cache,
+            receipts,
+            state,
+        })
     }
 
     pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {

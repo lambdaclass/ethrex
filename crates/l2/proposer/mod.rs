@@ -1,5 +1,6 @@
 use std::{
     sync::Arc,
+    thread::current,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -9,12 +10,13 @@ use ethereum_types::Address;
 use ethrex_blockchain::{
     error::ChainError,
     find_parent_header,
-    payload::{create_payload, BuildPayloadArgs},
+    payload::{create_payload, BuildPayloadArgs, PayloadBuildResult},
     store_block, store_receipts, validate_block, validate_gas_used, validate_receipts_root,
     validate_state_root, Blockchain,
 };
 use ethrex_rpc::clients::EngineApiConfig;
 use ethrex_storage::Store;
+use ethrex_vm::backends::BlockExecutionResult;
 use keccak_hash::H256;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -109,33 +111,24 @@ impl Proposer {
         blockchain: Arc<Blockchain>,
     ) -> Result<(), ProposerError> {
         let version = 3;
-        let head_block_hash = {
+        let parent_header = {
             let current_block_number = store.get_latest_block_number()?;
             store
-                .get_canonical_block_hash(current_block_number)?
+                .get_block_header(current_block_number)?
                 .ok_or(ProposerError::StorageDataIsNone)?
         };
+        let parent_hash = parent_header.compute_block_hash();
         let parent_beacon_block_root = H256::zero();
-
-        // ethrex_dev::block_producer::start_block_producer(
-        //     self.engine_config.rpc_url.clone(),
-        //     self.jwt_secret.clone().into(),
-        //     head_block_hash,
-        //     10,
-        //     self.block_production_interval,
-        //     self.coinbase_address,
-        // )
-        // .await?;
 
         // The proposer leverages the execution payload framework used for the engine API,
         // but avoids calling the API methods and unnecesary re-execution.
 
         info!("Producing block");
-        debug!("Head block hash: {head_block_hash:#x}");
+        debug!("Head block hash: {parent_hash:#x}");
 
-        // Create payload
+        // Proposer creates a new payload
         let args = BuildPayloadArgs {
-            parent: head_block_hash,
+            parent: parent_hash,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             fee_recipient: self.coinbase_address,
             random: H256::zero(),
@@ -144,53 +137,29 @@ impl Proposer {
             version,
         };
         let mut payload = create_payload(&args, &store)?;
-        // let payload_id = ...
 
-        // Build payload and executes transactions
-        let (.., mut evm_state, block_cache, receipts) = blockchain.build_payload(&mut payload)?;
+        // Blockchain builds the payload from mempool txs and executes them
+        let mut payload_build_result = blockchain.build_payload(&mut payload)?;
         let account_updates =
-            blockchain
-                .vm
-                .get_state_transitions(&mut evm_state, head_block_hash, &block_cache)?;
+            payload_build_result.get_state_transitions(parent_hash, blockchain.vm)?;
+        info!("Built payload for new block {}", payload.hash());
 
-        // Add to state
-        // TODO: validation
-        //store.add_payload(payload_id, block)
-
+        // Blockchain stores block
         let block = payload;
-        let Ok(parent_header) = find_parent_header(&block.header, &store) else {
-            // If the parent is not present, we store it as pending.
-            store.add_pending_block(block.clone())?;
-            return Err(ProposerError::ChainError(ChainError::ParentNotFound));
-        };
-        let chain_config = evm_state
-            .chain_config()
-            .map_err(ChainError::from)
-            .map_err(ProposerError::from)?;
+        let chain_config = store.get_chain_config()?;
         validate_block(&block, &parent_header, &chain_config)?;
 
-        validate_gas_used(&receipts, &block.header)?;
+        blockchain.store_block(
+            &block,
+            BlockExecutionResult {
+                account_updates,
+                receipts: payload_build_result.receipts,
+                requests: Vec::new(),
+            },
+        )?;
+        info!("Stored new block {}", block.hash());
 
-        // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = evm_state
-            .database()
-            .unwrap()
-            //.ok_or(ProposerError::StoreError(StoreError::MissingStore))?
-            .apply_account_updates(block.header.parent_hash, &account_updates)?
-            .unwrap();
-        //.ok_or(ChainError::ParentStateNotFound)?;
-
-        // Check state root matches the one in block header after execution
-        validate_state_root(&block.header, new_state_root)?;
-
-        // Check receipts root matches the one in block header after execution
-        validate_receipts_root(&block.header, &receipts)?;
-
-        // Processes requests from receipts, computes the requests_hash and compares it against the header
-        //validate_requests_hash(&block.header, &chain_config, &requests)?;
-
-        store_block(&store, block.clone())?;
-        store_receipts(&store, receipts, block.header.compute_block_hash())?;
+        // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         Ok(())
     }

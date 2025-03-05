@@ -1,5 +1,5 @@
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::payload::PayloadBuildContext;
+use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
 use ethrex_common::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
@@ -710,7 +710,11 @@ fn build_execution_payload_response(
                 .syncer
                 .try_lock()
                 .map_err(|_| RpcErr::Internal("Error locking syncer".to_string()))?;
-            let (blobs_bundle, block_value, ..) = syncer
+            let PayloadBuildResult {
+                blobs_bundle,
+                block_value,
+                ..
+            } = syncer
                 .blockchain
                 .build_payload(&mut payload_block)
                 .map_err(|err| RpcErr::Internal(err.to_string()))?;

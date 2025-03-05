@@ -19,7 +19,7 @@ use revm::db::states::bundle_state::BundleRetention;
 use revm::db::{AccountState, AccountStatus};
 use revm::primitives::B256;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub enum EVM {
     #[default]
     REVM,
