@@ -178,10 +178,10 @@ async fn main() {
 
     let evm_engine: EvmEngine = matches
         .get_one::<String>("evm")
-        .unwrap_or(&"".to_string())
+        .unwrap_or(&"revm".to_string())
         .clone()
         .try_into()
-        .unwrap_or_default();
+        .unwrap_or_else(|e| panic!("{}", e));
 
     let blockchain = Arc::new(Blockchain::new(evm_engine, store.clone()));
 
