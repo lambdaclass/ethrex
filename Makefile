@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
-	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
-	loc-compare-detailed load-test-fibonacci load-test-io
+		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
+		load-test-fibonacci load-test-io
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -129,22 +129,6 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
-
-loc:
-	cargo run -p loc
-
-loc-stats:
-	if [ "$(QUIET)" = "true" ]; then \
-		cargo run --quiet -p loc -- --summary;\
-	else \
-		cargo run -p loc -- --summary;\
-	fi
-
-loc-detailed:
-	cargo run --release -p loc --bin loc -- --detailed
-
-loc-compare-detailed:
-	cargo run --release -p loc --bin loc -- --compare-detailed
 
 install-cli: ## 🛠️ Installs the ethrex-l2 cli
 	cargo install --path cmd/ethrex_l2/ --force
