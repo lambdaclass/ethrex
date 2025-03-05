@@ -201,6 +201,7 @@ fn get_gateway_auth_client(matches: &clap::ArgMatches) -> EngineClient {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(not(feature = "dev"))]
 pub async fn init_network(
     matches: &ArgMatches,
     network: &str,
@@ -240,8 +241,6 @@ pub async fn init_network(
 
 #[cfg(feature = "dev")]
 pub fn init_dev_network(matches: &ArgMatches, store: &Store, tracker: TaskTracker) {
-    use ethrex_dev;
-
     let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
 
     if dev_mode {
