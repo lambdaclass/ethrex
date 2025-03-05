@@ -276,16 +276,20 @@ impl Committer {
                 None => 0,
             };
 
+            let new_nonce = if account_update.info.is_none() {
+                prev_nonce
+            } else {
+                account_update
+                    .info
+                    .clone()
+                    .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?
+                    .nonce
+            };
             modified_accounts.insert(
                 account_update.address,
                 AccountStateDiff {
                     new_balance: account_update.info.clone().map(|info| info.balance),
-                    nonce_diff: (account_update
-                        .info
-                        .clone()
-                        .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?
-                        .nonce
-                        - prev_nonce)
+                    nonce_diff: (new_nonce - prev_nonce)
                         .try_into()
                         .map_err(CommitterError::from)?,
                     storage: account_update.added_storage.clone().into_iter().collect(),
