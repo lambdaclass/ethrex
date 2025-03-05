@@ -38,10 +38,24 @@ For more information about the Prover Server, the [Prover Docs](./prover.md) pro
 
 Configuration is done through environment variables. The easiest way to configure the Proposer is by creating a `config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
 
-The following environment variables are available to configure the Proposer:
+The following environment variables are available to configure the Proposer (consider looking at the provided [config_example.toml](../config_example.toml):
+
+<!-- NOTE: Mantain the titles in the same order as present in [config_example.toml](../config_example.toml). -->
+
+- Under the [deployer] title:
+    - `address`: L1 account which will deploy the common bridge contracts in L1.
+    - `private key`: Its private key.
+    - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
+    - `sp1_contract_verifier`: Address which will verify the `sp1` proofs.
+    - `sp1_deploy_verifier`: Whether to deploy the sp1 verifier
+    - `salt_is_zero`: Whether a 0 value salt will be used. Keep as true for deterministic `create2` operations.
 
 - Under the [eth] title:
     - `rpc_url`: URL of the L1 RPC.
+
+- Under the [engine] title:
+    - `rpc_url`: URL of the EngineAPI.
+    - `jwt_path`: Path to the JWT authentication file, required to connect to the EngineAPI.
 
 - Under the [watcher] title:
     - `bridge_address`: Address of the bridge contract on L1.
@@ -49,9 +63,14 @@ The following environment variables are available to configure the Proposer:
     - `max_block_step`: Maximum number of blocks to look for when checking for new events.
     - `l2_proposer_private_key`: Private key of the L2 proposer.
 
-- Under the [engine] title:
-    - `rpc_url`: URL of the EngineAPI.
-    - `jwt_path`: Path to the JWT authentication file, required to connect to the EngineAPI.
+- Under the [proposer] title:
+    - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
+    - `coinbase address`: Address which will receive the execution fees.
+
+Under the [committer] title:
+    - `l1_address`: Address of the L1 committer.
+    - `l1_private_key`: Private key of the L1 committer.
+    - `on_chain_proposer_address`: Address of the on-chain committer.
 
 - Under the [prover] title:
     - `sp1_prover`: Configure how the `sp1_prover` computes its proofs, `"local"` for real proofs and `"mock"` for fake proofs.
@@ -64,14 +83,9 @@ The following environment variables are available to configure the Proposer:
 - Under the [prover.server] title:
     - `listen_ip`: IP to listen for proof data requests.
     - `listen_port`: Port to listen for proof data requests.
+    - `verifier_address`: Address in charge of verifying zkProofs.
+    - `verifier_private_key`: zkProof verifier's private key.
+    - `dev_mode`: whether `dev_mode` is activated.
 
-Under the [committer] title:
-- `l1_address`: Address of the L1 committer.
-- `l1_private_key`: Private key of the L1 committer.
-- `on_chain_proposer_address`: Address of the on-chain committer.
-
-- Under the [proposer] title:
-    - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
-    - `coinbase address`: Address which will receive the execution fees.
 
 If you want to use a different configuration file, you can set the `CONFIG_FILE` environment variable to the path of the file.
