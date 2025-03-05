@@ -1,6 +1,6 @@
 mod constants;
 pub mod levm;
-pub mod revm_b;
+pub mod revm;
 
 use crate::db::evm_state;
 use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState, SpecId};
@@ -11,7 +11,7 @@ use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
-use revm_b::REVM;
+use revm::REVM;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -271,7 +271,7 @@ impl Evm {
             } => {
                 levm::extract_all_requests_levm(receipts, &store_wrapper.store, header, block_cache)
             }
-            Evm::REVM { state } => revm_b::extract_all_requests(receipts, state, header),
+            Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
         }
     }
 }
