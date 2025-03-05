@@ -14,16 +14,11 @@ use levm::LEVM;
 use revm_b::REVM;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum EvmEngine {
+    #[default]
     REVM,
     LEVM,
-}
-
-impl Default for EvmEngine {
-    fn default() -> Self {
-        EvmEngine::REVM
-    }
 }
 
 // Allow conversion from string for backward compatibility

@@ -176,7 +176,7 @@ async fn main() {
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
 
-    let evm_engine = matches
+    let evm_engine: EvmEngine = matches
         .get_one::<String>("evm")
         .unwrap_or(&"".to_string())
         .clone()
