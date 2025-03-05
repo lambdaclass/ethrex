@@ -157,7 +157,7 @@ jobs:
             ethrex_flags: ""
           - name: "Devp2p tests"
             simulation: devp2p
-            test_pattern: discv4|eth|snap/Ping|Findnode|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest # InvalidTxs|NewPooledTxs|BlobViolations
+            test_pattern: discv4|eth|snap/Ping|Findnode|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest # InvalidTxs|BlobViolations
             ethrex_flags: ""
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
