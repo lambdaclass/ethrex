@@ -20,12 +20,11 @@ use ethrex_common::types::{
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
-use std::sync::Mutex;
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
-use ethrex_vm::backends::{BlockExecutionResult, Evm};
+use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
 
@@ -34,15 +33,15 @@ use tracing::{error, info, warn};
 
 #[derive(Debug)]
 pub struct Blockchain {
-    pub vm: Mutex<Evm>,
+    evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
 }
 
 impl Blockchain {
-    pub fn new(evm: Evm, store: Store) -> Self {
+    pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
         Self {
-            vm: Mutex::new(evm),
+            evm_engine,
             storage: store,
             mempool: Mempool::new(),
         }
@@ -50,7 +49,7 @@ impl Blockchain {
 
     pub fn default_with_store(store: Store) -> Self {
         Self {
-            vm: Mutex::new(Evm::default(store.clone())),
+            evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
         }
@@ -77,11 +76,17 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config)?;
+
+        let mut vm = Evm::new(
+            self.evm_engine,
+            self.storage.clone(),
+            block.header.parent_hash,
+        );
         let BlockExecutionResult {
             receipts,
             requests,
             account_updates,
-        } = self.vm.lock().unwrap().execute_block(block)?;
+        } = vm.execute_block(block)?;
 
         validate_gas_used(&receipts, &block.header)?;
 
@@ -150,12 +155,12 @@ impl Blockchain {
         }
         if let Some(last_block) = blocks.last() {
             let hash = last_block.hash();
-            match *self.vm.lock().unwrap() {
-                Evm::LEVM { .. } => {
+            match self.evm_engine {
+                EvmEngine::LEVM => {
                     // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
                     let _ = apply_fork_choice(&self.storage, hash, hash, hash);
                 }
-                Evm::REVM { .. } => {
+                EvmEngine::REVM => {
                     apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
                 }
             }

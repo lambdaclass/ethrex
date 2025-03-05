@@ -14,6 +14,31 @@ use levm::LEVM;
 use revm_b::REVM;
 use std::sync::Arc;
 
+#[derive(Debug, Clone, Copy)]
+pub enum EvmEngine {
+    REVM,
+    LEVM,
+}
+
+impl Default for EvmEngine {
+    fn default() -> Self {
+        EvmEngine::REVM
+    }
+}
+
+// Allow conversion from string for backward compatibility
+impl TryFrom<String> for EvmEngine {
+    type Error = EvmError;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        match s.to_lowercase().as_str() {
+            "revm" => Ok(EvmEngine::REVM),
+            "levm" => Ok(EvmEngine::LEVM),
+            _ => Err(EvmError::InvalidEVM(s)),
+        }
+    }
+}
+
 pub enum Evm {
     REVM {
         state: EvmState,
@@ -37,41 +62,23 @@ impl std::fmt::Debug for Evm {
 
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new(implementation: String, store: Store) -> Result<Self, EvmError> {
-        match implementation.as_str() {
-            "revm" => Ok(Evm::REVM {
-                state: evm_state(store.clone(), H256::zero()),
-            }),
-            "levm" => Ok(Evm::LEVM {
+    pub fn new(engine: EvmEngine, store: Store, block_hash: H256) -> Self {
+        match engine {
+            EvmEngine::REVM => Evm::REVM {
+                state: evm_state(store.clone(), block_hash),
+            },
+            EvmEngine::LEVM => Evm::LEVM {
                 store_wrapper: StoreWrapper {
                     store: store.clone(),
-                    block_hash: H256::zero(),
+                    block_hash,
                 },
                 block_cache: CacheDB::new(),
-            }),
-            _ => Err(EvmError::InvalidEVM(implementation)),
+            },
         }
     }
 
-    pub fn default(store: Store) -> Self {
-        Self::new("revm".to_string(), store).expect("This shouldn't fail. Check the implementation")
-    }
-
-    /// Clears state of the Evm and sets the block hash.
-    /// This is mandatory for using it in a new block, otherwise it can lead to unexpected results.
-    pub fn clear_state(&mut self, block_hash: H256) {
-        match self {
-            Evm::REVM { ref mut state } => {
-                *state = evm_state(state.database().unwrap().clone(), block_hash);
-            }
-            Evm::LEVM {
-                block_cache,
-                store_wrapper,
-            } => {
-                block_cache.clear();
-                store_wrapper.block_hash = block_hash;
-            }
-        }
+    pub fn default(store: Store, block_hash: H256) -> Self {
+        Self::new(EvmEngine::default(), store, block_hash)
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
