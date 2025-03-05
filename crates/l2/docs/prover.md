@@ -88,7 +88,7 @@ If neither `risc0` nor `sp1` is installed on the system, the prover can be built
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp .env.example .env` &rarr; check if you want to change any config.
+3. `cp config_example.toml config.toml` &rarr; check if you want to change any config.
 4. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
@@ -136,14 +136,17 @@ Two servers are required: one for the `prover` and another for the `proposer`. I
 
 1. `prover_client`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
     1. `cd ethrex/crates/l2`
-    2. `cp .example.env` and change the `PROVER_CLIENT_PROVER_SERVER_ENDPOINT` with the ip of the other server.
+    2. `cp config_example.toml config.toml` and change the `prover_server_endpoint` entry under the [prover.client] section with the ip of the other server.
 
 The important variables are:
 
 ```sh
-PROVER_CLIENT_PROVER_SERVER_ENDPOINT=<ip-address>:3000
-RISC0_DEV_MODE=0
-SP1_PROVER=local
+[prover.client]
+prover_server_endpoint=<ip-address>:3000
+
+[prover]
+risc0_dev_mode=0
+sp1_prover=local
 ```
 
 - `Finally`, to start the `prover_client`/`zkvm`, run:
@@ -151,13 +154,15 @@ SP1_PROVER=local
 
 2. `prover_server`/`proposer` &rarr; this server just needs rust installed.
     1. `cd ethrex/crates/l2`
-    2. `cp .example.env` and change the addresses and the following fields:
-       - `PROVER_SERVER_LISTEN_IP=0.0.0.0` &rarr; used to handle the tcp communication with the other server.
+    2. `cp config_example.toml config.toml` and change the addresses and the following fields:
+       - [prover.server]
+       `listen_ip=0.0.0.0` &rarr; used to handle the tcp communication with the other server.
        - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.
-       - `DEPLOYER_SALT_IS_ZERO=false` &rarr; set to false to randomize the salt.
-       - `DEPLOYER_SP1_DEPLOY_VERIFIER=true` overwrites `DEPLOYER_SP1_CONTRACT_VERIFIER`. Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-       - `DEPLOYER_CONTRACT_VERIFIER=0xd9b0d07CeCd808a8172F21fA7C97992168f045CA` &rarr; risc0’s verifier contract deployed on Sepolia. (Check the if the contract is deployed in your preferred network).
-       - Set the `ETH_RPC_URL` to any L1 endpoint.
+       - [deployer]
+            - `salt_is_zero=false` &rarr; set to false to randomize the salt.
+       - `sp1_deploy_verifier = true` overwrites `sp1_contract_verifier`. Check if the contract is deployed in your preferred network or set to `true` to deploy it.
+       - `risc0_contract_verifier = 0xd9b0d07CeCd808a8172F21fA7C97992168f045CA` &rarr; risc0’s verifier contract deployed on Sepolia. (Check the if the contract is deployed in your preferred network). An analog variable called `sp1_contract_verifier` exists for SP1.
+       - Set the [eth] `rpc_url` to any L1 endpoint.
 
 >[!NOTE]
 > Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.
