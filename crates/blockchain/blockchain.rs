@@ -56,11 +56,6 @@ impl Blockchain {
     }
 
     pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        info!(
-            "Add block: Adding block {} with hash {:#x}.",
-            block.header.number,
-            block.hash()
-        );
         let since = Instant::now();
 
         let block_hash = block.header.compute_block_hash();
