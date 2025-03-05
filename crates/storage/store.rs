@@ -10,17 +10,17 @@ use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_common::types::{
     code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, MempoolTransaction, Receipt,
-    Transaction, TxType, EMPTY_TRIE_HASH,
+    BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, Receipt, Transaction,
+    EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
 use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
@@ -32,8 +32,6 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
-    pub mempool: Arc<RwLock<HashMap<H256, MempoolTransaction>>>,
-    pub blobs_bundle_pool: Arc<Mutex<HashMap<H256, BlobsBundle>>>,
 }
 
 #[allow(dead_code)]
@@ -83,19 +81,13 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
-                mempool: Arc::new(RwLock::new(HashMap::new())),
-                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
-                mempool: Arc::new(RwLock::new(HashMap::new())),
-                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
-                mempool: Arc::new(RwLock::new(HashMap::new())),
-                blobs_bundle_pool: Arc::new(Mutex::new(HashMap::new())),
             },
         };
         info!("Started store engine");
@@ -268,121 +260,6 @@ impl Store {
         self.engine.get_transaction_location(transaction_hash)
     }
 
-    /// Add transaction to the pool
-    pub fn add_transaction_to_pool(
-        &self,
-        hash: H256,
-        transaction: MempoolTransaction,
-    ) -> Result<(), StoreError> {
-        let mut mempool = self
-            .mempool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        mempool.insert(hash, transaction);
-
-        Ok(())
-    }
-
-    /// Add a blobs bundle to the pool by its blob transaction hash
-    pub fn add_blobs_bundle_to_pool(
-        &self,
-        tx_hash: H256,
-        blobs_bundle: BlobsBundle,
-    ) -> Result<(), StoreError> {
-        self.blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
-            .insert(tx_hash, blobs_bundle);
-        Ok(())
-    }
-
-    /// Get a blobs bundle to the pool given its blob transaction hash
-    pub fn get_blobs_bundle_from_pool(
-        &self,
-        tx_hash: H256,
-    ) -> Result<Option<BlobsBundle>, StoreError> {
-        Ok(self
-            .blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
-            .get(&tx_hash)
-            .cloned())
-    }
-
-    /// Remove a transaction from the pool
-    pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
-        let mut mempool = self
-            .mempool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        if let Some(tx) = mempool.get(hash) {
-            if matches!(tx.tx_type(), TxType::EIP4844) {
-                self.blobs_bundle_pool
-                    .lock()
-                    .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(&tx.compute_hash());
-            }
-
-            mempool.remove(hash);
-        };
-
-        Ok(())
-    }
-
-    pub fn remove_transactions_from_pool(&self, filter: &[Transaction]) -> Result<(), StoreError> {
-        let mut mempool = self
-            .mempool
-            .write()
-            .map_err(|err| StoreError::MempoolWriteLock(err.to_string()))?;
-        for tx in filter {
-            mempool.remove(&tx.compute_hash());
-        }
-        Ok(())
-    }
-
-    /// Applies the filter and returns a set of suitable transactions from the mempool.
-    /// These transactions will be grouped by sender and sorted by nonce
-    pub fn filter_pool_transactions(
-        &self,
-        filter: &dyn Fn(&Transaction) -> bool,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
-        let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> = HashMap::new();
-        let mempool = self
-            .mempool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
-
-        for (_, tx) in mempool.iter() {
-            if filter(tx) {
-                txs_by_sender
-                    .entry(tx.sender())
-                    .or_default()
-                    .push(tx.clone())
-            }
-        }
-
-        txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
-        Ok(txs_by_sender)
-    }
-
-    /// Gets hashes from possible_hashes that are not already known in the mempool.
-    pub fn filter_unknown_transactions(
-        &self,
-        possible_hashes: &[H256],
-    ) -> Result<Vec<H256>, StoreError> {
-        let mempool = self
-            .mempool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
-
-        let tx_set: HashSet<_> = mempool.iter().map(|(hash, _)| hash).collect();
-        Ok(possible_hashes
-            .iter()
-            .filter(|hash| !tx_set.contains(hash))
-            .copied()
-            .collect())
-    }
-
     pub fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.engine.add_account_code(code_hash, code)
     }
@@ -484,7 +361,7 @@ impl Store {
     /// Adds all genesis accounts and returns the genesis block's state_root
     pub fn setup_genesis_state_trie(
         &self,
-        genesis_accounts: HashMap<Address, GenesisAccount>,
+        genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut genesis_state_trie = self.engine.open_state_trie(*EMPTY_TRIE_HASH);
         for (address, account) in genesis_accounts {
@@ -596,20 +473,6 @@ impl Store {
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
         self.engine.get_transaction_by_hash(transaction_hash)
-    }
-
-    pub fn get_transaction_by_hash_from_pool(
-        &self,
-        transaction_hash: H256,
-    ) -> Result<Option<Transaction>, StoreError> {
-        let tx = self
-            .mempool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
-            .get(&transaction_hash)
-            .map(|e| e.clone().into());
-
-        Ok(tx)
     }
 
     pub fn get_transaction_by_location(
@@ -1183,7 +1046,7 @@ mod tests {
     use bytes::Bytes;
     use ethereum_types::{H256, U256};
     use ethrex_common::{
-        types::{Transaction, TxType, BYTES_PER_BLOB, EMPTY_KECCACK_HASH},
+        types::{Transaction, TxType, EMPTY_KECCACK_HASH},
         Bloom,
     };
     use ethrex_rlp::decode::RLPDecode;
@@ -1234,8 +1097,6 @@ mod tests {
         run_test(&test_store_block_tags, engine_type);
         run_test(&test_chain_config_storage, engine_type);
         run_test(&test_genesis_block, engine_type);
-        run_test(&test_filter_mempool_transactions, engine_type);
-        run_test(&blobs_bundle_loadtest, engine_type);
     }
 
     fn test_genesis_block(store: Store) {
@@ -1480,47 +1341,6 @@ mod tests {
             terminal_total_difficulty: Some(58750000000000000000000),
             terminal_total_difficulty_passed: true,
             ..Default::default()
-        }
-    }
-
-    use hex_literal::hex;
-
-    fn test_filter_mempool_transactions(store: Store) {
-        let plain_tx_decoded = Transaction::decode_canonical(&hex!("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4")).unwrap();
-        let plain_tx_sender = plain_tx_decoded.sender();
-        let plain_tx = MempoolTransaction::new(plain_tx_decoded, plain_tx_sender);
-        let blob_tx_decoded = Transaction::decode_canonical(&hex!("03f88f0780843b9aca008506fc23ac00830186a09400000000000000000000000000000000000001008080c001e1a0010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c44401401a0840650aa8f74d2b07f40067dc33b715078d73422f01da17abdbd11e02bbdfda9a04b2260f6022bf53eadb337b3e59514936f7317d872defb891a708ee279bdca90")).unwrap();
-        let blob_tx_sender = blob_tx_decoded.sender();
-        let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
-        let plain_tx_hash = plain_tx.compute_hash();
-        let blob_tx_hash = blob_tx.compute_hash();
-        let filter =
-            |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
-        store
-            .add_transaction_to_pool(blob_tx_hash, blob_tx.clone())
-            .unwrap();
-        store
-            .add_transaction_to_pool(plain_tx_hash, plain_tx)
-            .unwrap();
-        let txs = store.filter_pool_transactions(&filter).unwrap();
-        assert_eq!(txs, HashMap::from([(blob_tx.sender(), vec![blob_tx])]));
-    }
-
-    fn blobs_bundle_loadtest(store: Store) {
-        // Write a bundle of 6 blobs 10 times
-        // If this test fails please adjust the max_size in the DB config
-        for i in 0..300 {
-            let blobs = [[i as u8; BYTES_PER_BLOB]; 6];
-            let commitments = [[i as u8; 48]; 6];
-            let proofs = [[i as u8; 48]; 6];
-            let bundle = BlobsBundle {
-                blobs: blobs.to_vec(),
-                commitments: commitments.to_vec(),
-                proofs: proofs.to_vec(),
-            };
-            store
-                .add_blobs_bundle_to_pool(H256::random(), bundle)
-                .unwrap();
         }
     }
 }

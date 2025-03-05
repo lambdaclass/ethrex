@@ -58,7 +58,7 @@ pub async fn launch(matches: clap::ArgMatches) {
         peer_table.clone(),
         local_p2p_node,
         store.clone(),
-        blockchain,
+        blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
     );
@@ -78,6 +78,7 @@ pub async fn launch(matches: clap::ArgMatches) {
         peer_table.clone(),
         store,
         tracker.clone(),
+        blockchain,
     )
     .await;
 

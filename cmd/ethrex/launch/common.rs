@@ -87,7 +87,7 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
     store
 }
 
-pub fn init_blockchain(matches: &ArgMatches, store: Store) -> Blockchain {
+pub fn init_blockchain(matches: &ArgMatches, store: Store) -> Arc<Blockchain> {
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
 
     let blockchain = Blockchain::new(evm.clone(), store);
@@ -117,7 +117,7 @@ pub fn init_blockchain(matches: &ArgMatches, store: Store) -> Blockchain {
         blockchain.import_blocks(&blocks);
     }
 
-    blockchain
+    Arc::new(blockchain)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -127,7 +127,7 @@ pub fn init_rpc_api(
     peer_table: Arc<Mutex<KademliaTable>>,
     local_p2p_node: Node,
     store: Store,
-    blockchain: Blockchain,
+    blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
 ) {
@@ -143,13 +143,14 @@ pub fn init_rpc_api(
         peer_table.clone(),
         sync_mode(matches),
         cancel_token,
-        blockchain,
+        blockchain.clone(),
     );
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(matches),
         get_authrpc_socket_addr(matches),
         store,
+        blockchain,
         get_jwt_secret(matches),
         local_p2p_node,
         local_node_record,
@@ -209,6 +210,7 @@ pub async fn init_network(
     peer_table: Arc<Mutex<KademliaTable>>,
     store: Store,
     tracker: TaskTracker,
+    blockchain: Arc<Blockchain>,
 ) {
     let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
 
@@ -228,6 +230,7 @@ pub async fn init_network(
         signer,
         peer_table.clone(),
         store,
+        blockchain,
     )
     .await
     .expect("Network starts");

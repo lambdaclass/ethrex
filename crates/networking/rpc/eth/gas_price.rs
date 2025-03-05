@@ -65,14 +65,18 @@ mod tests {
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
     use bytes::Bytes;
+    use ethrex_blockchain::Blockchain;
     use ethrex_p2p::sync::SyncManager;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
     fn default_context() -> RpcApiContext {
+        let storage = setup_store();
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         RpcApiContext {
-            storage: setup_store(),
+            storage,
+            blockchain,
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
