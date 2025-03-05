@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
-	loc-compare-detailed load-test-fibonacci load-test-io bench-ci
+	loc-compare-detailed load-test-fibonacci load-test-io
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -207,7 +207,3 @@ rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 
 flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
 	sudo bash scripts/flamegraph.sh
-
-bench-ci:
-	cargo build --release --bin ethrex
-	hyperfine -w 5 -r 10 -N --export-markdown bench_pr_comparison.md "./target/release/ethrex --network test_data/genesis-l2.json --import ./test_data/l2-loadtest.rlp --only_import"
