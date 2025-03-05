@@ -74,6 +74,25 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
+    #[allow(clippy::expect_fun_call, clippy::expect_used)]
+    let toml_config = std::env::var("CONFIG_FILE").expect(
+        format!(
+            "CONFIG_FILE environment variable not defined. Expected in {}, line: {}
+If running locally, a reasonable value would be CONFIG_FILE=config.toml",
+            file!(),
+            line!()
+        )
+        .as_str(),
+    );
+
+    match ethrex_l2::parse_toml::read_toml(toml_config) {
+        Ok(_) => (),
+        Err(err) => {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        }
+    };
+
     let setup_result = setup()?;
     download_contract_deps(&setup_result.contracts_path)?;
     compile_contracts(&setup_result.contracts_path)?;
