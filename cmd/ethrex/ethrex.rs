@@ -183,6 +183,31 @@ async fn main() {
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
 
+    if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
+        info!("Importing blocks from chain file: {}", chain_rlp_path);
+        let blocks = import::read_chain_file(chain_rlp_path);
+        blockchain.import_blocks(&blocks);
+    }
+
+    if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
+        info!(
+            "Importing blocks from individual block files in directory: {}",
+            blocks_path
+        );
+        let mut blocks = vec![];
+        let dir_reader = fs::read_dir(blocks_path).expect("Failed to read blocks directory");
+        for file_res in dir_reader {
+            let file = file_res.expect("Failed to open file in directory");
+            let path = file.path();
+            let s = path
+                .to_str()
+                .expect("Path could not be converted into string");
+            blocks.push(import::read_block_file(s));
+        }
+
+        blockchain.import_blocks(&blocks);
+    }
+
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
     // Get the signer from the default directory, create one if the key file is not present.

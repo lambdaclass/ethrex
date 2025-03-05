@@ -70,12 +70,12 @@ pub fn import_blocks_from_path(matches: &ArgMatches) {
     blockchain.import_blocks(&blocks);
 }
 
-fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
+pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
     let chain_file = std::fs::File::open(chain_rlp_path).expect("Failed to open chain rlp file");
     decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
 }
 
-fn read_block_file(block_file_path: &str) -> Block {
+pub fn read_block_file(block_file_path: &str) -> Block {
     let encoded_block = std::fs::read(block_file_path)
         .unwrap_or_else(|_| panic!("Failed to read block file with path {}", block_file_path));
     Block::decode(&encoded_block)
