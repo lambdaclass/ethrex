@@ -77,7 +77,11 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config)?;
 
-        let mut vm = Evm::new(self.evm_engine, self.storage.clone());
+        let mut vm = Evm::new(
+            self.evm_engine,
+            self.storage.clone(),
+            block.header.parent_hash,
+        );
         let BlockExecutionResult {
             receipts,
             requests,
@@ -152,11 +156,11 @@ impl Blockchain {
         if let Some(last_block) = blocks.last() {
             let hash = last_block.hash();
             match self.evm_engine {
-                EvmEngine::LEVM { .. } => {
+                EvmEngine::LEVM => {
                     // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
                     let _ = apply_fork_choice(&self.storage, hash, hash, hash);
                 }
-                EvmEngine::REVM { .. } => {
+                EvmEngine::REVM => {
                     apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
                 }
             }

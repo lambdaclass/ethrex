@@ -254,7 +254,7 @@ impl Committer {
     ) -> Result<StateDiff, CommitterError> {
         info!("Preparing state diff for block {}", block.header.number);
 
-        let result = Evm::default(store.clone())
+        let result = Evm::default(store.clone(), block.header.parent_hash)
             .execute_block(block)
             .map_err(CommitterError::from)?;
         let account_updates = result.account_updates;

@@ -62,40 +62,23 @@ impl std::fmt::Debug for Evm {
 
 impl Evm {
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
-    pub fn new(engine: EvmEngine, store: Store) -> Self {
+    pub fn new(engine: EvmEngine, store: Store, block_hash: H256) -> Self {
         match engine {
             EvmEngine::REVM => Evm::REVM {
-                state: evm_state(store.clone(), H256::zero()),
+                state: evm_state(store.clone(), block_hash),
             },
             EvmEngine::LEVM => Evm::LEVM {
                 store_wrapper: StoreWrapper {
                     store: store.clone(),
-                    block_hash: H256::zero(),
+                    block_hash,
                 },
                 block_cache: CacheDB::new(),
             },
         }
     }
 
-    pub fn default(store: Store) -> Self {
-        Self::new(EvmEngine::default(), store)
-    }
-
-    /// Clears state of the Evm and sets the block hash.
-    /// This is mandatory for using it in a new block, otherwise it can lead to unexpected results.
-    pub fn clear_state(&mut self, block_hash: H256) {
-        match self {
-            Evm::REVM { ref mut state } => {
-                *state = evm_state(state.database().unwrap().clone(), block_hash);
-            }
-            Evm::LEVM {
-                block_cache,
-                store_wrapper,
-            } => {
-                block_cache.clear();
-                store_wrapper.block_hash = block_hash;
-            }
-        }
+    pub fn default(store: Store, block_hash: H256) -> Self {
+        Self::new(EvmEngine::default(), store, block_hash)
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
