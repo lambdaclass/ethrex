@@ -59,7 +59,7 @@ pub async fn launch(matches: clap::ArgMatches) {
         peer_table.clone(),
         local_p2p_node,
         store.clone(),
-        blockchain,
+        blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
     );
@@ -75,10 +75,11 @@ pub async fn launch(matches: clap::ArgMatches) {
         peer_table.clone(),
         store.clone(),
         tracker.clone(),
+        blockchain.clone(),
     )
     .await;
 
-    let l2_proposer = ethrex_l2::start_proposer(store).into_future();
+    let l2_proposer = ethrex_l2::start_proposer(store, blockchain).into_future();
 
     tracker.spawn(l2_proposer);
 
