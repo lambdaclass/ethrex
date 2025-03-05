@@ -125,7 +125,7 @@ If running locally, a reasonable value would be CONFIG_FILE=config.toml",
         &setup_result.eth_client,
     )
     .await?;
-    make_deposits(bridge_address, &setup_result.eth_client).await;
+    make_deposits(bridge_address, &setup_result.eth_client).await?;
 
     let env_lines = read_env_as_lines().map_err(DeployError::EnvFileError)?;
 
@@ -622,15 +622,13 @@ async fn wait_for_transaction_receipt(
     Ok(())
 }
 
-async fn make_deposits(bridge: Address, eth_client: &EthClient) {
+async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), DeployError> {
     let genesis_l1_path = std::env::var("GENESIS_L1_PATH")
         .unwrap_or("../../test_data/genesis-l1-dev.json".to_string());
     let pks_path = std::env::var("PRIVATE_KEYS_PATH")
         .unwrap_or("../../test_data/private_keys_l1.txt".to_string());
     let genesis = read_genesis_file(&genesis_l1_path);
-    let Ok(pks) = fs::read_to_string(&pks_path) else {
-        return;
-    };
+    let pks = fs::read_to_string(&pks_path).map_err(|_| DeployError::FailedToGetStringFromPath)?;
     let private_keys: Vec<String> = pks
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -638,16 +636,16 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
         .collect();
 
     for pk in private_keys.iter() {
-        let Ok(secret_key) = pk.strip_prefix("0x").unwrap_or(pk).parse::<SecretKey>() else {
-            continue;
-        };
-        let Ok(address) = get_address_from_secret_key(&secret_key) else {
-            continue;
-        };
+        let secret_key = pk
+            .strip_prefix("0x")
+            .unwrap_or(pk)
+            .parse::<SecretKey>()
+            .map_err(|_| {
+                DeployError::DecodingError("Error while parsing private key".to_string())
+            })?;
+        let address = get_address_from_secret_key(&secret_key)?;
         let values = vec![Value::Address(address)];
-        let Ok(calldata) = encode_calldata("deposit(address)", &values) else {
-            continue;
-        };
+        let calldata = encode_calldata("deposit(address)", &values)?;
         let Some(acc) = genesis.alloc.get(&address) else {
             println!(
                 "Skipping deposit for address {:?} as it is not in the genesis file",
@@ -666,12 +664,9 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
             ..Overrides::default()
         };
 
-        let Ok(build) = eth_client
+        let build = eth_client
             .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides, 1)
-            .await
-        else {
-            continue;
-        };
+            .await?;
 
         match eth_client
             .send_eip1559_transaction(&build, &secret_key)
@@ -683,15 +678,16 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
                     address, value_to_deposit
                 );
             }
-            Err(_) => {
+            Err(e) => {
                 println!(
                     "Failed to deposit to {:?} with value {:?}",
                     address, value_to_deposit
                 );
-                continue;
+                return Err(DeployError::EthClientError(e));
             }
         }
     }
+    Ok(())
 }
 
 #[allow(clippy::unwrap_used)]
