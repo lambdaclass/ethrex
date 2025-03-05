@@ -220,51 +220,38 @@ fn handle_forkchoice(
                 }
             };
 
-            info!(
-                "Applying fork choice with head: {:#x}",
-                fork_choice_state.head_block_hash
-            );
-            // Check if the block has already been invalidated
-            match invalid_ancestors.get(&fork_choice_state.head_block_hash) {
-                Some(latest_valid_hash) => {
-                    warn!(
-                        "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
-                        latest_valid_hash
-                    );
-                    Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
-                }
-                None => {
-                    // This is a test to know if checking for the parent of the head block is enough to fix the hive test failing
-                    let head_block = context
-                        .storage
-                        .get_block_header_by_hash(fork_choice_state.head_block_hash)?;
+            // Check head block hash in invalid_ancestors
+            if let Some(latest_valid_hash) =
+                invalid_ancestors.get(&fork_choice_state.head_block_hash)
+            {
+                warn!(
+                    "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
+                    latest_valid_hash
+                );
+                Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
+            } else {
+                // Check parent block hash in invalid_ancestors (if head block exists)
+                let check_parent = context
+                    .storage
+                    .get_block_header_by_hash(fork_choice_state.head_block_hash)?
+                    .and_then(|head_block| {
+                        warn!(
+                            "Checking parent for invalid ancestor {}",
+                            head_block.parent_hash
+                        );
+                        invalid_ancestors.get(&head_block.parent_hash).copied()
+                    });
 
-                    match head_block {
-                        Some(head_block) => {
-                            warn!(
-                                "FORKCHOICE: Checking parent for invalid ancestor {}",
-                                head_block.parent_hash
-                            );
-                            if let Some(latest_valid_hash) =
-                                invalid_ancestors.get(&head_block.parent_hash)
-                            {
-                                Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
-                            } else {
-                                apply_fork_choice(
-                                    &context.storage,
-                                    fork_choice_state.head_block_hash,
-                                    fork_choice_state.safe_block_hash,
-                                    fork_choice_state.finalized_block_hash,
-                                )
-                            }
-                        }
-                        None => apply_fork_choice(
-                            &context.storage,
-                            fork_choice_state.head_block_hash,
-                            fork_choice_state.safe_block_hash,
-                            fork_choice_state.finalized_block_hash,
-                        ),
-                    }
+                if let Some(latest_valid_hash) = check_parent {
+                    Err(InvalidForkChoice::InvalidAncestor(latest_valid_hash))
+                } else {
+                    // All checks passed, apply fork choice
+                    apply_fork_choice(
+                        &context.storage,
+                        fork_choice_state.head_block_hash,
+                        fork_choice_state.safe_block_hash,
+                        fork_choice_state.finalized_block_hash,
+                    )
                 }
             }
         }

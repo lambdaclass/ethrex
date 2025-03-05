@@ -457,31 +457,65 @@ fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), 
     Ok(())
 }
 
+// This function is used to make sure neither the current block nor its parent have been invalidated
+fn validate_ancestors(
+    block: &Block,
+    context: &RpcApiContext,
+) -> Result<Option<PayloadStatus>, RpcErr> {
+    // Obtain the invalid ancestors from the syncer
+    let invalid_ancestors = match context.syncer.try_lock() {
+        Ok(syncer) => syncer.invalid_ancestors.clone(),
+        Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+    };
+
+    // Check if the block has already been invalidated
+    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
+        return Ok(Some(PayloadStatus::invalid_with(
+            *latest_valid_hash,
+            "Header has been previously invalidated.".into(),
+        )));
+    }
+
+    // Check if the parent block has already been invalidated
+    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash) {
+        return Ok(Some(PayloadStatus::invalid_with(
+            *latest_valid_hash,
+            "Parent header has been previously invalidated.".into(),
+        )));
+    }
+
+    Ok(None)
+}
+
+// TODO: We need to check why we return a Result<Value, RpcErr> here instead of a Result<PayloadStatus, RpcErr> as in v3.
 fn handle_new_payload_v1_v2(
     payload: &ExecutionPayload,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     let block = get_block_from_payload(payload, None, None)?;
-    let payload_status = match context.sync_status()? {
-        SyncStatus::Active | SyncStatus::Pending => PayloadStatus::syncing(),
-        SyncStatus::Inactive => {
-            // Check if the block has already been invalidated
-            let invalid_ancestors = match context.syncer.try_lock() {
-                Ok(syncer) => syncer.invalid_ancestors.clone(),
-                Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-            };
-            if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
-                PayloadStatus::invalid_with(
-                    *latest_valid_hash,
-                    "Header has been previously invalidated.".into(),
-                )
-            } else if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
-                PayloadStatus::invalid_with_err(&error_msg)
-            } else {
-                execute_payload(&block, &context)?
-            }
+
+    // Check sync status
+    match context.sync_status()? {
+        SyncStatus::Active | SyncStatus::Pending => {
+            return serde_json::to_value(PayloadStatus::syncing())
+                .map_err(|error| RpcErr::Internal(error.to_string()));
         }
-    };
+        SyncStatus::Inactive => {}
+    }
+
+    // Validate block hash
+    if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+        return serde_json::to_value(PayloadStatus::invalid_with_err(&error_msg))
+            .map_err(|error| RpcErr::Internal(error.to_string()));
+    }
+
+    // Check for invalid ancestors
+    if let Some(status) = validate_ancestors(&block, &context)? {
+        return serde_json::to_value(status).map_err(|error| RpcErr::Internal(error.to_string()));
+    }
+
+    // All checks passed, execute payload
+    let payload_status = execute_payload(&block, &context)?;
     serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
@@ -492,52 +526,44 @@ fn handle_new_payload_v3(
     expected_blob_versioned_hashes: Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
     // Ignore incoming
+    // Check sync status
     match context.sync_status()? {
-        SyncStatus::Active | SyncStatus::Pending => Ok(PayloadStatus::syncing()),
-        SyncStatus::Inactive => {
-            // Check if the block has already been invalidated
-            let invalid_ancestors = match context.syncer.try_lock() {
-                Ok(syncer) => syncer.invalid_ancestors.clone(),
-                Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-            };
-
-            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
-                return Ok(PayloadStatus::invalid_with_err(&error_msg));
-            }
-            // We want to check for the current block and its parent if any of those are already invalidated, this is just for testing
-            debug!(
-                "Block hash {} is about to check for invalid ancestors and his parent {}",
-                block.hash(),
-                block.header.parent_hash
-            );
-            if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
-                Ok(PayloadStatus::invalid_with(
-                    *latest_valid_hash,
-                    "Header has been previously invalidated.".into(),
-                ))
-            } else if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash)
-            {
-                Ok(PayloadStatus::invalid_with(
-                    *latest_valid_hash,
-                    "Parent header has been previously invalidated.".into(),
-                ))
-            } else {
-                let blob_versioned_hashes: Vec<H256> = block
-                    .body
-                    .transactions
-                    .iter()
-                    .flat_map(|tx| tx.blob_versioned_hashes())
-                    .collect();
-
-                if expected_blob_versioned_hashes != blob_versioned_hashes {
-                    return Ok(PayloadStatus::invalid_with_err(
-                        "Invalid blob_versioned_hashes",
-                    ));
-                }
-                execute_payload(&block, &context)
-            }
-        }
+        SyncStatus::Active | SyncStatus::Pending => return Ok(PayloadStatus::syncing()),
+        SyncStatus::Inactive => {}
     }
+
+    // Validate block hash
+    if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+        return Ok(PayloadStatus::invalid_with_err(&error_msg));
+    }
+
+    debug!(
+        "Block hash {} is about to check for invalid ancestors and its parent {}",
+        block.hash(),
+        block.header.parent_hash
+    );
+
+    // Check for invalid ancestors
+    if let Some(status) = validate_ancestors(&block, &context)? {
+        return Ok(status);
+    }
+
+    // V3 specific: validate blob hashes
+    let blob_versioned_hashes: Vec<H256> = block
+        .body
+        .transactions
+        .iter()
+        .flat_map(|tx| tx.blob_versioned_hashes())
+        .collect();
+
+    if expected_blob_versioned_hashes != blob_versioned_hashes {
+        return Ok(PayloadStatus::invalid_with_err(
+            "Invalid blob_versioned_hashes",
+        ));
+    }
+
+    // All checks passed, execute payload
+    execute_payload(&block, &context)
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
