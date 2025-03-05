@@ -1,14 +1,14 @@
 use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::Genesis;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::{node_id_from_signing_key, peer_table},
     sync::{SyncManager, SyncMode},
     types::{Node, NodeRecord},
 };
-use ethrex_rlp::decode::RLPDecode;
+
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::backends::EVM;
 use k256::ecdsa::SigningKey;
@@ -24,6 +24,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use subcommands::{import, removedb};
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::{error, info, warn};
@@ -31,6 +32,7 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 mod cli;
 mod decode;
 mod networks;
+mod subcommands;
 
 const DEFAULT_DATADIR: &str = "ethrex";
 #[tokio::main]
@@ -38,15 +40,12 @@ async fn main() {
     let matches = cli::cli().get_matches();
 
     if let Some(matches) = matches.subcommand_matches("removedb") {
-        let data_dir = matches
-            .get_one::<String>("datadir")
-            .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
-        let path = Path::new(&data_dir);
-        if path.exists() {
-            std::fs::remove_dir_all(path).expect("Failed to remove data directory");
-        } else {
-            warn!("Data directory does not exist: {}", data_dir);
-        }
+        removedb::remove_db(matches);
+        return;
+    }
+
+    if let Some(matches) = matches.subcommand_matches("import") {
+        import::import_blocks_from_path(matches);
         return;
     }
 
@@ -106,29 +105,29 @@ async fn main() {
     if network == "holesky" {
         info!("Adding holesky preset bootnodes");
         // Set holesky presets
-        network = String::from(networks::HOLESKY_GENESIS_PATH);
         bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
     }
 
     if network == "sepolia" {
         info!("Adding sepolia preset bootnodes");
         // Set sepolia presets
-        network = String::from(networks::SEPOLIA_GENESIS_PATH);
         bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
     }
 
     if network == "mekong" {
         info!("Adding mekong preset bootnodes");
         // Set mekong presets
-        network = String::from(networks::MEKONG_GENESIS_PATH);
         bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
     if network == "ephemery" {
         info!("Adding ephemery preset bootnodes");
         // Set ephemery presets
-        network = String::from(networks::EPHEMERY_GENESIS_PATH);
         bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
+    }
+
+    if let Some(genesis_path) = genesis_file_path_from_network(&network) {
+        network = genesis_path;
     }
 
     if bootnodes.is_empty() {
@@ -183,31 +182,6 @@ async fn main() {
     store
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
-
-    if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
-        info!("Importing blocks from chain file: {}", chain_rlp_path);
-        let blocks = read_chain_file(chain_rlp_path);
-        blockchain.import_blocks(&blocks);
-    }
-
-    if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
-        info!(
-            "Importing blocks from individual block files in directory: {}",
-            blocks_path
-        );
-        let mut blocks = vec![];
-        let dir_reader = fs::read_dir(blocks_path).expect("Failed to read blocks directory");
-        for file_res in dir_reader {
-            let file = file_res.expect("Failed to open file in directory");
-            let path = file.path();
-            let s = path
-                .to_str()
-                .expect("Path could not be converted into string");
-            blocks.push(read_block_file(s));
-        }
-
-        blockchain.import_blocks(&blocks);
-    }
 
     let jwt_secret = read_jwtsecret_file(authrpc_jwtsecret);
 
@@ -430,18 +404,6 @@ fn generate_jwt_secret() -> String {
     hex::encode(secret)
 }
 
-fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
-    let chain_file = std::fs::File::open(chain_rlp_path).expect("Failed to open chain rlp file");
-    decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
-}
-
-fn read_block_file(block_file_path: &str) -> Block {
-    let encoded_block = std::fs::read(block_file_path)
-        .unwrap_or_else(|_| panic!("Failed to read block file with path {}", block_file_path));
-    Block::decode(&encoded_block)
-        .unwrap_or_else(|_| panic!("Failed to decode block file {}", block_file_path))
-}
-
 fn read_genesis_file(genesis_file_path: &str) -> Genesis {
     let genesis_file = std::fs::File::open(genesis_file_path).expect("Failed to open genesis file");
     decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
@@ -504,4 +466,18 @@ fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> 
     };
 
     serde_json::from_reader(file)
+}
+
+fn genesis_file_path_from_network(network: &str) -> Option<String> {
+    if network == "holesky" {
+        Some(String::from(networks::HOLESKY_GENESIS_PATH))
+    } else if network == "sepolia" {
+        Some(String::from(networks::SEPOLIA_GENESIS_PATH))
+    } else if network == "mekong" {
+        Some(String::from(networks::MEKONG_GENESIS_PATH))
+    } else if network == "ephemery" {
+        Some(String::from(networks::EPHEMERY_GENESIS_PATH))
+    } else {
+        None
+    }
 }
