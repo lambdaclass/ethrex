@@ -1,10 +1,8 @@
-#[cfg(feature = "dev")]
-use crate::launch::common::init_dev_network;
 use crate::{
     launch::{
         common::{
             get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics,
-            init_network, init_rpc_api, init_store, init_tracing,
+            init_rpc_api, init_store, init_tracing,
         },
         DEFAULT_DATADIR,
     },
@@ -65,22 +63,28 @@ pub async fn launch(matches: clap::ArgMatches) {
 
     init_metrics(&matches, tracker.clone());
 
-    #[cfg(feature = "dev")]
-    init_dev_network(&matches, &store, tracker.clone());
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "dev")] {
+            use crate::launch::common::init_dev_network;
 
-    #[cfg(not(feature = "dev"))]
-    init_network(
-        &matches,
-        &network,
-        &data_dir,
-        local_p2p_node,
-        signer,
-        peer_table.clone(),
-        store,
-        tracker.clone(),
-        blockchain,
-    )
-    .await;
+            init_dev_network(&matches, &store, tracker.clone());
+        } else {
+            use crate::launch::common::init_network;
+
+            init_network(
+                &matches,
+                &network,
+                &data_dir,
+                local_p2p_node,
+                signer,
+                peer_table.clone(),
+                store,
+                tracker.clone(),
+                blockchain,
+            )
+            .await;
+        }
+    }
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
