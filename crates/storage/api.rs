@@ -313,4 +313,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         start: H256,
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError>;
+
+    fn write_batch_of_tries(&self, tries: Vec<(&H256, &Trie)>);
 }
