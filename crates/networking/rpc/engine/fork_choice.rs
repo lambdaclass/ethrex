@@ -230,13 +230,33 @@ fn handle_forkchoice(
                     );
                     Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
                 }
-                None => apply_fork_choice(
-                    &context.storage,
-                    fork_choice_state.head_block_hash,
-                    fork_choice_state.safe_block_hash,
-                    fork_choice_state.finalized_block_hash,
-                    invalid_ancestors.clone(),
-                ),
+                None => {
+                    // This is a test to know if checking for the parent of the head block is enough to fix the hive test failing
+                    let head_block = context
+                        .storage
+                        .get_block_header_by_hash(fork_choice_state.head_block_hash)?;
+
+                    match head_block {
+                        Some(head_block) => {
+                            warn!("FORKCHOICE: Checking parent for invalid ancestor {}", head_block.parent_hash);
+                            if let Some(latest_valid_hash) = invalid_ancestors.get(&head_block.parent_hash) {
+                                Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
+                            } else {
+                                apply_fork_choice(
+                                &context.storage,
+                                fork_choice_state.head_block_hash,
+                                fork_choice_state.safe_block_hash,
+                                fork_choice_state.finalized_block_hash,
+                            )}
+                        }
+                        None => apply_fork_choice(
+                            &context.storage,
+                            fork_choice_state.head_block_hash,
+                            fork_choice_state.safe_block_hash,
+                            fork_choice_state.finalized_block_hash,
+                        )
+                    }
+                }
             }
         }
         // Restart sync if needed

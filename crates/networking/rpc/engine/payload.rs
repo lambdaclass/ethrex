@@ -495,22 +495,42 @@ fn handle_new_payload_v3(
     match context.sync_status()? {
         SyncStatus::Active | SyncStatus::Pending => Ok(PayloadStatus::syncing()),
         SyncStatus::Inactive => {
+            // Check if the block has already been invalidated
+            let invalid_ancestors = match context.syncer.try_lock() {
+                Ok(syncer) => syncer.invalid_ancestors.clone(),
+                Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+            };
+
             if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
                 return Ok(PayloadStatus::invalid_with_err(&error_msg));
             }
-            let blob_versioned_hashes: Vec<H256> = block
-                .body
-                .transactions
-                .iter()
-                .flat_map(|tx| tx.blob_versioned_hashes())
-                .collect();
+            // We want to check for the current block and its parent if any of those are already invalidated, this is just for testing
+            debug!("Block hash {} is about to check for invalid ancestors and his parent {}", block.hash(), block.header.parent_hash);
+            if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()){
+                Ok(PayloadStatus::invalid_with(
+                    *latest_valid_hash,
+                    "Header has been previously invalidated.".into(),
+                ))
+            } else if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash){
+                Ok(PayloadStatus::invalid_with(
+                    *latest_valid_hash,
+                    "Parent header has been previously invalidated.".into(),
+                ))
+            } else {
+                let blob_versioned_hashes: Vec<H256> = block
+                    .body
+                    .transactions
+                    .iter()
+                    .flat_map(|tx| tx.blob_versioned_hashes())
+                    .collect();
 
-            if expected_blob_versioned_hashes != blob_versioned_hashes {
-                return Ok(PayloadStatus::invalid_with_err(
-                    "Invalid blob_versioned_hashes",
-                ));
+                if expected_blob_versioned_hashes != blob_versioned_hashes {
+                    return Ok(PayloadStatus::invalid_with_err(
+                        "Invalid blob_versioned_hashes",
+                    ));
+                }
+                execute_payload(&block, &context)
             }
-            execute_payload(&block, &context)
         }
     }
 }

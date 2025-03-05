@@ -212,6 +212,15 @@ impl SyncManager {
                 Some(header) => header.clone(),
                 None => continue,
             };
+
+            // This is just for testing the solution
+            if first_block_header == last_block_header && block_headers[0].compute_block_hash() == current_head && current_head != sync_head {
+                // There is no path to the sync head this goes back until it find a common ancerstor
+                warn!("Sync failed to find target block header, going back to the previous parent");
+                current_head = block_headers[0].parent_hash;
+                continue;
+            }
+
             let mut block_hashes = block_headers
                 .iter()
                 .map(|header| header.compute_block_hash())
