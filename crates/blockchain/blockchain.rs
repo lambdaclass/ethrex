@@ -150,10 +150,10 @@ impl Blockchain {
             match self.vm {
                 EVM::LEVM => {
                     // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                    let _ = apply_fork_choice(&self.storage, hash, hash, hash, std::collections::HashMap::new());
+                    let _ = apply_fork_choice(&self.storage, hash, hash, hash);
                 }
                 EVM::REVM => {
-                    apply_fork_choice(&self.storage, hash, hash, hash, std::collections::HashMap::new()).unwrap();
+                    apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
                 }
             }
         }

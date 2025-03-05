@@ -9,9 +9,6 @@ use crate::{
     is_canonical,
 };
 
-use tracing::error;
-use std::collections::HashMap;
-
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
 /// - The finalized, safe and head hashes must correspond to already saved blocks.
 /// - The saved blocks should be in the correct order (finalized <= safe <= head).
@@ -26,7 +23,6 @@ pub fn apply_fork_choice(
     head_hash: H256,
     safe_hash: H256,
     finalized_hash: H256,
-    invalid_ancestors: HashMap<BlockHash, BlockHash>,
 ) -> Result<BlockHeader, InvalidForkChoice> {
     if head_hash.is_zero() {
         return Err(InvalidForkChoice::InvalidHeadHash);
@@ -110,20 +106,9 @@ pub fn apply_fork_choice(
 
     // Finished all validations.
 
-    // Make all ancestors to head canonical if they are not invalid
+    // Make all ancestors to head canonical.
     for (number, hash) in new_canonical_blocks {
-        match invalid_ancestors.get(&hash) {
-            Some(invalid_hash) => {
-                error!(
-                    "Block {} is invalid. Invalid block hash: {}, invalidating fork choice.",
-                    number, invalid_hash
-                );
-                return Err(InvalidForkChoice::InvalidAncestor(*invalid_hash));
-            }
-            None => {
-                store.set_canonical_block(number, hash)?;
-            }
-        }
+        store.set_canonical_block(number, hash)?;
     }
 
     // Remove anything after the head from the canonical chain.
