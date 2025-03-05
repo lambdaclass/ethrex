@@ -46,7 +46,6 @@ pub async fn start() -> eyre::Result<()> {
         return cmd.run();
     }
 
-    dbg!("QUESO");
     let cfg = load_selected_config().await?;
     match command {
         EthrexL2Command::Stack(cmd) => cmd.run(cfg).await?,
