@@ -181,7 +181,7 @@ async fn main() {
         .unwrap_or(&"revm".to_string())
         .clone()
         .try_into()
-        .expect("Failed to parse evm");
+        .unwrap_or_else(|e| panic!("{}", e));
 
     let blockchain = Arc::new(Blockchain::new(evm_engine, store.clone()));
 
