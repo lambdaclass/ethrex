@@ -48,25 +48,30 @@ The following environment variables are available to configure the Proposer:
     - `check_interval_ms`: Interval in milliseconds to check for new events.
     - `max_block_step`: Maximum number of blocks to look for when checking for new events.
     - `l2_proposer_private_key`: Private key of the L2 proposer.
+
 - Under the [engine] title:
     - `rpc_url`: URL of the EngineAPI.
     - `jwt_path`: Path to the JWT authentication file, required to connect to the EngineAPI.
+
 - Under the [prover] title:
     - `sp1_prover`: Configure how the `sp1_prover` computes its proofs, `"local"` for real proofs and `"mock"` for fake proofs.
     - `risc0_dev_mode`: Whether `risc0`'s dev mode is on.
+
 - Under the [prover.client] title:
     - `prover_server_endpoint`: Endpoint for the prover server.
-- `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
-- `PROVER_SERVER_LISTEN_IP`: IP to listen for proof data requests.
-- `PROVER_SERVER_LISTEN_PORT`: Port to listen for proof data requests.
-- `PROVER_ELF_PATH`: Path to the ELF file for the prover.
+    - `interval_ms`: Interval in milliseconds to prove new blocks (Currently unused).
+
+- Under the [prover.server] title:
+    - `listen_ip`: IP to listen for proof data requests.
+    - `listen_port`: Port to listen for proof data requests.
+
 Under the [committer] title:
 - `l1_address`: Address of the L1 committer.
 - `l1_private_key`: Private key of the L1 committer.
 - `on_chain_proposer_address`: Address of the on-chain committer.
 
-Under the [proposer] title:
-- `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
-- `coinbase address`: Address which will receive the execution fees.
+- Under the [proposer] title:
+    - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
+    - `coinbase address`: Address which will receive the execution fees.
 
 If you want to use a different configuration file, you can set the `CONFIG_FILE` environment variable to the path of the file.
