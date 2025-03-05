@@ -98,7 +98,10 @@ impl Monitor {
 
         let add_block_time_in_secs = self.current_cycle.add_block_time / 1000;
         let add_block_time_ratio = add_block_time_in_secs as f64 / elapsed as f64;
-        let blocks_per_second = self.current_cycle.executed_blocks_count as f64 / elapsed as f64;
+        let blocks_per_second_over_total_time =
+            self.current_cycle.executed_blocks_count as f64 / elapsed as f64;
+        let blocks_per_second_over_add_block =
+            self.current_cycle.executed_blocks_count as f64 / add_block_time_in_secs as f64;
         let throughput =
             self.current_cycle.throughput / self.current_cycle.executed_blocks_count as f64;
 
@@ -107,7 +110,8 @@ impl Monitor {
         \tTotal time (takes into account network requests): {} seconds\n\
         \tTime spent adding blocks: {} seconds ~= {:.2}% of total time\n\
         \tAverage block in total time: {:.3} seconds\n\
-        \tBlocks per second: {:.3}\n\
+        \tBlocks per second over total time: {:.3}\n\
+        \tBlocks per second add block: {:.3}\n\
         \tThroughput: {:.3} Gigagas/s\n\
         \tStarted at block: {} (hash: {:?})\n\
         \tFinished at block: {} (hash: {:?})\n\
@@ -118,7 +122,8 @@ impl Monitor {
             add_block_time_in_secs,
             add_block_time_ratio * 100.0,
             avg,
-            blocks_per_second,
+            blocks_per_second_over_total_time,
+            blocks_per_second_over_add_block,
             throughput,
             self.current_cycle.started_at_block_num,
             self.current_cycle.started_at_block_hash,
