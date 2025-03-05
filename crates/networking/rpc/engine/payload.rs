@@ -631,18 +631,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         };
     };
 
-    let add_block_result = {
-        let lock = context.syncer.try_lock();
-        if let Ok(syncer) = lock {
-            syncer.blockchain.add_block(block)
-        } else {
-            Err(ChainError::Custom(
-                "Error when trying to lock syncer".to_string(),
-            ))
-        }
-    };
-
-    match add_block_result {
+    match context.blockchain.add_block(block) {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state
         // transition of any new payload as long as the parent is present. If we received the
@@ -750,11 +739,7 @@ fn build_execution_payload_response(
         })
     } else {
         let (blobs_bundle, block_value) = {
-            let syncer = context
-                .syncer
-                .try_lock()
-                .map_err(|_| RpcErr::Internal("Error locking syncer".to_string()))?;
-            syncer
+            context
                 .blockchain
                 .build_payload(&mut payload_block)
                 .map_err(|err| RpcErr::Internal(err.to_string()))?
