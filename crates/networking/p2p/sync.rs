@@ -212,7 +212,7 @@ impl SyncManager {
                 Some(header) => header.clone(),
                 None => continue,
             };
-            
+
             // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
             // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
             if first_block_header == last_block_header
