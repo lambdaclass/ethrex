@@ -490,7 +490,7 @@ TODO: Expand on tasks about proper interoperability between chains (seamlessly b
 >
 > 1. Make sure you are inside the `crates/l2` directory.
 > 2. Make sure the Docker daemon is running.
-> 3. Make sure you have created a `.env` file following the `.env.example` file.
+> 3. Make sure you have created a `config.toml` file following the `config_example.toml` file.
 
 ```
 make init

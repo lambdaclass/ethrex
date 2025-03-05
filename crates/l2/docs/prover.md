@@ -69,7 +69,7 @@ Then run any of the targets:
 
 ### Dev Mode
 
-To run the blockchain (`proposer`) and prover in conjunction in a development environment, set the following environment variables in the `.env` file:
+To run the blockchain (`proposer`) and prover in conjunction in a development environment, set the following environment variables in the `config.toml` file:
 - `PROVER_SERVER_DEV_MODE=false`
 - Depending on the Proving System:
   - RISC0: `RISC0_DEV_MODE=1` [(docs)](https://dev.risczero.com/api/generating-proofs/dev-mode)

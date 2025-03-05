@@ -36,25 +36,37 @@ For more information about the Prover Server, the [Prover Docs](./prover.md) pro
 
 ## Configuration
 
-Configuration is done through environment variables. The easiest way to configure the Proposer is by creating a `.env` file and setting the variables there. Then, at start, it will read the file and set the variables.
+Configuration is done through environment variables. The easiest way to configure the Proposer is by creating a `config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
 
 The following environment variables are available to configure the Proposer:
 
-- `ETH_RPC_URL`: URL of the L1 RPC.
-- `L1_WATCHER_BRIDGE_ADDRESS`: Address of the bridge contract on L1.
-- `L1_WATCHER_TOPICS`: Topics to filter the L1 events.
-- `L1_WATCHER_CHECK_INTERVAL_MS`: Interval in milliseconds to check for new events.
-- `L1_WATCHER_MAX_BLOCK_STEP`: Maximum number of blocks to look for when checking for new events.
-- `L1_WATCHER_L2_PROPOSER_PRIVATE_KEY`: Private key of the L2 proposer.
-- `ENGINE_API_RPC_URL`: URL of the EngineAPI.
-- `ENGINE_API_JWT_PATH`: Path to the JWT authentication file, required to connect to the EngineAPI.
+- Under the [eth] title:
+    - `rpc_url`: URL of the L1 RPC.
+
+- Under the [watcher] title:
+    - `bridge_address`: Address of the bridge contract on L1.
+    - `check_interval_ms`: Interval in milliseconds to check for new events.
+    - `max_block_step`: Maximum number of blocks to look for when checking for new events.
+    - `l2_proposer_private_key`: Private key of the L2 proposer.
+- Under the [engine] title:
+    - `rpc_url`: URL of the EngineAPI.
+    - `jwt_path`: Path to the JWT authentication file, required to connect to the EngineAPI.
+- Under the [prover] title:
+    - `sp1_prover`: Configure how the `sp1_prover` computes its proofs, `"local"` for real proofs and `"mock"` for fake proofs.
+    - `risc0_dev_mode`: Whether `risc0`'s dev mode is on.
+- Under the [prover.client] title:
+    - `prover_server_endpoint`: Endpoint for the prover server.
+- `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
 - `PROVER_SERVER_LISTEN_IP`: IP to listen for proof data requests.
 - `PROVER_SERVER_LISTEN_PORT`: Port to listen for proof data requests.
-- `PROVER_PROVER_SERVER_ENDPOINT`: Endpoint for the prover server.
 - `PROVER_ELF_PATH`: Path to the ELF file for the prover.
-- `PROPOSER_ON_CHAIN_PROPOSER_ADDRESS`: Address of the on-chain proposer.
-- `PROPOSER_L1_ADDRESS`: Address of the L1 proposer.
-- `PROPOSER_L1_PRIVATE_KEY`: Private key of the L1 proposer.
-- `PROPOSER_INTERVAL_MS`: Interval in milliseconds to produce new blocks for the proposer.
+Under the [committer] title:
+- `l1_address`: Address of the L1 committer.
+- `l1_private_key`: Private key of the L1 committer.
+- `on_chain_proposer_address`: Address of the on-chain committer.
 
-If you want to use a different configuration file, you can set the `ENV_FILE` environment variable to the path of the file.
+Under the [proposer] title:
+- `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
+- `coinbase address`: Address which will receive the execution fees.
+
+If you want to use a different configuration file, you can set the `CONFIG_FILE` environment variable to the path of the file.
