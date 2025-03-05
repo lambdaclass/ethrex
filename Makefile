@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
-	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
-	loc-compare-detailed load-test-fibonacci load-test-io
+		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
+		load-test-fibonacci load-test-io
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -142,22 +142,6 @@ run-hive-report: build-image setup-hive clean-hive-logs ## 🐝 Run Hive and Bui
 	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
 	cargo run --release -p hive_report
 
-loc:
-	cargo run -p loc
-
-loc-stats:
-	if [ "$(QUIET)" = "true" ]; then \
-		cargo run --quiet -p loc -- --summary;\
-	else \
-		cargo run -p loc -- --summary;\
-	fi
-
-loc-detailed:
-	cargo run --release -p loc --bin loc -- --detailed
-
-loc-compare-detailed:
-	cargo run --release -p loc --bin loc -- --compare-detailed
-
 hive-stats:
 	make hive QUIET=true
 	make setup-hive QUIET=true
@@ -168,7 +152,6 @@ hive-stats:
 	make run-hive-all SIMULATION=ethereum/sync || exit 0
 
 stats:
-	make loc-stats QUIET=true && echo
 	cd crates/vm/levm && make download-evm-ef-tests
 	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
 	make hive-stats
