@@ -6,7 +6,7 @@ use ethrex_common::{
     types::{AccountInfo, Block, ChainConfig},
     Address, H256, U256,
 };
-use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use revm::{
     db::CacheDB,
@@ -23,9 +23,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     backends::{self},
     block_env,
-    db::{evm_state, StoreWrapper},
+    db::evm_state,
     errors::ExecutionDBError,
-    spec_id, tx_env, EvmError,
+    tx_env,
 };
 
 /// In-memory EVM database for single execution data.
@@ -56,126 +56,6 @@ pub struct ExecutionDB {
 }
 
 impl ExecutionDB {
-    /// Creates a database and returns the ExecutionDB by "pre-executing" a block,
-    /// without performing any validation, and retrieving data from a [Store].
-    pub fn from_store(block: &Block, store: Store) -> Result<Self, ExecutionDBError> {
-        let parent_hash = block.header.parent_hash;
-        let chain_config = store.get_chain_config()?;
-        let store_wrapper = StoreWrapper {
-            store: store.clone(),
-            block_hash: parent_hash,
-        };
-
-        // pre-execute and get all state changes
-        let cache = Self::pre_execute(
-            block,
-            chain_config.chain_id,
-            spec_id(&chain_config, block.header.timestamp),
-            store_wrapper,
-        )
-        .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: must be a better way
-        let store_wrapper = cache.db;
-
-        // fetch all read/written values from store
-        let already_existing_accounts = cache
-            .accounts
-            .iter()
-            // filter out new accounts, we're only interested in already existing accounts.
-            // new accounts are storage cleared, self-destructed accounts too but they're marked with "not
-            // existing" status instead.
-            .filter_map(|(address, account)| {
-                if !account.account_state.is_storage_cleared() {
-                    Some((Address::from(address.0.as_ref()), account))
-                } else {
-                    None
-                }
-            });
-        let accounts = already_existing_accounts
-            .clone()
-            .map(|(address, _)| {
-                // return error if account is missing
-                let account = match store_wrapper
-                    .store
-                    .get_account_info_by_hash(parent_hash, address)
-                {
-                    Ok(None) => Err(ExecutionDBError::NewMissingAccountInfo(address)),
-                    Ok(Some(some)) => Ok(some),
-                    Err(err) => Err(ExecutionDBError::Store(err)),
-                };
-                Ok((address, account?))
-            })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let code = already_existing_accounts
-            .clone()
-            .map(|(_, account)| {
-                // return error if code is missing
-                let hash = H256::from(account.info.code_hash.0);
-                Ok((
-                    hash,
-                    store_wrapper
-                        .store
-                        .get_account_code(hash)?
-                        .ok_or(ExecutionDBError::NewMissingCode(hash))?,
-                ))
-            })
-            .collect::<Result<_, ExecutionDBError>>()?;
-        let storage = already_existing_accounts
-            .map(|(address, account)| {
-                // return error if storage is missing
-                Ok((
-                    address,
-                    account
-                        .storage
-                        .keys()
-                        .map(|key| {
-                            let key = H256::from(key.to_be_bytes());
-                            let value = store_wrapper
-                                .store
-                                .get_storage_at_hash(parent_hash, address, key)
-                                .map_err(ExecutionDBError::Store)?
-                                .ok_or(ExecutionDBError::NewMissingStorage(address, key))?;
-                            Ok((key, value))
-                        })
-                        .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?,
-                ))
-            })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let block_hashes = cache
-            .block_hashes
-            .into_iter()
-            .map(|(num, hash)| (num.try_into().unwrap(), H256::from(hash.0)))
-            .collect();
-        // WARN: unwrapping because revm wraps a u64 as a U256
-
-        // get proofs
-        let state_trie = store
-            .state_trie(parent_hash)?
-            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
-
-        let state_proofs =
-            state_trie.get_proofs(&accounts.keys().map(hash_address).collect::<Vec<_>>())?;
-
-        let mut storage_proofs = HashMap::new();
-        for (address, storages) in &storage {
-            let storage_trie = store.storage_trie(parent_hash, *address)?.ok_or(
-                ExecutionDBError::NewMissingStorageTrie(parent_hash, *address),
-            )?;
-
-            let paths = storages.keys().map(hash_key).collect::<Vec<_>>();
-            storage_proofs.insert(*address, storage_trie.get_proofs(&paths)?);
-        }
-
-        Ok(Self {
-            accounts,
-            code,
-            storage,
-            block_hashes,
-            chain_config,
-            state_proofs,
-            storage_proofs,
-        })
-    }
-
     /// Gets the Vec<[AccountUpdate]>/StateTransitions obtained after executing a block.
     pub fn get_account_updates(
         block: &Block,
@@ -212,17 +92,74 @@ impl ExecutionDB {
     }
 
     /// Execute a block and cache all state changes, returns the cache
-    fn pre_execute<ExtDB: DatabaseRef>(
+    pub fn pre_execute<ExtDB: DatabaseRef>(
         block: &Block,
         chain_id: u64,
         spec_id: SpecId,
         db: ExtDB,
     ) -> Result<CacheDB<ExtDB>, RevmError<ExtDB::Error>> {
-        let block_env = block_env(&block.header, spec_id);
+        // this code was copied from the L1
+        // TODO: if we change EvmState so that it accepts a CacheDB<RpcDB> then we can
+        // simply call execute_block().
+
         let mut db = CacheDB::new(db);
 
+        // beacon root call
+        #[cfg(not(feature = "l2"))]
+        {
+            use lazy_static::lazy_static;
+            use revm::DatabaseCommit;
+            use revm_primitives::{TxEnv, TxKind as RevmTxKind};
+
+            lazy_static! {
+                static ref SYSTEM_ADDRESS: RevmAddress = RevmAddress::from_slice(
+                    &hex::decode("fffffffffffffffffffffffffffffffffffffffe").unwrap()
+                );
+                static ref CONTRACT_ADDRESS: RevmAddress = RevmAddress::from_slice(
+                    &hex::decode("000F3df6D732807Ef1319fB7B8bB8522d0Beac02").unwrap(),
+                );
+            };
+            let beacon_root = match block.header.parent_beacon_block_root {
+                None => {
+                    return Err(RevmError::Custom(
+                        "parent_beacon_block_root field is missing".to_string(),
+                    ))
+                }
+                Some(beacon_root) => beacon_root,
+            };
+
+            let tx_env = TxEnv {
+                caller: *SYSTEM_ADDRESS,
+                transact_to: RevmTxKind::Call(*CONTRACT_ADDRESS),
+                gas_limit: 30_000_000,
+                data: revm::primitives::Bytes::copy_from_slice(beacon_root.as_bytes()),
+                ..Default::default()
+            };
+            let mut block_env = block_env(&block.header, spec_id);
+            block_env.basefee = RevmU256::ZERO;
+            block_env.gas_limit = RevmU256::from(30_000_000);
+
+            let mut evm = Evm::builder()
+                .with_db(&mut db)
+                .with_block_env(block_env)
+                .with_tx_env(tx_env)
+                .with_spec_id(spec_id)
+                .build();
+
+            let transaction_result = evm.transact()?;
+
+            let mut result_state = transaction_result.state;
+            result_state.remove(&*SYSTEM_ADDRESS);
+            result_state.remove(&evm.block().coinbase);
+
+            evm.context.evm.db.commit(result_state);
+        }
+
+        // execute block
+        let block_env = block_env(&block.header, spec_id);
+
         for transaction in &block.body.transactions {
-            let tx_env = tx_env(transaction);
+            let tx_env = tx_env(transaction, transaction.sender());
 
             // execute tx
             let evm_builder = Evm::builder()
@@ -294,4 +231,10 @@ impl DatabaseRef for ExecutionDB {
             .map(|h| RevmB256::from_slice(&h.0))
             .ok_or(ExecutionDBError::BlockHashNotFound(number))
     }
+}
+
+/// Creates an [ExecutionDB] from an initial database and a block to execute, usually via
+/// pre-execution.
+pub trait ToExecDB {
+    fn to_exec_db(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError>;
 }

@@ -5,72 +5,316 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
+use constants::MAX_INITCODE_SIZE;
+use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::GAS_PER_BLOB;
-use ethrex_common::types::requests::Requests;
+use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
+use ethrex_common::types::BlobsBundle;
+use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
-    compute_receipts_root, compute_requests_hash, validate_block_header,
-    validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    EIP4844Transaction, Receipt, Transaction,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
+    BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::H256;
+
+use ethrex_common::{Address, H256};
+use mempool::Mempool;
+use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
+use ethrex_vm::backends::BlockExecutionResult;
+use ethrex_vm::backends::EVM;
 use ethrex_vm::db::evm_state;
-use ethrex_vm::{backends::BlockExecutionResult, get_evm_backend_or_default};
+use fork_choice::apply_fork_choice;
+use tracing::{error, info, warn};
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-/// Adds a new block to the store. It may or may not be canonical, as long as its ancestry links
-/// with the canonical chain and its parent's post-state is calculated. It doesn't modify the
-/// canonical chain/head. Fork choice needs to be updated for that in a separate step.
-///
-/// Performs pre and post execution validation, and updates the database with the post state.
-pub fn add_block(block: &Block, storage: &Store) -> Result<(), ChainError> {
-    let block_hash = block.header.compute_block_hash();
+#[derive(Debug)]
+pub struct Blockchain {
+    pub vm: EVM,
+    storage: Store,
+    pub mempool: Mempool,
+}
 
-    // Validate if it can be the new head and find the parent
-    let Ok(parent_header) = find_parent_header(&block.header, storage) else {
-        // If the parent is not present, we store it as pending.
-        storage.add_pending_block(block.clone())?;
-        return Err(ChainError::ParentNotFound);
-    };
-    let mut state = evm_state(storage.clone(), block.header.parent_hash);
-    let chain_config = state.chain_config().map_err(ChainError::from)?;
+impl Blockchain {
+    pub fn new(evm: EVM, store: Store) -> Self {
+        Self {
+            vm: evm,
+            storage: store,
+            mempool: Mempool::new(),
+        }
+    }
 
-    // Validate the block pre-execution
-    validate_block(block, &parent_header, &chain_config)?;
-    let BlockExecutionResult {
-        receipts,
-        requests,
-        account_updates,
-    } = get_evm_backend_or_default().execute_block(block, &mut state)?;
+    pub fn default_with_store(store: Store) -> Self {
+        Self {
+            vm: Default::default(),
+            storage: store,
+            mempool: Mempool::new(),
+        }
+    }
 
-    validate_gas_used(&receipts, &block.header)?;
+    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+        let since = Instant::now();
 
-    // Apply the account updates over the last block's state and compute the new state root
-    let new_state_root = state
-        .database()
-        .ok_or(ChainError::StoreError(StoreError::MissingStore))?
-        .apply_account_updates(block.header.parent_hash, &account_updates)?
-        .ok_or(ChainError::ParentStateNotFound)?;
+        let block_hash = block.header.compute_block_hash();
 
-    // Check state root matches the one in block header after execution
-    validate_state_root(&block.header, new_state_root)?;
+        // Validate if it can be the new head and find the parent
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block.clone())?;
+            return Err(ChainError::ParentNotFound);
+        };
+        let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
+        let chain_config = state.chain_config().map_err(ChainError::from)?;
 
-    // Check receipts root matches the one in block header after execution
-    validate_receipts_root(&block.header, &receipts)?;
+        // Validate the block pre-execution
+        validate_block(block, &parent_header, &chain_config)?;
+        let BlockExecutionResult {
+            receipts,
+            requests,
+            account_updates,
+        } = self.vm.execute_block(block, &mut state)?;
 
-    // Processes requests from receipts, computes the requests_hash and compares it against the header
-    validate_requests_hash(&block.header, &chain_config, &requests)?;
+        validate_gas_used(&receipts, &block.header)?;
 
-    store_block(storage, block.clone())?;
-    store_receipts(storage, receipts, block_hash)?;
+        // Apply the account updates over the last block's state and compute the new state root
+        let new_state_root = state
+            .database()
+            .ok_or(ChainError::StoreError(StoreError::MissingStore))?
+            .apply_account_updates(block.header.parent_hash, &account_updates)?
+            .ok_or(ChainError::ParentStateNotFound)?;
 
-    Ok(())
+        // Check state root matches the one in block header after execution
+        validate_state_root(&block.header, new_state_root)?;
+
+        // Check receipts root matches the one in block header after execution
+        validate_receipts_root(&block.header, &receipts)?;
+
+        // Processes requests from receipts, computes the requests_hash and compares it against the header
+        validate_requests_hash(&block.header, &chain_config, &requests)?;
+
+        store_block(&self.storage, block.clone())?;
+        store_receipts(&self.storage, receipts, block_hash)?;
+
+        let interval = Instant::now().duration_since(since).as_millis();
+        if interval != 0 {
+            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+        }
+
+        Ok(())
+    }
+
+    //TODO: Forkchoice Update shouldn't be part of this function
+    pub fn import_blocks(&self, blocks: &Vec<Block>) {
+        let size = blocks.len();
+        for block in blocks {
+            let hash = block.hash();
+            info!(
+                "Adding block {} with hash {:#x}.",
+                block.header.number, hash
+            );
+            if let Err(error) = self.add_block(block) {
+                warn!(
+                    "Failed to add block {} with hash {:#x}: {}.",
+                    block.header.number, hash, error
+                );
+            }
+            if self
+                .storage
+                .update_latest_block_number(block.header.number)
+                .is_err()
+            {
+                error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
+                break;
+            };
+            if self
+                .storage
+                .set_canonical_block(block.header.number, hash)
+                .is_err()
+            {
+                error!(
+                    "Fatal: added block {} but could not set it as canonical -- aborting block import",
+                    block.header.number
+                );
+                break;
+            };
+        }
+        if let Some(last_block) = blocks.last() {
+            let hash = last_block.hash();
+            match self.vm {
+                EVM::LEVM => {
+                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
+                    let _ = apply_fork_choice(&self.storage, hash, hash, hash);
+                }
+                EVM::REVM => {
+                    apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
+                }
+            }
+        }
+        info!("Added {size} blocks to blockchain");
+    }
+
+    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
+    #[cfg(feature = "c-kzg")]
+    pub fn add_blob_transaction_to_pool(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        // Validate blobs bundle
+
+        blobs_bundle.validate(&transaction)?;
+
+        let transaction = Transaction::EIP4844Transaction(transaction);
+        let sender = transaction.sender();
+
+        // Validate transaction
+        self.validate_transaction(&transaction, sender)?;
+
+        // Add transaction and blobs bundle to storage
+        let hash = transaction.compute_hash();
+        self.mempool
+            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
+        Ok(hash)
+    }
+
+    /// Add a transaction to the mempool checking that the transaction is valid
+    pub fn add_transaction_to_pool(&self, transaction: Transaction) -> Result<H256, MempoolError> {
+        // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
+        if matches!(transaction, Transaction::EIP4844Transaction(_)) {
+            return Err(MempoolError::BlobTxNoBlobsBundle);
+        }
+        let sender = transaction.sender();
+        // Validate transaction
+        self.validate_transaction(&transaction, sender)?;
+
+        let hash = transaction.compute_hash();
+
+        // Add transaction to storage
+        self.mempool
+            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+
+        Ok(hash)
+    }
+
+    /// Remove a transaction from the mempool
+    pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
+        self.mempool.remove_transaction(hash)
+    }
+
+    /*
+
+    SOME VALIDATIONS THAT WE COULD INCLUDE
+    Stateless validations
+    1. This transaction is valid on current mempool
+        -> Depends on mempool transaction filtering logic
+    2. Ensure the maxPriorityFeePerGas is high enough to cover the requirement of the calling pool (the minimum to be included in)
+        -> Depends on mempool transaction filtering logic
+    3. Transaction's encoded size is smaller than maximum allowed
+        -> I think that this is not in the spec, but it may be a good idea
+    4. Make sure the transaction is signed properly
+    5. Ensure a Blob Transaction comes with its sidecar (Done! - All blob validations have been moved to `common/types/blobs_bundle.rs`):
+      1. Validate number of BlobHashes is positive (Done!)
+      2. Validate number of BlobHashes is less than the maximum allowed per block,
+         which may be computed as `maxBlobGasPerBlock / blobTxBlobGasPerBlob`
+      3. Ensure number of BlobHashes is equal to:
+        - The number of blobs (Done!)
+        - The number of commitments (Done!)
+        - The number of proofs (Done!)
+      4. Validate that the hashes matches with the commitments, performing a `kzg4844` hash. (Done!)
+      5. Verify the blob proofs with the `kzg4844` (Done!)
+    Stateful validations
+    1. Ensure transaction nonce is higher than the `from` address stored nonce
+    2. Certain pools do not allow for nonce gaps. Ensure a gap is not produced (that is, the transaction nonce is exactly the following of the stored one)
+    3. Ensure the transactor has enough funds to cover transaction cost:
+        - Transaction cost is calculated as `(gas * gasPrice) + (blobGas * blobGasPrice) + value`
+    4. In case of transaction reorg, ensure the transactor has enough funds to cover for transaction replacements without overdrafts.
+    - This is done by comparing the total spent gas of the transactor from all pooled transactions, and accounting for the necessary gas spenditure if any of those transactions is replaced.
+    5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
+
+    */
+
+    pub fn validate_transaction(
+        &self,
+        tx: &Transaction,
+        sender: Address,
+    ) -> Result<(), MempoolError> {
+        // TODO: Add validations here
+
+        let header_no = self.storage.get_latest_block_number()?;
+        let header = self
+            .storage
+            .get_block_header(header_no)?
+            .ok_or(MempoolError::NoBlockHeaderError)?;
+        let config = self.storage.get_chain_config()?;
+
+        // NOTE: We could add a tx size limit here, but it's not in the actual spec
+
+        // Check init code size
+        if config.is_shanghai_activated(header.timestamp)
+            && tx.is_contract_creation()
+            && tx.data().len() > MAX_INITCODE_SIZE
+        {
+            return Err(MempoolError::TxMaxInitCodeSizeError);
+        }
+
+        // Check gas limit is less than header's gas limit
+        if header.gas_limit < tx.gas_limit() {
+            return Err(MempoolError::TxGasLimitExceededError);
+        }
+
+        // Check priority fee is less or equal than gas fee gap
+        if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
+            return Err(MempoolError::TxTipAboveFeeCapError);
+        }
+
+        // Check that the gas limit is covers the gas needs for transaction metadata.
+        if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, &header, &config)? {
+            return Err(MempoolError::TxIntrinsicGasCostAboveLimitError);
+        }
+
+        // Check that the specified blob gas fee is above the minimum value
+        if let Some(fee) = tx.max_fee_per_blob_gas() {
+            // Blob tx fee checks
+            if fee < MIN_BASE_FEE_PER_BLOB_GAS.into() {
+                return Err(MempoolError::TxBlobBaseFeeTooLowError);
+            }
+        };
+
+        let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender)?;
+
+        if let Some(sender_acc_info) = maybe_sender_acc_info {
+            if tx.nonce() < sender_acc_info.nonce {
+                return Err(MempoolError::InvalidNonce);
+            }
+
+            let tx_cost = tx
+                .cost_without_base_fee()
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+
+            if tx_cost > sender_acc_info.balance {
+                return Err(MempoolError::NotEnoughBalance);
+            }
+        } else {
+            // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
+            return Err(MempoolError::NotEnoughBalance);
+        }
+
+        if let Some(chain_id) = tx.chain_id() {
+            if chain_id != config.chain_id {
+                return Err(MempoolError::InvalidChainId(config.chain_id));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub fn validate_requests_hash(
@@ -82,7 +326,8 @@ pub fn validate_requests_hash(
         return Ok(());
     }
 
-    let computed_requests_hash = compute_requests_hash(requests);
+    let encoded_requests: Vec<EncodedRequests> = requests.iter().map(|r| r.encode()).collect();
+    let computed_requests_hash = compute_requests_hash(&encoded_requests);
     let valid = header
         .requests_hash
         .map(|requests_hash| requests_hash == computed_requests_hash)
@@ -178,11 +423,11 @@ pub fn validate_block(
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
 
     if chain_config.is_prague_activated(block.header.timestamp) {
-        validate_prague_header_fields(&block.header, parent_header)
+        validate_prague_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
     } else if chain_config.is_cancun_activated(block.header.timestamp) {
-        validate_cancun_header_fields(&block.header, parent_header)
+        validate_cancun_header_fields(&block.header, parent_header, chain_config)
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
     } else {

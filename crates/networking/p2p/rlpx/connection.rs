@@ -19,13 +19,17 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::mempool::{self};
-use ethrex_common::{H256, H512};
+use ethrex_blockchain::Blockchain;
+use ethrex_common::{
+    types::{MempoolTransaction, Transaction},
+    H256, H512,
+};
+
 use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -38,13 +42,15 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
-use super::utils::log_peer_warn;
+use super::{eth::transactions::NewPooledTransactionHashes, utils::log_peer_warn};
 
 const CAP_P2P_5: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP_1: (Capability, u8) = (Capability::Snap, 1);
 const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -69,10 +75,13 @@ pub(crate) struct RLPxConnection<S> {
     node: Node,
     framed: Framed<S, RLPxCodec>,
     storage: Store,
+    blockchain: Arc<Blockchain>,
     capabilities: Vec<(Capability, u8)>,
     negotiated_eth_version: u8,
     negotiated_snap_version: u8,
-    next_periodic_task_check: Instant,
+    next_periodic_ping: Instant,
+    next_tx_broadcast: Instant,
+    broadcasted_txs: HashSet<H256>,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
     /// since internally it's an Arc.
@@ -91,6 +100,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         stream: S,
         codec: RLPxCodec,
         storage: Store,
+        blockchain: Arc<Blockchain>,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
@@ -98,10 +108,13 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             node,
             framed: Framed::new(stream, codec),
             storage,
+            blockchain,
             capabilities: vec![],
             negotiated_eth_version: 0,
             negotiated_snap_version: 0,
-            next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+            next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+            next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
+            broadcasted_txs: HashSet::new(),
             connection_broadcast_send: connection_broadcast,
         }
     }
@@ -272,6 +285,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
         };
 
+        // Send transactions transaction hashes from mempool at connection start
+        self.send_new_pooled_tx_hashes().await?;
         // Start listening for messages,
         loop {
             tokio::select! {
@@ -305,7 +320,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.handle_broadcast(broadcasted_msg?).await?
                 }
                 // Allow an interruption to check periodic tasks
-                _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => () // noop
+                _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => (), // noop
             }
             self.check_periodic_tasks().await?;
         }
@@ -321,11 +336,45 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn check_periodic_tasks(&mut self) -> Result<(), RLPxError> {
-        if Instant::now() >= self.next_periodic_task_check {
+        if Instant::now() >= self.next_periodic_ping {
             self.send(Message::Ping(PingMessage {})).await?;
             log_peer_debug(&self.node, "Ping sent");
-            self.next_periodic_task_check = Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL;
+            self.next_periodic_ping = Instant::now() + PERIODIC_PING_INTERVAL;
         };
+        if Instant::now() >= self.next_tx_broadcast {
+            self.send_new_pooled_tx_hashes().await?;
+            self.next_tx_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
+        }
+        Ok(())
+    }
+
+    async fn send_new_pooled_tx_hashes(&mut self) -> Result<(), RLPxError> {
+        if self.capabilities.contains(&CAP_ETH_68) {
+            let filter =
+                |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
+            let txs: Vec<MempoolTransaction> = self
+                .blockchain
+                .mempool
+                .filter_transactions_with_filter_fn(&filter)?
+                .into_values()
+                .flatten()
+                .collect();
+            if !txs.is_empty() {
+                let tx_count = txs.len();
+                for tx in txs {
+                    self.send(Message::NewPooledTransactionHashes(
+                        NewPooledTransactionHashes::new(vec![(*tx).clone()], &self.blockchain)?,
+                    ))
+                    .await?;
+                    // Possible improvement: the mempool already knows the hash but the filter function does not return it
+                    self.broadcasted_txs.insert((*tx).compute_hash());
+                }
+                log_peer_debug(
+                    &self.node,
+                    &format!("Sent {} transactions to peer", tx_count),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -368,7 +417,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if is_synced {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
-                        if let Err(e) = mempool::add_transaction(tx.clone(), &self.storage) {
+                        if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()) {
                             log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
                             continue;
                         }
@@ -407,19 +456,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             {
                 //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
                 let hashes =
-                    new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
+                    new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
 
                 //TODO(#1416): Evaluate keeping track of the request-id.
                 let request = GetPooledTransactions::new(random(), hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
-                let response = msg.handle(&self.storage)?;
+                let response = msg.handle(&self.blockchain)?;
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if is_synced {
-                    msg.handle(&self.node, &self.storage)?;
+                    msg.handle(&self.node, &self.blockchain)?;
                 }
             }
             Message::GetStorageRanges(req) => {

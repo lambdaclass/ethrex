@@ -1,4 +1,8 @@
-use crate::{error::StoreError, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use crate::{
+    api::StoreEngine,
+    error::StoreError,
+    store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS},
+};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
@@ -11,8 +15,6 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, MutexGuard},
 };
-
-use super::api::StoreEngine;
 
 pub type NodeMap = Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>;
 
@@ -34,8 +36,6 @@ struct StoreInner {
     state_trie_nodes: NodeMap,
     // A storage trie for each hashed account address
     storage_trie_nodes: HashMap<H256, NodeMap>,
-    // TODO (#307): Remove TotalDifficulty.
-    block_total_difficulties: HashMap<BlockHash, U256>,
     // Stores local blocks by payload id
     payloads: HashMap<u64, (Block, U256, BlobsBundle, bool)>,
     pending_blocks: HashMap<BlockHash, Block>,
@@ -54,8 +54,6 @@ struct ChainData {
     finalized_block_number: Option<BlockNumber>,
     safe_block_number: Option<BlockNumber>,
     latest_block_number: Option<BlockNumber>,
-    // TODO (#307): Remove TotalDifficulty.
-    latest_total_difficulty: Option<U256>,
     pending_block_number: Option<BlockNumber>,
     is_synced: bool,
 }
@@ -156,28 +154,6 @@ impl StoreEngine for Store {
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
         Ok(self.inner().block_numbers.get(&block_hash).copied())
-    }
-
-    fn add_block_total_difficulty(
-        &self,
-        block_hash: BlockHash,
-        block_total_difficulty: U256,
-    ) -> Result<(), StoreError> {
-        self.inner()
-            .block_total_difficulties
-            .insert(block_hash, block_total_difficulty);
-        Ok(())
-    }
-
-    fn get_block_total_difficulty(
-        &self,
-        block_hash: BlockHash,
-    ) -> Result<Option<U256>, StoreError> {
-        Ok(self
-            .inner()
-            .block_total_difficulties
-            .get(&block_hash)
-            .copied())
     }
 
     fn add_transaction_location(
@@ -301,17 +277,6 @@ impl StoreEngine for Store {
             .replace(block_number);
         Ok(())
     }
-    fn update_latest_total_difficulty(
-        &self,
-        latest_total_difficulty: U256,
-    ) -> Result<(), StoreError> {
-        self.inner()
-            .chain_data
-            .latest_total_difficulty
-            .replace(latest_total_difficulty);
-        Ok(())
-    }
-
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         Ok(self.inner().chain_data.latest_block_number)
     }
@@ -322,10 +287,6 @@ impl StoreEngine for Store {
             .pending_block_number
             .replace(block_number);
         Ok(())
-    }
-
-    fn get_latest_total_difficulty(&self) -> Result<Option<U256>, StoreError> {
-        Ok(self.inner().chain_data.latest_total_difficulty)
     }
 
     fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
