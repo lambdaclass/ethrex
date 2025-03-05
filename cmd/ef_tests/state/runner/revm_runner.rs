@@ -336,7 +336,7 @@ pub fn ensure_post_state(
             .map_err(|_| {
                 InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())
             })?;
-            let revm_account_updates = backends::revm_b::REVM::get_state_transitions(revm_state);
+            let revm_account_updates = backends::revm::REVM::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
                 vector,
                 test,
@@ -518,7 +518,7 @@ pub fn _ensure_post_state_revm(
                 // Execution result was successful and no exception was expected.
                 None => {
                     let revm_account_updates =
-                        backends::revm_b::REVM::get_state_transitions(revm_state);
+                        backends::revm::REVM::get_state_transitions(revm_state);
                     let pos_state_root = post_state_root(&revm_account_updates, test);
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
