@@ -82,6 +82,7 @@ impl L1Watcher {
             if logs.is_empty() {
                 continue;
             }
+
             let pending_deposit_logs = self.get_pending_deposit_logs().await?;
             let _deposit_txs = self
                 .process_logs(logs, &pending_deposit_logs, store, blockchain)
@@ -201,7 +202,7 @@ impl L1Watcher {
                 .strip_prefix("0x")
                 .unwrap_or_default()
                 .to_string();
-            let a = format!("0x{:0>40}", str_ben).to_string();
+            let a = format!("0x{:0>40}", str_ben).to_string(); // we add a padding of 0s to the left
             let beneficiary = a.parse::<Address>().map_err(|e| {
                 L1WatcherError::FailedToDeserializeLog(format!(
                     "Failed to parse beneficiary from log: {e:#?}"
@@ -269,7 +270,7 @@ impl L1Watcher {
                         // Otherwise, the transaction is not included in the mempool.
                         // We should override the blockchain to always include the transaction.
                         max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(0),
+                        max_priority_fee_per_gas: Some(gas_price),
                         ..Default::default()
                     },
                     10,

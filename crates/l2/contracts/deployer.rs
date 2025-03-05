@@ -637,15 +637,8 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
         .map(|line| line.trim().to_string())
         .collect();
 
-    let mut total_deposited = U256::zero();
-
     for pk in private_keys.iter() {
-        let pk_str = pk.strip_prefix("0x").unwrap_or(pk);
-        let Ok(pk_h256) = pk_str.parse::<H256>() else {
-            continue;
-        };
-        let pk_bytes = pk_h256.as_bytes();
-        let Ok(secret_key) = SecretKey::from_slice(pk_bytes) else {
+        let Ok(secret_key) = pk.strip_prefix("0x").unwrap_or(pk).parse::<SecretKey>() else {
             continue;
         };
         let Ok(address) = get_address_from_secret_key(&secret_key) else {
@@ -656,15 +649,16 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
             continue;
         };
         let Some(acc) = genesis.alloc.get(&address) else {
-            dbg!("No hay address en genesis ⏭️", address);
+            println!(
+                "Skipping deposit for address {:?} as it is not in the genesis file",
+                address
+            );
             continue;
         };
         let value_to_deposit = acc
             .balance
-            .checked_div(U256::from_str("3").unwrap_or(U256::zero()))
+            .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
-        total_deposited += value_to_deposit;
-        // let value_to_deposit = U256::one();
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
@@ -684,16 +678,20 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) {
             .await
         {
             Ok(_) => {
-                dbg!("Se completó deposit", address, value_to_deposit);
+                println!(
+                    "A deposit was completed to {:?} with value {:?}",
+                    address, value_to_deposit
+                );
             }
-            Err(e) => {
-                dbg!("Falló el deposit 🚩", address, value_to_deposit);
-                dbg!(e);
+            Err(_) => {
+                println!(
+                    "Failed to deposit to {:?} with value {:?}",
+                    address, value_to_deposit
+                );
                 continue;
             }
         }
     }
-    dbg!(total_deposited);
 }
 
 #[allow(clippy::unwrap_used)]
