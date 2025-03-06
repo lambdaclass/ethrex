@@ -11,7 +11,10 @@ use tracing::info;
 
 use crate::decode;
 
+use super::removedb;
+
 pub fn import_blocks_from_path(matches: &ArgMatches) {
+    let remove_db = *matches.get_one::<bool>("removedb").unwrap_or(&false);
     let path = matches
         .get_one::<String>("path")
         .expect("No path provided to import blocks");
@@ -19,6 +22,14 @@ pub fn import_blocks_from_path(matches: &ArgMatches) {
         .get_one::<String>("datadir")
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
+    let mut network = matches
+        .get_one::<String>("network")
+        .expect("network is required")
+        .clone();
+
+    if remove_db {
+        removedb::remove_db_file(&data_dir);
+    }
 
     let store = {
         cfg_if::cfg_if! {
@@ -35,10 +46,6 @@ pub fn import_blocks_from_path(matches: &ArgMatches) {
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
 
-    let mut network = matches
-        .get_one::<String>("network")
-        .expect("network is required")
-        .clone();
     if let Some(genesis_path) = genesis_file_path_from_network(&network) {
         network = genesis_path;
     }

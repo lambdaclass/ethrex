@@ -179,7 +179,13 @@ pub fn cli() -> Command {
                         .required(true)
                         .value_name("GENESIS_FILE_PATH")
                         .action(ArgAction::Set),
-                ),
+                )
+                .arg(
+                    Arg::new("removedb")
+                        .long("removedb")
+                        .required(false)
+                        .action(clap::ArgAction::SetTrue)
+                )
         );
 
     cfg_if::cfg_if! {
