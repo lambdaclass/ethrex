@@ -298,7 +298,7 @@ async fn main() {
 
             let gateway_jwtsecret = read_jwtsecret_file(gateway_authrpc_jwtsecret);
             let gateway_auth_client = EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret);
-            let gateway_pubkey = Public::from_str(&gateway_pubkey).expect("Failed to parse gateway pubkey");
+            let gateway_pubkey = Public::from_str(gateway_pubkey).expect("Failed to parse gateway pubkey");
 
             let rpc_api = ethrex_rpc::start_api(
                 http_socket_addr,
