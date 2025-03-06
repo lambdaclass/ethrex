@@ -19,7 +19,7 @@ use std::{
     future::IntoFuture,
     io,
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
-    path::{self, Path, PathBuf},
+    path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
     time::Duration,
@@ -44,8 +44,25 @@ async fn main() {
         return;
     }
 
+    let data_dir = matches
+        .get_one::<String>("datadir")
+        .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
+
+    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
+
+    let mut network = matches
+        .get_one::<String>("network")
+        .expect("network is required")
+        .clone();
+
+    if let Some(genesis_path) = genesis_file_path_from_network(&network) {
+        network = genesis_path;
+    }
+
+    let genesis = read_genesis_file(&network);
+
     if let Some(matches) = matches.subcommand_matches("import") {
-        import::import_blocks_from_path(matches);
+        import::import_blocks_from_path(matches, data_dir, evm, genesis);
         return;
     }
 
@@ -91,11 +108,6 @@ async fn main() {
         .get_one::<String>("discovery.port")
         .expect("discovery.port is required");
 
-    let mut network = matches
-        .get_one::<String>("network")
-        .expect("network is required")
-        .clone();
-
     let mut bootnodes: Vec<Node> = matches
         .get_many("bootnodes")
         .map(Iterator::copied)
@@ -126,10 +138,6 @@ async fn main() {
         bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
     }
 
-    if let Some(genesis_path) = genesis_file_path_from_network(&network) {
-        network = genesis_path;
-    }
-
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
@@ -144,10 +152,6 @@ async fn main() {
     let tcp_socket_addr =
         parse_socket_addr(tcp_addr, tcp_port).expect("Failed to parse addr and port");
 
-    let data_dir = matches
-        .get_one::<String>("datadir")
-        .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
-
     let peers_file = PathBuf::from(data_dir.clone() + "/peers.json");
     info!("Reading known peers from {:?}", peers_file);
     match read_known_peers(peers_file.clone()) {
@@ -157,31 +161,12 @@ async fn main() {
 
     let sync_mode = sync_mode(&matches);
 
-    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
-
-    let path = path::PathBuf::from(data_dir.clone());
-    let store: Store = if path.ends_with("memory") {
-        Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
-    } else {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
-            } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
-            } else {
-                let engine_type = EngineType::InMemory;
-                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
-                panic!("Specify the desired database engine.");
-            }
-        }
-        Store::new(&data_dir, engine_type).expect("Failed to create Store")
-    };
-    let blockchain = Arc::new(Blockchain::new(evm.clone(), store.clone()));
-
-    let genesis = read_genesis_file(&network);
+    let store = create_store_at_path(&data_dir);
     store
         .add_initial_state(genesis.clone())
         .expect("Failed to create genesis block");
+
+    let blockchain = Arc::new(Blockchain::new(evm.clone(), store.clone()));
 
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
@@ -504,5 +489,24 @@ fn genesis_file_path_from_network(network: &str) -> Option<String> {
         Some(String::from(networks::EPHEMERY_GENESIS_PATH))
     } else {
         None
+    }
+}
+
+fn create_store_at_path(data_dir: &str) -> Store {
+    if data_dir.ends_with("memory") {
+        Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
+    } else {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "redb")] {
+                let engine_type = EngineType::RedB;
+            } else if #[cfg(feature = "libmdbx")] {
+                let engine_type = EngineType::Libmdbx;
+            } else {
+                let engine_type = EngineType::InMemory;
+                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+                panic!("Specify the desired database engine.");
+            }
+        }
+        Store::new(data_dir, engine_type).expect("Failed to create Store")
     }
 }

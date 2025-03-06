@@ -160,27 +160,6 @@ pub fn cli() -> Command {
                         .action(ArgAction::Set),
                 )
                 .arg(
-                    Arg::new("datadir")
-                        .long("datadir")
-                        .value_name("DATABASE_DIRECTORY")
-                        .action(ArgAction::Set),
-                )
-                .arg(
-                    Arg::new("evm")
-                        .long("evm")
-                        .required(false)
-                        .default_value("revm")
-                        .value_name("EVM_BACKEND")
-                        .value_parser(clap::value_parser!(EVM))
-                        .help("Has to be `levm` or `revm`"),
-                ).arg(
-                    Arg::new("network")
-                        .long("network")
-                        .required(true)
-                        .value_name("GENESIS_FILE_PATH")
-                        .action(ArgAction::Set),
-                )
-                .arg(
                     Arg::new("removedb")
                         .long("removedb")
                         .required(false)

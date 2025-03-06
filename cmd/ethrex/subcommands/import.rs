@@ -1,11 +1,11 @@
 use std::fs::{self, metadata};
 
-use crate::{genesis_file_path_from_network, read_genesis_file, set_datadir, DEFAULT_DATADIR};
+use crate::create_store_at_path;
 use clap::ArgMatches;
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{EngineType, Store};
+
 use ethrex_vm::backends::EVM;
 use tracing::info;
 
@@ -13,46 +13,24 @@ use crate::decode;
 
 use super::removedb;
 
-pub fn import_blocks_from_path(matches: &ArgMatches) {
+pub fn import_blocks_from_path(
+    matches: &ArgMatches,
+    data_dir: String,
+    evm: &EVM,
+    genesis: Genesis,
+) {
     let remove_db = *matches.get_one::<bool>("removedb").unwrap_or(&false);
     let path = matches
         .get_one::<String>("path")
         .expect("No path provided to import blocks");
-    let data_dir = matches
-        .get_one::<String>("datadir")
-        .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
-    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
-    let mut network = matches
-        .get_one::<String>("network")
-        .expect("network is required")
-        .clone();
-
     if remove_db {
         removedb::remove_db_file(&data_dir);
     }
 
-    let store = {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
-            } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
-            } else {
-                let engine_type = EngineType::InMemory;
-                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
-                panic!("Specify the desired database engine.");
-            }
-        }
-        Store::new(&data_dir, engine_type).expect("Failed to create Store")
-    };
+    let store = create_store_at_path(&data_dir);
 
-    if let Some(genesis_path) = genesis_file_path_from_network(&network) {
-        network = genesis_path;
-    }
-
-    let genesis = read_genesis_file(&network);
     store
-        .add_initial_state(genesis.clone())
+        .add_initial_state(genesis)
         .expect("Failed to create genesis block");
 
     let blockchain = Blockchain::new(evm.clone(), store.clone());
