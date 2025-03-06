@@ -10,7 +10,7 @@ use ethrex_common::{
     types::{
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
-        requests::{compute_requests_hash, EncodedRequests, Requests},
+        requests::{compute_requests_hash, EncodedRequests},
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
         MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
@@ -164,7 +164,7 @@ pub struct PayloadBuildContext<'a> {
     pub payload: &'a mut Block,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
-    pub requests: Vec<Requests>,
+    pub requests: Vec<EncodedRequests>,
     pub requests_hash: Option<H256>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
@@ -224,7 +224,10 @@ impl<'a> PayloadBuildContext<'a> {
 
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub fn build_payload(&self, payload: &mut Block) -> Result<(BlobsBundle, U256), ChainError> {
+    pub fn build_payload(
+        &self,
+        payload: &mut Block,
+    ) -> Result<(BlobsBundle, Vec<EncodedRequests>, U256), ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -250,7 +253,7 @@ impl Blockchain {
             }
         }
 
-        Ok((context.blobs_bundle, context.block_value))
+        Ok((context.blobs_bundle, context.requests, context.block_value))
     }
 
     fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -484,11 +487,10 @@ impl Blockchain {
 
         let requests = context
             .vm
-            .extract_requests(&context.receipts, &context.payload.header);
-        context.requests = requests?;
-        let encoded_requests: Vec<EncodedRequests> =
-            context.requests.iter().map(|r| r.encode()).collect();
-        context.requests_hash = Some(compute_requests_hash(&encoded_requests));
+            .extract_requests(&context.receipts, &context.payload.header)?;
+
+        context.requests = requests.iter().map(|r| r.encode()).collect();
+        context.requests_hash = Some(compute_requests_hash(&context.requests));
 
         Ok(())
     }

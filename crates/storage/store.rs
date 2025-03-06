@@ -8,10 +8,10 @@ use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
+use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::{
-    code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, Receipt, Transaction,
-    EMPTY_TRIE_HASH,
+    code_hash, AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Genesis, GenesisAccount, Index, Receipt, Transaction, EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -818,23 +818,16 @@ impl Store {
         self.engine.add_payload(payload_id, block)
     }
 
-    pub fn get_payload(
-        &self,
-        payload_id: u64,
-    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
+    pub fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         self.engine.get_payload(payload_id)
     }
 
     pub fn update_payload(
         &self,
         payload_id: u64,
-        block: Block,
-        block_value: U256,
-        blobs_bundle: BlobsBundle,
-        completed: bool,
+        payload: PayloadBundle,
     ) -> Result<(), StoreError> {
-        self.engine
-            .update_payload(payload_id, block, block_value, blobs_bundle, completed)
+        self.engine.update_payload(payload_id, payload)
     }
 
     pub fn get_receipts_for_block(
