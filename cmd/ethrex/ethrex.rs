@@ -77,7 +77,7 @@ async fn main() {
 
             init_dev_network(&matches, &store, tracker.clone());
         } else {
-            use crate::initializers::init_network;
+            use crate::initializers::{init_network};
 
             init_network(
                 &matches,

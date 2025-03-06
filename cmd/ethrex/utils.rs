@@ -104,7 +104,7 @@ pub async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: Path
     };
 }
 
-#[cfg(not(feature = "dev"))]
+#[allow(dead_code)]
 pub fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> {
     let Ok(file) = std::fs::File::open(file_path) else {
         return Ok(vec![]);

@@ -201,7 +201,7 @@ fn get_gateway_auth_client(matches: &clap::ArgMatches) -> EngineClient {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(not(feature = "dev"))]
+#[allow(dead_code)]
 pub async fn init_network(
     matches: &ArgMatches,
     network: &str,
@@ -306,7 +306,7 @@ pub fn get_network(matches: &ArgMatches) -> String {
     network
 }
 
-#[cfg(not(feature = "dev"))]
+#[allow(dead_code)]
 pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = matches
         .get_many("bootnodes")
