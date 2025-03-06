@@ -90,7 +90,7 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
 pub fn init_blockchain(matches: &ArgMatches, store: Store) -> Arc<Blockchain> {
     let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
 
-    let blockchain = Blockchain::new(evm.clone(), store);
+    let blockchain = Blockchain::new(*evm, store);
 
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
