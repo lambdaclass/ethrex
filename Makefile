@@ -164,3 +164,8 @@ rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 
 flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
 	sudo bash scripts/flamegraph.sh
+
+test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
+	solc ./test_data/ERC20.sol -o $@
+load-test-erc20: test_data/ERC20/ERC20.bin install-cli
+	ethrex_l2 test erc20 --path test_data/private_keys.txt -t 100
