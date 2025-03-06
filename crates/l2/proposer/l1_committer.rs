@@ -25,7 +25,7 @@ use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache};
 
@@ -94,6 +94,7 @@ impl Committer {
             .get_block_body(block_number)
             .map_err(CommitterError::from)?
         else {
+            debug!("No new block to commit, skipping..");
             return Ok(());
         };
 
