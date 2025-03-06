@@ -90,6 +90,8 @@ pub enum ProposerError {
     FailedToReadJWT(#[from] std::io::Error),
     #[error("Proposer failed to decode jwt_secret: {0}")]
     FailedToDecodeJWT(#[from] hex::FromHexError),
+    #[error("Proposer failed because of an execution cache error")]
+    ExecutionCache(#[from] ExecutionCacheError),
 }
 
 #[derive(Debug, thiserror::Error)]

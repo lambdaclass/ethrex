@@ -8,7 +8,7 @@ use crate::{
 
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockNumber,
+        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
         PrivilegedL2Transaction, Receipt, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
         MIN_BASE_FEE_PER_BLOB_GAS,
     },
@@ -20,15 +20,11 @@ use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
-use ethrex_vm::{
-    backends::{BlockExecutionResult, EVM},
-    db::evm_state,
-    ExecutionResult,
-};
+use ethrex_vm::{backends::EVM, db::evm_state};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
-use tokio::{sync::broadcast::Receiver, time::sleep};
+use tokio::time::sleep;
 use tracing::{error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache};

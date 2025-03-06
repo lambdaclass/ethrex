@@ -1,6 +1,5 @@
 use std::{
     sync::Arc,
-    thread::current,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -8,20 +7,16 @@ use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_e
 use errors::ProposerError;
 use ethereum_types::Address;
 use ethrex_blockchain::{
-    error::ChainError,
-    find_parent_header,
     fork_choice::apply_fork_choice,
-    payload::{create_payload, BuildPayloadArgs, PayloadBuildResult},
-    store_block, store_receipts, validate_block, validate_gas_used, validate_receipts_root,
-    validate_state_root, Blockchain,
+    payload::{create_payload, BuildPayloadArgs},
+    validate_block, Blockchain,
 };
-use ethrex_rpc::clients::EngineApiConfig;
 use ethrex_storage::Store;
 use ethrex_vm::backends::BlockExecutionResult;
 use execution_cache::ExecutionCache;
 use keccak_hash::H256;
+use tokio::task::JoinSet;
 use tokio::time::sleep;
-use tokio::{sync::broadcast, task::JoinSet};
 use tracing::{debug, error, info};
 
 pub mod l1_committer;
@@ -186,7 +181,7 @@ impl Proposer {
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         // Cache execution result
-        execution_cache.push(block.hash(), execution_result.account_updates);
+        execution_cache.push(block.hash(), execution_result.account_updates)?;
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&store, block.hash(), block.hash(), block.hash())?;
