@@ -1,6 +1,7 @@
 use ethrex_blockchain::error::ChainError;
+use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
-use ethrex_common::types::{BlobsBundle, Block, BlockBody, BlockHash, BlockNumber, Fork};
+use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
@@ -222,11 +223,12 @@ impl RpcHandler for GetPayloadV1Request {
         let payload = get_payload(self.payload_id, &context)?;
         // NOTE: This validation is actually not required to run Hive tests. Not sure if it's
         // necessary
-        validate_payload_v1_v2(&payload.0, &context)?;
-        let execution_payload_response =
-            build_execution_payload_response(self.payload_id, payload, None, context)?;
-        serde_json::to_value(execution_payload_response.execution_payload)
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        validate_payload_v1_v2(&payload.block, &context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+
+        let response = ExecutionPayload::from_block(payload_bundle.block);
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -242,11 +244,18 @@ impl RpcHandler for GetPayloadV2Request {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
-        validate_payload_v1_v2(&payload.0, &context)?;
-        let execution_payload_response =
-            build_execution_payload_response(self.payload_id, payload, None, context)?;
-        serde_json::to_value(execution_payload_response)
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        validate_payload_v1_v2(&payload.block, &context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+
+        let response = ExecutionPayloadResponse {
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            block_value: payload_bundle.block_value,
+            blobs_bundle: None,
+            should_override_builder: None,
+            execution_requests: None,
+        };
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -307,12 +316,69 @@ impl RpcHandler for GetPayloadV3Request {
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
-        validate_fork(&payload.0, Fork::Cancun, &context)?;
-        let execution_payload_response =
-            build_execution_payload_response(self.payload_id, payload, Some(false), context)?;
+        validate_fork(&payload.block, Fork::Cancun, &context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
 
-        serde_json::to_value(execution_payload_response)
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        let response = ExecutionPayloadResponse {
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            block_value: payload_bundle.block_value,
+            blobs_bundle: Some(payload_bundle.blobs_bundle),
+            should_override_builder: Some(false),
+            execution_requests: None,
+        };
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+pub struct GetPayloadV4Request {
+    pub payload_id: u64,
+}
+
+impl From<GetPayloadV4Request> for RpcRequest {
+    fn from(val: GetPayloadV4Request) -> Self {
+        RpcRequest {
+            method: "engine_getPayloadV4".to_string(),
+            params: Some(vec![serde_json::json!(U256::from(val.payload_id))]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for GetPayloadV4Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let payload_id = parse_get_payload_request(params)?;
+        Ok(Self { payload_id })
+    }
+
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let payload = get_payload(self.payload_id, &context)?;
+        let chain_config = &context.storage.get_chain_config()?;
+
+        if !chain_config.is_prague_activated(payload.block.header.timestamp) {
+            return Err(RpcErr::UnsuportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(payload.block.header.timestamp)
+            )));
+        }
+
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+
+        let response = ExecutionPayloadResponse {
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block),
+            block_value: payload_bundle.block_value,
+            blobs_bundle: Some(payload_bundle.blobs_bundle),
+            should_override_builder: Some(false),
+            execution_requests: Some(
+                payload_bundle
+                    .requests
+                    .into_iter()
+                    .filter(|r| !r.is_empty())
+                    .collect(),
+            ),
+        };
+
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -651,20 +717,15 @@ fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr>
     Ok(payload_id)
 }
 
-fn get_payload(
-    payload_id: u64,
-    context: &RpcApiContext,
-) -> Result<(Block, U256, BlobsBundle, bool), RpcErr> {
+fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
     info!("Requested payload with id: {:#018x}", payload_id);
-    let payload = context.storage.get_payload(payload_id)?;
-
-    let Some((payload_block, block_value, blobs_bundle, completed)) = payload else {
+    let Some(payload) = context.storage.get_payload(payload_id)? else {
         return Err(RpcErr::UnknownPayload(format!(
             "Payload with id {:#018x} not found",
             payload_id
         )));
     };
-    Ok((payload_block, block_value, blobs_bundle, completed))
+    Ok(payload)
 }
 
 fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(), RpcErr> {
@@ -678,41 +739,33 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     Ok(())
 }
 
-fn build_execution_payload_response(
+fn build_payload_if_necessary(
     payload_id: u64,
-    payload: (Block, U256, BlobsBundle, bool),
-    should_override_builder: Option<bool>,
+    mut payload: PayloadBundle,
     context: RpcApiContext,
-) -> Result<ExecutionPayloadResponse, RpcErr> {
-    let (mut payload_block, block_value, blobs_bundle, completed) = payload;
-    if completed {
-        Ok(ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_block),
-            block_value,
-            blobs_bundle: Some(blobs_bundle),
-            should_override_builder,
-        })
+) -> Result<PayloadBundle, RpcErr> {
+    if payload.completed {
+        Ok(payload)
     } else {
-        let (blobs_bundle, block_value) = {
+        let (blobs_bundle, requests, block_value) = {
             context
                 .blockchain
-                .build_payload(&mut payload_block)
+                .build_payload(&mut payload.block)
                 .map_err(|err| RpcErr::Internal(err.to_string()))?
         };
 
-        context.storage.update_payload(
-            payload_id,
-            payload_block.clone(),
+        let new_payload = PayloadBundle {
+            block: payload.block,
             block_value,
-            blobs_bundle.clone(),
-            true,
-        )?;
+            blobs_bundle,
+            requests,
+            completed: true,
+        };
 
-        Ok(ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(payload_block),
-            block_value,
-            blobs_bundle: Some(blobs_bundle),
-            should_override_builder,
-        })
+        context
+            .storage
+            .update_payload(payload_id, new_payload.clone())?;
+
+        Ok(new_payload)
     }
 }
