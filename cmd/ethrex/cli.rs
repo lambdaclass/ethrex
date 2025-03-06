@@ -175,10 +175,17 @@ pub fn cli() -> Command {
             )
             .arg(
                 Arg::new("gateway.jwtsecret")
-                .long("gateway.jwtsecret")
-                .default_value("jwt.hex")
-                .value_name("GATEWAY_JWTSECRET_PATH")
-                .action(ArgAction::Set),
+                    .long("gateway.jwtsecret")
+                    .default_value("jwt.hex")
+                    .value_name("GATEWAY_JWTSECRET_PATH")
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                Arg::new("gateway.pubkey")
+                    .long("gateway.pubkey")
+                    .default_value("0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+                    .value_name("GATEWAY_PUBKEY")
+                    .action(ArgAction::Set)
             )
         } else {
             cmd
