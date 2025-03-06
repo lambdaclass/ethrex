@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 use ethrex_common::{
     serde_utils,
     types::{
-        compute_transactions_root, compute_withdrawals_root, BlobsBundle, Block, BlockBody,
-        BlockHash, BlockHeader, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        compute_transactions_root, compute_withdrawals_root, requests::EncodedRequests,
+        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
+        DEFAULT_OMMERS_HASH,
     },
     Address, Bloom, H256, U256,
 };
@@ -265,6 +266,7 @@ pub struct ExecutionPayloadResponse {
     pub block_value: U256,
     pub blobs_bundle: Option<BlobsBundle>,
     pub should_override_builder: Option<bool>, // TODO: look into this
+    pub execution_requests: Option<Vec<EncodedRequests>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::Address;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use k256::sha2::Sha256;
 use keccak_hash::H256;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,12 @@ const CONSOLIDATION_TYPE: u8 = 0x02;
 #[derive(Clone, Debug)]
 pub struct EncodedRequests(pub Bytes);
 
+impl EncodedRequests {
+    pub fn is_empty(&self) -> bool {
+        self.0.len() <= 1
+    }
+}
+
 impl<'de> Deserialize<'de> for EncodedRequests {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -36,6 +43,19 @@ impl Serialize for EncodedRequests {
         S: serde::Serializer,
     {
         serde_utils::bytes::serialize(&self.0, serializer)
+    }
+}
+
+impl RLPEncode for EncodedRequests {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        self.0.encode(buf)
+    }
+}
+
+impl RLPDecode for EncodedRequests {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let (bytes, rest) = RLPDecode::decode_unfinished(rlp)?;
+        Ok((EncodedRequests(bytes), rest))
     }
 }
 

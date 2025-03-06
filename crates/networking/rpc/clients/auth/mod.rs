@@ -165,7 +165,7 @@ impl EngineClient {
         vec![
             "engine_exchangeCapabilities".to_owned(),
             "engine_forkchoiceUpdatedV3".to_owned(),
-            "engine_getPayloadV3".to_owned(),
+            "engine_getPayloadV4".to_owned(),
             "engine_newPayloadV3".to_owned(),
         ]
     }

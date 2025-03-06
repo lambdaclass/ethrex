@@ -4,6 +4,7 @@ mod block;
 mod constants;
 mod fork_id;
 mod genesis;
+pub mod payload;
 mod receipt;
 pub mod requests;
 pub mod transaction;

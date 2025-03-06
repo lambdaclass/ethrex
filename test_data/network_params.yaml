@@ -1,18 +1,33 @@
 participants:
+  # NOTE: Both erigon and geth work on this example, but they provide wrong nodes information on discovery protocol
+  # - el_type: erigon
+  #   el_image: ethpandaops/erigon:main-764a2c50
+  #   cl_type: lighthouse
+  #   cl_image: sigp/lighthouse:v7.0.0-beta.0
+  #   validator_count: 32
+  # - el_type: reth
+  #   el_image: ghcr.io/paradigmxyz/reth:v1.2.2
+  #   cl_type: lighthouse
+  #   cl_image: sigp/lighthouse:v7.0.0-beta.0
+  #   validator_count: 32
+  - el_type: besu
+    el_image: ethpandaops/besu:main-142a5e6
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.0-beta.0
+    validator_count: 32
+  - el_type: geth
+    el_image: ethereum/client-go:v1.15.2
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.0-beta.0
+    validator_count: 32
+    count: 1
   - el_type: ethrex
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v5.3.0
+    cl_image: sigp/lighthouse:v7.0.0-beta.0
     validator_count: 32
-  - el_type: geth
-    el_image: ethereum/client-go:v1.14.12
-    cl_type: lighthouse
-    cl_image: sigp/lighthouse:v5.3.0
-    validator_count: 32
-  - el_type: geth
-    el_image: ethereum/client-go:v1.14.12
-    cl_type: lighthouse
-    cl_image: sigp/lighthouse:v5.3.0
-    validator_count: 32
+
+network_params:
+  electra_fork_epoch: 1
 
 additional_services:
   - dora
@@ -23,3 +38,8 @@ tx_spammer_params:
   # A list of optional extra params that will be passed to the TX Spammer container for modifying its behaviour
   tx_spammer_extra_args: ["--txcount=3", "--accounts=80"]
   # Some tested seeds: 0x5a8e7b08fef94497, 0x6619e189b8a8b911, 0x52a0d7198393262e, use it as an extra argument for the tx_spammer, i.e: "--seed=0x5a8e7b08fef94497"
+
+blockscout_params:
+  image: "blockscout/blockscout:latest"
+  verif_image: "ghcr.io/blockscout/smart-contract-verifier:latest"
+  frontend_image: "ghcr.io/blockscout/frontend:latest"
