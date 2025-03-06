@@ -3,7 +3,7 @@ use crate::{
     utils::config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
 };
 use bytes::Bytes;
-use ethereum_types::{Address, BigEndianHash, H256, U256};
+use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{constants::TX_GAS_COST, Blockchain};
 use ethrex_common::types::{Signable, Transaction};
 use ethrex_rpc::clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient};
