@@ -206,7 +206,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
         // Send disconnect message only if error is different than RLPxError::DisconnectRequested
         // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
-        if !matches!(error, RLPxError::DisconnectRequested(_)) {
+        if !matches!(error, RLPxError::DisconnectReceived(_)) {
             self.send_disconnect_message(self.match_disconnect_reason(&error))
                 .await;
         }
@@ -214,7 +214,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Discard peer from kademlia table in some cases
         match error {
             // already connected, don't discard it
-            RLPxError::DisconnectRequested(DisconnectReason::AlreadyConnected)
+            RLPxError::DisconnectReceived(DisconnectReason::AlreadyConnected)
             | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
                 log_peer_debug(&self.node, "Peer already connected, don't replace it");
             }
@@ -234,7 +234,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     fn match_disconnect_reason(&self, error: &RLPxError) -> Option<DisconnectReason> {
         match error {
             RLPxError::DisconnectSent(reason) => Some(*reason),
-            RLPxError::DisconnectRequested(reason) => Some(*reason),
+            RLPxError::DisconnectReceived(reason) => Some(*reason),
             RLPxError::RLPDecodeError(_) => Some(DisconnectReason::NetworkError),
             // TODO build a proper matching between error types and disconnection reasons
             _ => None,
@@ -295,7 +295,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 Ok(())
             }
             Message::Disconnect(disconnect) => {
-                Err(RLPxError::DisconnectRequested(disconnect.reason()))
+                Err(RLPxError::DisconnectReceived(disconnect.reason()))
             }
             _ => {
                 // Fail if it is not a hello message
@@ -431,7 +431,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     &format!("Received Disconnect: {}", msg_data.reason()),
                 );
                 // TODO handle the disconnection request
-                return Err(RLPxError::DisconnectRequested(msg_data.reason()));
+                return Err(RLPxError::DisconnectReceived(msg_data.reason()));
             }
             Message::Ping(_) => {
                 log_peer_debug(&self.node, "Sending pong message");

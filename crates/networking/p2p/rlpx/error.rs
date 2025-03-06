@@ -16,7 +16,7 @@ pub(crate) enum RLPxError {
     #[error("Peer disconnected")]
     Disconnected(),
     #[error("Disconnect requested: {0}")]
-    DisconnectRequested(DisconnectReason),
+    DisconnectReceived(DisconnectReason),
     #[error("Disconnect sent: {0}")]
     DisconnectSent(DisconnectReason),
     #[error("Not Found: {0}")]
