@@ -2,6 +2,7 @@ use std::{env::temp_dir, fs::File, path::PathBuf};
 
 use ethrex_common::types::BlockHash;
 use ethrex_storage::AccountUpdate;
+use tracing::warn;
 
 use super::errors::ExecutionCacheError;
 
@@ -40,6 +41,7 @@ impl ExecutionCache {
     ) -> Result<Option<ExecutionResult>, ExecutionCacheError> {
         let filename = format!("result_{block_hash:x}.ethrex");
         File::open(self.tempdir.join(filename))
+            .inspect_err(|err| warn!("{err}"))
             .ok()
             .map(|file| bincode::deserialize_from(file).map_err(ExecutionCacheError::from))
             .transpose()
