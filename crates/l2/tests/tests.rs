@@ -53,7 +53,16 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let l1_rich_wallet_address = l1_rich_wallet_address();
 
     let l1_initial_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
-    let l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
+    let mut l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
+    println!("Waiting for L2 to update for initial deposit");
+    let mut retries = 0;
+    while retries < 30 && l2_initial_balance.is_zero() {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        println!("[{retries}/30] Waiting for L2 balance to update");
+        l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
+        retries += 1;
+    }
+    assert_ne!(retries, 30, "L2 balance is zero");
     let common_bridge_initial_balance = eth_client.get_balance(common_bridge_address()).await?;
 
     println!("L1 initial balance: {l1_initial_balance}");
