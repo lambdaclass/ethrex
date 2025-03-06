@@ -20,7 +20,7 @@ use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, Store};
-use ethrex_vm::{backends::EVM, db::evm_state};
+use ethrex_vm::backends::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, str::FromStr, time::Duration};
@@ -254,18 +254,14 @@ impl Committer {
     ) -> Result<StateDiff, CommitterError> {
         info!("Preparing state diff for block {}", block.header.number);
 
-        let mut state = evm_state(store.clone(), block.header.parent_hash);
-
-        let result = EVM::default()
-            .execute_block(block, &mut state)
+        let result = Evm::default(store.clone(), block.header.parent_hash)
+            .execute_block(block)
             .map_err(CommitterError::from)?;
         let account_updates = result.account_updates;
 
         let mut modified_accounts = HashMap::new();
         for account_update in &account_updates {
-            let prev_nonce = match state
-                .database()
-                .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?
+            let prev_nonce = match store
                 // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
                 // and we may have to keep track of the latestCommittedBlock (last block of the batch),
                 // the batch_size and the latestCommittedBatch in the contract.
