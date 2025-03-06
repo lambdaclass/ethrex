@@ -21,6 +21,7 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
@@ -312,9 +313,11 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<H256>, StoreError> {
+        let mut since = Instant::now();
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
+        let mut storage_tries_to_commit = vec![];
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -350,12 +353,46 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
-                    account_state.storage_root = storage_trie.hash()?;
+                    account_state.storage_root = storage_trie.hash_no_commit();
+                    storage_tries_to_commit.push(storage_trie);
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
-        Ok(Some(state_trie.hash()?))
+        let hash = state_trie.hash_no_commit();
+
+        let mut interval = Instant::now().duration_since(since).as_millis();
+        info!(
+            "Account update with {} account updates, {} storage changes took {}ms",
+            account_updates.len(),
+            account_updates
+                .iter()
+                .map(|a| a.added_storage.len())
+                .sum::<usize>(),
+            interval,
+        );
+
+        since = Instant::now();
+        let storage_tries_to_commit_len = storage_tries_to_commit.len();
+        for mut trie in storage_tries_to_commit {
+            if let Some(ref root) = trie.root.clone() {
+                let _ = trie.state_mut().commit(root);
+            }
+        }
+        interval = Instant::now().duration_since(since).as_millis();
+        info!(
+            "Committing {} storage tries took {}ms",
+            storage_tries_to_commit_len, interval
+        );
+
+        since = Instant::now();
+        if let Some(ref root) = state_trie.root.clone() {
+            let _ = state_trie.state_mut().commit(root);
+        }
+        interval = Instant::now().duration_since(since).as_millis();
+        info!("Committing state trie took {}ms", interval);
+
+        Ok(Some(hash))
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
