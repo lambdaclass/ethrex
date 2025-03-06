@@ -49,7 +49,7 @@ impl SignedMessage {
 
         let Some(params) = params else {
             return Err(RpcErr::InvalidBasedMessage(
-                "Expected some params".to_string(),
+                "Failed to parse based request into SignedMessage, params were expected but none were found".to_string(),
             ));
         };
 
@@ -57,22 +57,28 @@ impl SignedMessage {
             params
                 .first()
                 .ok_or(RpcErr::InvalidBasedMessage(
-                    "Expected based message".to_string(),
+                    "Failed to parse based request into SignedMessage, message not found"
+                        .to_string(),
                 ))?
                 .clone(),
         )
-        .map_err(|e| RpcErr::InvalidBasedMessage(e.to_string()))
+        .map_err(|e| {
+            RpcErr::InvalidBasedMessage(format!(
+                "Failed to parse based request into SignedMessage: {e}"
+            ))
+        })
     }
 
     pub fn call_env(req: &RpcRequest, context: RpcApiContext) -> Result<serde_json::Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        if let VersionedMessage::EnvV0(env) = &request.message {
-            request.check_signature(&context.gateway_pubkey)?;
-            env.handle(context)
-        } else {
-            Err(RpcErr::InvalidBasedMessage(
-                "Expected Env message".to_string(),
-            ))
+        match &request.message {
+            VersionedMessage::EnvV0(env) => {
+                request.check_signature(&context.gateway_pubkey)?;
+                env.handle(context)
+            }
+            other_based_message => Err(RpcErr::InvalidBasedMessage(format!(
+                "Failed to handle Env message, found {other_based_message:?} instead of Env"
+            ))),
         }
     }
 
@@ -81,13 +87,14 @@ impl SignedMessage {
         context: RpcApiContext,
     ) -> Result<serde_json::Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        if let VersionedMessage::FragV0(new_frag) = &request.message {
-            request.check_signature(&context.gateway_pubkey)?;
-            new_frag.handle(context)
-        } else {
-            Err(RpcErr::InvalidBasedMessage(
-                "Expected New Frag message".to_string(),
-            ))
+        match &request.message {
+            VersionedMessage::FragV0(frag) => {
+                request.check_signature(&context.gateway_pubkey)?;
+                frag.handle(context)
+            }
+            other_based_message => Err(RpcErr::InvalidBasedMessage(format!(
+                "Failed to handle Frag message, found {other_based_message:?} instead of Frag"
+            ))),
         }
     }
 
@@ -96,13 +103,14 @@ impl SignedMessage {
         context: RpcApiContext,
     ) -> Result<serde_json::Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        if let VersionedMessage::SealV0(seal_frag) = &request.message {
-            request.check_signature(&context.gateway_pubkey)?;
-            seal_frag.handle(context)
-        } else {
-            Err(RpcErr::InvalidBasedMessage(
-                "Expected Seal Frag message".to_string(),
-            ))
+        match &request.message {
+            VersionedMessage::SealV0(seal) => {
+                request.check_signature(&context.gateway_pubkey)?;
+                seal.handle(context)
+            }
+            other_based_message => Err(RpcErr::InvalidBasedMessage(format!(
+                "Failed to handle Seal message, found {other_based_message:?} instead of Seal"
+            ))),
         }
     }
 
@@ -111,17 +119,17 @@ impl SignedMessage {
         let signature = libsecp256k1::Signature::parse_standard_slice(&self.signature[..64])
             .map_err(|e| RpcErr::InvalidBasedMessage(format!("Invalid signature: {e}")))?;
         let recovery_id =
-            libsecp256k1::RecoveryId::parse_rpc(self.signature.0[64]).map_err(|_| {
-                RpcErr::InvalidBasedMessage("Invalid signature recovery ID").to_string()
+            libsecp256k1::RecoveryId::parse_rpc(self.signature.0[64]).map_err(|err| {
+                RpcErr::InvalidBasedMessage(format!("Invalid signature recovery ID: {err}"))
             })?;
 
         let signer = libsecp256k1::recover(&message, &signature, &recovery_id)
-            .map_err(|_| RpcErr::InvalidBasedMessage("Invalid signature").to_string())?;
+            .map_err(|err| RpcErr::InvalidBasedMessage(format!("Invalid signature: {err}")))?;
 
         // First byte is compression flag, which is always 0x04 for uncompressed keys
         if signer.serialize()[1..] != expected.0 {
             return Err(RpcErr::InvalidBasedMessage(format!(
-                "Unexpected signer: 0x{}",
+                "Invalid signer: 0x{}",
                 hex::encode(signer.serialize())
             )));
         }

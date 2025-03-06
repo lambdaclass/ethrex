@@ -23,6 +23,7 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
+    #[cfg(feature = "based")]
     InvalidBasedMessage(String),
 }
 
@@ -123,8 +124,9 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
+            #[cfg(feature = "based")]
             RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
-                code: -38004,
+                code: -38004, // TODO: This code was hand-picked, should be reviewed
                 data: None,
                 message: format!("Invalid based message: {context}"),
             },
