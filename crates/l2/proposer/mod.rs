@@ -38,7 +38,6 @@ pub mod errors;
 pub struct Proposer {
     interval_ms: u64,
     coinbase_address: Address,
-    execution_cache: ExecutionCache,
 }
 
 pub async fn start_proposer(store: Store, blockchain: Arc<Blockchain>) {
@@ -49,8 +48,7 @@ pub async fn start_proposer(store: Store, blockchain: Arc<Blockchain>) {
         return;
     }
 
-    const EXECUTION_CACHE_LEN: usize = 16;
-    let execution_cache = ExecutionCache::new(EXECUTION_CACHE_LEN);
+    let execution_cache = Arc::new(ExecutionCache::default());
 
     let mut task_set = JoinSet::new();
     task_set.spawn(l1_watcher::start_l1_watcher(
@@ -59,7 +57,7 @@ pub async fn start_proposer(store: Store, blockchain: Arc<Blockchain>) {
     ));
     task_set.spawn(l1_committer::start_l1_committer(
         store.clone(),
-        execution_cache.subscribe(),
+        execution_cache.clone(),
     ));
     task_set.spawn(prover_server::start_prover_server(store.clone()));
     task_set.spawn(start_proposer_server(
@@ -90,21 +88,19 @@ pub async fn start_proposer(store: Store, blockchain: Arc<Blockchain>) {
 async fn start_proposer_server(
     store: Store,
     blockchain: Arc<Blockchain>,
-    execution_cache: ExecutionCache,
+    execution_cache: Arc<ExecutionCache>,
 ) -> Result<(), ConfigError> {
     let proposer_config = ProposerConfig::from_env()?;
-    let proposer =
-        Proposer::new_from_config(proposer_config, execution_cache).map_err(ConfigError::from)?;
+    let proposer = Proposer::new_from_config(proposer_config).map_err(ConfigError::from)?;
 
-    proposer.run(store.clone(), blockchain).await;
+    proposer
+        .run(store.clone(), blockchain, execution_cache)
+        .await;
     Ok(())
 }
 
 impl Proposer {
-    pub fn new_from_config(
-        config: ProposerConfig,
-        execution_cache: ExecutionCache,
-    ) -> Result<Self, ProposerError> {
+    pub fn new_from_config(config: ProposerConfig) -> Result<Self, ProposerError> {
         let ProposerConfig {
             interval_ms,
             coinbase_address,
@@ -112,13 +108,20 @@ impl Proposer {
         Ok(Self {
             interval_ms,
             coinbase_address,
-            execution_cache,
         })
     }
 
-    pub async fn run(&self, store: Store, blockchain: Arc<Blockchain>) {
+    pub async fn run(
+        &self,
+        store: Store,
+        blockchain: Arc<Blockchain>,
+        execution_cache: Arc<ExecutionCache>,
+    ) {
         loop {
-            if let Err(err) = self.main_logic(store.clone(), blockchain.clone()).await {
+            if let Err(err) = self
+                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+                .await
+            {
                 error!("Block Producer Error: {}", err);
             }
 
@@ -130,6 +133,7 @@ impl Proposer {
         &self,
         store: Store,
         blockchain: Arc<Blockchain>,
+        execution_cache: Arc<ExecutionCache>,
     ) -> Result<(), ProposerError> {
         let version = 3;
         let head_header = {
@@ -182,8 +186,7 @@ impl Proposer {
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         // Cache execution result
-        self.execution_cache
-            .push(block.header.number, execution_result);
+        execution_cache.push(block.hash(), execution_result.account_updates);
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&store, block.hash(), block.hash(), block.hash())?;

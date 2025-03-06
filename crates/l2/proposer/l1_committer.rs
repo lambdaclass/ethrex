@@ -43,12 +43,12 @@ pub struct Committer {
     l1_private_key: SecretKey,
     interval_ms: u64,
     arbitrary_base_blob_gas_price: u64,
-    exec_recv: Receiver<(BlockNumber, BlockExecutionResult)>,
+    execution_cache: Arc<ExecutionCache>,
 }
 
 pub async fn start_l1_committer(
     store: Store,
-    execution_cache: Receiver<(BlockNumber, BlockExecutionResult)>,
+    execution_cache: Arc<ExecutionCache>,
 ) -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
@@ -64,7 +64,7 @@ impl Committer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
-        exec_recv: Receiver<(BlockNumber, BlockExecutionResult)>,
+        execution_cache: Arc<ExecutionCache>,
     ) -> Self {
         Self {
             eth_client: EthClient::new(&eth_config.rpc_url),
@@ -74,7 +74,7 @@ impl Committer {
             l1_private_key: committer_config.l1_private_key,
             interval_ms: committer_config.interval_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
-            exec_recv,
+            execution_cache,
         }
     }
 
@@ -140,10 +140,8 @@ impl Committer {
                         .collect(),
                 )?;
 
-                let account_updates = match ExecutionCache::get(&mut self.exec_recv, block_number)
-                    .await
-                {
-                    Some(u) => u.account_updates,
+                let account_updates = match self.execution_cache.get(block_to_commit.hash())? {
+                    Some(account_updates) => account_updates,
                     None => {
                         warn!(
                             "Could not find execution cache result for block {block_number}, falling back to re-execution"

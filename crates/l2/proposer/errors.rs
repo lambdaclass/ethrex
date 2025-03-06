@@ -100,6 +100,8 @@ pub enum CommitterError {
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
     #[error("Committer failed retrieve block from storage: {0}")]
     FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    #[error("Committer failed because of an execution cache error")]
+    ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]
     FailedToRetrieveDataFromStorage,
     #[error("Committer failed to generate blobs bundle: {0}")]
@@ -168,4 +170,12 @@ pub enum MetricsGathererError {
     MetricsError(#[from] ethrex_metrics::MetricsError),
     #[error("MetricsGatherer failed because of an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ExecutionCacheError {
+    #[error("Failed because of io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Failed (de)serializing result: {0}")]
+    Bincode(#[from] bincode::Error),
 }

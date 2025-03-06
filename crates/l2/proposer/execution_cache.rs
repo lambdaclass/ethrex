@@ -1,34 +1,47 @@
-use ethrex_common::types::BlockNumber;
-use ethrex_vm::backends::BlockExecutionResult;
-use tokio::sync::broadcast::{self, Receiver, Sender};
-use tracing::warn;
+use std::{env::temp_dir, fs::File, path::PathBuf};
+
+use ethrex_common::types::BlockHash;
+use ethrex_storage::AccountUpdate;
+
+use super::errors::ExecutionCacheError;
+
+/// For now the result will only be account updates, in the future we can add other parameters as
+/// they're needed.
+pub type ExecutionResult = Vec<AccountUpdate>;
 
 /// Proposer will push execution results into the cache so other components can retrieve them,
-/// without having to re-execute. The cache is implemented as a mpmc (broadcast) channel.
-pub struct ExecutionCache(Sender<(BlockNumber, BlockExecutionResult)>);
+/// without having to re-execute. The cache is implemented with temporary files.
+pub struct ExecutionCache {
+    tempdir: PathBuf,
+}
+
+impl Default for ExecutionCache {
+    fn default() -> Self {
+        Self {
+            tempdir: temp_dir(),
+        }
+    }
+}
 
 impl ExecutionCache {
-    pub fn new(len: usize) -> Self {
-        Self(broadcast::channel(len).0)
+    pub fn push(
+        &self,
+        block_hash: BlockHash,
+        execution_result: ExecutionResult,
+    ) -> Result<(), ExecutionCacheError> {
+        let filename = format!("result_{block_hash:x}.ethrex");
+        let file = File::create(self.tempdir.join(filename))?;
+        bincode::serialize_into(file, &execution_result).map_err(ExecutionCacheError::from)
     }
 
-    pub fn subscribe(&self) -> Receiver<(BlockNumber, BlockExecutionResult)> {
-        self.0.subscribe()
-    }
-
-    pub fn push(&self, block_number: BlockNumber, execution_result: BlockExecutionResult) {
-        if self.0.send((block_number, execution_result)).is_err() {
-            warn!("Execution cache published new result but there are no receivers");
-        }
-    }
-
-    pub async fn get(
-        receiver: &mut Receiver<(BlockNumber, BlockExecutionResult)>,
-        block_number: BlockNumber,
-    ) -> Option<BlockExecutionResult> {
-        match receiver.recv().await {
-            Ok(result) if result.0 == block_number => Some(result.1),
-            _ => None,
-        }
+    pub fn get(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<ExecutionResult>, ExecutionCacheError> {
+        let filename = format!("result_{block_hash:x}.ethrex");
+        File::open(self.tempdir.join(filename))
+            .ok()
+            .map(|file| bincode::deserialize_from(file).map_err(ExecutionCacheError::from))
+            .transpose()
     }
 }
