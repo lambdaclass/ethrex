@@ -2,7 +2,7 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, ReceiptRLP, Rlp, TransactionHashRLP, TupleRLP,
+    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -12,20 +12,20 @@ use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    Index, Receipt, Transaction,
+    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Index, Receipt, Transaction,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
-use libmdbx::orm::{Decodable, Encodable, Table};
+use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{
     dupsort,
     orm::{table, Database},
     table_info,
 };
-use libmdbx::{DatabaseOptions, Mode, ReadWriteOptions};
+use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
@@ -62,11 +62,12 @@ impl Store {
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
 
+        let mut cursor = txn.cursor::<T>().map_err(StoreError::LibmdbxError)?;
         for (key, value) in key_values {
-            txn.upsert::<T>(key, value)
+            cursor
+                .upsert(key, value)
                 .map_err(StoreError::LibmdbxError)?;
         }
-
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
@@ -172,7 +173,11 @@ impl StoreEngine for Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        self.write::<Receipts>((block_hash, index).into(), receipt.into())
+        let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
+        let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt.encode_to_vec()) else {
+            return Err(StoreError::Custom("Invalid size".to_string()));
+        };
+        self.write_batch::<Receipts>(entries.into_iter())
     }
 
     fn get_receipt(
@@ -181,7 +186,10 @@ impl StoreEngine for Store {
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self.read::<Receipts>((hash, index).into())?.map(|b| b.to()))
+            let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+            let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+            let key = (hash, index).into();
+            IndexedChunk::read_from_db(&mut cursor, key)
         } else {
             Ok(None)
         }
@@ -345,31 +353,16 @@ impl StoreEngine for Store {
     }
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.write::<Payloads>(
-            payload_id,
-            (block, U256::zero(), BlobsBundle::empty(), false).into(),
-        )
+        self.write::<Payloads>(payload_id, PayloadBundle::from_block(block).into())
     }
 
-    fn get_payload(
-        &self,
-        payload_id: u64,
-    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
-        Ok(self.read::<Payloads>(payload_id)?.map(|b| b.to()))
+    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
+        let r = self.read::<Payloads>(payload_id)?;
+        Ok(r.map(|b| b.to()))
     }
 
-    fn update_payload(
-        &self,
-        payload_id: u64,
-        block: Block,
-        block_value: U256,
-        blobs_bundle: BlobsBundle,
-        completed: bool,
-    ) -> Result<(), StoreError> {
-        self.write::<Payloads>(
-            payload_id,
-            (block, block_value, blobs_bundle, completed).into(),
-        )
+    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+        self.write::<Payloads>(payload_id, payload.into())
     }
 
     fn get_transaction_by_hash(
@@ -449,20 +442,25 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let key_values = receipts.into_iter().enumerate().map(|(index, receipt)| {
-            (
-                <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index as u64)),
-                <Receipt as Into<ReceiptRLP>>::into(receipt),
-            )
-        });
+        let mut key_values = vec![];
 
-        self.write_batch::<Receipts>(key_values)
+        for (index, receipt) in receipts.clone().into_iter().enumerate() {
+            let key = (block_hash, index as u64).into();
+            let receipt_rlp = receipt.encode_to_vec();
+            let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                continue;
+            };
+
+            key_values.append(&mut entries);
+        }
+
+        self.write_batch::<Receipts>(key_values.into_iter())
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
         let mut receipt_index = 0;
-        let mut key: TupleRLP<BlockHash, Index> = (*block_hash, 0).into();
+        let mut key = (*block_hash, 0).into();
         let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
         let mut cursor = txn
             .cursor::<Receipts>()
@@ -473,15 +471,13 @@ impl StoreEngine for Store {
         // So we search for values in the db that match with this kind
         // of key, until we reach an Index that returns None
         // and we stop the search.
-        while let Some((_, encoded_receipt)) =
-            cursor.seek_exact(key).map_err(|_| StoreError::ReadError)?
-        {
-            receipts.push(encoded_receipt);
+        while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key)? {
+            receipts.push(receipt);
             receipt_index += 1;
             key = (*block_hash, receipt_index).into();
         }
 
-        Ok(receipts.into_iter().map(|receipt| receipt.to()).collect())
+        Ok(receipts)
     }
 
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
@@ -697,6 +693,117 @@ impl Debug for Store {
 
 // Define tables
 
+/// For `dupsort` tables, multiple values can be stored under the same key.
+/// To maintain an explicit order, each value is assigned an `index`.
+/// This is useful when storing large byte sequences that exceed the maximum size limit,
+/// requiring them to be split into smaller chunks for storage.
+pub struct IndexedChunk<T: RLPEncode + RLPDecode> {
+    index: u8,
+    value: Rlp<T>,
+}
+
+pub trait ChunkTrait<T: RLPEncode + RLPDecode> {
+    #[allow(unused)]
+    fn index(&self) -> u8;
+    fn value_bytes(&self) -> &Vec<u8>;
+}
+
+impl<T: RLPEncode + RLPDecode> ChunkTrait<T> for IndexedChunk<T> {
+    fn index(&self) -> u8 {
+        self.index
+    }
+
+    fn value_bytes(&self) -> &Vec<u8> {
+        self.value.bytes()
+    }
+}
+
+impl<T: Send + Sync + RLPEncode + RLPDecode> Decodable for IndexedChunk<T> {
+    fn decode(b: &[u8]) -> anyhow::Result<Self> {
+        let index = b[0];
+        let value = Rlp::from_bytes(b[1..].to_vec());
+        Ok(Self { index, value })
+    }
+}
+
+impl<T: Send + Sync + RLPEncode + RLPDecode> Encodable for IndexedChunk<T> {
+    type Encoded = Vec<u8>;
+
+    fn encode(self) -> Self::Encoded {
+        // by appending the index at the begging, we enforce the btree ordering from lowest to highest
+        let mut buf = vec![self.index];
+        buf.extend_from_slice(self.value.bytes());
+        buf
+    }
+}
+
+impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
+    /// Splits a value into a indexed chunks if it exceeds the maximum storage size.
+    /// Each chunk is assigned an index to ensure correct ordering when retrieved.
+    ///
+    /// Warning: The current implementation supports a maximum of 256 chunks per value
+    /// because the index is stored as a u8.
+    ///
+    /// If the data exceeds this limit, `None` is returned to indicate that it cannot be stored.
+    pub fn from<Tab: Table>(key: Tab::Key, bytes: &[u8]) -> Option<Vec<(Tab::Key, Self)>>
+    where
+        Tab::Key: Clone,
+    {
+        let chunks: Vec<Vec<u8>> = bytes
+            // -1 to account for the index byte
+            .chunks(DB_MAX_VALUE_SIZE - 1)
+            .map(|i| i.to_vec())
+            .collect();
+
+        if chunks.len() > 256 {
+            return None;
+        }
+
+        let chunks = chunks
+            .into_iter()
+            .enumerate()
+            .map(|(index, chunk)| {
+                (
+                    key.clone(),
+                    IndexedChunk {
+                        index: index as u8,
+                        value: Rlp::from_bytes(chunk),
+                    },
+                )
+            })
+            .collect();
+
+        Some(chunks)
+    }
+
+    /// Reads multiple stored chunks and reconstructs the original full value.
+    /// The chunks are appended in order based on their assigned index.
+    pub fn read_from_db<Tab: Table + DupSort, K: TransactionKind>(
+        cursor: &mut libmdbx::orm::Cursor<'_, K, Tab>,
+        key: Tab::Key,
+    ) -> Result<Option<T>, StoreError>
+    where
+        Tab::Key: Decodable,
+        Tab::Value: ChunkTrait<T>,
+    {
+        let mut value = vec![];
+
+        if let Some((_, chunk)) = cursor.seek_exact(key).map_err(StoreError::LibmdbxError)? {
+            value.extend_from_slice(chunk.value_bytes());
+        } else {
+            return Ok(None);
+        }
+
+        // Fetch remaining parts
+        while let Some((_, chunk)) = cursor.next_value().map_err(StoreError::LibmdbxError)? {
+            value.extend_from_slice(chunk.value_bytes());
+        }
+
+        let decoded = T::decode(&value).map_err(StoreError::RLPDecode)?;
+        Ok(Some(decoded))
+    }
+}
+
 table!(
     /// The canonical block hash for each block number. It represents the canonical chain.
     ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
@@ -722,7 +829,7 @@ table!(
 
 dupsort!(
     /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => ReceiptRLP
+    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
 );
 
 dupsort!(
@@ -759,7 +866,7 @@ table!(
 
 table!(
     /// payload id to payload table
-    ( Payloads ) u64 => Rlp<(Block, U256, BlobsBundle, bool)>
+    ( Payloads ) u64 => PayloadBundleRLP
 );
 
 table!(
@@ -848,6 +955,15 @@ impl Encodable for SnapStateIndex {
         (self as u32).encode()
     }
 }
+
+/// default page size recommended by libmdbx
+///
+/// - See here: https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
+/// - and here: https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
+const DB_PAGE_SIZE: usize = 4096;
+/// For a default page size of 4096, the max value size is roughly 1/2 page size.
+const DB_MAX_VALUE_SIZE: usize = 2022;
+
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
 pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
@@ -872,6 +988,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
     .collect();
     let path = path.map(|p| p.as_ref().to_path_buf());
     let options = DatabaseOptions {
+        page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
         mode: Mode::ReadWrite(ReadWriteOptions {
             // Set max DB size to 1TB
             max_size: Some(1024_isize.pow(4)),
@@ -884,10 +1001,12 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
 
 #[cfg(test)]
 mod tests {
-    use libmdbx::{
-        dupsort,
-        orm::{table, Database, Decodable, Encodable},
-        table_info,
+    use super::*;
+    use crate::rlp::TupleRLP;
+    use bytes::Bytes;
+    use ethrex_common::{
+        types::{BlockHash, Index, Log, TxType},
+        Address, Bloom, H256,
     };
 
     #[test]
@@ -1073,6 +1192,164 @@ mod tests {
             }
 
             assert_eq!(acc, 58);
+        }
+    }
+
+    // Test IndexedChunks implementation with receipts as the type
+    #[test]
+    fn mdbx_indexed_chunks_test() {
+        dupsort!(
+            /// Receipts table.
+            ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+        );
+
+        let tables = [table_info!(Receipts)].into_iter().collect();
+        let options = DatabaseOptions {
+            page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
+            mode: Mode::ReadWrite(ReadWriteOptions {
+                max_size: Some(1024_isize.pow(4)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let db = Database::create_with_options(None, options, &tables).unwrap();
+
+        let mut receipts = vec![];
+        for i in 0..10 {
+            receipts.push(generate_big_receipt(100 * (i + 1), 10, 10 * (i + 1)));
+        }
+
+        // encode receipts
+        let block_hash = H256::random();
+        let mut key_values = vec![];
+        for (i, receipt) in receipts.iter().enumerate() {
+            let key = (block_hash, i as u64).into();
+            let receipt_rlp = receipt.encode_to_vec();
+            let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                continue;
+            };
+            key_values.append(&mut entries);
+        }
+
+        // store values
+        let txn = db.begin_readwrite().unwrap();
+        let mut cursor = txn.cursor::<Receipts>().unwrap();
+        for (key, value) in key_values {
+            cursor.upsert(key, value).unwrap()
+        }
+        txn.commit().unwrap();
+
+        // now retrieve the values and assert they are the same
+        let mut stored_receipts = vec![];
+        let mut receipt_index = 0;
+        let mut key: TupleRLP<BlockHash, Index> = (block_hash, 0).into();
+        let txn = db.begin_read().unwrap();
+        let mut cursor = txn.cursor::<Receipts>().unwrap();
+        while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key).unwrap() {
+            stored_receipts.push(receipt);
+            receipt_index += 1;
+            key = (block_hash, receipt_index).into();
+        }
+
+        assert_eq!(receipts, stored_receipts);
+    }
+
+    // This test verifies the 256-chunk-per-value limitation on indexed chunks.
+    // Given a value size of 2022 bytes, we can store up to 256 * 2022 = 517,632 - 256 bytes.
+    // The 256 subtraction accounts for the index byte overhead.
+    // We expect that exceeding this storage limit results in a `None` when writing.
+    #[test]
+    fn indexed_chunk_storage_limit_exceeded() {
+        dupsort!(
+            /// example table.
+            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
+        );
+
+        let tables = [table_info!(Example)].into_iter().collect();
+        let options = DatabaseOptions {
+            page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
+            mode: Mode::ReadWrite(ReadWriteOptions {
+                max_size: Some(1024_isize.pow(4)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let _ = Database::create_with_options(None, options, &tables).unwrap();
+
+        let block_hash = H256::random();
+
+        // we want to store the maximum
+        let max_data_bytes: usize = 517377;
+        let data = Bytes::from(vec![1u8; max_data_bytes]);
+        let key = block_hash.into();
+        let entries = IndexedChunk::<Vec<u8>>::from::<Example>(key, &data);
+
+        assert!(entries.is_none());
+    }
+
+    // This test verifies the 256-chunk-per-value limitation on indexed chunks.
+    // Given a value size of 2022 bytes, we can store up to 256 * 2022 = 517,632 - 256 bytes.
+    // The 256 subtraction accounts for the index byte overhead.
+    // We expect that we can write up to that storage limit.
+    #[test]
+    fn indexed_chunk_storage_store_max_limit() {
+        dupsort!(
+            /// example table.
+            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
+        );
+
+        let tables = [table_info!(Example)].into_iter().collect();
+        let options = DatabaseOptions {
+            page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
+            mode: Mode::ReadWrite(ReadWriteOptions {
+                max_size: Some(1024_isize.pow(4)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let db = Database::create_with_options(None, options, &tables).unwrap();
+
+        let block_hash = H256::random();
+
+        // we want to store the maximum
+        let max_data_bytes: usize = 517376;
+        let data = Bytes::from(vec![1u8; max_data_bytes]);
+        let key = block_hash.into();
+        let entries = IndexedChunk::<Vec<u8>>::from::<Example>(key, &data).unwrap();
+
+        // store values
+        let txn = db.begin_readwrite().unwrap();
+        let mut cursor = txn.cursor::<Example>().unwrap();
+        for (k, v) in entries {
+            cursor.upsert(k, v).unwrap();
+        }
+        txn.commit().unwrap();
+    }
+
+    fn generate_big_receipt(
+        data_size_in_bytes: usize,
+        logs_size: usize,
+        topics_size: usize,
+    ) -> Receipt {
+        let large_data: Bytes = Bytes::from(vec![1u8; data_size_in_bytes]);
+        let large_topics: Vec<H256> = std::iter::repeat(H256::random())
+            .take(topics_size)
+            .collect();
+
+        let logs = std::iter::repeat(Log {
+            address: Address::random(),
+            topics: large_topics.clone(),
+            data: large_data.clone(),
+        })
+        .take(logs_size)
+        .collect();
+
+        Receipt {
+            tx_type: TxType::EIP7702,
+            succeeded: true,
+            cumulative_gas_used: u64::MAX,
+            bloom: Bloom::default(),
+            logs,
         }
     }
 }

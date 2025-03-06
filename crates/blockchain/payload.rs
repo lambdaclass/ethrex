@@ -10,7 +10,7 @@ use ethrex_common::{
     types::{
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
-        requests::{compute_requests_hash, EncodedRequests, Requests},
+        requests::{compute_requests_hash, EncodedRequests},
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
         MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
@@ -167,7 +167,7 @@ pub struct PayloadBuildContext<'a> {
     pub block_cache: CacheDB,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
-    pub requests: Vec<Requests>,
+    pub requests: Vec<EncodedRequests>,
     pub requests_hash: Option<H256>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
@@ -224,7 +224,10 @@ impl<'a> PayloadBuildContext<'a> {
 
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub fn build_payload(&self, payload: &mut Block) -> Result<(BlobsBundle, U256), ChainError> {
+    pub fn build_payload(
+        &self,
+        payload: &mut Block,
+    ) -> Result<(BlobsBundle, Vec<EncodedRequests>, U256), ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -250,7 +253,7 @@ impl Blockchain {
             }
         }
 
-        Ok((context.blobs_bundle, context.block_value))
+        Ok((context.blobs_bundle, context.requests, context.block_value))
     }
 
     pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -482,6 +485,7 @@ impl Blockchain {
             &mut context.block_cache,
             &chain_config,
             &mut context.remaining_gas,
+            head.tx.sender(),
         )?;
         context.block_value += U256::from(gas_used) * head.tip;
         Ok(report)
@@ -500,11 +504,10 @@ impl Blockchain {
             context.evm_state,
             &context.payload.header,
             &mut context.block_cache,
-        );
-        context.requests = requests?;
-        let encoded_requests: Vec<EncodedRequests> =
-            context.requests.iter().map(|r| r.encode()).collect();
-        context.requests_hash = Some(compute_requests_hash(&encoded_requests));
+        )?;
+
+        context.requests = requests.iter().map(|r| r.encode()).collect();
+        context.requests_hash = Some(compute_requests_hash(&context.requests));
 
         Ok(())
     }
@@ -544,7 +547,6 @@ struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HeadTransaction {
     tx: MempoolTransaction,
-    sender: Address,
     tip: u64,
 }
 
@@ -569,7 +571,7 @@ impl TransactionQueue {
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
         let mut heads = Vec::new();
-        for (address, txs) in txs.iter_mut() {
+        for (_, txs) in txs.iter_mut() {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element
             let head_tx = txs.remove(0);
@@ -581,7 +583,6 @@ impl TransactionQueue {
                         InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
                     ))?,
                 tx: head_tx,
-                sender: *address,
             });
         }
         // Sort heads by higest tip (and lowest timestamp if tip is equal)
@@ -613,7 +614,7 @@ impl TransactionQueue {
     /// Removes current head transaction and all transactions from the given sender
     fn pop(&mut self) {
         if !self.is_empty() {
-            let sender = self.heads.remove(0).sender;
+            let sender = self.heads.remove(0).tx.sender();
             self.txs.remove(&sender);
         }
     }
@@ -622,7 +623,7 @@ impl TransactionQueue {
     /// Add a tx from the same sender to the head transactions
     fn shift(&mut self) -> Result<(), ChainError> {
         let tx = self.heads.remove(0);
-        if let Some(txs) = self.txs.get_mut(&tx.sender) {
+        if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {
             // Fetch next head
             if !txs.is_empty() {
                 let head_tx = txs.remove(0);
@@ -634,7 +635,6 @@ impl TransactionQueue {
                         ),
                     )?,
                     tx: head_tx,
-                    sender: tx.sender,
                 };
                 // Insert head into heads list while maintaing order
                 let index = match self.heads.binary_search(&head) {
