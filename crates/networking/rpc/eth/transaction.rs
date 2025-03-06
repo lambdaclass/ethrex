@@ -1,3 +1,5 @@
+#[cfg(feature = "based")]
+use crate::utils::RpcRequest;
 use crate::{
     eth::block,
     types::{
@@ -12,7 +14,6 @@ use ethrex_common::{
     H256, U256,
 };
 
-use ethrex_blockchain::mempool;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
@@ -567,38 +568,82 @@ fn simulate_tx(
 
 impl RpcHandler for SendRawTransactionRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<SendRawTransactionRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 1 {
-            return Err(RpcErr::BadParams(format!(
-                "Expected one param and {} were provided",
-                params.len()
-            )));
-        };
-
-        let str_data = serde_json::from_value::<String>(params[0].clone())?;
-        let str_data = str_data
-            .strip_prefix("0x")
-            .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
-        let data = hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))?;
+        let data = get_transaction_data(params)?;
 
         let transaction = SendRawTransactionRequest::decode_canonical(&data)
             .map_err(|error| RpcErr::BadParams(error.to_string()))?;
 
         Ok(transaction)
     }
+
+    #[cfg(feature = "based")]
+    async fn relay_to_gateway_or_fallback(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<Value, RpcErr> {
+        use tracing::warn;
+
+        info!("Relaying eth_sendRawTransaction to gateway");
+
+        let gateway_eth_client = context.gateway_eth_client.clone();
+
+        let tx_data = get_transaction_data(&req.params)?;
+
+        let gateway_request = gateway_eth_client.send_raw_transaction(&tx_data);
+
+        let client_response = Self::call(req, context);
+
+        let gateway_response = gateway_request
+            .await
+            .map_err(|err| {
+                RpcErr::Internal(format!(
+                    "Could not relay eth_sendRawTransaction to gateway: {err}",
+                ))
+            })
+            .and_then(|hash| {
+                serde_json::to_value(format!("{hash:#x}"))
+                    .map_err(|error| RpcErr::Internal(error.to_string()))
+            });
+
+        if gateway_response.is_err() {
+            warn!(error = ?gateway_response, "Gateway eth_sendRawTransaction failed, falling back to local node");
+        } else {
+            info!("Successfully relayed eth_sendRawTransaction to gateway");
+        }
+
+        gateway_response.or(client_response)
+    }
+
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            mempool::add_blob_transaction(
+            context.blockchain.add_blob_transaction_to_pool(
                 wrapped_blob_tx.tx.clone(),
                 wrapped_blob_tx.blobs_bundle.clone(),
-                &context.storage,
             )
         } else {
-            mempool::add_transaction(self.to_transaction(), &context.storage)
+            context
+                .blockchain
+                .add_transaction_to_pool(self.to_transaction())
         }?;
         serde_json::to_value(format!("{:#x}", hash))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
+}
+
+fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, RpcErr> {
+    let params = rpc_req_params
+        .as_ref()
+        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    if params.len() != 1 {
+        return Err(RpcErr::BadParams(format!(
+            "Expected one param and {} were provided",
+            params.len()
+        )));
+    };
+
+    let str_data = serde_json::from_value::<String>(params[0].clone())?;
+    let str_data = str_data
+        .strip_prefix("0x")
+        .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
+    hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))
 }
