@@ -140,7 +140,7 @@ jobs:
           enclave_name: ${{ matrix.enclave_name }}
           kurtosis_version: "1.4.2"
           ethereum_package_url: "github.com/lambdaclass/ethereum-package"
-          ethereum_package_branch: "ethrex-integration-pectra-test"
+          ethereum_package_branch: "ethrex-integration-pectra"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
