@@ -40,12 +40,12 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 5b49d02ee556232a73ea1e28000ec5b3fca1073f
+ETHEREUM_PACKAGE_REVISION := 42963f52f3cfc4eb9deb5248c8529ff97acc709c
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
 ethereum-package:
-	git clone --single-branch --branch ethrex-integration https://github.com/lambdaclass/ethereum-package
+	git clone --single-branch --branch ethrex-integration-pectra https://github.com/lambdaclass/ethereum-package
 
 checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum package revision
 	cd ethereum-package && \
@@ -109,50 +109,26 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 4
+SIM_PARALLELISM := 16
 
 # Runs a hive testing suite
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
 run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
+	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM)
 
 run-hive-levm: build-image setup-hive ## 🧪 Run Hive testing suite with LEVM
-	cd hive && ./hive --client ethrex --ethrex.flags "--evm levm" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
+	cd hive && ./hive --client ethrex --ethrex.flags "--evm levm" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM)
 
 run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism 4
+	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism $(SIM_PARALLELISM)
 
 run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --docker.output
+	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
-
-SIM_PARALLELISM := 48
-EVM_BACKEND := revm
-# `make run-hive-report SIM_PARALLELISM=24 EVM_BACKEND="levm"`
-run-hive-report: build-image setup-hive clean-hive-logs ## 🐝 Run Hive and Build report
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cargo run --release -p hive_report
-
-hive-stats:
-	make hive QUIET=true
-	make setup-hive QUIET=true
-	rm -rf hive/workspace $(FILE_NAME)_logs
-	make run-hive-all SIMULATION=ethereum/rpc-compat || exit 0
-	make run-hive-all SIMULATION=devp2p || exit 0
-	make run-hive-all SIMULATION=ethereum/engine || exit 0
-	make run-hive-all SIMULATION=ethereum/sync || exit 0
-
-stats:
-	cd crates/vm/levm && make download-evm-ef-tests
-	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
-	make hive-stats
-	cargo run --quiet --release -p hive_report
 
 install-cli: ## 🛠️ Installs the ethrex-l2 cli
 	cargo install --path cmd/ethrex_l2/ --force
