@@ -72,10 +72,6 @@ pub enum SigIntError {
 pub enum ProposerError {
     #[error("Proposer failed because of an EngineClient error: {0}")]
     EngineClientError(#[from] EngineClientError),
-    #[error("Proposer failed because of a ChainError error: {0}")]
-    ChainError(#[from] ChainError),
-    #[error("Proposer failed because of a EvmError error: {0}")]
-    EvmError(#[from] EvmError),
     #[error("Proposer failed because of a InvalidForkChoice error: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Proposer failed to produce block: {0}")]
