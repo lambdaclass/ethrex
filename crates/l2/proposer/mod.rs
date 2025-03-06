@@ -10,6 +10,7 @@ use ethereum_types::Address;
 use ethrex_blockchain::{
     error::ChainError,
     find_parent_header,
+    fork_choice::apply_fork_choice,
     payload::{create_payload, BuildPayloadArgs, PayloadBuildResult},
     store_block, store_receipts, validate_block, validate_gas_used, validate_receipts_root,
     validate_state_root, Blockchain,
@@ -131,29 +132,30 @@ impl Proposer {
         blockchain: Arc<Blockchain>,
     ) -> Result<(), ProposerError> {
         let version = 3;
-        let parent_header = {
+        let head_header = {
             let current_block_number = store.get_latest_block_number()?;
+            info!("Current block number {current_block_number}");
             store
                 .get_block_header(current_block_number)?
                 .ok_or(ProposerError::StorageDataIsNone)?
         };
-        let parent_hash = parent_header.compute_block_hash();
-        let parent_beacon_block_root = H256::zero();
+        let head_hash = head_header.compute_block_hash();
+        let head_beacon_block_root = H256::zero();
 
         // The proposer leverages the execution payload framework used for the engine API,
         // but avoids calling the API methods and unnecesary re-execution.
 
         info!("Producing block");
-        debug!("Head block hash: {parent_hash:#x}");
+        debug!("Head block hash: {head_hash:#x}");
 
         // Proposer creates a new payload
         let args = BuildPayloadArgs {
-            parent: parent_hash,
+            parent: head_hash,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             fee_recipient: self.coinbase_address,
             random: H256::zero(),
             withdrawals: Default::default(),
-            beacon_root: Some(parent_beacon_block_root),
+            beacon_root: Some(head_beacon_block_root),
             version,
         };
         let mut payload = create_payload(&args, &store)?;
@@ -161,13 +163,13 @@ impl Proposer {
         // Blockchain builds the payload from mempool txs and executes them
         let mut payload_build_result = blockchain.build_payload(&mut payload)?;
         let account_updates =
-            payload_build_result.get_state_transitions(parent_hash, blockchain.vm)?;
-        info!("Built payload for new block {}", payload.hash());
+            payload_build_result.get_state_transitions(head_hash, blockchain.vm)?;
+        info!("Built payload for new block {}", payload.header.number);
 
         // Blockchain stores block
         let block = payload;
         let chain_config = store.get_chain_config()?;
-        validate_block(&block, &parent_header, &chain_config)?;
+        validate_block(&block, &head_header, &chain_config)?;
 
         let execution_result = BlockExecutionResult {
             account_updates,
@@ -177,12 +179,14 @@ impl Proposer {
 
         blockchain.store_block(&block, execution_result.clone())?;
         info!("Stored new block {}", block.hash());
+        // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         // Cache execution result
         self.execution_cache
             .push(block.header.number, execution_result);
 
-        // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
+        // Make the new head be part of the canonical chain
+        apply_fork_choice(&store, block.hash(), block.hash(), block.hash())?;
 
         Ok(())
     }

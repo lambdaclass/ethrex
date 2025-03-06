@@ -3,7 +3,7 @@ use std::sync::mpsc::SendError;
 use crate::utils::config::errors::ConfigError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
-use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
@@ -76,6 +76,8 @@ pub enum ProposerError {
     ChainError(#[from] ChainError),
     #[error("Proposer failed because of a EvmError error: {0}")]
     EvmError(#[from] EvmError),
+    #[error("Proposer failed because of a InvalidForkChoice error: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Proposer failed to produce block: {0}")]
     FailedToProduceBlock(String),
     #[error("Proposer failed to prepare PayloadAttributes timestamp: {0}")]
