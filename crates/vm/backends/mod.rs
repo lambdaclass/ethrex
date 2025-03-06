@@ -60,6 +60,7 @@ impl EVM {
 
     /// Wraps [REVM::execute_tx] and [LEVM::execute_tx].
     /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_tx(
         &self,
         state: &mut EvmState,
@@ -68,6 +69,7 @@ impl EVM {
         block_cache: &mut CacheDB,
         chain_config: &ChainConfig,
         remaining_gas: &mut u64,
+        sender: Address,
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
             EVM::REVM => {
@@ -76,6 +78,7 @@ impl EVM {
                     block_header,
                     state,
                     spec_id(chain_config, block_header.timestamp),
+                    sender,
                 )?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_result.gas_used());
