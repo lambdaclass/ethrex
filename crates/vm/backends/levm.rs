@@ -214,8 +214,7 @@ impl LEVM {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (new_state_account_address, new_state_account) in new_state {
             let initial_account_state = current_db
-                .get_account_info_by_hash(block_hash, *new_state_account_address)
-                .expect("Error getting account info by address")
+                .get_account_info_by_hash(block_hash, *new_state_account_address)?
                 .unwrap_or_default();
             let mut updates = 0;
             if initial_account_state.balance != new_state_account.info.balance {
