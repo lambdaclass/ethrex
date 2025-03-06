@@ -286,6 +286,7 @@ impl Store {
         let account_state = AccountState::decode(&encoded_state)?;
         self.get_account_code(account_state.code_hash)
     }
+
     pub fn get_nonce_by_account_address(
         &self,
         block_number: BlockNumber,
@@ -358,6 +359,56 @@ impl Store {
         Ok(Some(state_trie.hash()?))
     }
 
+    /// Applies state transitions to the given trie and does not commit nor calculate root hash
+    pub fn apply_account_updates_to_trie(
+        &self,
+        account_updates: &[AccountUpdate],
+        state_trie: &mut Trie,
+    ) -> Result<(), StoreError> {
+        for update in account_updates.iter() {
+            let hashed_address = hash_address(&update.address);
+            if update.removed {
+                // Remove account from trie
+                state_trie.remove(hashed_address)?;
+            } else {
+                // Add or update AccountState in the trie
+                // Fetch current state or create a new state to be inserted
+                let mut account_state = match state_trie.get(&hashed_address)? {
+                    Some(encoded_state) => AccountState::decode(&encoded_state)?,
+                    None => AccountState::default(),
+                };
+                if let Some(info) = &update.info {
+                    account_state.nonce = info.nonce;
+                    account_state.balance = info.balance;
+                    account_state.code_hash = info.code_hash;
+                    // Store updated code in DB
+                    if let Some(code) = &update.code {
+                        self.add_account_code(info.code_hash, code.clone())?;
+                    }
+                }
+                // Store the added storage in the account's storage trie and compute its new root
+                if !update.added_storage.is_empty() {
+                    let mut storage_trie = self.engine.open_storage_trie(
+                        H256::from_slice(&hashed_address),
+                        account_state.storage_root,
+                    );
+                    for (storage_key, storage_value) in &update.added_storage {
+                        let hashed_key = hash_key(storage_key);
+                        if storage_value.is_zero() {
+                            storage_trie.remove(hashed_key)?;
+                        } else {
+                            storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        }
+                    }
+                    account_state.storage_root = storage_trie.hash()?;
+                }
+                state_trie.insert(hashed_address, account_state.encode_to_vec())?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Adds all genesis accounts and returns the genesis block's state_root
     pub fn setup_genesis_state_trie(
         &self,
@@ -392,6 +443,7 @@ impl Store {
         Ok(genesis_state_trie.hash()?)
     }
 
+    /// Adds all genesis accounts and returns the genesis block's state_root
     pub fn add_receipt(
         &self,
         block_hash: BlockHash,
@@ -407,6 +459,13 @@ impl Store {
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
         self.engine.add_receipts(block_hash, receipts)
+    }
+
+    pub fn add_batch_of_receipts(
+        &self,
+        batch: Vec<(BlockHash, Vec<Receipt>)>,
+    ) -> Result<(), StoreError> {
+        self.engine.add_batch_of_receipts(batch)
     }
 
     pub fn get_receipt(
@@ -426,6 +485,10 @@ impl Store {
         self.add_block_body(hash, block.body)?;
         self.add_block_header(hash, header)?;
         self.add_block_number(hash, number)
+    }
+
+    pub fn add_batch_of_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
+        self.engine.add_batch_of_blocks(blocks)
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {

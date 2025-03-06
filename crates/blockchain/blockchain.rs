@@ -97,8 +97,8 @@ impl Blockchain {
         // Processes requests from receipts, computes the requests_hash and compares it against the header
         validate_requests_hash(&block.header, &chain_config, &requests)?;
 
-        store_block(&self.storage, block.clone())?;
-        store_receipts(&self.storage, receipts, block_hash)?;
+        self.storage.add_block(block.clone())?;
+        self.storage.add_receipts(block_hash, receipts)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
         if interval != 0 {
@@ -106,6 +106,63 @@ impl Blockchain {
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
             info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
         }
+
+        Ok(())
+    }
+
+    pub fn add_blocks_in_batch(
+        &self,
+        parent_hash: BlockHash,
+        blocks: &[Block],
+    ) -> Result<(), ChainError> {
+        let Some(mut state_trie) = self.storage.state_trie(parent_hash)? else {
+            return Err(ChainError::ParentNotFound);
+        };
+
+        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
+
+        for (i, block) in blocks.iter().enumerate() {
+            let block_hash = block.header.compute_block_hash();
+            // Validate if it can be the new head and find the parent
+            let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+                // If the parent is not present, we store it as pending.
+                self.storage.add_pending_block(block.clone())?;
+                return Err(ChainError::ParentNotFound);
+            };
+
+            let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
+            let chain_config: ChainConfig = state.chain_config().map_err(ChainError::from)?;
+
+            // Validate the block pre-execution
+            validate_block(block, &parent_header, &chain_config)?;
+            let BlockExecutionResult {
+                receipts,
+                requests,
+                account_updates,
+            } = self.vm.execute_block(block, &mut state)?;
+
+            validate_gas_used(&receipts, &block.header)?;
+
+            // todo only execute transactions
+            // batch account updates to merge the repeated accounts
+            state
+                .database()
+                .ok_or(ChainError::StoreError(StoreError::MissingStore))?
+                .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
+
+            // Validate state trie on last block only
+            if i >= blocks.len() - 1 {
+                let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
+                validate_state_root(&block.header, root_hash)?;
+                validate_receipts_root(&block.header, &receipts)?;
+                validate_requests_hash(&block.header, &chain_config, &requests)?;
+            }
+
+            all_receipts.push((block_hash, receipts));
+        }
+
+        self.storage.add_batch_of_blocks(blocks.into())?;
+        self.storage.add_batch_of_receipts(all_receipts)?;
 
         Ok(())
     }
@@ -339,21 +396,6 @@ pub fn validate_requests_hash(
         ));
     }
 
-    Ok(())
-}
-
-/// Stores block and header in the database
-pub fn store_block(storage: &Store, block: Block) -> Result<(), ChainError> {
-    storage.add_block(block)?;
-    Ok(())
-}
-
-pub fn store_receipts(
-    storage: &Store,
-    receipts: Vec<Receipt>,
-    block_hash: BlockHash,
-) -> Result<(), ChainError> {
-    storage.add_receipts(block_hash, receipts)?;
     Ok(())
 }
 
