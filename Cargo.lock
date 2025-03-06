@@ -603,24 +603,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-rpc-types-engine"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b582c59b6f493d9b15bea32f44f662fa6749e5464ef5305d8429a864ace60684"
-dependencies = [
- "alloy-consensus 0.11.1",
- "alloy-eips 0.11.1",
- "alloy-primitives 0.8.21",
- "alloy-rlp",
- "alloy-serde 0.11.1",
- "derive_more 1.0.0",
- "jsonwebtoken",
- "rand 0.8.5",
- "serde",
- "strum 0.26.3",
-]
-
-[[package]]
 name = "alloy-rpc-types-eth"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10917,7 +10899,6 @@ dependencies = [
 name = "zkvm_interface"
 version = "0.1.0"
 dependencies = [
- "alloy-rpc-types-engine",
  "ethrex-common",
  "ethrex-rlp",
  "ethrex-storage",

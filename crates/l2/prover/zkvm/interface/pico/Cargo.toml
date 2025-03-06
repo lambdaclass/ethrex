@@ -15,7 +15,7 @@ ethrex-vm = { path = "../../../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }
 
 # Temporarily pin version because 0.11.1 breaks compilation
-alloy-rpc-types-engine = "=0.11.0"
+#alloy-rpc-types-engine = "=0.11.0"
 
 [patch.crates-io]
 # Pico has its own patch for secp256k1 but it doesn't compile: it has a git dependency for a branch that
