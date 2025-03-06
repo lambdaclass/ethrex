@@ -2,7 +2,6 @@ use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::Transaction;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::merkle_tree::merkle_proof;
 use ethrex_l2_sdk::{get_withdrawal_hash, COMMON_BRIDGE_L2_ADDRESS, L2_WITHDRAW_SIGNATURE};

@@ -12,6 +12,7 @@ use crate::ExecutionResult;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
 use revm::{
+    db::AccountState as RevmAccountState,
     inspectors::TracerEip3155,
     primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv, B256},
     DatabaseCommit, Evm,
@@ -67,7 +68,7 @@ impl REVM {
         let mut cumulative_gas_used = 0;
 
         for tx in block.body.transactions.iter() {
-            let result = Self::execute_tx(tx, block_header, state, spec_id)?;
+            let result = Self::execute_tx(tx, block_header, state, spec_id, tx.sender())?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -104,9 +105,10 @@ impl REVM {
         header: &BlockHeader,
         state: &mut EvmState,
         spec_id: SpecId,
+        sender: Address,
     ) -> Result<ExecutionResult, EvmError> {
         let block_env = block_env(header, spec_id);
-        let tx_env = tx_env(tx);
+        let tx_env = tx_env(tx, sender);
         run_evm(tx_env, block_env, state, spec_id)
     }
 
@@ -120,26 +122,36 @@ impl REVM {
         initial_state: &mut EvmState,
         withdrawals: &[Withdrawal],
     ) -> Result<(), StoreError> {
+        //balance_increments is a vector of tuples (Address, increment as u128)
+        let balance_increments = withdrawals
+            .iter()
+            .filter(|withdrawal| withdrawal.amount > 0)
+            .map(|withdrawal| {
+                (
+                    RevmAddress::from_slice(withdrawal.address.as_bytes()),
+                    (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
+                )
+            })
+            .collect::<Vec<_>>();
         match initial_state {
             EvmState::Store(db) => {
-                //balance_increments is a vector of tuples (Address, increment as u128)
-                let balance_increments = withdrawals
-                    .iter()
-                    .filter(|withdrawal| withdrawal.amount > 0)
-                    .map(|withdrawal| {
-                        (
-                            RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                            (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
                 db.increment_balances(balance_increments)?;
             }
-            EvmState::Execution(_) => {
-                // TODO: We should check withdrawals are valid
-                // (by checking that accounts exist if this is the only error) but there's no state to
-                // change.
+            EvmState::Execution(db) => {
+                for (address, balance) in balance_increments {
+                    if balance == 0 {
+                        continue;
+                    }
+
+                    let account = db
+                        .load_account(address)
+                        .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
+
+                    account.info.balance += RevmU256::from(balance);
+                    if account.account_state == RevmAccountState::None {
+                        account.account_state = RevmAccountState::Touched;
+                    }
+                }
             }
         }
         Ok(())
@@ -310,26 +322,36 @@ pub fn process_withdrawals(
     state: &mut EvmState,
     withdrawals: &[Withdrawal],
 ) -> Result<(), StoreError> {
+    //balance_increments is a vector of tuples (Address, increment as u128)
+    let balance_increments = withdrawals
+        .iter()
+        .filter(|withdrawal| withdrawal.amount > 0)
+        .map(|withdrawal| {
+            (
+                RevmAddress::from_slice(withdrawal.address.as_bytes()),
+                (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
+            )
+        })
+        .collect::<Vec<_>>();
     match state {
         EvmState::Store(db) => {
-            //balance_increments is a vector of tuples (Address, increment as u128)
-            let balance_increments = withdrawals
-                .iter()
-                .filter(|withdrawal| withdrawal.amount > 0)
-                .map(|withdrawal| {
-                    (
-                        RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                        (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-                    )
-                })
-                .collect::<Vec<_>>();
-
             db.increment_balances(balance_increments)?;
         }
-        EvmState::Execution(_) => {
-            // TODO: We should check withdrawals are valid
-            // (by checking that accounts exist if this is the only error) but there's no state to
-            // change.
+        EvmState::Execution(db) => {
+            for (address, balance) in balance_increments {
+                if balance == 0 {
+                    continue;
+                }
+
+                let account = db
+                    .load_account(address)
+                    .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
+
+                account.info.balance += RevmU256::from(balance);
+                if account.account_state == RevmAccountState::None {
+                    account.account_state = RevmAccountState::Touched;
+                }
+            }
         }
     }
     Ok(())
@@ -353,14 +375,14 @@ pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
 
 // Used for the L2
 pub const DEPOSIT_MAGIC_DATA: &[u8] = b"mint";
-pub fn tx_env(tx: &Transaction) -> TxEnv {
+pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
     let max_fee_per_blob_gas = tx
         .max_fee_per_blob_gas()
         .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
         caller: match tx {
             Transaction::PrivilegedL2Transaction(_tx) => RevmAddress::ZERO,
-            _ => RevmAddress(tx.sender().0.into()),
+            _ => RevmAddress(sender.0.into()),
         },
         gas_limit: tx.gas_limit(),
         gas_price: RevmU256::from(tx.gas_price()),
@@ -573,8 +595,13 @@ pub(crate) fn generic_system_contract_revm(
                 .with_spec_id(spec_id)
                 .build();
 
-            // Not necessary to commit to DB
             let transaction_result = evm.transact()?;
+            let mut result_state = transaction_result.state;
+            result_state.remove(SYSTEM_ADDRESS.as_ref());
+            result_state.remove(&evm.block().coinbase);
+
+            evm.context.evm.db.commit(result_state);
+
             Ok(transaction_result.result.into())
         }
     }
