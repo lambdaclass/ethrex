@@ -3,7 +3,9 @@ use std::marker::PhantomData;
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt},
+    types::{
+        payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt,
+    },
     H256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -32,6 +34,9 @@ pub type ReceiptRLP = Rlp<Receipt>;
 // Transaction types
 pub type TransactionHashRLP = Rlp<H256>;
 
+// Payload type
+pub type PayloadBundleRLP = Rlp<PayloadBundle>;
+
 // Wrapper for tuples. Used mostly for indexed keys.
 pub type TupleRLP<A, B> = Rlp<(A, B)>;
 
@@ -49,6 +54,16 @@ impl<T: RLPEncode> From<T> for Rlp<T> {
 impl<T: RLPDecode> Rlp<T> {
     pub fn to(&self) -> T {
         T::decode(&self.0).unwrap()
+    }
+}
+
+impl<T> Rlp<T> {
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes, Default::default())
+    }
+
+    pub fn bytes(&self) -> &Vec<u8> {
+        &self.0
     }
 }
 
