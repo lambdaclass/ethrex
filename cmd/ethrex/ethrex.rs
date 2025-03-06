@@ -6,11 +6,6 @@ use crate::{
     utils::{set_datadir, store_known_peers},
 };
 use ethrex_p2p::network::peer_table;
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{EngineType, Store};
-use k256::ecdsa::SigningKey;
-use local_ip_address::local_ip;
-use rand::rngs::OsRng;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
