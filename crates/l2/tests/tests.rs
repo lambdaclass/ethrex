@@ -68,7 +68,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Depositing funds from L1 to L2");
 
-    let deposit_value = U256::from(1000000000000000000000u128);
+    let deposit_value = U256::from(1000000000000000000000000000000000000u128);
     let deposit_tx = ethrex_l2_sdk::deposit(
         deposit_value,
         l1_rich_wallet_address,
