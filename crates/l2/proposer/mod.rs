@@ -113,9 +113,8 @@ impl Proposer {
         execution_cache: Arc<ExecutionCache>,
     ) {
         loop {
-            if let Err(err) = self
-                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
-                .await
+            if let Err(err) =
+                self.main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
             {
                 error!("Block Producer Error: {}", err);
             }
@@ -124,7 +123,7 @@ impl Proposer {
         }
     }
 
-    pub async fn main_logic(
+    pub fn main_logic(
         &self,
         store: Store,
         blockchain: Arc<Blockchain>,
@@ -133,7 +132,6 @@ impl Proposer {
         let version = 3;
         let head_header = {
             let current_block_number = store.get_latest_block_number()?;
-            info!("Current block number {current_block_number}");
             store
                 .get_block_header(current_block_number)?
                 .ok_or(ProposerError::StorageDataIsNone)?

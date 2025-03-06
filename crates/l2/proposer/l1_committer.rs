@@ -89,98 +89,94 @@ impl Committer {
             EthClient::get_next_block_to_commit(&self.eth_client, self.on_chain_proposer_address)
                 .await?;
 
-        loop {
-            if let Some(block_to_commit_body) = self
+        let Some(block_to_commit_body) = self
+            .store
+            .get_block_body(block_number)
+            .map_err(CommitterError::from)?
+        else {
+            return Ok(());
+        };
+
+        let block_to_commit_header = self
+            .store
+            .get_block_header(block_number)
+            .map_err(CommitterError::from)?
+            .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                "Failed to get_block_header() after get_block_body()".to_owned(),
+            ))?;
+
+        let mut txs_and_receipts = vec![];
+        for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
+            let receipt = self
                 .store
-                .get_block_body(block_number)
-                .map_err(CommitterError::from)?
-            {
-                let block_to_commit_header = self
-                    .store
-                    .get_block_header(block_number)
-                    .map_err(CommitterError::from)?
-                    .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "Failed to get_block_header() after get_block_body()".to_owned(),
-                    ))?;
+                .get_receipt(block_number, index.try_into()?)?
+                .ok_or(CommitterError::InternalError(
+                    "Transactions in a block should have a receipt".to_owned(),
+                ))?;
+            txs_and_receipts.push((tx.clone(), receipt));
+        }
 
-                let mut txs_and_receipts = vec![];
-                for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
-                    let receipt = self
-                        .store
-                        .get_receipt(block_number, index.try_into()?)?
-                        .ok_or(CommitterError::InternalError(
-                            "Transactions in a block should have a receipt".to_owned(),
-                        ))?;
-                    txs_and_receipts.push((tx.clone(), receipt));
-                }
+        let block_to_commit = Block::new(block_to_commit_header, block_to_commit_body);
 
-                let block_to_commit = Block::new(block_to_commit_header, block_to_commit_body);
+        let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
+        let deposits = self.get_block_deposits(&block_to_commit);
 
-                let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
-                let deposits = self.get_block_deposits(&block_to_commit);
+        let mut withdrawal_hashes = vec![];
 
-                let mut withdrawal_hashes = vec![];
+        for (_, tx) in &withdrawals {
+            let hash =
+                get_withdrawal_hash(tx).ok_or(CommitterError::InvalidWithdrawalTransaction)?;
+            withdrawal_hashes.push(hash);
+        }
 
-                for (_, tx) in &withdrawals {
-                    let hash = get_withdrawal_hash(tx)
-                        .ok_or(CommitterError::InvalidWithdrawalTransaction)?;
-                    withdrawal_hashes.push(hash);
-                }
+        let withdrawal_logs_merkle_root = self.get_withdrawals_merkle_root(withdrawal_hashes)?;
+        let deposit_logs_hash = self.get_deposit_hash(
+            deposits
+                .iter()
+                .filter_map(|tx| tx.get_deposit_hash())
+                .collect(),
+        )?;
 
-                let withdrawal_logs_merkle_root =
-                    self.get_withdrawals_merkle_root(withdrawal_hashes)?;
-                let deposit_logs_hash = self.get_deposit_hash(
-                    deposits
-                        .iter()
-                        .filter_map(|tx| tx.get_deposit_hash())
-                        .collect(),
-                )?;
-
-                let account_updates = match self.execution_cache.get(block_to_commit.hash())? {
-                    Some(account_updates) => account_updates,
-                    None => {
-                        warn!(
+        let account_updates = match self.execution_cache.get(block_to_commit.hash())? {
+            Some(account_updates) => account_updates,
+            None => {
+                warn!(
                             "Could not find execution cache result for block {block_number}, falling back to re-execution"
                         );
-                        let mut state =
-                            evm_state(self.store.clone(), block_to_commit.header.parent_hash);
-                        EVM::default()
-                            .execute_block(&block_to_commit, &mut state)
-                            .map(|result| result.account_updates)?
-                    }
-                };
-
-                let state_diff = self.prepare_state_diff(
-                    &block_to_commit,
-                    self.store.clone(),
-                    withdrawals,
-                    deposits,
-                    &account_updates,
-                )?;
-
-                let blobs_bundle = self.generate_blobs_bundle(&state_diff)?;
-
-                let head_block_hash = block_to_commit.hash();
-                break match self
-                    .send_commitment(
-                        block_to_commit.header.number,
-                        withdrawal_logs_merkle_root,
-                        deposit_logs_hash,
-                        blobs_bundle,
-                    )
-                    .await
-                {
-                    Ok(commit_tx_hash) => {
-                        info!("Sent commitment to block {head_block_hash:#x}, with transaction hash {commit_tx_hash:#x}");
-                        Ok(())
-                    }
-                    Err(error) => {
-                        return Err(CommitterError::FailedToSendCommitment(format!(
-                            "Failed to send commitment to block {head_block_hash:#x}: {error}"
-                        )));
-                    }
-                };
+                let mut state = evm_state(self.store.clone(), block_to_commit.header.parent_hash);
+                EVM::default()
+                    .execute_block(&block_to_commit, &mut state)
+                    .map(|result| result.account_updates)?
             }
+        };
+
+        let state_diff = self.prepare_state_diff(
+            &block_to_commit,
+            self.store.clone(),
+            withdrawals,
+            deposits,
+            &account_updates,
+        )?;
+
+        let blobs_bundle = self.generate_blobs_bundle(&state_diff)?;
+
+        let head_block_hash = block_to_commit.hash();
+        match self
+            .send_commitment(
+                block_to_commit.header.number,
+                withdrawal_logs_merkle_root,
+                deposit_logs_hash,
+                blobs_bundle,
+            )
+            .await
+        {
+            Ok(commit_tx_hash) => {
+                info!("Sent commitment to block {head_block_hash:#x}, with transaction hash {commit_tx_hash:#x}");
+                Ok(())
+            }
+            Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
+                "Failed to send commitment to block {head_block_hash:#x}: {error}"
+            ))),
         }
     }
 
