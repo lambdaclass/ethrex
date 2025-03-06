@@ -65,7 +65,7 @@ impl ExecutionDB {
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        let result = backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
+        let result = backends::revm::REVM::execute_block(block, &mut state).map_err(Box::new)?;
         Ok(result.account_updates)
     }
 
@@ -159,7 +159,7 @@ impl ExecutionDB {
         let block_env = block_env(&block.header, spec_id);
 
         for transaction in &block.body.transactions {
-            let tx_env = tx_env(transaction);
+            let tx_env = tx_env(transaction, transaction.sender());
 
             // execute tx
             let evm_builder = Evm::builder()

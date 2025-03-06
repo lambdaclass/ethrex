@@ -10,7 +10,7 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::backends::EVM;
+use ethrex_vm::backends::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -158,8 +158,6 @@ async fn main() {
 
     let sync_mode = sync_mode(&matches);
 
-    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
-
     let path = path::PathBuf::from(data_dir.clone());
     let store: Store = if path.ends_with("memory") {
         Store::new(&data_dir, EngineType::InMemory).expect("Failed to create Store")
@@ -177,7 +175,15 @@ async fn main() {
         }
         Store::new(&data_dir, engine_type).expect("Failed to create Store")
     };
-    let blockchain = Blockchain::new(evm.clone(), store.clone());
+
+    let evm_engine: EvmEngine = matches
+        .get_one::<String>("evm")
+        .unwrap_or(&"revm".to_string())
+        .clone()
+        .try_into()
+        .unwrap_or_else(|e| panic!("{}", e));
+
+    let blockchain = Arc::new(Blockchain::new(evm_engine, store.clone()));
 
     let genesis = read_genesis_file(&network);
     store
@@ -261,28 +267,75 @@ async fn main() {
         peer_table.clone(),
         sync_mode,
         cancel_token.clone(),
-        blockchain,
+        blockchain.clone(),
     );
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
-    let rpc_api = ethrex_rpc::start_api(
-        http_socket_addr,
-        authrpc_socket_addr,
-        store.clone(),
-        jwt_secret,
-        local_p2p_node,
-        local_node_record,
-        syncer,
-    )
-    .into_future();
+    let jwt_secret_clone = jwt_secret.clone();
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "based")] {
+            use ethrex_rpc::{EngineClient, EthClient};
+
+            let gateway_addr = matches
+                .get_one::<String>("gateway.addr")
+                .expect("gateway.addr is required");
+            let gateway_eth_port = matches
+                .get_one::<String>("gateway.eth_port")
+                .expect("gateway.eth_port is required");
+            let gateway_auth_port = matches
+                .get_one::<String>("gateway.auth_port")
+                .expect("gateway.auth_port is required");
+            let gateway_authrpc_jwtsecret = matches
+                .get_one::<String>("gateway.jwtsecret")
+                .expect("gateway.jwtsecret is required");
+
+            let gateway_http_socket_addr =
+                parse_socket_addr(gateway_addr, gateway_eth_port).expect("Failed to parse gateway http address and port");
+            let gateway_authrpc_socket_addr = parse_socket_addr(gateway_addr, gateway_auth_port)
+                .expect("Failed to parse gateway authrpc address and port");
+
+            let gateway_eth_client = EthClient::new(&gateway_http_socket_addr.to_string());
+
+            let gateway_jwtsecret = read_jwtsecret_file(gateway_authrpc_jwtsecret);
+            let gateway_auth_client = EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret);
+
+            let rpc_api = ethrex_rpc::start_api(
+                http_socket_addr,
+                authrpc_socket_addr,
+                store.clone(),
+                blockchain.clone(),
+                jwt_secret_clone,
+                local_p2p_node,
+                local_node_record,
+                syncer,
+                gateway_eth_client,
+                gateway_auth_client,
+            )
+            .into_future();
+
+            tracker.spawn(rpc_api);
+        } else {
+            let rpc_api = ethrex_rpc::start_api(
+                http_socket_addr,
+                authrpc_socket_addr,
+                store.clone(),
+                blockchain.clone(),
+                jwt_secret_clone,
+                local_p2p_node,
+                local_node_record,
+                syncer,
+            )
+            .into_future();
+
+            tracker.spawn(rpc_api);
+        }
+    }
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
     let enode = local_p2p_node.enode_url();
     info!("Node: {enode}");
-
-    tracker.spawn(rpc_api);
 
     // Check if the metrics.port is present, else set it to 0
     let metrics_port = matches
@@ -303,15 +356,13 @@ async fn main() {
                 error!("Cannot run with DEV_MODE if the `l2` feature is enabled.");
                 panic!("Run without the --dev argument.");
             }
-            let l2_proposer = ethrex_l2::start_proposer(store).into_future();
+            let l2_proposer = ethrex_l2::start_proposer(store.clone(), blockchain.clone()).into_future();
             tracker.spawn(l2_proposer);
         } else if #[cfg(feature = "dev")] {
             use ethrex_dev;
             // Start the block_producer module if devmode was set
             if dev_mode {
                 info!("Runnning in DEV_MODE");
-                let authrpc_jwtsecret =
-                    std::fs::read(authrpc_jwtsecret).expect("Failed to read JWT secret");
                 let head_block_hash = {
                     let current_block_number = store.get_latest_block_number().unwrap();
                     store
@@ -323,7 +374,7 @@ async fn main() {
                 let url = format!("http://{authrpc_socket_addr}");
                 let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
                     url,
-                    authrpc_jwtsecret.into(),
+                    jwt_secret,
                     head_block_hash,
                     max_tries,
                     1000,
@@ -343,6 +394,7 @@ async fn main() {
                 signer,
                 peer_table.clone(),
                 store,
+                blockchain,
             )
             .await.expect("Network starts");
             tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));

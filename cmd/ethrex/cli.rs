@@ -1,10 +1,9 @@
 use clap::{Arg, ArgAction, Command};
 use ethrex_p2p::types::Node;
-use ethrex_vm::backends::EVM;
 use tracing::Level;
 
 pub fn cli() -> Command {
-    Command::new("ethrex")
+    let cmd = Command::new("ethrex")
         .about("ethrex Execution client")
         .author("Lambdaclass")
         .arg(
@@ -138,7 +137,6 @@ pub fn cli() -> Command {
                 .required(false)
                 .default_value("revm")
                 .value_name("EVM_BACKEND")
-                .value_parser(clap::value_parser!(EVM))
                 .help("Has to be `levm` or `revm`"),
         )
         .subcommand(
@@ -148,5 +146,40 @@ pub fn cli() -> Command {
                     .value_name("DATABASE_DIRECTORY")
                     .action(ArgAction::Set),
             ),
-        )
+        );
+
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "based")] {
+            cmd.arg(
+                Arg::new("gateway.addr")
+                    .long("gateway.addr")
+                    .default_value("0.0.0.0")
+                    .value_name("GATEWAY_ADDRESS")
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                Arg::new("gateway.eth_port")
+                    .long("gateway.eth_port")
+                    .default_value("8546")
+                    .value_name("GATEWAY_ETH_PORT")
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                Arg::new("gateway.auth_port")
+                    .long("gateway.auth_port")
+                    .default_value("8553")
+                    .value_name("GATEWAY_AUTH_PORT")
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                Arg::new("gateway.jwtsecret")
+                .long("gateway.jwtsecret")
+                .default_value("jwt.hex")
+                .value_name("GATEWAY_JWTSECRET_PATH")
+                .action(ArgAction::Set),
+            )
+        } else {
+            cmd
+        }
+    }
 }
