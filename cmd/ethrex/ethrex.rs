@@ -25,23 +25,27 @@ pub const DEFAULT_DATADIR: &str = "ethrex";
 async fn main() {
     let matches = cli::cli().get_matches();
 
-    let data_dir = matches
-        .get_one::<String>("datadir")
-        .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
+    init_tracing(&matches);
 
-    if matches.subcommand_matches("removedb").is_some() {
+    if let Some(matches) = matches.subcommand_matches("removedb") {
+        let data_dir = matches
+            .get_one::<String>("datadir")
+            .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
         let path = Path::new(&data_dir);
         if path.exists() {
             std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+            info!("Data directory removed: {}", data_dir);
         } else {
             warn!("Data directory does not exist: {}", data_dir);
         }
         return;
     }
 
-    init_tracing(&matches);
-
     let network = get_network(&matches);
+
+    let data_dir = matches
+        .get_one::<String>("datadir")
+        .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
     let store = init_store(&data_dir, &network);
 
