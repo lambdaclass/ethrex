@@ -197,17 +197,8 @@ impl L1Watcher {
                 .ok_or(L1WatcherError::FailedToDeserializeLog(
                     "Failed to parse beneficiary from log: log.topics[2] out of bounds".to_owned(),
                 ))?
-                .into_uint();
-            let str_ben = format!("{:#x}", beneficiary_uint)
-                .strip_prefix("0x")
-                .unwrap_or_default()
-                .to_string();
-            let a = format!("0x{:0>40}", str_ben).to_string(); // we add a padding of 0s to the left
-            let beneficiary = a.parse::<Address>().map_err(|e| {
-                L1WatcherError::FailedToDeserializeLog(format!(
-                    "Failed to parse beneficiary from log: {e:#?}"
-                ))
-            })?;
+                .to_fixed_bytes();
+            let beneficiary = Address::from_slice(&beneficiary_uint[12..]);
 
             let deposit_id =
                 log.log
