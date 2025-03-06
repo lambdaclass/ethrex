@@ -86,9 +86,9 @@ async fn main() {
                 local_p2p_node,
                 signer,
                 peer_table.clone(),
-                store,
+                store.clone(),
                 tracker.clone(),
-                blockchain,
+                blockchain.clone(),
             )
             .await;
         }
@@ -96,6 +96,8 @@ async fn main() {
 
     cfg_if::cfg_if! {
         if #[cfg(all(feature = "l2", not(feature = "dev")))] {
+            use std::future::IntoFuture;
+
             let l2_proposer = ethrex_l2::start_proposer(store, blockchain).into_future();
 
             tracker.spawn(l2_proposer);

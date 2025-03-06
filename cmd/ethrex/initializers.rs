@@ -17,7 +17,7 @@ use ethrex_p2p::{
 #[cfg(feature = "based")]
 use ethrex_rpc::{EngineClient, EthClient};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::backends::EVM;
+use ethrex_vm::backends::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -88,9 +88,14 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
 }
 
 pub fn init_blockchain(matches: &ArgMatches, store: Store) -> Arc<Blockchain> {
-    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
+    let evm_engine: EvmEngine = matches
+        .get_one::<String>("evm")
+        .unwrap_or(&"revm".to_string())
+        .clone()
+        .try_into()
+        .unwrap_or_else(|e| panic!("{}", e));
 
-    let blockchain = Blockchain::new(evm.clone(), store);
+    let blockchain = Blockchain::new(evm_engine, store.clone());
 
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
