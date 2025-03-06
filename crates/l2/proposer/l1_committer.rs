@@ -167,7 +167,7 @@ impl Committer {
                 let blobs_bundle = self.generate_blobs_bundle(&state_diff)?;
 
                 let head_block_hash = block_to_commit.hash();
-                match self
+                break match self
                     .send_commitment(
                         block_to_commit.header.number,
                         withdrawal_logs_merkle_root,
@@ -178,13 +178,14 @@ impl Committer {
                 {
                     Ok(commit_tx_hash) => {
                         info!("Sent commitment to block {head_block_hash:#x}, with transaction hash {commit_tx_hash:#x}");
+                        Ok(())
                     }
                     Err(error) => {
                         return Err(CommitterError::FailedToSendCommitment(format!(
                             "Failed to send commitment to block {head_block_hash:#x}: {error}"
                         )));
                     }
-                }
+                };
             }
         }
     }
