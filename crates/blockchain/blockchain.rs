@@ -113,7 +113,7 @@ impl Blockchain {
     pub fn add_blocks_in_batch(
         &self,
         parent_hash: BlockHash,
-        blocks: &[Block],
+        blocks: Vec<Block>,
     ) -> Result<(), ChainError> {
         let Some(mut state_trie) = self.storage.state_trie(parent_hash)? else {
             return Err(ChainError::ParentNotFound);
@@ -161,7 +161,7 @@ impl Blockchain {
             all_receipts.push((block_hash, receipts));
         }
 
-        self.storage.add_batch_of_blocks(blocks.into())?;
+        self.storage.add_batch_of_blocks(blocks)?;
         self.storage.add_batch_of_receipts(all_receipts)?;
 
         Ok(())

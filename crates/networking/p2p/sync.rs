@@ -8,7 +8,7 @@ mod trie_rebuild;
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{error::ChainError, Blockchain};
 use ethrex_common::{
-    types::{Block, BlockHash},
+    types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::error::RLPDecodeError;
@@ -270,11 +270,15 @@ impl SyncManager {
             block_headers.remove(0);
             // Store headers and save hashes for full block retrieval
             all_block_hashes.extend_from_slice(&block_hashes[..]);
-            store.add_block_headers(block_hashes.clone(), block_headers)?;
 
             if self.sync_mode == SyncMode::Full {
-                self.download_and_run_blocks(&mut block_hashes, store.clone())
+                self.download_and_run_blocks(&block_hashes, &block_headers, store.clone())
                     .await?;
+            }
+
+            // in full sync mode, headers are added if after added after the execution and validation
+            if self.sync_mode == SyncMode::Snap {
+                store.add_block_headers(block_hashes.clone(), block_headers)?;
             }
 
             if sync_head_found {
@@ -336,11 +340,10 @@ impl SyncManager {
     /// Returns an error if there was a problem while executing or validating the blocks
     async fn download_and_run_blocks(
         &mut self,
-        block_hashes: &mut [BlockHash],
+        block_hashes: &[BlockHash],
+        block_headers: &[BlockHeader],
         store: Store,
     ) -> Result<(), SyncError> {
-        let mut last_valid_hash = H256::default();
-
         let mut current_chunk_idx = 0;
         let chunks: Vec<Vec<BlockHash>> = block_hashes
             .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
@@ -351,6 +354,8 @@ impl SyncManager {
             Some(res) => res.clone(),
             None => return Ok(()),
         };
+        let mut headers_idx = 0;
+        let mut blocks: Vec<Block> = vec![];
 
         loop {
             debug!("Requesting Block Bodies");
@@ -367,40 +372,41 @@ impl SyncManager {
                     block_bodies_len, first_block_hash, first_block_header_number
                 );
 
-                // Execute and store blocks
-                for (hash, body) in chunk
+                // Push blocks
+                for ((_, body), header) in chunk
                     .drain(..block_bodies_len)
                     .zip(block_bodies.into_iter())
+                    .zip(block_headers[headers_idx..block_bodies_len].iter())
                 {
-                    let header = store
-                        .get_block_header_by_hash(hash)?
-                        .ok_or(SyncError::CorruptDB)?;
-                    let number = header.number;
-                    let block = Block::new(header, body);
-                    if let Err(error) = self.blockchain.add_block(&block) {
-                        warn!("Failed to add block during FullSync: {error}");
-                        self.invalid_ancestors.insert(hash, last_valid_hash);
-                        return Err(error.into());
-                    }
-                    store.set_canonical_block(number, hash)?;
-                    store.update_latest_block_number(number)?;
-                    last_valid_hash = hash;
-                    debug!(
-                        "Executed and stored block number {} with hash {}",
-                        number, hash
-                    );
+                    let block = Block::new(header.clone(), body);
+                    blocks.push(block);
                 }
-                debug!("Executed & stored {} blocks", block_bodies_len);
+
+                headers_idx += block_bodies_len;
 
                 if chunk.is_empty() {
                     current_chunk_idx += 1;
                     chunk = match chunks.get(current_chunk_idx) {
                         Some(res) => res.clone(),
-                        None => return Ok(()),
+                        None => break,
                     };
                 };
             }
         }
+
+        debug!("Starting to execute and validate blocks in batch");
+        let first_block = blocks.first().unwrap().clone();
+        let last_block = blocks.last().unwrap().clone();
+        let blocks_len = blocks.len();
+
+        self.blockchain
+            .add_blocks_in_batch(first_block.header.parent_hash, blocks)?;
+
+        store.set_canonical_block(last_block.header.number, last_block.hash())?;
+        store.update_latest_block_number(last_block.header.number)?;
+        debug!("Executed & stored {} blocks", blocks_len);
+
+        Ok(())
     }
 }
 
