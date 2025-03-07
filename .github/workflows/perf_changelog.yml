@@ -9,7 +9,7 @@ jobs:
   # We only want this for perf-related changes for now, so we add a few labels
   # for which the check is skipped
   changelog:
-    if: ${{ github.event.label.name == 'performance' }}
+    if: contains(github.event.pull_request.labels.*.name, 'performance')
     runs-on: ubuntu-latest
     steps:
     - uses: dangoslen/changelog-enforcer@v3
