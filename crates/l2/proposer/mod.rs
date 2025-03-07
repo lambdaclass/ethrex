@@ -158,8 +158,7 @@ impl Proposer {
         let mut payload = create_payload(&args, &store)?;
 
         // Blockchain builds the payload from mempool txs and executes them
-        let mut payload_build_result = blockchain.build_payload(&mut payload)?;
-        let account_updates = payload_build_result.get_state_transitions(head_hash)?;
+        let payload_build_result = blockchain.build_payload(&mut payload)?;
         info!("Built payload for new block {}", payload.header.number);
 
         // Blockchain stores block
@@ -168,7 +167,7 @@ impl Proposer {
         validate_block(&block, &head_header, &chain_config)?;
 
         let execution_result = BlockExecutionResult {
-            account_updates,
+            account_updates: payload_build_result.account_updates,
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
         };

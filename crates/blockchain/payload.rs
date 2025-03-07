@@ -40,7 +40,7 @@ use crate::{
     Blockchain,
 };
 
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -171,6 +171,7 @@ pub struct PayloadBuildContext<'a> {
     pub blobs_bundle: BlobsBundle,
     pub store: Store,
     pub vm: Evm,
+    pub account_updates: Vec<AccountUpdate>,
 }
 
 impl<'a> PayloadBuildContext<'a> {
@@ -200,6 +201,7 @@ impl<'a> PayloadBuildContext<'a> {
             blobs_bundle: BlobsBundle::default(),
             store: storage.clone(),
             vm,
+            account_updates: Vec::new(),
         })
     }
 }
@@ -227,16 +229,7 @@ pub struct PayloadBuildResult {
     pub block_value: U256,
     pub receipts: Vec<Receipt>,
     pub requests: Vec<EncodedRequests>,
-    vm: Evm,
-}
-
-impl PayloadBuildResult {
-    pub fn get_state_transitions(
-        &mut self,
-        parent_hash: H256,
-    ) -> Result<Vec<AccountUpdate>, EvmError> {
-        self.vm.get_state_transitions(parent_hash)
-    }
+    pub account_updates: Vec<AccountUpdate>,
 }
 
 impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
@@ -246,7 +239,7 @@ impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
             block_value,
             requests,
             receipts,
-            vm,
+            account_updates,
             ..
         } = value;
 
@@ -255,7 +248,7 @@ impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
             block_value,
             requests,
             receipts,
-            vm,
+            account_updates,
         }
     }
 }
@@ -543,6 +536,7 @@ impl Blockchain {
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
         context.payload.header.requests_hash = context.requests_hash;
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        context.account_updates = account_updates;
         Ok(())
     }
 }
