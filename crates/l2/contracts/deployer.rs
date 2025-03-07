@@ -147,6 +147,9 @@ If running locally, a reasonable value would be CONFIG_FILE=config.toml",
                 "DEPLOYER_SP1_CONTRACT_VERIFIER" => {
                     format!("{envar}={sp1_contract_verifier_address:#x}")
                 }
+                "DEPLOYER_PICO_CONTRACT_VERIFIER" => {
+                    format!("{envar}={pico_contract_verifier_address:#x}")
+                }
                 _ => line,
             };
         }

@@ -9,7 +9,9 @@ struct Deployer {
     private_key: String,
     risc0_contract_verifier: String,
     sp1_contract_verifier: String,
+    pico_contract_verifier: String,
     sp1_deploy_verifier: bool,
+    pico_deploy_verifier: bool,
     salt_is_zero: bool,
 }
 
@@ -22,14 +24,18 @@ impl Deployer {
 {prefix}_PRIVATE_KEY={}
 {prefix}_RISC0_CONTRACT_VERIFIER={}
 {prefix}_SP1_CONTRACT_VERIFIER={}
+{prefix}_PICO_CONTRACT_VERIFIER={}
 {prefix}_SP1_DEPLOY_VERIFIER={}
+{prefix}_PICO_DEPLOY_VERIFIER={}
 {prefix}_SALT_IS_ZERO={}
 ",
             self.address,
             self.private_key,
             self.risc0_contract_verifier,
             self.sp1_contract_verifier,
+            self.pico_contract_verifier,
             self.sp1_deploy_verifier,
+            self.pico_deploy_verifier,
             self.salt_is_zero
         )
     }
