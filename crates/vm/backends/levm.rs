@@ -201,7 +201,7 @@ impl LEVM {
         let store = store_wrapper.store.clone();
         let block_hash = store_wrapper.block_hash;
         for (new_state_account_address, new_state_account) in new_state {
-            let initial_account_state = current_db
+            let initial_account_state = store
                 .get_account_info_by_hash(block_hash, *new_state_account_address)?
                 .unwrap_or_default();
             let mut updates = 0;
