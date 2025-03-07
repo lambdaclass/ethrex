@@ -159,8 +159,7 @@ impl Proposer {
 
         // Blockchain builds the payload from mempool txs and executes them
         let mut payload_build_result = blockchain.build_payload(&mut payload)?;
-        let account_updates =
-            payload_build_result.get_state_transitions(head_hash, blockchain.vm)?;
+        let account_updates = payload_build_result.get_state_transitions(head_hash)?;
         info!("Built payload for new block {}", payload.header.number);
 
         // Blockchain stores block

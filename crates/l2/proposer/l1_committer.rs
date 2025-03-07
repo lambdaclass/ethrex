@@ -20,7 +20,7 @@ use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
-use ethrex_vm::{backends::EVM, db::evm_state};
+use ethrex_vm::backends::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
@@ -144,9 +144,8 @@ impl Committer {
                 warn!(
                             "Could not find execution cache result for block {block_number}, falling back to re-execution"
                         );
-                let mut state = evm_state(self.store.clone(), block_to_commit.header.parent_hash);
-                EVM::default()
-                    .execute_block(&block_to_commit, &mut state)
+                Evm::default(self.store.clone(), block_to_commit.header.parent_hash)
+                    .execute_block(&block_to_commit)
                     .map(|result| result.account_updates)?
             }
         };

@@ -58,8 +58,10 @@ pub fn pr_message(
 
         total_lines_changed += loc_diff.abs();
 
-        let file_path_printable = if let Some(idx) = file_path.find("/ethrex/") {
-            &file_path[idx + 1..]
+        // remove "ethrex/" and everything before it
+        const ETHREX_PREFIX: &str = "ethrex/";
+        let file_path_printable = if let Some(idx) = file_path.find(ETHREX_PREFIX) {
+            &file_path[idx + ETHREX_PREFIX.len()..]
         } else {
             file_path
         };

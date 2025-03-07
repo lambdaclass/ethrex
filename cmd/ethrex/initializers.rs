@@ -17,7 +17,7 @@ use ethrex_p2p::{
 #[cfg(feature = "based")]
 use ethrex_rpc::{EngineClient, EthClient};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::backends::EVM;
+use ethrex_vm::backends::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -87,17 +87,19 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
     store
 }
 
-pub fn init_blockchain(matches: &ArgMatches, store: Store) -> Arc<Blockchain> {
-    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
-
-    let blockchain = Blockchain::new(*evm, store);
+pub fn init_blockchain(
+    matches: &ArgMatches,
+    evm_engine: EvmEngine,
+    store: Store,
+) -> Arc<Blockchain> {
+    let blockchain = Blockchain::new(evm_engine, store);
 
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
         blockchain.import_blocks(&blocks);
     }
-
+    //TODO: remove --import --import_dir when we update hive fork
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
         info!(
             "Importing blocks from individual block files in directory: {}",

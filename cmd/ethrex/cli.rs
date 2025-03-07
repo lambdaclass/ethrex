@@ -1,6 +1,5 @@
 use clap::{Arg, ArgAction, Command};
 use ethrex_p2p::types::Node;
-use ethrex_vm::backends::EVM;
 use tracing::Level;
 
 pub fn cli() -> Command {
@@ -138,7 +137,6 @@ pub fn cli() -> Command {
                 .required(false)
                 .default_value("revm")
                 .value_name("EVM_BACKEND")
-                .value_parser(clap::value_parser!(EVM))
                 .help("Has to be `levm` or `revm`"),
         )
         .subcommand(
@@ -148,6 +146,23 @@ pub fn cli() -> Command {
                     .value_name("DATABASE_DIRECTORY")
                     .action(ArgAction::Set),
             ),
+        )
+        .subcommand(
+            Command::new("import")
+                .about("Import blocks to the database") 
+                .arg(
+                    Arg::new("path")
+                        .required(true)
+                        .value_name("FILE_PATH/FOLDER")
+                        .help("Path to a RLP chain file or a folder containing files with individual Blocks")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("removedb")
+                        .long("removedb")
+                        .required(false)
+                        .action(clap::ArgAction::SetTrue)
+                )
         );
 
     cfg_if::cfg_if! {
