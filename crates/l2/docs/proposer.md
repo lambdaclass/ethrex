@@ -83,8 +83,8 @@ Under the [committer] section:
 - Under the [prover.server] section:
     - `listen_ip`: IP to listen for proof data requests.
     - `listen_port`: Port to listen for proof data requests.
-    - `verifier_address`: Address in charge of verifying zkProofs.
-    - `verifier_private_key`: zkProof verifier's private key.
+    - `verifier_address`: Address of the account that sends verify transaction to L1.
+    - `verifier_private_key`: Private key for the account that sends verify transaction to L1.
     - `dev_mode`: whether `dev_mode` is activated.
 
 
