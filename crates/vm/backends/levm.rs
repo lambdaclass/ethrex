@@ -65,6 +65,7 @@ impl LEVM {
         let mut cumulative_gas_used = 0;
 
         for tx in block.body.transactions.iter() {
+            // println!("{:?}", tx);
             let report = Self::execute_tx(
                 tx,
                 block_header,
@@ -94,6 +95,11 @@ impl LEVM {
                 cumulative_gas_used,
                 report.logs.clone(),
             );
+
+            // println!(
+            //     "LEVM Gas used: {} ({}-{}), Cumulative gas used: {}",
+            //     gas_used, report.gas_used, report.gas_refunded, cumulative_gas_used
+            // );
 
             receipts.push(receipt);
         }
@@ -126,6 +132,8 @@ impl LEVM {
             &store_wrapper,
             &block_cache,
         )?);
+
+        println!("LEVM Account updates: {:?}", account_updates);
 
         Ok(BlockExecutionResult {
             receipts,

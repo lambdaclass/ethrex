@@ -70,6 +70,8 @@ impl REVM {
         let mut cumulative_gas_used = 0;
 
         for tx in block.body.transactions.iter() {
+            println!("{:?}", tx);
+
             let result = Self::execute_tx(tx, block_header, state, spec_id, tx.sender())?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
@@ -78,6 +80,13 @@ impl REVM {
                 cumulative_gas_used,
                 result.logs(),
             );
+
+            println!(
+                "REVM Gas used: {}, Cumulative gas used: {}",
+                result.gas_used(),
+                cumulative_gas_used
+            );
+
             receipts.push(receipt);
         }
 
@@ -94,6 +103,8 @@ impl REVM {
         }
 
         let account_updates = Self::get_state_transitions(state);
+
+        println!("REVM Account updates: {:?}", account_updates);
 
         Ok(BlockExecutionResult {
             receipts,
