@@ -281,7 +281,7 @@ impl Committer {
             } else {
                 account_update
                     .info
-                    .clone()
+                    .as_ref()
                     .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?
                     .nonce
             };
