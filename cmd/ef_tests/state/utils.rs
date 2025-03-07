@@ -4,7 +4,11 @@ use crate::{
 };
 use ethrex_common::{types::Genesis, H256, U256};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::db::{evm_state, EvmState, StoreWrapper};
+use ethrex_vm::{
+    backends::revm::db::{evm_state, EvmState},
+    db::StoreWrapper,
+};
+// use ethrex_vm::db::{evm_state, EvmState, StoreWrapper};
 use spinoff::Spinner;
 
 /// Loads initial state, used for REVM as it contains EvmState.

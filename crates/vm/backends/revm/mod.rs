@@ -1,5 +1,5 @@
 pub mod aux;
-pub(crate) mod db;
+pub mod db;
 pub mod execution_db;
 pub mod execution_result;
 
