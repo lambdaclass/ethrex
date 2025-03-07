@@ -34,7 +34,7 @@ use tokio::{runtime::Runtime, sync::mpsc};
 
 pub struct Store {
     db: Arc<Database>,
-    block_task: mpsc::Sender<Storable>,
+    block_task: mpsc::UnboundedSender<Storable>,
 }
 enum Storable {
     Body {
@@ -71,7 +71,7 @@ impl Storable {
 
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
-        let (task_tx, mut task_rx) = mpsc::channel::<Storable>(100);
+        let (task_tx, mut task_rx) = mpsc::unbounded_channel::<Storable>();
 
         let db = Arc::new(init_db(Some(path)));
         let db_for_task = db.clone();
@@ -170,7 +170,7 @@ impl StoreEngine for Store {
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
         self.block_task
-            .blocking_send(Storable::from_block_header(block_hash, block_header))
+            .send(Storable::from_block_header(block_hash, block_header))
             .expect("FAILED TO SEND MSG");
         Ok(())
     }
@@ -204,7 +204,7 @@ impl StoreEngine for Store {
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
         self.block_task
-            .blocking_send(Storable::from_block_body(block_hash, block_body))
+            .send(Storable::from_block_body(block_hash, block_body))
             .expect("FAILED TO SEND MSG");
         Ok(())
     }
@@ -237,7 +237,7 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
         self.block_task
-            .blocking_send(Storable::from_block_number(block_hash, block_number))
+            .send(Storable::from_block_number(block_hash, block_number))
             .expect("FAILED TO SEND MSG");
         Ok(())
     }
