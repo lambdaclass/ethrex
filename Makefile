@@ -85,10 +85,10 @@ QUIET ?= false
 
 hive:
 	if [ "$(QUIET)" = "true" ]; then \
-		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
+		git clone --quiet --single-branch --branch import_subcommand --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
 		cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .; \
 	else \
-		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
+		git clone --single-branch --branch import_subcommand --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
 		cd hive && git checkout --detach $(HIVE_REVISION) && go build .; \
 	fi
 
@@ -96,12 +96,12 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 	if [ "$$(cd hive && git rev-parse HEAD)" != "$(HIVE_REVISION)" ]; then \
 		if [ "$(QUIET)" = "true" ]; then \
 			cd hive && \
-			git checkout --quiet master && \
+			git checkout --quiet import_subcommand && \
 			git fetch --quiet --shallow-since=$(HIVE_SHALLOW_SINCE) && \
 			git checkout --quiet --detach $(HIVE_REVISION) && go build .;\
 		else \
 			cd hive && \
-			git checkout master && \
+			git checkout import_subcommand && \
 			git fetch --shallow-since=$(HIVE_SHALLOW_SINCE) && \
 			git checkout --detach $(HIVE_REVISION) && go build .;\
 		fi \
