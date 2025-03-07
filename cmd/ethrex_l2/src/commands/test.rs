@@ -111,7 +111,6 @@ async fn transfer_from(
                 calldata.clone(),
                 Overrides {
                     chain_id: Some(cfg.network.l2_chain_id),
-                    nonce: Some(i),
                     value: if calldata.is_empty() {
                         Some(value)
                     } else {
