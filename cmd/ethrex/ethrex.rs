@@ -6,17 +6,16 @@ use crate::{
     utils::{set_datadir, store_known_peers},
 };
 use ethrex_p2p::network::peer_table;
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
+use subcommands::{import, removedb};
 use tokio_util::task::TaskTracker;
-use tracing::{info, warn};
+use tracing::info;
 
 mod cli;
 mod decode;
 mod initializers;
 mod networks;
+mod subcommands;
 mod utils;
 
 pub const DEFAULT_DATADIR: &str = "ethrex";
@@ -29,23 +28,30 @@ async fn main() {
         .get_one::<String>("datadir")
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
+    init_tracing(&matches);
+
     if matches.subcommand_matches("removedb").is_some() {
-        let path = Path::new(&data_dir);
-        if path.exists() {
-            std::fs::remove_dir_all(path).expect("Failed to remove data directory");
-        } else {
-            warn!("Data directory does not exist: {}", data_dir);
-        }
+        removedb::remove_db(&data_dir);
         return;
     }
 
-    init_tracing(&matches);
+    let evm_engine = matches
+        .get_one::<String>("evm")
+        .unwrap_or(&"revm".to_string())
+        .clone()
+        .try_into()
+        .unwrap_or_else(|e| panic!("{}", e));
 
     let network = get_network(&matches);
 
+    if let Some(subcommand_matches) = matches.subcommand_matches("import") {
+        import::import_blocks_from_path(subcommand_matches, data_dir, evm_engine, &network);
+        return;
+    }
+
     let store = init_store(&data_dir, &network);
 
-    let blockchain = init_blockchain(&matches, store.clone());
+    let blockchain = init_blockchain(&matches, evm_engine, store.clone());
 
     let signer = get_signer(&data_dir);
 

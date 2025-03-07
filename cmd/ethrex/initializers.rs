@@ -87,22 +87,19 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
     store
 }
 
-pub fn init_blockchain(matches: &ArgMatches, store: Store) -> Arc<Blockchain> {
-    let evm_engine: EvmEngine = matches
-        .get_one::<String>("evm")
-        .unwrap_or(&"revm".to_string())
-        .clone()
-        .try_into()
-        .unwrap_or_else(|e| panic!("{}", e));
-
-    let blockchain = Blockchain::new(evm_engine, store.clone());
+pub fn init_blockchain(
+    matches: &ArgMatches,
+    evm_engine: EvmEngine,
+    store: Store,
+) -> Arc<Blockchain> {
+    let blockchain = Blockchain::new(evm_engine, store);
 
     if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
         info!("Importing blocks from chain file: {}", chain_rlp_path);
         let blocks = read_chain_file(chain_rlp_path);
         blockchain.import_blocks(&blocks);
     }
-
+    //TODO: remove --import --import_dir when we update hive fork
     if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
         info!(
             "Importing blocks from individual block files in directory: {}",
