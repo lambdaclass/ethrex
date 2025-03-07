@@ -40,7 +40,7 @@ use crate::{
     Blockchain,
 };
 
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
