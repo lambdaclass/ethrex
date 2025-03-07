@@ -133,24 +133,27 @@ impl Blockchain {
                 return Err(ChainError::ParentNotFound);
             };
 
-            let mut state = evm_state(self.storage.clone(), block.header.parent_hash);
-            let chain_config: ChainConfig = state.chain_config().map_err(ChainError::from)?;
+            let chain_config: ChainConfig = self.storage.get_chain_config()?;
 
             // Validate the block pre-execution
             validate_block(block, &parent_header, &chain_config)?;
+
+            let mut vm = Evm::new(
+                self.evm_engine,
+                self.storage.clone(),
+                block.header.parent_hash,
+            );
             let BlockExecutionResult {
                 receipts,
                 requests,
                 account_updates,
-            } = self.vm.execute_block(block, &mut state)?;
+            } = vm.execute_block(block)?;
 
             validate_gas_used(&receipts, &block.header)?;
 
             // todo only execute transactions
             // batch account updates to merge the repeated accounts
-            state
-                .database()
-                .ok_or(ChainError::StoreError(StoreError::MissingStore))?
+            self.storage
                 .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
 
             // Validate state trie on last block only
