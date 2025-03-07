@@ -1,12 +1,14 @@
 use std::fs::{self, metadata};
 
 use clap::ArgMatches;
-use ethrex_blockchain::Blockchain;
 
 use ethrex_vm::backends::EvmEngine;
 use tracing::info;
 
-use crate::{initializers::init_store, utils};
+use crate::{
+    initializers::{init_blockchain, init_store},
+    utils,
+};
 
 use super::removedb;
 
@@ -26,8 +28,7 @@ pub fn import_blocks_from_path(
 
     let store = init_store(&data_dir, network);
 
-    // Todo use initializers::init_blockchain when we remove --import from it
-    let blockchain = Blockchain::new(evm, store.clone());
+    let blockchain = init_blockchain(evm, store);
 
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
