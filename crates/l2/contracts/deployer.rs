@@ -674,7 +674,7 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
         {
             Ok(hash) => {
                 println!(
-                    "A deposit was completed to {:?} with value {:?} with hash {:?}",
+                    "Deposit transaction sent to L1 from {:?} with value {:?} and hash {:?}",
                     address, value_to_deposit, hash
                 );
             }
