@@ -30,15 +30,93 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use tokio::{runtime::Runtime, sync::mpsc};
 
 pub struct Store {
     db: Arc<Database>,
+    block_task: mpsc::Sender<Storable>,
 }
+enum Storable {
+    Body {
+        hash: BlockHash,
+        body: BlockBody,
+    },
+    Header {
+        hash: BlockHashRLP,
+        header: BlockHeader,
+    },
+    BlockNumber {
+        hash: BlockHashRLP,
+        number: BlockNumber,
+    },
+}
+
+impl Storable {
+    fn from_block_body(hash: BlockHash, body: BlockBody) -> Self {
+        Storable::Body { hash, body }
+    }
+    fn from_block_header(hash: BlockHash, header: BlockHeader) -> Self {
+        Storable::Header {
+            hash: hash.into(),
+            header,
+        }
+    }
+    fn from_block_number(hash: BlockHash, number: BlockNumber) -> Self {
+        Storable::BlockNumber {
+            hash: hash.into(),
+            number,
+        }
+    }
+}
+
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
+        let (task_tx, mut task_rx) = mpsc::channel::<Storable>(100);
+
+        let db = Arc::new(init_db(Some(path)));
+        let db_for_task = db.clone();
+        let _writer = tokio::task::spawn(async move {
+            loop {
+                tokio::select! {
+                    () = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+
+                    },
+                    Some(storable) = task_rx.recv() => {
+                        Self::write_it(storable, db_for_task.clone()).await;
+                    }
+                }
+            }
+        });
+
         Ok(Self {
-            db: Arc::new(init_db(Some(path))),
+            db: db.clone(),
+            block_task: task_tx,
         })
+    }
+
+    async fn write_it(storable: Storable, db: Arc<Database>) {
+        match storable {
+            Storable::Body { hash, body } => {
+                Self::__write::<Bodies>(db, hash.into(), body.into()).unwrap()
+            }
+            Storable::Header { hash, header } => {
+                Self::__write::<Headers>(db, hash.into(), header.into()).unwrap()
+            }
+            Storable::BlockNumber { hash, number } => {
+                Self::__write::<BlockNumbers>(db, hash.into(), number.into()).unwrap()
+            }
+        }
+    }
+
+    fn __write<T: Table>(
+        db: Arc<Database>,
+        key: T::Key,
+        value: T::Value,
+    ) -> Result<(), StoreError> {
+        let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+        txn.upsert::<T>(key, value)
+            .map_err(StoreError::LibmdbxError)?;
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 
     // Helper method to write into a libmdbx table
@@ -91,7 +169,10 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.write::<Headers>(block_hash.into(), block_header.into())
+        self.block_task
+            .blocking_send(Storable::from_block_header(block_hash, block_header))
+            .expect("FAILED TO SEND MSG");
+        Ok(())
     }
 
     fn add_block_headers(
@@ -122,7 +203,10 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        self.write::<Bodies>(block_hash.into(), block_body.into())
+        self.block_task
+            .blocking_send(Storable::from_block_body(block_hash, block_body))
+            .expect("FAILED TO SEND MSG");
+        Ok(())
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
@@ -152,7 +236,10 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.write::<BlockNumbers>(block_hash.into(), block_number)
+        self.block_task
+            .blocking_send(Storable::from_block_number(block_hash, block_number))
+            .expect("FAILED TO SEND MSG");
+        Ok(())
     }
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
