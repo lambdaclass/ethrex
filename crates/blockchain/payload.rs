@@ -227,7 +227,7 @@ pub struct PayloadBuildResult {
     pub block_value: U256,
     pub receipts: Vec<Receipt>,
     pub requests: Vec<EncodedRequests>,
-    vm: Evm
+    vm: Evm,
 }
 
 impl PayloadBuildResult {
@@ -281,7 +281,7 @@ impl Blockchain {
             block_value,
             requests,
             receipts,
-            vm
+            vm,
         })
     }
 
