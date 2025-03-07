@@ -126,7 +126,47 @@ impl StoreEngine for Store {
     }
 
     fn add_batch_of_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
-        Ok(())
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        for block in blocks {
+            let header = block.header;
+            let number = header.number;
+            let hash = header.compute_block_hash();
+
+            let mut cursor = tx
+                .cursor::<TransactionLocations>()
+                .map_err(StoreError::LibmdbxError)?;
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                cursor
+                    .upsert(
+                        transaction.compute_hash().into(),
+                        (number, hash, index as u64).into(),
+                    )
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            let mut cursor = tx.cursor::<Bodies>().map_err(StoreError::LibmdbxError)?;
+            cursor
+                .upsert(hash.into(), block.body.into())
+                .map_err(StoreError::LibmdbxError)?;
+
+            let mut cursor = tx.cursor::<Headers>().map_err(StoreError::LibmdbxError)?;
+            cursor
+                .upsert(hash.into(), header.into())
+                .map_err(StoreError::LibmdbxError)?;
+
+            let mut cursor = tx
+                .cursor::<BlockNumbers>()
+                .map_err(StoreError::LibmdbxError)?;
+            cursor
+                .upsert(hash.into(), number.into())
+                .map_err(StoreError::LibmdbxError)?;
+        }
+
+        tx.commit().map_err(StoreError::LibmdbxError)
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
