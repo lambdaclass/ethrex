@@ -51,7 +51,7 @@ async fn main() {
 
     let store = init_store(&data_dir, &network);
 
-    let blockchain = init_blockchain(&matches, evm_engine, store.clone());
+    let blockchain = init_blockchain(evm_engine, store.clone());
 
     let signer = get_signer(&data_dir);
 
