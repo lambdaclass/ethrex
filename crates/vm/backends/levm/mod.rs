@@ -1,3 +1,5 @@
+pub(crate) mod db;
+
 use super::BlockExecutionResult;
 use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
