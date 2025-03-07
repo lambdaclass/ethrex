@@ -95,6 +95,8 @@ pub enum CommitterError {
     FailedToRetrieveBlockFromStorage(#[from] StoreError),
     #[error("Committer failed retrieve data from storage")]
     FailedToRetrieveDataFromStorage,
+    #[error("Committer registered a negative nonce in AccountUpdate")]
+    FailedToCalculateNonce,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage")]
