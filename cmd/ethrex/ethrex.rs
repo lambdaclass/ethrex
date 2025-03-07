@@ -6,7 +6,6 @@ use crate::{
     utils::{set_datadir, store_known_peers},
 };
 use ethrex_p2p::network::peer_table;
-use ethrex_vm::backends::EVM;
 use std::{path::PathBuf, time::Duration};
 use subcommands::{import, removedb};
 use tokio_util::task::TaskTracker;
@@ -36,18 +35,23 @@ async fn main() {
         return;
     }
 
-    let evm = matches.get_one::<EVM>("evm").unwrap_or(&EVM::REVM);
+    let evm_engine = matches
+        .get_one::<String>("evm")
+        .unwrap_or(&"revm".to_string())
+        .clone()
+        .try_into()
+        .unwrap_or_else(|e| panic!("{}", e));
 
     let network = get_network(&matches);
 
     if let Some(subcommand_matches) = matches.subcommand_matches("import") {
-        import::import_blocks_from_path(subcommand_matches, data_dir, evm, &network);
+        import::import_blocks_from_path(subcommand_matches, data_dir, evm_engine, &network);
         return;
     }
 
     let store = init_store(&data_dir, &network);
 
-    let blockchain = init_blockchain(&matches, evm, store.clone());
+    let blockchain = init_blockchain(&matches, evm_engine, store.clone());
 
     let signer = get_signer(&data_dir);
 
@@ -88,9 +92,9 @@ async fn main() {
                 local_p2p_node,
                 signer,
                 peer_table.clone(),
-                store,
+                store.clone(),
                 tracker.clone(),
-                blockchain,
+                blockchain.clone(),
             )
             .await;
         }
@@ -98,6 +102,8 @@ async fn main() {
 
     cfg_if::cfg_if! {
         if #[cfg(all(feature = "l2", not(feature = "dev")))] {
+            use std::future::IntoFuture;
+
             let l2_proposer = ethrex_l2::start_proposer(store, blockchain).into_future();
 
             tracker.spawn(l2_proposer);

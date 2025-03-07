@@ -3,14 +3,19 @@ use std::fs::{self, metadata};
 use clap::ArgMatches;
 use ethrex_blockchain::Blockchain;
 
-use ethrex_vm::backends::EVM;
+use ethrex_vm::backends::EvmEngine;
 use tracing::info;
 
 use crate::{initializers::init_store, utils};
 
 use super::removedb;
 
-pub fn import_blocks_from_path(matches: &ArgMatches, data_dir: String, evm: &EVM, network: &str) {
+pub fn import_blocks_from_path(
+    matches: &ArgMatches,
+    data_dir: String,
+    evm: EvmEngine,
+    network: &str,
+) {
     let remove_db = *matches.get_one::<bool>("removedb").unwrap_or(&false);
     let path = matches
         .get_one::<String>("path")
@@ -22,7 +27,7 @@ pub fn import_blocks_from_path(matches: &ArgMatches, data_dir: String, evm: &EVM
     let store = init_store(&data_dir, network);
 
     // Todo use initializers::init_blockchain when we remove --import from it
-    let blockchain = Blockchain::new(evm.clone(), store.clone());
+    let blockchain = Blockchain::new(evm, store.clone());
 
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
