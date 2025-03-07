@@ -1,6 +1,9 @@
 use crate::{
     proposer::errors::L1WatcherError,
-    utils::config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
+    utils::{
+        config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
+        parse::hash_to_address,
+    },
 };
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
@@ -190,15 +193,15 @@ impl L1Watcher {
                     "Failed to parse mint value from log: {e:#?}"
                 ))
             })?;
-            let beneficiary_uint = log
-                .log
-                .topics
-                .get(2)
-                .ok_or(L1WatcherError::FailedToDeserializeLog(
-                    "Failed to parse beneficiary from log: log.topics[2] out of bounds".to_owned(),
-                ))?
-                .to_fixed_bytes();
-            let beneficiary = Address::from_slice(&beneficiary_uint[12..]);
+            let beneficiary_hash =
+                log.log
+                    .topics
+                    .get(2)
+                    .ok_or(L1WatcherError::FailedToDeserializeLog(
+                        "Failed to parse beneficiary from log: log.topics[2] out of bounds"
+                            .to_owned(),
+                    ))?;
+            let beneficiary = hash_to_address(*beneficiary_hash);
 
             let deposit_id =
                 log.log
