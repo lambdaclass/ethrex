@@ -8,7 +8,7 @@ mod mods;
 
 use db::EvmState;
 
-use crate::backends::revm_b::*;
+use crate::backends::revm::*;
 use ethrex_common::{
     types::{
         tx_fields::AccessList, BlockHeader, ChainConfig, Fork, GenericTransaction, INITIAL_BASE_FEE,

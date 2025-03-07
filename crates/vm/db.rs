@@ -17,6 +17,7 @@ use crate::{
     spec_id, ChainConfig, EvmError,
 };
 
+#[derive(Clone)]
 pub struct StoreWrapper {
     pub store: Store,
     pub block_hash: BlockHash,
@@ -76,7 +77,7 @@ impl LevmDatabase for StoreWrapper {
         let acc_info = self
             .store
             .get_account_info_by_hash(self.block_hash, address)
-            .unwrap()
+            .unwrap_or(None)
             .unwrap_or_default();
 
         let acc_code = self
