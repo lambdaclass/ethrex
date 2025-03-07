@@ -261,7 +261,10 @@ impl ToExecDB for RpcDB {
     fn to_exec_db(
         &self,
         block: &Block,
-    ) -> Result<ethrex_vm::execution_db::ExecutionDB, ethrex_vm::errors::ExecutionDBError> {
+    ) -> Result<
+        ethrex_vm::backends::revm::execution_db::ExecutionDB,
+        ethrex_vm::errors::ExecutionDBError,
+    > {
         // TODO: Simplify this function and potentially merge with the implementation for
         // StoreWrapper.
 

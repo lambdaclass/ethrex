@@ -1,8 +1,10 @@
-use super::constants::{
+pub(crate) mod db;
+
+use super::BlockExecutionResult;
+use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use super::BlockExecutionResult;
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use ethrex_common::types::requests::Requests;

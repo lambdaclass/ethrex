@@ -33,7 +33,7 @@ use tracing::{error, info, warn};
 
 #[derive(Debug)]
 pub struct Blockchain {
-    evm_engine: EvmEngine,
+    pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
 }
