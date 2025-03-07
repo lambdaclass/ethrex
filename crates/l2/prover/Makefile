@@ -28,10 +28,10 @@ perf-sp1-gpu:
 RUST_LOG?="info"
 
 perf-pico:
-	RUST_LOG=${RUST_LOG} cargo +nightly test --release --test perf_zkvm --features "pico,l2" -- test_performance_zkvm --exact --show-output
+	RUST_LOG=${RUST_LOG} cargo +nightly-2024-11-27 test --release --test perf_zkvm --features "pico,l2" -- test_performance_zkvm --exact --show-output
 	
 perf-pico-gpu:
-	RUST_LOG=${RUST_LOG} cargo +nightly test --release --test perf_zkvm --features "pico,l2,gpu" -- test_performance_zkvm --exact --show-output
+	RUST_LOG=${RUST_LOG} cargo +nightly-2024-11-27 test --release --test perf_zkvm --features "pico,l2,gpu" -- test_performance_zkvm --exact --show-output
 
 ########################################################################
 ########## L2 Prover comparison with rsp. Uses GPU by default ##########

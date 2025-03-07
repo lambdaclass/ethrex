@@ -67,4 +67,4 @@ jobs:
       - name: Test Prover Execution
         run: |
           cd crates/l2/prover
-          RUSTUP_TOOLCHAIN=nightly-2024-11-27 RUST_LOG=info make perf-pico
+          RUST_LOG=info make perf-pico
