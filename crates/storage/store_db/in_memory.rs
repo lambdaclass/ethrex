@@ -143,6 +143,10 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    fn add_batch_of_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn add_block_number(
         &self,
         block_hash: BlockHash,
@@ -195,6 +199,21 @@ impl StoreEngine for Store {
         let mut store = self.inner();
         let entry = store.receipts.entry(block_hash).or_default();
         entry.insert(index, receipt);
+        Ok(())
+    }
+
+    fn add_batch_of_receipts(
+        &self,
+        receipts: Vec<(BlockHash, Vec<Receipt>)>,
+    ) -> Result<(), StoreError> {
+        let mut store = self.inner();
+        for (index, (block_hash, receipts)) in receipts.iter().enumerate() {
+            let entry = store.receipts.entry(*block_hash).or_default();
+            for receipt in receipts {
+                entry.insert(index as u64, receipt.clone());
+            }
+        }
+
         Ok(())
     }
 

@@ -125,6 +125,10 @@ impl StoreEngine for Store {
         self.write::<Bodies>(block_hash.into(), block_body.into())
     }
 
+    fn add_batch_of_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
             self.get_block_body_by_hash(hash)
@@ -467,6 +471,27 @@ impl StoreEngine for Store {
             };
 
             key_values.append(&mut entries);
+        }
+
+        self.write_batch::<Receipts>(key_values.into_iter())
+    }
+
+    fn add_batch_of_receipts(
+        &self,
+        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
+    ) -> std::result::Result<(), StoreError> {
+        let mut key_values = vec![];
+
+        for (block_hash, receipts) in blocks_receipts {
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                let key = (block_hash, index as u64).into();
+                let receipt_rlp = receipt.encode_to_vec();
+                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                    continue;
+                };
+
+                key_values.append(&mut entries);
+            }
         }
 
         self.write_batch::<Receipts>(key_values.into_iter())
