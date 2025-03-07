@@ -20,10 +20,10 @@ use revm::{
 use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
 
+use super::db::evm_state;
 use crate::{
     backends::{self},
     block_env,
-    db::evm_state,
     errors::ExecutionDBError,
     tx_env,
 };

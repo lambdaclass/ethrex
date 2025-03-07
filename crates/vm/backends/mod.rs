@@ -1,16 +1,19 @@
-mod constants;
 pub mod levm;
 pub mod revm;
 
-use crate::db::evm_state;
-use crate::{db::StoreWrapper, errors::EvmError, spec_id, EvmState, SpecId};
+use self::revm::db::evm_state;
+use crate::{db::StoreWrapper, errors::EvmError, spec_id, SpecId};
 use ethrex_common::types::requests::Requests;
-use ethrex_common::types::{Block, BlockHeader, Fork, Receipt, Transaction, Withdrawal};
+use ethrex_common::types::{
+    AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
+};
 use ethrex_common::{Address, H256};
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
+use revm::db::EvmState;
+use revm::execution_result::ExecutionResult;
 use revm::REVM;
 use std::sync::Arc;
 
@@ -273,6 +276,65 @@ impl Evm {
                 levm::extract_all_requests_levm(receipts, &store_wrapper.store, header, block_cache)
             }
             Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
+        }
+    }
+
+    pub fn simulate_tx_from_generic(
+        &mut self,
+        tx: &GenericTransaction,
+        header: &BlockHeader,
+        spec_id: SpecId,
+    ) -> Result<ExecutionResult, EvmError> {
+        match self {
+            Evm::REVM { state } => {
+                self::revm::aux::simulate_tx_from_generic(tx, header, state, spec_id)
+            }
+            Evm::LEVM {
+                store_wrapper: _,
+                block_cache: _,
+            } => todo!(),
+        }
+    }
+
+    pub fn create_access_list(
+        &mut self,
+        tx: &GenericTransaction,
+        header: &BlockHeader,
+        spec_id: SpecId,
+    ) -> Result<(u64, AccessList, Option<String>), EvmError> {
+        let res = match self {
+            Evm::REVM { state } => self::revm::aux::create_access_list(tx, header, state, spec_id),
+            Evm::LEVM {
+                store_wrapper: _,
+                block_cache: _,
+            } => todo!(),
+        }?;
+
+        match res {
+            (
+                ExecutionResult::Success {
+                    reason: _,
+                    gas_used,
+                    gas_refunded: _,
+                    logs: _,
+                    output: _,
+                },
+                access_list,
+            ) => Ok((gas_used, access_list, None)),
+            (
+                ExecutionResult::Revert {
+                    gas_used,
+                    output: _,
+                },
+                access_list,
+            ) => Ok((
+                gas_used,
+                access_list,
+                Some("Transaction Reverted".to_string()),
+            )),
+            (ExecutionResult::Halt { reason, gas_used }, access_list) => {
+                Ok((gas_used, access_list, Some(reason)))
+            }
         }
     }
 }

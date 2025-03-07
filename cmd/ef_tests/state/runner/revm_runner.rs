@@ -16,7 +16,7 @@ use ethrex_levm::{
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
     backends::{self},
-    db::{EvmState, StoreWrapper},
+    db::StoreWrapper,
     fork_to_spec_id, RevmAddress, RevmU256,
 };
 use revm::{

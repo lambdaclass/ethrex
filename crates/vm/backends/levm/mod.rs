@@ -1,8 +1,8 @@
-use super::constants::{
+use super::BlockExecutionResult;
+use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use super::BlockExecutionResult;
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use ethrex_common::types::requests::Requests;
@@ -33,6 +33,121 @@ pub use ethrex_levm::db::CacheDB;
 /// [LEVM::process_withdrawals]
 #[derive(Debug)]
 pub struct LEVM;
+
+/// `new_state` is being modified at the end.
+pub fn generic_system_contract_levm(
+    block_header: &BlockHeader,
+    calldata: Bytes,
+    store: &Store,
+    new_state: &mut CacheDB,
+    contract_address: Address,
+    system_address: Address,
+) -> Result<ExecutionReport, EvmError> {
+    let store_wrapper = Arc::new(StoreWrapper {
+        store: store.clone(),
+        block_hash: block_header.parent_hash,
+    });
+
+    let chain_config = store.get_chain_config()?;
+    let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    let env = Environment {
+        origin: system_address,
+        gas_limit: 30_000_000,
+        block_number: block_header.number.into(),
+        coinbase: block_header.coinbase,
+        timestamp: block_header.timestamp.into(),
+        prev_randao: Some(block_header.prev_randao),
+        base_fee_per_gas: U256::zero(),
+        gas_price: U256::zero(),
+        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+        block_gas_limit: 30_000_000,
+        transient_storage: HashMap::new(),
+        config,
+        ..Default::default()
+    };
+
+    let mut vm = VM::new(
+        TxKind::Call(contract_address),
+        env,
+        U256::zero(),
+        calldata.into(),
+        store_wrapper,
+        CacheDB::new(),
+        vec![],
+        None,
+    )
+    .map_err(EvmError::from)?;
+
+    let mut report = vm.execute().map_err(EvmError::from)?;
+
+    report.new_state.remove(&system_address);
+
+    match report.result {
+        TxResult::Success => {
+            new_state.extend(report.new_state.clone());
+        }
+        _ => {
+            return Err(EvmError::Custom(
+                "ERROR in generic_system_contract_levm(). TX didn't succeed.".to_owned(),
+            ))
+        }
+    }
+
+    // new_state is a CacheDB coming from outside the function
+    new_state.extend(report.new_state.clone());
+
+    Ok(report)
+}
+
+#[allow(unreachable_code)]
+#[allow(unused_variables)]
+pub fn extract_all_requests_levm(
+    receipts: &[Receipt],
+    store: &Store,
+    header: &BlockHeader,
+    cache: &mut CacheDB,
+) -> Result<Vec<Requests>, EvmError> {
+    let config = store.get_chain_config()?;
+    let fork = config.fork(header.timestamp);
+
+    if fork < Fork::Prague {
+        return Ok(Default::default());
+    }
+
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "l2")] {
+            return Ok(Default::default());
+        }
+    }
+
+    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
+        "deposit_contract_address config is missing".to_string(),
+    ))?;
+
+    let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, store, cache) {
+        Some(report) => {
+            // the cache is updated inside the generic_system_call
+            report.output.into()
+        }
+        None => Default::default(),
+    };
+
+    let consolidation_data: Vec<u8> =
+        match LEVM::dequeue_consolidation_requests(header, store, cache) {
+            Some(report) => {
+                // the cache is updated inside the generic_system_call
+                report.output.into()
+            }
+            None => Default::default(),
+        };
+
+    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
+    let consolidation = Requests::from_consolidation_data(consolidation_data);
+
+    Ok(vec![deposits, withdrawals, consolidation])
+}
 
 impl LEVM {
     pub fn execute_block(block: &Block, store: Store) -> Result<BlockExecutionResult, EvmError> {
@@ -410,119 +525,4 @@ impl LEVM {
             _ => None,
         }
     }
-}
-
-/// `new_state` is being modified at the end.
-pub fn generic_system_contract_levm(
-    block_header: &BlockHeader,
-    calldata: Bytes,
-    store: &Store,
-    new_state: &mut CacheDB,
-    contract_address: Address,
-    system_address: Address,
-) -> Result<ExecutionReport, EvmError> {
-    let store_wrapper = Arc::new(StoreWrapper {
-        store: store.clone(),
-        block_hash: block_header.parent_hash,
-    });
-
-    let chain_config = store.get_chain_config()?;
-    let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-    let env = Environment {
-        origin: system_address,
-        gas_limit: 30_000_000,
-        block_number: block_header.number.into(),
-        coinbase: block_header.coinbase,
-        timestamp: block_header.timestamp.into(),
-        prev_randao: Some(block_header.prev_randao),
-        base_fee_per_gas: U256::zero(),
-        gas_price: U256::zero(),
-        block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-        block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: 30_000_000,
-        transient_storage: HashMap::new(),
-        config,
-        ..Default::default()
-    };
-
-    let mut vm = VM::new(
-        TxKind::Call(contract_address),
-        env,
-        U256::zero(),
-        calldata.into(),
-        store_wrapper,
-        CacheDB::new(),
-        vec![],
-        None,
-    )
-    .map_err(EvmError::from)?;
-
-    let mut report = vm.execute().map_err(EvmError::from)?;
-
-    report.new_state.remove(&system_address);
-
-    match report.result {
-        TxResult::Success => {
-            new_state.extend(report.new_state.clone());
-        }
-        _ => {
-            return Err(EvmError::Custom(
-                "ERROR in generic_system_contract_levm(). TX didn't succeed.".to_owned(),
-            ))
-        }
-    }
-
-    // new_state is a CacheDB coming from outside the function
-    new_state.extend(report.new_state.clone());
-
-    Ok(report)
-}
-
-#[allow(unreachable_code)]
-#[allow(unused_variables)]
-pub fn extract_all_requests_levm(
-    receipts: &[Receipt],
-    store: &Store,
-    header: &BlockHeader,
-    cache: &mut CacheDB,
-) -> Result<Vec<Requests>, EvmError> {
-    let config = store.get_chain_config()?;
-    let fork = config.fork(header.timestamp);
-
-    if fork < Fork::Prague {
-        return Ok(Default::default());
-    }
-
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "l2")] {
-            return Ok(Default::default());
-        }
-    }
-
-    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
-        "deposit_contract_address config is missing".to_string(),
-    ))?;
-
-    let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, store, cache) {
-        Some(report) => {
-            // the cache is updated inside the generic_system_call
-            report.output.into()
-        }
-        None => Default::default(),
-    };
-
-    let consolidation_data: Vec<u8> =
-        match LEVM::dequeue_consolidation_requests(header, store, cache) {
-            Some(report) => {
-                // the cache is updated inside the generic_system_call
-                report.output.into()
-            }
-            None => Default::default(),
-        };
-
-    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
-    let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
-    let consolidation = Requests::from_consolidation_data(consolidation_data);
-
-    Ok(vec![deposits, withdrawals, consolidation])
 }
