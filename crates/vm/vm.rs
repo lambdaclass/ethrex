@@ -2,8 +2,6 @@ pub mod backends;
 mod constants;
 pub mod db;
 pub mod errors;
-#[cfg(feature = "l2")]
-mod mods;
 
 use crate::backends::revm::*;
 

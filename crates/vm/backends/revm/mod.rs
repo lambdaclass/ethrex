@@ -2,6 +2,8 @@ pub mod aux;
 pub mod db;
 pub mod execution_db;
 pub mod execution_result;
+#[cfg(feature = "l2")]
+mod mods;
 
 use super::BlockExecutionResult;
 use crate::constants::{
@@ -43,9 +45,6 @@ use std::cmp::min;
 
 #[derive(Debug)]
 pub struct REVM;
-
-#[cfg(feature = "l2")]
-use crate::mods;
 
 /// The struct implements the following functions:
 /// [REVM::execute_block]
