@@ -24,13 +24,12 @@ pub const DEFAULT_DATADIR: &str = "ethrex";
 async fn main() {
     let matches = cli::cli().get_matches();
 
-    let data_dir = matches
-        .get_one::<String>("datadir")
-        .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
-
     init_tracing(&matches);
 
-    if matches.subcommand_matches("removedb").is_some() {
+    if let Some(subcommand_matches) = matches.subcommand_matches("removedb") {
+        let data_dir = subcommand_matches
+            .get_one::<String>("datadir")
+            .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
         removedb::remove_db(&data_dir);
         return;
     }
@@ -43,6 +42,10 @@ async fn main() {
         .unwrap_or_else(|e| panic!("{}", e));
 
     let network = get_network(&matches);
+
+    let data_dir = matches
+        .get_one::<String>("datadir")
+        .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
     if let Some(subcommand_matches) = matches.subcommand_matches("import") {
         import::import_blocks_from_path(subcommand_matches, data_dir, evm_engine, &network);
