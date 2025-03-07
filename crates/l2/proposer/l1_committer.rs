@@ -276,15 +276,12 @@ impl Committer {
                 None => 0,
             };
 
-            let new_nonce = if account_update.info.is_none() {
-                prev_nonce
+            let new_nonce = if let Some(info) = &account_update.info {
+                info.nonce
             } else {
-                account_update
-                    .info
-                    .as_ref()
-                    .ok_or(CommitterError::FailedToRetrieveDataFromStorage)?
-                    .nonce
+                prev_nonce
             };
+
             modified_accounts.insert(
                 account_update.address,
                 AccountStateDiff {
