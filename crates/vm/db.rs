@@ -17,6 +17,7 @@ use crate::{
     spec_id, ChainConfig, EvmError,
 };
 
+#[derive(Clone)]
 pub struct StoreWrapper {
     pub store: Store,
     pub block_hash: BlockHash,
