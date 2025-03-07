@@ -125,7 +125,13 @@ If running locally, a reasonable value would be CONFIG_FILE=config.toml",
         &setup_result.eth_client,
     )
     .await?;
-    make_deposits(bridge_address, &setup_result.eth_client).await?;
+    let args = std::env::args().collect::<Vec<String>>();
+
+    if let Some(arg) = args.get(1) {
+        if arg == "--deposit_rich" {
+            make_deposits(bridge_address, &setup_result.eth_client).await?;
+        }
+    }
 
     let env_lines = read_env_as_lines().map_err(DeployError::EnvFileError)?;
 
