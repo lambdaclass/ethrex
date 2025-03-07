@@ -239,6 +239,27 @@ impl PayloadBuildResult {
     }
 }
 
+impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
+    fn from(value: PayloadBuildContext) -> Self {
+        let PayloadBuildContext {
+            blobs_bundle,
+            block_value,
+            requests,
+            receipts,
+            vm,
+            ..
+        } = value;
+
+        Self {
+            blobs_bundle,
+            block_value,
+            requests,
+            receipts,
+            vm,
+        }
+    }
+}
+
 impl Blockchain {
     /// Completes the payload building process, return the block value
     pub fn build_payload(&self, payload: &mut Block) -> Result<PayloadBuildResult, ChainError> {
@@ -267,22 +288,7 @@ impl Blockchain {
             }
         }
 
-        let PayloadBuildContext {
-            blobs_bundle,
-            block_value,
-            requests,
-            receipts,
-            vm,
-            ..
-        } = context;
-
-        Ok(PayloadBuildResult {
-            blobs_bundle,
-            block_value,
-            requests,
-            receipts,
-            vm,
-        })
+        Ok(context.into())
     }
 
     fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
