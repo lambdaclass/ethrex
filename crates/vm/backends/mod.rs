@@ -89,6 +89,18 @@ impl Evm {
         }
     }
 
+    pub fn execute_block_without_clearing_state(
+        &mut self,
+        block: &Block,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        match self {
+            Evm::REVM { state } => REVM::execute_block(block, state),
+            Evm::LEVM { store_wrapper, .. } => {
+                LEVM::execute_block(block, store_wrapper.store.clone())
+            }
+        }
+    }
+
     /// Wraps [REVM::execute_tx] and [LEVM::execute_tx].
     /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
     #[allow(clippy::too_many_arguments)]

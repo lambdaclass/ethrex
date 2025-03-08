@@ -123,31 +123,33 @@ impl Blockchain {
         };
 
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
+        let chain_config: ChainConfig = self.storage.get_chain_config()?;
+        let mut vm = Evm::new(self.evm_engine, self.storage.clone(), parent_hash);
 
         for (i, block) in blocks.iter().enumerate() {
             let block_hash = block.header.compute_block_hash();
-            // Validate if it can be the new head and find the parent
-            let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-                // If the parent is not present, we store it as pending.
-                self.storage.add_pending_block(block.clone())?;
-                return Err(ChainError::ParentNotFound);
-            };
 
-            let chain_config: ChainConfig = self.storage.get_chain_config()?;
+            // Validate if it can be the new head and find the parent
+            let parent_header = match i == 0 {
+                true => {
+                    let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+                        // If the parent is not present, we store it as pending.
+                        self.storage.add_pending_block(block.clone())?;
+                        return Err(ChainError::ParentNotFound);
+                    };
+                    parent_header
+                }
+                false => blocks[i - 1].header.clone(),
+            };
 
             // Validate the block pre-execution
             validate_block(block, &parent_header, &chain_config)?;
 
-            let mut vm = Evm::new(
-                self.evm_engine,
-                self.storage.clone(),
-                block.header.parent_hash,
-            );
             let BlockExecutionResult {
                 receipts,
                 requests,
                 account_updates,
-            } = vm.execute_block(block)?;
+            } = vm.execute_block_without_clearing_state(block)?;
 
             validate_gas_used(&receipts, &block.header)?;
 

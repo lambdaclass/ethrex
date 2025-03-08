@@ -400,6 +400,7 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
+                    // TODO: don't commit to db here to batch all the writes in a single tx
                     account_state.storage_root = storage_trie.hash()?;
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
