@@ -103,7 +103,7 @@ impl Trie {
 
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
-    pub fn remove(&mut self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let root = self.root.take();
         if let Some(root) = root {
             let root_node = self
@@ -111,7 +111,7 @@ impl Trie {
                 .get_node(root)?
                 .ok_or(TrieError::InconsistentTree)?;
             let (root_node, old_value) =
-                root_node.remove(&mut self.state, Nibbles::from_bytes(path))?;
+                root_node.remove(&mut self.state, Nibbles::from_bytes(&path))?;
             self.root = root_node
                 .map(|root| root.insert_self(&mut self.state))
                 .transpose()?;
@@ -527,7 +527,7 @@ mod test {
         trie.insert(b"horse".to_vec(), b"stallion".to_vec())
             .unwrap();
         trie.insert(b"doge".to_vec(), b"coin".to_vec()).unwrap();
-        trie.remove(&b"horse".to_vec()).unwrap();
+        trie.remove(b"horse".to_vec()).unwrap();
         assert_eq!(trie.get(&b"do".to_vec()).unwrap(), Some(b"verb".to_vec()));
         assert_eq!(trie.get(&b"doge".to_vec()).unwrap(), Some(b"coin".to_vec()));
     }
@@ -538,7 +538,7 @@ mod test {
         trie.insert(vec![185], vec![185]).unwrap();
         trie.insert(vec![185, 0], vec![185, 0]).unwrap();
         trie.insert(vec![185, 1], vec![185, 1]).unwrap();
-        trie.remove(&vec![185, 1]).unwrap();
+        trie.remove(vec![185, 1]).unwrap();
         assert_eq!(trie.get(&vec![185, 0]).unwrap(), Some(vec![185, 0]));
         assert_eq!(trie.get(&vec![185]).unwrap(), Some(vec![185]));
         assert!(trie.get(&vec![185, 1]).unwrap().is_none());
@@ -695,7 +695,7 @@ mod test {
             // Removals
             for (val, should_remove) in data.iter() {
                 if *should_remove {
-                    let removed = trie.remove(val).unwrap();
+                    let removed = trie.remove(val.clone()).unwrap();
                     prop_assert_eq!(removed, Some(val.clone()));
                 }
             }
@@ -726,7 +726,7 @@ mod test {
             // Removals
             for val in data.iter() {
                 if remove(val) {
-                    let removed = trie.remove(val).unwrap();
+                    let removed = trie.remove(val.clone()).unwrap();
                     prop_assert_eq!(removed, Some(val.clone()));
                 }
             }
@@ -772,7 +772,7 @@ mod test {
             // Removals
             for (val, should_remove) in data.iter() {
                 if *should_remove {
-                    trie.remove(val).unwrap();
+                    trie.remove(val.clone()).unwrap();
                     cita_trie.remove(val).unwrap();
                 }
             }
@@ -800,7 +800,7 @@ mod test {
             // Removals
             for val in data.iter() {
                 if remove(val) {
-                    trie.remove(val).unwrap();
+                    trie.remove(val.clone()).unwrap();
                     cita_trie.remove(val).unwrap();
                 }
             }
@@ -857,7 +857,7 @@ mod test {
             // Removals
             for (val, should_remove) in data.iter() {
                 if *should_remove {
-                    trie.remove(val).unwrap();
+                    trie.remove(val.clone()).unwrap();
                     cita_trie.remove(val).unwrap();
                 }
             }
@@ -889,7 +889,7 @@ mod test {
             // Removals
             for val in data.iter() {
                 if remove(val) {
-                    trie.remove(val).unwrap();
+                    trie.remove(val.clone()).unwrap();
                     cita_trie.remove(val).unwrap();
                 }
             }
@@ -986,7 +986,7 @@ mod test {
         cita_trie.insert(b.clone(), b.clone()).unwrap();
         trie.insert(a.clone(), a.clone()).unwrap();
         trie.insert(b.clone(), b.clone()).unwrap();
-        trie.remove(&a).unwrap();
+        trie.remove(a.clone()).unwrap();
         cita_trie.remove(&a).unwrap();
         let _ = cita_trie.root();
         let cita_proof = cita_trie.get_proof(&a).unwrap();

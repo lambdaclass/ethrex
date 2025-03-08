@@ -831,7 +831,7 @@ mod tests {
             let values = vec![data.iter().collect::<Vec<_>>()[start].clone()];
             let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
             // Remove the value to generate a proof of non-existance
-            trie.remove(&values[0]).unwrap();
+            trie.remove(values[0].clone()).unwrap();
             // Generate proofs
             let proof = trie.get_proof(&values[0]).unwrap();
             // Verify the range proof

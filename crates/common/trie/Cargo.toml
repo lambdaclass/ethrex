@@ -31,7 +31,7 @@ proptest = "1.0.0"
 tempdir = "0.3.7"
 cita_trie = "4.0.0"          # used for proptest comparisons
 hasher = "0.1.4"             # cita_trie needs this
-uuid = { version = "1.15", features = ["serde", "v4"] }
+rand.workspace = true
 criterion = "0.5"
 
 [lib]
