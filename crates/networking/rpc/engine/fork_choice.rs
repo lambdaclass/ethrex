@@ -220,17 +220,39 @@ fn handle_forkchoice(
                 }
             };
 
-            // Check if the block has already been invalidated
-            match invalid_ancestors.get(&fork_choice_state.head_block_hash) {
-                Some(latest_valid_hash) => {
-                    Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
+            // Check head block hash in invalid_ancestors
+            if let Some(latest_valid_hash) =
+                invalid_ancestors.get(&fork_choice_state.head_block_hash)
+            {
+                warn!(
+                    "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
+                    latest_valid_hash
+                );
+                Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
+            } else {
+                // Check parent block hash in invalid_ancestors (if head block exists)
+                let check_parent = context
+                    .storage
+                    .get_block_header_by_hash(fork_choice_state.head_block_hash)?
+                    .and_then(|head_block| {
+                        warn!(
+                            "Checking parent for invalid ancestor {}",
+                            head_block.parent_hash
+                        );
+                        invalid_ancestors.get(&head_block.parent_hash).copied()
+                    });
+
+                if let Some(latest_valid_hash) = check_parent {
+                    Err(InvalidForkChoice::InvalidAncestor(latest_valid_hash))
+                } else {
+                    // All checks passed, apply fork choice
+                    apply_fork_choice(
+                        &context.storage,
+                        fork_choice_state.head_block_hash,
+                        fork_choice_state.safe_block_hash,
+                        fork_choice_state.finalized_block_hash,
+                    )
                 }
-                None => apply_fork_choice(
-                    &context.storage,
-                    fork_choice_state.head_block_hash,
-                    fork_choice_state.safe_block_hash,
-                    fork_choice_state.finalized_block_hash,
-                ),
             }
         }
         // Restart sync if needed
