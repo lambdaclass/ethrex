@@ -2729,6 +2729,7 @@ dependencies = [
  "lambdaworks-math",
  "libsecp256k1",
  "num-bigint 0.4.6",
+ "p256",
  "revm-primitives 14.0.0",
  "ripemd",
  "serde",
