@@ -20,10 +20,10 @@ use revm::{
 use revm_primitives::SpecId;
 use serde::{Deserialize, Serialize};
 
+use super::db::evm_state;
 use crate::{
     backends::{self},
     block_env,
-    db::evm_state,
     errors::ExecutionDBError,
     tx_env,
 };
@@ -65,7 +65,7 @@ impl ExecutionDB {
 
         let mut state = evm_state(store.clone(), block.header.parent_hash);
 
-        let result = backends::revm_b::REVM::execute_block(block, &mut state).map_err(Box::new)?;
+        let result = backends::revm::REVM::execute_block(block, &mut state).map_err(Box::new)?;
         Ok(result.account_updates)
     }
 
