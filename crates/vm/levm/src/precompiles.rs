@@ -32,6 +32,10 @@ use lambdaworks_math::{
 };
 use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
+use p256::{
+    ecdsa::{signature::Verifier, Signature as P256Signature, VerifyingKey},
+    EncodedPoint,
+};
 use sha3::Digest;
 use std::ops::Mul;
 
@@ -44,7 +48,7 @@ use crate::{
         BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST,
         BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECADD_COST_PRE_ISTANBUL, ECMUL_COST,
         ECMUL_COST_PRE_ISTANBUL, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
-        POINT_EVALUATION_COST,
+        P256VERIFY_COST, POINT_EVALUATION_COST,
     },
 };
 
@@ -116,8 +120,12 @@ pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x11,
 ]);
+pub const P256VERIFY_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x00,
+]);
 
-pub const PRECOMPILES: [H160; 10] = [
+pub const PRECOMPILES: [H160; 11] = [
     ECRECOVER_ADDRESS,
     SHA2_256_ADDRESS,
     RIPEMD_160_ADDRESS,
@@ -128,6 +136,7 @@ pub const PRECOMPILES: [H160; 10] = [
     ECPAIRING_ADDRESS,
     BLAKE2F_ADDRESS,
     POINT_EVALUATION_ADDRESS,
+    P256VERIFY_ADDRESS,
 ];
 
 pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
@@ -298,8 +307,8 @@ fn increase_precompile_consumed_gas(
     Ok(())
 }
 
-/// When slice length is less than 128, the rest is filled with zeros. If slice length is
-/// more than 128 the excess bytes are discarded.
+/// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
+/// more than `target_len`, the excess bytes are discarded.
 fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Result<Bytes, VMError> {
     let mut padded_calldata = calldata.to_vec();
     if padded_calldata.len() < target_len {
@@ -1680,4 +1689,45 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
     }
     scalar_le.reverse();
     Ok(Scalar::from_raw(scalar_le))
+}
+
+/// Signature verification in the “secp256r1” elliptic curve
+pub fn p_256_verify(
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    let gas_cost = P256VERIFY_COST;
+
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    // If calldata does not reach the required length, we should fill the rest with zeros
+    let calldata = fill_with_zeros(calldata, 160)?;
+
+    let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
+    let r = calldata.get(32..64).ok_or(InternalError::SlicingError)?;
+    let s = calldata.get(64..96).ok_or(InternalError::SlicingError)?;
+    let x = calldata.get(96..128).ok_or(InternalError::SlicingError)?;
+    let y = calldata.get(128..160).ok_or(InternalError::SlicingError)?;
+
+    let Ok(verifier) = VerifyingKey::from_encoded_point(&EncodedPoint::from_affine_coordinates(
+        x.into(),
+        y.into(),
+        false,
+    )) else {
+        return Ok(Bytes::new());
+    };
+
+    let r_array: [u8; 32] = r.try_into().expect("Invalid length for r");
+    let s_array: [u8; 32] = s.try_into().expect("Invalid length for s");
+
+    let Ok(signature) = P256Signature::from_scalars(r_array, s_array) else {
+        return Ok(Bytes::new());
+    };
+
+    let success = verifier.verify(hash, &signature).is_ok();
+
+    let mut result = [0; 32];
+    result[31] = u8::from(success);
+    Ok(Bytes::from(result.to_vec()))
 }
