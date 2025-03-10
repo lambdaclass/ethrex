@@ -287,7 +287,7 @@ impl Evm {
     ) -> Result<ExecutionResult, EvmError> {
         match self {
             Evm::REVM { state } => {
-                self::revm::aux::simulate_tx_from_generic(tx, header, state, spec_id)
+                self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
             }
             Evm::LEVM {
                 store_wrapper: _,
@@ -303,7 +303,9 @@ impl Evm {
         spec_id: SpecId,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
         let res = match self {
-            Evm::REVM { state } => self::revm::aux::create_access_list(tx, header, state, spec_id),
+            Evm::REVM { state } => {
+                self::revm::helpers::create_access_list(tx, header, state, spec_id)
+            }
             Evm::LEVM {
                 store_wrapper: _,
                 block_cache: _,
