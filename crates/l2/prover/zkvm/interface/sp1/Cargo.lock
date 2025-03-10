@@ -935,6 +935,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert_case"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1149,6 +1158,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
 dependencies = [
+ "convert_case",
  "proc-macro2",
  "quote",
  "syn 2.0.98",
@@ -1370,6 +1380,7 @@ dependencies = [
  "bls12_381",
  "bytes",
  "datatest-stable",
+ "derive_more",
  "ethrex-common",
  "ethrex-rlp",
  "k256",
@@ -1452,10 +1463,10 @@ dependencies = [
 name = "ethrex-vm"
 version = "0.1.0"
 dependencies = [
- "alloy-rpc-types-eth",
  "bincode",
  "bytes",
  "cfg-if",
+ "derive_more",
  "ethereum-types",
  "ethrex-common",
  "ethrex-levm",
@@ -3509,6 +3520,12 @@ name = "unicode-ident"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00e2473a93778eb0bad35909dff6a10d28e63f792f16ed15e404fca9d5eeedbe"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
 
 [[package]]
 name = "unicode-xid"
