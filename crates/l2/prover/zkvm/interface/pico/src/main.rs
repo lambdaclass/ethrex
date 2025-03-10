@@ -3,7 +3,7 @@
 use pico_sdk::io::{commit, read_as};
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::{backends::revm::REVM, db::EvmState};
+use ethrex_vm::backends::revm::{REVM, db::EvmState};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
