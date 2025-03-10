@@ -120,12 +120,14 @@ pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x11,
 ]);
+
+#[cfg(feature = "l2")]
 pub const P256VERIFY_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x01, 0x00,
 ]);
 
-pub const PRECOMPILES: [H160; 11] = [
+pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
     SHA2_256_ADDRESS,
     RIPEMD_160_ADDRESS,
@@ -136,7 +138,6 @@ pub const PRECOMPILES: [H160; 11] = [
     ECPAIRING_ADDRESS,
     BLAKE2F_ADDRESS,
     POINT_EVALUATION_ADDRESS,
-    P256VERIFY_ADDRESS,
 ];
 
 pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
@@ -148,6 +149,9 @@ pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
     BLS12_MAP_FP_TO_G1_ADDRESS,
     BLS12_MAP_FP2_TO_G2_ADDRESS,
 ];
+
+#[cfg(feature = "l2")]
+pub const RIP_PRECOMPILES: [H160; 1] = [P256VERIFY_ADDRESS];
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
@@ -205,6 +209,13 @@ pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
     if PRECOMPILES_POST_CANCUN.contains(callee_address) && fork < Fork::Prague {
         return false;
     }
+
+    cfg_if::cfg_if! {
+    if #[cfg(feature = "l2")] {
+        if RIP_PRECOMPILES.contains(callee_address) {
+            return true;
+        }
+    }}
 
     PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }

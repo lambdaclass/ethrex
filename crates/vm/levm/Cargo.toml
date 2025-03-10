@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+cfg-if = "1.0.0"
 ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
@@ -45,6 +46,7 @@ spinoff = "0.8.0"
 default = []
 c-kzg = ["ethrex-common/c-kzg"]
 ethereum_foundation_tests = []
+l2 = []
 
 [lints.rust]
 unsafe_code = "forbid"
