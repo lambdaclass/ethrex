@@ -11,7 +11,7 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_common::{
     constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
     types::{
-        code_hash, AccountInfo, AccountState, BlobsBundle, Block, BlockBody, BlockHash,
+        code_hash, payload::PayloadBundle, AccountInfo, AccountState, Block, BlockBody, BlockHash,
         BlockHeader, BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, Receipt,
         Transaction, EMPTY_TRIE_HASH,
     },
