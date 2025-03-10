@@ -74,7 +74,7 @@ pub fn generate_program_input(
     // create blockchain
     let blockchain = Blockchain::default_with_store(store.clone());
     for block in chain {
-        blockchain.add_block(&block)?;
+        blockchain.add_block(block)?;
     }
 
     let parent_hash = block.header.parent_hash;

@@ -164,6 +164,13 @@ impl StoreEngine for Store {
             cursor
                 .upsert(hash.into(), number.into())
                 .map_err(StoreError::LibmdbxError)?;
+
+            let mut cursor = tx
+                .cursor::<CanonicalBlockHashes>()
+                .map_err(StoreError::LibmdbxError)?;
+            cursor
+                .upsert(number, hash.into())
+                .map_err(StoreError::LibmdbxError)?;
         }
 
         tx.commit().map_err(StoreError::LibmdbxError)

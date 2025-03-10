@@ -14,7 +14,7 @@ use levm::LEVM;
 use revm::REVM;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum EvmEngine {
     #[default]
     REVM,

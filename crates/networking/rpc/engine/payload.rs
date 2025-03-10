@@ -544,7 +544,7 @@ fn handle_new_payload_v1_v2(
             } else if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
                 PayloadStatus::invalid_with_err(&error_msg)
             } else {
-                execute_payload(&block, &context)?
+                execute_payload(block, &context)?
             }
         }
     };
@@ -576,7 +576,7 @@ fn handle_new_payload_v3(
                     "Invalid blob_versioned_hashes",
                 ));
             }
-            execute_payload(&block, &context)
+            execute_payload(block, &context)
         }
     }
 }
@@ -624,7 +624,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
-fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStatus, RpcErr> {
+fn execute_payload(block: Block, context: &RpcApiContext) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
     let storage = &context.storage;
     // Return the valid message directly if we have it.

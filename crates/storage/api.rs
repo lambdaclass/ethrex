@@ -12,6 +12,11 @@ use ethrex_trie::{Nibbles, Trie};
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add a batch of blocks in a single tx
     /// This will store -> BlockHeader, BlockBody, BlockTransaction, BlockNumber
+    ///
+    /// TODO: Currently, when adding each block, we assume it's part of the canonical chain
+    /// and set the canonical hash to the block number. This approach is used to optimize
+    /// for writing all blocks in a single transaction. However, this is a temporary measure,
+    /// and we should revisit this assumption when implementing sidechains.
     fn add_batch_of_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
 
     /// Add block header

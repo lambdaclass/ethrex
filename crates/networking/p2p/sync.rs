@@ -320,9 +320,10 @@ impl SyncManager {
                     let block = store
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
-                    self.blockchain.add_block(&block)?;
-                    store.set_canonical_block(block.header.number, *hash)?;
-                    store.update_latest_block_number(block.header.number)?;
+                    let block_number = block.header.number;
+                    self.blockchain.add_block(block)?;
+                    store.set_canonical_block(block_number, *hash)?;
+                    store.update_latest_block_number(block_number)?;
                 }
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
@@ -395,14 +396,11 @@ impl SyncManager {
         }
 
         debug!("Starting to execute and validate blocks in batch");
-        let first_block = blocks.first().unwrap().clone();
         let last_block = blocks.last().unwrap().clone();
         let blocks_len = blocks.len();
 
-        self.blockchain
-            .add_blocks_in_batch(first_block.header.parent_hash, blocks)?;
+        self.blockchain.add_blocks_in_batch(blocks)?;
 
-        store.set_canonical_block(last_block.header.number, last_block.hash())?;
         store.update_latest_block_number(last_block.header.number)?;
         debug!("Executed & stored {} blocks", blocks_len);
 

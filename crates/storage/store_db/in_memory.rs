@@ -159,6 +159,7 @@ impl StoreEngine for Store {
             self.add_block_body(hash, block.body)?;
             self.add_block_header(hash, header)?;
             self.add_block_number(hash, number)?;
+            self.set_canonical_block(number, hash)?;
         }
 
         Ok(())

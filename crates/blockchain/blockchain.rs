@@ -55,82 +55,45 @@ impl Blockchain {
         }
     }
 
-    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        let since = Instant::now();
-
-        let block_hash = block.header.compute_block_hash();
-
-        // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone())?;
-            return Err(ChainError::ParentNotFound);
-        };
-
-        let chain_config = self.storage.get_chain_config()?;
-
-        // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config)?;
-
-        let mut vm = Evm::new(
-            self.evm_engine,
-            self.storage.clone(),
-            block.header.parent_hash,
-        );
-        let BlockExecutionResult {
-            receipts,
-            requests,
-            account_updates,
-        } = vm.execute_block(block)?;
-
-        validate_gas_used(&receipts, &block.header)?;
-
-        // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = self
-            .storage
-            .apply_account_updates(block.header.parent_hash, &account_updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
-
-        // Check state root matches the one in block header after execution
-        validate_state_root(&block.header, new_state_root)?;
-
-        // Check receipts root matches the one in block header after execution
-        validate_receipts_root(&block.header, &receipts)?;
-
-        // Processes requests from receipts, computes the requests_hash and compares it against the header
-        validate_requests_hash(&block.header, &chain_config, &requests)?;
-
-        self.storage.add_block(block.clone())?;
-        self.storage.add_receipts(block_hash, receipts)?;
-
-        let interval = Instant::now().duration_since(since).as_millis();
-        if interval != 0 {
-            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
-        }
-
-        Ok(())
+    pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
+        self.add_blocks_in_batch(vec![block])
     }
 
-    pub fn add_blocks_in_batch(
-        &self,
-        parent_hash: BlockHash,
-        blocks: Vec<Block>,
-    ) -> Result<(), ChainError> {
-        let Some(mut state_trie) = self.storage.state_trie(parent_hash)? else {
+    pub fn add_blocks_in_batch(&self, blocks: Vec<Block>) -> Result<(), ChainError> {
+        let first_block_header = match blocks.first() {
+            Some(block) => block.header.clone(),
+            None => return Err(ChainError::Custom("First block not found".into())),
+        };
+        let last_block_header = match blocks.first() {
+            Some(block) => block.header.clone(),
+            None => return Err(ChainError::Custom("Last block not found".into())),
+        };
+
+        if self.evm_engine == EvmEngine::LEVM {
+            panic!("LEVM engine is not supported for add blocks in batch");
+        }
+
+        let Some(mut state_trie) = self.storage.state_trie(first_block_header.parent_hash)? else {
             return Err(ChainError::ParentNotFound);
         };
 
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
         let chain_config: ChainConfig = self.storage.get_chain_config()?;
-        let mut vm = Evm::new(self.evm_engine, self.storage.clone(), parent_hash);
+        let mut vm = Evm::new(
+            self.evm_engine,
+            self.storage.clone(),
+            first_block_header.parent_hash,
+        );
 
         for (i, block) in blocks.iter().enumerate() {
+            let is_first_block = i == 0;
+            let is_last_block = i == blocks.len() - 1;
+
             let block_hash = block.header.compute_block_hash();
 
             // Validate if it can be the new head and find the parent
-            let parent_header = match i == 0 {
+            let parent_header = match is_first_block {
+                // for the first block, we need to query the store
                 true => {
                     let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
                         // If the parent is not present, we store it as pending.
@@ -139,6 +102,7 @@ impl Blockchain {
                     };
                     parent_header
                 }
+                // for the subsequent ones, the parent is the previous block
                 false => blocks[i - 1].header.clone(),
             };
 
@@ -158,18 +122,17 @@ impl Blockchain {
             self.storage
                 .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
 
-            // Validate state trie on last block only
-            if i >= blocks.len() - 1 {
-                let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
-                validate_state_root(&block.header, root_hash)?;
+            if is_last_block {
                 validate_receipts_root(&block.header, &receipts)?;
                 validate_requests_hash(&block.header, &chain_config, &requests)?;
             }
-            all_receipts.push((block_hash, receipts));
 
-            self.storage
-                .set_canonical_block(block.header.number, block_hash)?;
+            all_receipts.push((block_hash, receipts));
         }
+
+        // Compute state trie root hash, validate it and commit to db
+        let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
+        validate_state_root(&last_block_header, root_hash)?;
 
         self.storage.add_batch_of_blocks(blocks)?;
         self.storage.add_batch_of_receipts(all_receipts)?;
@@ -181,7 +144,7 @@ impl Blockchain {
     pub fn import_blocks(&self, blocks: Vec<Block>) {
         let size = blocks.len();
         let last_block = blocks.last().unwrap().header.clone();
-        if let Err(err) = self.add_blocks_in_batch(blocks[0].header.parent_hash, blocks) {
+        if let Err(err) = self.add_blocks_in_batch(blocks) {
             warn!("Failed to add blocks: {:?}.", err);
         };
         if let Err(err) = self.storage.update_latest_block_number(last_block.number) {
