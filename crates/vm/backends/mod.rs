@@ -292,7 +292,7 @@ impl Evm {
             Evm::LEVM {
                 store_wrapper: _,
                 block_cache: _,
-            } => todo!(),
+            } => Err(EvmError::Custom("Not implemented".to_string())),
         }
     }
 
@@ -309,7 +309,7 @@ impl Evm {
             Evm::LEVM {
                 store_wrapper: _,
                 block_cache: _,
-            } => todo!(),
+            } => Err(EvmError::Custom("Not implemented".to_string())),
         }?;
 
         match res {
