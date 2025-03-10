@@ -18,7 +18,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, Node, EMPTY_TRIE_HASH};
 use tokio::sync::mpsc::{channel, Sender};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -78,10 +78,10 @@ pub(crate) async fn heal_state_trie(
             break;
         }
     }
-    debug!("State Healing stopped, signaling storage healer");
+    info!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle
     if !paths.is_empty() {
-        debug!("Caching {} paths for the next cycle", paths.len());
+        info!("Caching {} paths for the next cycle", paths.len());
         store.set_state_heal_paths(paths.clone())?;
     }
     // Send empty batch to signal that no more batches are incoming

@@ -11,7 +11,7 @@
 use ethrex_common::{H256, U256};
 use ethrex_storage::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -86,7 +86,7 @@ pub(crate) async fn storage_fetcher(
             }
         }
     }
-    debug!(
+    info!(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
@@ -127,7 +127,7 @@ async fn fetch_storage_batch(
             // If only one incomplete range is returned then it must belong to a trie that is too big to fit into one request
             // We will handle this large trie separately
             if keys.is_empty() {
-                debug!("Large storage trie encountered, handling separately");
+                info!("Large storage trie encountered, handling separately");
                 let (account_hash, storage_root) = batch.remove(0);
                 if handle_large_storage_range(
                     state_root,
@@ -189,7 +189,7 @@ async fn handle_large_storage_range(
     let mut should_continue = true;
     // Fetch the remaining range
     while should_continue {
-        debug!("Fetching large storage trie, current key: {}", next_key);
+        info!("Fetching large storage trie, current key: {}", next_key);
 
         if let Some((keys, values, incomplete)) = peers
             .request_storage_range(state_root, storage_root, account_hash, next_key)
