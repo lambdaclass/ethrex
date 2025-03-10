@@ -165,8 +165,10 @@ impl Blockchain {
                 validate_receipts_root(&block.header, &receipts)?;
                 validate_requests_hash(&block.header, &chain_config, &requests)?;
             }
-
             all_receipts.push((block_hash, receipts));
+
+            self.storage
+                .set_canonical_block(block.header.number, block_hash)?;
         }
 
         self.storage.add_batch_of_blocks(blocks)?;
@@ -493,7 +495,10 @@ pub fn is_canonical(
     block_hash: BlockHash,
 ) -> Result<bool, StoreError> {
     match store.get_canonical_block_hash(block_number)? {
-        Some(hash) if hash == block_hash => Ok(true),
+        Some(hash) => {
+            info!("CANONICAL HASH {} PROVIDED HASH {}", hash, block_hash);
+            Ok(hash == block_hash)
+        }
         _ => Ok(false),
     }
 }
