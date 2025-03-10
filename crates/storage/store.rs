@@ -8,13 +8,10 @@ use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::{
-    constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
-    types::{
-        code_hash, payload::PayloadBundle, AccountInfo, AccountState, Block, BlockBody, BlockHash,
-        BlockHeader, BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, Receipt,
-        Transaction, EMPTY_TRIE_HASH,
-    },
+use ethrex_common::types::{
+    code_hash, payload::PayloadBundle, AccountInfo, AccountState, Block, BlockBody, BlockHash,
+    BlockHeader, BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, Receipt, Transaction,
+    EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -24,7 +21,7 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -468,7 +465,7 @@ impl Store {
         self.set_canonical_block(genesis_block_number, genesis_hash)?;
 
         // Set chain config
-        self.set_chain_config(genesis.config)
+        self.set_chain_config(&genesis.config)
     }
 
     pub fn get_transaction_by_hash(
@@ -518,15 +515,8 @@ impl Store {
             .transpose()
     }
 
-    pub fn set_chain_config(&self, mut chain_config: ChainConfig) -> Result<(), StoreError> {
-        if chain_config.deposit_contract_address.is_none() {
-            if chain_config.chain_id != 1 && chain_config.chain_id != 0 {
-                return Err(StoreError::MissingDepositContractAddress);
-            }
-            warn!("Missing deposit contract address. Using mainnet address as default.");
-            chain_config.deposit_contract_address = Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS);
-        }
-        self.engine.set_chain_config(&chain_config)
+    pub fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+        self.engine.set_chain_config(chain_config)
     }
 
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
@@ -1319,7 +1309,7 @@ mod tests {
 
     fn test_chain_config_storage(store: Store) {
         let chain_config = example_chain_config();
-        store.set_chain_config(chain_config).unwrap();
+        store.set_chain_config(&chain_config).unwrap();
         let retrieved_chain_config = store.get_chain_config().unwrap();
         assert_eq!(chain_config, retrieved_chain_config);
     }
@@ -1343,9 +1333,8 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(58750000000000000000000),
             terminal_total_difficulty_passed: true,
-            deposit_contract_address: Some(
-                H160::from_str("0x4242424242424242424242424242424242424242").unwrap(),
-            ),
+            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+                .unwrap(),
             ..Default::default()
         }
     }

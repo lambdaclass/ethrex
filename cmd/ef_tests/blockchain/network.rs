@@ -43,7 +43,7 @@ lazy_static! {
     };
     pub static ref CANCUN_TO_PRAGUE_AT_15K_CONFIG: ChainConfig = ChainConfig {
         prague_time: Some(0x3a98),
-        deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS),
+        deposit_contract_address: *MAINNET_DEPOSIT_CONTRACT_ADDRESS,
         ..*CANCUN_CONFIG
     };
     pub static ref PRAGUE_CONFIG: ChainConfig = ChainConfig {

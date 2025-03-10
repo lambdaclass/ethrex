@@ -38,7 +38,7 @@ pub static ref CANCUN_CONFIG: ChainConfig = ChainConfig {
     terminal_total_difficulty_passed: false,
     verkle_time: None,
     blob_schedule: BlobSchedule::default(),
-        deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS)
+        deposit_contract_address: *MAINNET_DEPOSIT_CONTRACT_ADDRESS
 };
 }
 pub const MAINNET_CHAIN_ID: u64 = 0x1;

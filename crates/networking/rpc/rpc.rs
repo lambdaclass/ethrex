@@ -486,7 +486,7 @@ mod tests {
         let local_p2p_node = example_p2p_node();
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        storage.set_chain_config(example_chain_config()).unwrap();
+        storage.set_chain_config(&example_chain_config()).unwrap();
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             local_p2p_node,
@@ -665,7 +665,7 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
-            deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS),
+            deposit_contract_address: *MAINNET_DEPOSIT_CONTRACT_ADDRESS,
             ..Default::default()
         }
     }
@@ -677,7 +677,7 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        storage.set_chain_config(example_chain_config()).unwrap();
+        storage.set_chain_config(&example_chain_config()).unwrap();
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let chain_id = storage
             .get_chain_config()
