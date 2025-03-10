@@ -17,9 +17,6 @@ use super::{
     run_without_commit, tx_env_from_generic,
 };
 
-// ================== Commonly used functions ======================
-
-// TODO: IMPLEMENT FOR LEVM
 // Executes a single GenericTransaction, doesn't commit the result or perform state transitions
 pub fn simulate_tx_from_generic(
     tx: &GenericTransaction,
@@ -32,7 +29,6 @@ pub fn simulate_tx_from_generic(
     run_without_commit(tx_env, block_env, state, spec_id)
 }
 
-// TODO: IMPLEMENT FOR LEVM
 /// Runs the transaction and returns the access list and estimated gas use (when running the tx with said access list)
 pub fn create_access_list(
     tx: &GenericTransaction,
@@ -70,7 +66,6 @@ pub fn create_access_list(
     Ok((execution_result, access_list))
 }
 
-// TODO: IMPLEMENT FOR LEVM
 /// Runs the transaction and returns the access list for it
 fn create_access_list_inner(
     tx_env: TxEnv,
