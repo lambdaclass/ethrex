@@ -276,7 +276,7 @@ pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec
 
     if network == networks::HOLESKY_GENESIS_PATH {
         info!("Adding holesky preset bootnodes");
-        bootnodes.extend(dbg!(networks::HOLESKY_BOOTNODES.iter()));
+        bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
     }
 
     if network == networks::SEPOLIA_GENESIS_PATH {
