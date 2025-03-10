@@ -63,10 +63,8 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     let stdin_builder = client.get_stdin_builder();
     stdin_builder.borrow_mut().write(&input);
 
-    warn!("Pico doesn't implement execution only so the backend's execute() function will generate a \"fast\" proof, without entering the recursion phase");
-    let proof = client.prove_fast()?;
-
-    info!("Successfully generated Pico fast proof.");
+    // we could generate a "fast" proof but it takes several (>10) minutes to complete
+    warn!("Pico doesn't implement execution only so the backend's execute() function will not run anything");
     Ok(())
 }
 
