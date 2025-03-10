@@ -221,7 +221,7 @@ impl SyncManager {
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
                 warn!("Sync failed to find target block header, going back to the previous parent");
-                current_head = block_headers[0].parent_hash;
+                current_head = first_block_header.parent_hash;
                 continue;
             }
 
