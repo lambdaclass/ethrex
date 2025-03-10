@@ -212,6 +212,19 @@ impl SyncManager {
                 Some(header) => header.clone(),
                 None => continue,
             };
+
+            // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
+            // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
+            if first_block_header == last_block_header
+                && first_block_header.compute_block_hash() == current_head
+                && current_head != sync_head
+            {
+                // There is no path to the sync head this goes back until it find a common ancerstor
+                warn!("Sync failed to find target block header, going back to the previous parent");
+                current_head = first_block_header.parent_hash;
+                continue;
+            }
+
             let mut block_hashes = block_headers
                 .iter()
                 .map(|header| header.compute_block_hash())
@@ -273,7 +286,7 @@ impl SyncManager {
             store.add_block_headers(block_hashes.clone(), block_headers)?;
 
             if self.sync_mode == SyncMode::Full {
-                self.download_and_run_blocks(&mut block_hashes, store.clone())
+                self.download_and_run_blocks(&mut block_hashes, sync_head, store.clone())
                     .await?;
             }
 
@@ -337,6 +350,7 @@ impl SyncManager {
     async fn download_and_run_blocks(
         &mut self,
         block_hashes: &mut [BlockHash],
+        sync_head: BlockHash,
         store: Store,
     ) -> Result<(), SyncError> {
         let mut last_valid_hash = H256::default();
@@ -380,6 +394,12 @@ impl SyncManager {
                     if let Err(error) = self.blockchain.add_block(&block) {
                         warn!("Failed to add block during FullSync: {error}");
                         self.invalid_ancestors.insert(hash, last_valid_hash);
+
+                        // TODO(#2127): Just marking the failing ancestor and the sync head is enough
+                        // to fix the Missing Ancestors hive test, we want to look at a more robust
+                        // solution in the future if needed.
+                        self.invalid_ancestors.insert(sync_head, last_valid_hash);
+
                         return Err(error.into());
                     }
                     store.set_canonical_block(number, hash)?;
