@@ -33,7 +33,7 @@ use lambdaworks_math::{
 use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
 use p256::{
-    ecdsa::{signature::Verifier, Signature as P256Signature, VerifyingKey},
+    ecdsa::{signature::hazmat::PrehashVerifier, Signature as P256Signature, VerifyingKey},
     EncodedPoint,
 };
 use sha3::Digest;
@@ -1704,12 +1704,14 @@ pub fn p_256_verify(
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 160)?;
 
-    let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
+    // Parse parameters
+    let message_hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
     let r = calldata.get(32..64).ok_or(InternalError::SlicingError)?;
     let s = calldata.get(64..96).ok_or(InternalError::SlicingError)?;
     let x = calldata.get(96..128).ok_or(InternalError::SlicingError)?;
     let y = calldata.get(128..160).ok_or(InternalError::SlicingError)?;
 
+    // Build verifier
     let Ok(verifier) = VerifyingKey::from_encoded_point(&EncodedPoint::from_affine_coordinates(
         x.into(),
         y.into(),
@@ -1718,16 +1720,22 @@ pub fn p_256_verify(
         return Ok(Bytes::new());
     };
 
-    let r_array: [u8; 32] = r.try_into().expect("Invalid length for r");
-    let s_array: [u8; 32] = s.try_into().expect("Invalid length for s");
+    // Build signature
+    let r: [u8; 32] = r.try_into().map_err(|_| InternalError::SlicingError)?;
+    let s: [u8; 32] = s.try_into().map_err(|_| InternalError::SlicingError)?;
 
-    let Ok(signature) = P256Signature::from_scalars(r_array, s_array) else {
+    let Ok(signature) = P256Signature::from_scalars(r, s) else {
         return Ok(Bytes::new());
     };
 
-    let success = verifier.verify(hash, &signature).is_ok();
+    // Verify message signature
+    let success = verifier.verify_prehash(message_hash, &signature).is_ok();
 
-    let mut result = [0; 32];
-    result[31] = u8::from(success);
-    Ok(Bytes::from(result.to_vec()))
+    if success {
+        let mut result = [0; 32];
+        result[31] = 1;
+        Ok(Bytes::from(result.to_vec()))
+    } else {
+        Ok(Bytes::new())
+    }
 }

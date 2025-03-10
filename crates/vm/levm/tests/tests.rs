@@ -20,14 +20,16 @@ use ethrex_levm::{
     memory,
     operations::Operation,
     precompiles::{
-        blake2f, bls12_g1msm, ecadd, ecmul, ecpairing, ecrecover, identity, modexp, ripemd_160,
-        sha2_256,
+        blake2f, bls12_g1msm, ecadd, ecmul, ecpairing, ecrecover, identity, modexp, p_256_verify,
+        ripemd_160, sha2_256,
     },
     testing::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
     utils::{calculate_create_address, word_to_address},
     vm::{Storage, VM},
     Environment,
 };
+use serde::Deserialize;
+use std::fs;
 use std::{borrow::BorrowMut, collections::HashMap, sync::Arc};
 
 fn create_opcodes(size: usize, offset: usize, value_to_transfer: usize) -> Vec<Operation> {
@@ -4694,4 +4696,39 @@ fn g1_mul() {
 
     assert_eq!(result, Bytes::copy_from_slice(&expected_result));
     assert_eq!(consumed_gas, 12000); // Verify gas consumption
+}
+
+#[derive(Debug, Deserialize)]
+struct P256TestCase {
+    input: String,
+    expected: String,
+    gas: u64,
+    name: String,
+}
+
+#[test]
+fn p_256_verify_test() {
+    // Taken from https://github.com/ulerdogan/go-ethereum/tree/ulerdogan-secp256r1.
+
+    let json_data = fs::read_to_string("./tests/p_256_verify.json").unwrap();
+
+    let tests: Vec<P256TestCase> = serde_json::from_str(&json_data).unwrap();
+
+    for test in tests {
+        let calldata = hex::decode(&test.input).unwrap();
+        let calldata = Bytes::from(calldata);
+        let mut consumed_gas = 0;
+        let result = p_256_verify(&calldata, 10000, &mut consumed_gas).unwrap();
+        let expected_result = Bytes::from(hex::decode(&test.expected).unwrap());
+        assert_eq!(
+            result, expected_result,
+            "Result assertion failed on test: {}.",
+            test.name
+        );
+        assert_eq!(
+            consumed_gas, test.gas,
+            "Gas assertion failed on test: {}.",
+            test.name
+        );
+    }
 }
