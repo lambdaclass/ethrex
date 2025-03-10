@@ -182,8 +182,11 @@ impl SyncManager {
             Err(e) => return Err(e.into()),
         };
 
+        // TODO(#2126): To avoid modifying the current_head while backtracking we use a separate search_head
+        let mut search_head = current_head;
+
         loop {
-            debug!("Requesting Block Headers from {current_head}");
+            debug!("Requesting Block Headers from {search_head}");
             let block_header_limit = match self.sync_mode {
                 SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
                 // In Full sync mode, request the same number of block bodies as headers,
@@ -194,7 +197,7 @@ impl SyncManager {
             let Some(mut block_headers) = self
                 .peers
                 .request_block_headers(
-                    current_head,
+                    search_head,
                     BlockRequestOrder::OldToNew,
                     block_header_limit,
                 )
@@ -212,16 +215,15 @@ impl SyncManager {
                 Some(header) => header.clone(),
                 None => continue,
             };
-
             // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
             // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
             if first_block_header == last_block_header
-                && first_block_header.compute_block_hash() == current_head
-                && current_head != sync_head
+                && first_block_header.compute_block_hash() == search_head
+                && search_head != sync_head
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
                 warn!("Sync failed to find target block header, going back to the previous parent");
-                current_head = first_block_header.parent_hash;
+                search_head = first_block_header.parent_hash;
                 continue;
             }
 
@@ -260,6 +262,7 @@ impl SyncManager {
                     "Syncing head not found, updated current_head {:?}",
                     last_block_hash
                 );
+                search_head = last_block_hash;
                 current_head = last_block_hash;
                 if self.sync_mode == SyncMode::Snap {
                     store.set_header_download_checkpoint(current_head)?;
