@@ -178,22 +178,36 @@ impl Blockchain {
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks(&self, blocks: &Vec<Block>) {
+    pub fn import_blocks(&self, blocks: Vec<Block>) {
         let size = blocks.len();
-        let last_block = blocks.last().unwrap().clone();
-        self.add_blocks_in_batch(blocks[0].header.parent_hash, blocks)?;
-        self.storage
-            .update_latest_block_number(last_block.header.number)?;
-        if let Some(last_block) = blocks.last() {
-            let hash = last_block.hash();
-            match self.evm_engine {
-                EvmEngine::LEVM => {
-                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                    let _ = apply_fork_choice(&self.storage, hash, hash, hash);
-                }
-                EvmEngine::REVM => {
-                    apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
-                }
+        let last_block = blocks.last().unwrap().header.clone();
+        if let Err(err) = self.add_blocks_in_batch(blocks[0].header.parent_hash, blocks) {
+            warn!("Failed to add blocks: {:?}.", err);
+        };
+        if let Err(err) = self.storage.update_latest_block_number(last_block.number) {
+            error!("Fatal: added block {} but could not update the block number, err {:?} -- aborting block import", last_block.number, err);
+            return;
+        };
+
+        let last_block_hash = last_block.compute_block_hash();
+        match self.evm_engine {
+            EvmEngine::LEVM => {
+                // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
+                let _ = apply_fork_choice(
+                    &self.storage,
+                    last_block_hash,
+                    last_block_hash,
+                    last_block_hash,
+                );
+            }
+            EvmEngine::REVM => {
+                apply_fork_choice(
+                    &self.storage,
+                    last_block_hash,
+                    last_block_hash,
+                    last_block_hash,
+                )
+                .unwrap();
             }
         }
         info!("Added {size} blocks to blockchain");
