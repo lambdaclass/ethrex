@@ -1,9 +1,12 @@
 use crate::{
     proposer::errors::L1WatcherError,
-    utils::config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
+    utils::{
+        config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
+        parse::hash_to_address,
+    },
 };
 use bytes::Bytes;
-use ethereum_types::{Address, BigEndianHash, H256, U256};
+use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{constants::TX_GAS_COST, Blockchain};
 use ethrex_common::types::{Signable, Transaction};
 use ethrex_rpc::clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient};
@@ -190,21 +193,15 @@ impl L1Watcher {
                     "Failed to parse mint value from log: {e:#?}"
                 ))
             })?;
-            let beneficiary_uint = log
-                .log
-                .topics
-                .get(2)
-                .ok_or(L1WatcherError::FailedToDeserializeLog(
-                    "Failed to parse beneficiary from log: log.topics[2] out of bounds".to_owned(),
-                ))?
-                .into_uint();
-            let beneficiary = format!("{beneficiary_uint:#x}")
-                .parse::<Address>()
-                .map_err(|e| {
-                    L1WatcherError::FailedToDeserializeLog(format!(
-                        "Failed to parse beneficiary from log: {e:#?}"
-                    ))
-                })?;
+            let beneficiary_hash =
+                log.log
+                    .topics
+                    .get(2)
+                    .ok_or(L1WatcherError::FailedToDeserializeLog(
+                        "Failed to parse beneficiary from log: log.topics[2] out of bounds"
+                            .to_owned(),
+                    ))?;
+            let beneficiary = hash_to_address(*beneficiary_hash);
 
             let deposit_id =
                 log.log
