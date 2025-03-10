@@ -1,7 +1,7 @@
 use risc0_zkvm::guest::env;
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::{backends::revm_b::REVM, db::EvmState};
+use ethrex_vm::{backends::revm::db::EvmState, backends::revm::REVM};
 
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},

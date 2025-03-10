@@ -1,23 +1,23 @@
 participants:
+  - el_type: geth
+    el_image: ethereum/client-go:v1.15.2
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.0-beta.0
+    validator_count: 32
   - el_type: ethrex
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v5.3.0
+    cl_image: sigp/lighthouse:v7.0.0-beta.0
     validator_count: 32
-  - el_type: geth
-    el_image: ethereum/client-go:v1.14.12
-    cl_type: lighthouse
-    cl_image: sigp/lighthouse:v5.3.0
-    validator_count: 32
-
-network_params:
-  # The address of the staking contract address on the Eth1 chain
-  deposit_contract_address: "0x4242424242424242424242424242424242424242"
 
 additional_services:
-  # In the future we may want to run the blob spammer in this check if possible
-  # through the tx_spammer addition service config.
   - assertoor
   - dora
+
+network_params:
+  electra_fork_epoch: 1
+
+  # The address of the staking contract address on the Eth1 chain
+  deposit_contract_address: "0x4242424242424242424242424242424242424242"
 
 assertoor_params:
   run_stability_check: false
