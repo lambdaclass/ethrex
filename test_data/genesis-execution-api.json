@@ -20,7 +20,7 @@
     "terminalTotalDifficulty": 131072,
     "terminalTotalDifficultyPassed": true,
     "ethash": {},
-    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa"
+    "depositContractAddress": "0x4242424242424242424242424242424242424242"
   },
   "nonce": "0x0",
   "timestamp": "0x0",

@@ -523,7 +523,7 @@ impl Store {
             if chain_config.chain_id != 1 && chain_config.chain_id != 0 {
                 return Err(StoreError::MissingDepositContractAddress);
             }
-            warn!("Missing deposit contract address. Using mainnet address instead.");
+            warn!("Missing deposit contract address. Using mainnet address as default.");
             chain_config.deposit_contract_address = Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS);
         }
         self.engine.set_chain_config(&chain_config)
