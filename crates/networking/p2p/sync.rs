@@ -196,11 +196,7 @@ impl SyncManager {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(
-                    search_head,
-                    BlockRequestOrder::OldToNew,
-                    block_header_limit,
-                )
+                .request_block_headers(search_head, BlockRequestOrder::OldToNew, block_header_limit)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
