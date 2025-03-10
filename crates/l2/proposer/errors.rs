@@ -3,6 +3,7 @@ use std::sync::mpsc::SendError;
 use crate::utils::config::errors::ConfigError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
+use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
@@ -71,18 +72,26 @@ pub enum SigIntError {
 pub enum ProposerError {
     #[error("Proposer failed because of an EngineClient error: {0}")]
     EngineClientError(#[from] EngineClientError),
+    #[error("Proposer failed because of a ChainError error: {0}")]
+    ChainError(#[from] ChainError),
+    #[error("Proposer failed because of a EvmError error: {0}")]
+    EvmError(#[from] EvmError),
+    #[error("Proposer failed because of a InvalidForkChoice error: {0}")]
+    InvalidForkChoice(#[from] InvalidForkChoice),
     #[error("Proposer failed to produce block: {0}")]
     FailedToProduceBlock(String),
     #[error("Proposer failed to prepare PayloadAttributes timestamp: {0}")]
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
-    #[error("Proposer failed retrieve block from storage: {0}")]
-    FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    #[error("Proposer failed because of a store error: {0}")]
+    StoreError(#[from] StoreError),
     #[error("Proposer failed retrieve block from storaga, data is None.")]
     StorageDataIsNone,
     #[error("Proposer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
     #[error("Proposer failed to decode jwt_secret: {0}")]
     FailedToDecodeJWT(#[from] hex::FromHexError),
+    #[error("Proposer failed because of an execution cache error")]
+    ExecutionCache(#[from] ExecutionCacheError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +102,8 @@ pub enum CommitterError {
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
     #[error("Committer failed retrieve block from storage: {0}")]
     FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    #[error("Committer failed because of an execution cache error")]
+    ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]
     FailedToRetrieveDataFromStorage,
     #[error("Committer registered a negative nonce in AccountUpdate")]
@@ -163,4 +174,12 @@ pub enum MetricsGathererError {
     MetricsError(#[from] ethrex_metrics::MetricsError),
     #[error("MetricsGatherer failed because of an EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ExecutionCacheError {
+    #[error("Failed because of io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Failed (de)serializing result: {0}")]
+    Bincode(#[from] bincode::Error),
 }
