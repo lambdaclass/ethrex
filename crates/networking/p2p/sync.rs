@@ -39,9 +39,9 @@ use crate::{
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
-/// Max size of a bach to stat a fetch request in queues
+/// Max size of a bach to start a fetch request in queues
 const BATCH_SIZE: usize = 300;
-/// Max size of a bach to stat a fetch request in queues for nodes
+/// Max size of a bach to start a fetch request for nodes in queues
 const NODE_BATCH_SIZE: usize = 900;
 /// Maximum amount of concurrent paralell fetches for a queue
 const MAX_PARALLEL_FETCHES: usize = 10;
