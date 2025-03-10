@@ -100,8 +100,8 @@ impl Blockchain {
         // Processes requests from receipts, computes the requests_hash and compares it against the header
         validate_requests_hash(&block.header, &chain_config, &requests)?;
 
-        store_block(&self.storage, block.clone())?;
-        store_receipts(&self.storage, receipts, block_hash)?;
+        self.storage.add_block(block.clone())?;
+        self.storage.add_receipts(block_hash, receipts)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
         if interval != 0 {
@@ -113,51 +113,101 @@ impl Blockchain {
         Ok(())
     }
 
+    pub fn add_blocks_in_batch(
+        &self,
+        parent_hash: BlockHash,
+        blocks: Vec<Block>,
+    ) -> Result<(), ChainError> {
+        let Some(mut state_trie) = self.storage.state_trie(parent_hash)? else {
+            return Err(ChainError::ParentNotFound);
+        };
+
+        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
+        let chain_config: ChainConfig = self.storage.get_chain_config()?;
+        let mut vm = Evm::new(self.evm_engine, self.storage.clone(), parent_hash);
+
+        for (i, block) in blocks.iter().enumerate() {
+            let block_hash = block.header.compute_block_hash();
+
+            // Validate if it can be the new head and find the parent
+            let parent_header = match i == 0 {
+                true => {
+                    let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+                        // If the parent is not present, we store it as pending.
+                        self.storage.add_pending_block(block.clone())?;
+                        return Err(ChainError::ParentNotFound);
+                    };
+                    parent_header
+                }
+                false => blocks[i - 1].header.clone(),
+            };
+
+            // Validate the block pre-execution
+            validate_block(block, &parent_header, &chain_config)?;
+
+            let BlockExecutionResult {
+                receipts,
+                requests,
+                account_updates,
+            } = vm.execute_block_without_clearing_state(block)?;
+
+            validate_gas_used(&receipts, &block.header)?;
+
+            // todo only execute transactions
+            // batch account updates to merge the repeated accounts
+            self.storage
+                .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
+
+            // Validate state trie on last block only
+            if i >= blocks.len() - 1 {
+                let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
+                validate_state_root(&block.header, root_hash)?;
+                validate_receipts_root(&block.header, &receipts)?;
+                validate_requests_hash(&block.header, &chain_config, &requests)?;
+            }
+            all_receipts.push((block_hash, receipts));
+
+            self.storage
+                .set_canonical_block(block.header.number, block_hash)?;
+        }
+
+        self.storage.add_batch_of_blocks(blocks)?;
+        self.storage.add_batch_of_receipts(all_receipts)?;
+
+        Ok(())
+    }
+
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks(&self, blocks: &Vec<Block>) {
+    pub fn import_blocks(&self, blocks: Vec<Block>) {
         let size = blocks.len();
-        for block in blocks {
-            let hash = block.hash();
-            info!(
-                "Adding block {} with hash {:#x}.",
-                block.header.number, hash
-            );
-            if let Err(error) = self.add_block(block) {
-                warn!(
-                    "Failed to add block {} with hash {:#x}: {}.",
-                    block.header.number, hash, error
+        let last_block = blocks.last().unwrap().header.clone();
+        if let Err(err) = self.add_blocks_in_batch(blocks[0].header.parent_hash, blocks) {
+            warn!("Failed to add blocks: {:?}.", err);
+        };
+        if let Err(err) = self.storage.update_latest_block_number(last_block.number) {
+            error!("Fatal: added block {} but could not update the block number, err {:?} -- aborting block import", last_block.number, err);
+            return;
+        };
+
+        let last_block_hash = last_block.compute_block_hash();
+        match self.evm_engine {
+            EvmEngine::LEVM => {
+                // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
+                let _ = apply_fork_choice(
+                    &self.storage,
+                    last_block_hash,
+                    last_block_hash,
+                    last_block_hash,
                 );
             }
-            if self
-                .storage
-                .update_latest_block_number(block.header.number)
-                .is_err()
-            {
-                error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
-                break;
-            };
-            if self
-                .storage
-                .set_canonical_block(block.header.number, hash)
-                .is_err()
-            {
-                error!(
-                    "Fatal: added block {} but could not set it as canonical -- aborting block import",
-                    block.header.number
-                );
-                break;
-            };
-        }
-        if let Some(last_block) = blocks.last() {
-            let hash = last_block.hash();
-            match self.evm_engine {
-                EvmEngine::LEVM => {
-                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                    let _ = apply_fork_choice(&self.storage, hash, hash, hash);
-                }
-                EvmEngine::REVM => {
-                    apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
-                }
+            EvmEngine::REVM => {
+                apply_fork_choice(
+                    &self.storage,
+                    last_block_hash,
+                    last_block_hash,
+                    last_block_hash,
+                )
+                .unwrap();
             }
         }
         info!("Added {size} blocks to blockchain");
@@ -345,21 +395,6 @@ pub fn validate_requests_hash(
     Ok(())
 }
 
-/// Stores block and header in the database
-pub fn store_block(storage: &Store, block: Block) -> Result<(), ChainError> {
-    storage.add_block(block)?;
-    Ok(())
-}
-
-pub fn store_receipts(
-    storage: &Store,
-    receipts: Vec<Receipt>,
-    block_hash: BlockHash,
-) -> Result<(), ChainError> {
-    storage.add_receipts(block_hash, receipts)?;
-    Ok(())
-}
-
 /// Performs post-execution checks
 pub fn validate_state_root(
     block_header: &BlockHeader,
@@ -446,7 +481,10 @@ pub fn is_canonical(
     block_hash: BlockHash,
 ) -> Result<bool, StoreError> {
     match store.get_canonical_block_hash(block_number)? {
-        Some(hash) if hash == block_hash => Ok(true),
+        Some(hash) => {
+            info!("CANONICAL HASH {} PROVIDED HASH {}", hash, block_hash);
+            Ok(hash == block_hash)
+        }
         _ => Ok(false),
     }
 }

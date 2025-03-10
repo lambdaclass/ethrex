@@ -47,5 +47,5 @@ pub fn import_blocks_from_path(
         info!("Importing blocks from chain file: {}", path);
         utils::read_chain_file(path)
     };
-    blockchain.import_blocks(&blocks);
+    blockchain.import_blocks(blocks);
 }
