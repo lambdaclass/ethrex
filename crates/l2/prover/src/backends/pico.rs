@@ -47,7 +47,7 @@ pub fn prove(input: ProgramInput) -> Result<ProveOutput, Box<dyn std::error::Err
 
     let output_dir = temp_dir();
 
-    let proof = client.prove(output_dir.clone())?;
+    client.prove(output_dir.clone())?;
 
     // assumes setup (keypair generation) was done before
     client.prove_evm(false, output_dir.clone(), "kb")?;
@@ -68,7 +68,7 @@ pub fn execute(input: ProgramInput) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn verify(output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
+pub fn verify(_output: &ProveOutput) -> Result<(), Box<dyn std::error::Error>> {
     warn!("Pico backend's verify() does nothing, this is because Pico doesn't expose a verification function but will verify each phase during proving as a sanity check");
     Ok(())
 }
