@@ -127,12 +127,6 @@ pub fn cli() -> Command {
                 .value_name("EVM_BACKEND")
                 .help("Has to be `levm` or `revm`"),
         )
-        .arg(
-            Arg::new("only_import")
-                .long("only_import")
-                .required(false)
-                .action(clap::ArgAction::SetTrue), // This turns the flag into a boolean
-        )
         .subcommand(
             Command::new("removedb").about("Remove the database").arg(
                 Arg::new("datadir")
