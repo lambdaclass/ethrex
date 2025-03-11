@@ -532,7 +532,10 @@ fn validate_ancestors(
     // Obtain the invalid ancestors from the syncer
     let invalid_ancestors = match context.syncer.try_lock() {
         Ok(syncer) => syncer.invalid_ancestors.clone(),
-        Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+        Err(err) => {
+            dbg!("COULD NOT VERIFY ANCESTORS");
+            return Err(RpcErr::Internal(err.to_string()));
+        }
     };
 
     // Check if the block has already been invalidated
