@@ -55,10 +55,8 @@ impl Blockchain {
         }
     }
 
-    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+    pub fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
         let since = Instant::now();
-
-        let block_hash = block.header.compute_block_hash();
 
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
@@ -66,7 +64,6 @@ impl Blockchain {
             self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
         };
-
         let chain_config = self.storage.get_chain_config()?;
 
         // Validate the block pre-execution
@@ -77,11 +74,32 @@ impl Blockchain {
             self.storage.clone(),
             block.header.parent_hash,
         );
+        let execution_result = vm.execute_block(block)?;
+
+        let interval = Instant::now().duration_since(since).as_millis();
+        if interval != 0 {
+            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+        }
+
+        Ok(execution_result)
+    }
+
+    pub fn store_block(
+        &self,
+        block: &Block,
+        execution_result: BlockExecutionResult,
+    ) -> Result<(), ChainError> {
+        // Assumes block is valid
         let BlockExecutionResult {
             receipts,
             requests,
             account_updates,
-        } = vm.execute_block(block)?;
+        } = execution_result;
+        let chain_config = self.storage.get_chain_config()?;
+
+        let block_hash = block.header.compute_block_hash();
 
         validate_gas_used(&receipts, &block.header)?;
 
@@ -91,10 +109,10 @@ impl Blockchain {
             .apply_account_updates(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
-        // Check state root matches the one in block header after execution
+        // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
-        // Check receipts root matches the one in block header after execution
+        // Check receipts root matches the one in block header
         validate_receipts_root(&block.header, &receipts)?;
 
         // Processes requests from receipts, computes the requests_hash and compares it against the header
@@ -103,14 +121,12 @@ impl Blockchain {
         store_block(&self.storage, block.clone())?;
         store_receipts(&self.storage, receipts, block_hash)?;
 
-        let interval = Instant::now().duration_since(since).as_millis();
-        if interval != 0 {
-            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
-        }
-
         Ok(())
+    }
+
+    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+        self.execute_block(block)
+            .and_then(|res| self.store_block(block, res))
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
