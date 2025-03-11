@@ -514,7 +514,7 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
-    dbg!("NEW STATE BEFORE VM {:?}", &new_state);
+    // dbg!("NEW STATE BEFORE VM {:?}", &new_state);
 
     let mut vm = VM::new(
         TxKind::Call(contract_address),
