@@ -15,6 +15,7 @@ use ethrex_storage::Store;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
 
 use crate::{
     proposer::the_proposer::{
@@ -51,13 +52,14 @@ pub struct L1Watcher {
     check_interval: Duration,
     store: Store,
     blockchain: Arc<Blockchain>,
-    state: L1WatcherState,
 }
 
 impl L1Watcher {
-    pub async fn new_from_config(
+    pub async fn new(
         watcher_config: L1WatcherConfig,
         eth_config: EthConfig,
+        store: Store,
+        blockchain: Arc<Blockchain>,
     ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let l2_client = EthClient::new("http://localhost:1729");
@@ -73,25 +75,63 @@ impl L1Watcher {
             last_block_fetched,
             l2_proposer_pk: watcher_config.l2_proposer_private_key,
             check_interval: Duration::from_millis(watcher_config.check_interval_ms),
-            state: L1WatcherState::default(),
+            store,
+            blockchain,
         })
+    }
+
+    async fn handle_send_after(&mut self, msg: L1WatcherToL1Watcher, _senders: &SendersSpine) {
+        match msg {
+            L1WatcherToL1Watcher::WatchL1ToL2Tx => {
+                let logs = match self.get_logs().await {
+                    Ok(logs) => logs,
+                    Err(e) => {
+                        warn!("Failed to get logs: {e:#?}");
+                        return;
+                    }
+                };
+
+                // We may not have a deposit nor a withdrawal, that means no events -> no logs.
+                if logs.is_empty() {
+                    debug!("no logs found");
+                    return;
+                }
+
+                let pending_deposit_logs = match self.get_pending_deposit_logs().await {
+                    Ok(logs) => logs,
+                    Err(e) => {
+                        warn!("failed to get pending deposit logs: {e:#?}");
+                        return;
+                    }
+                };
+
+                let _deposit_txs = match self
+                    .process_logs(logs, &pending_deposit_logs, &self.store, &self.blockchain)
+                    .await
+                {
+                    Ok(txs) => txs,
+                    Err(e) => {
+                        warn!("failed to process lgos: {e:#?}");
+                        return;
+                    }
+                };
+            }
+        }
     }
 
     pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
         let current_block = self.eth_client.get_block_number().await?;
 
-        tracing::debug!(
+        debug!(
             "Current block number: {} ({:#x})",
-            current_block,
-            current_block
+            current_block, current_block
         );
 
         let new_last_block = min(self.last_block_fetched + self.max_block_step, current_block);
 
-        tracing::debug!(
+        debug!(
             "Looking logs from block {:#x} to {:#x}",
-            self.last_block_fetched,
-            new_last_block
+            self.last_block_fetched, new_last_block
         );
 
         // Matches the event DepositInitiated from ICommonBridge.sol
@@ -110,12 +150,12 @@ impl L1Watcher {
             Err(error) => {
                 // We may get an error if the RPC doesn't has the logs for the requested
                 // block interval. For example, Light Nodes.
-                tracing::warn!("Error when getting logs from L1: {}", error);
+                warn!("Error when getting logs from L1: {}", error);
                 vec![]
             }
         };
 
-        tracing::debug!("logs: {logs:#?}");
+        debug!("logs: {logs:#?}");
 
         // If we have an error adding the tx to the mempool we may assign it to the next
         // block to fetch, but we may lose a deposit tx.
@@ -215,11 +255,11 @@ impl L1Watcher {
             if !pending_deposit_logs.contains(&keccak(
                 [beneficiary.as_bytes(), &value_bytes, &id_bytes].concat(),
             )) {
-                tracing::warn!("Deposit already processed (to: {beneficiary:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
+                warn!("Deposit already processed (to: {beneficiary:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
                 continue;
             }
 
-            tracing::info!("Initiating mint transaction for {beneficiary:#x} with value {mint_value:#x} and depositId: {deposit_id:#}",);
+            info!("Initiating mint transaction for {beneficiary:#x} with value {mint_value:#x} and depositId: {deposit_id:#}",);
 
             let gas_price = self.l2_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()
@@ -268,11 +308,11 @@ impl L1Watcher {
                 .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
             {
                 Ok(hash) => {
-                    tracing::info!("Mint transaction added to mempool {hash:#x}",);
+                    info!("Mint transaction added to mempool {hash:#x}");
                     deposit_txs.push(hash);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to add mint transaction to the mempool: {e:#?}");
+                    warn!("Failed to add mint transaction to the mempool: {e:#?}");
                     // TODO: Figure out if we want to continue or not
                     continue;
                 }
@@ -280,52 +320,6 @@ impl L1Watcher {
         }
 
         Ok(deposit_txs)
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub enum L1WatcherState {
-    #[default]
-    Running,
-    Stopped,
-}
-
-impl L1WatcherState {
-    async fn handle_send_after(
-        &self,
-        msg: L1WatcherToL1Watcher,
-        watcher: &mut L1Watcher,
-        _senders: &SendersSpine,
-    ) -> L1WatcherState {
-        match msg {
-            L1WatcherToL1Watcher::WatchL1ToL2Tx => self.handle_commit(watcher).await,
-        }
-    }
-
-    async fn handle_commit(&self, watcher: &mut L1Watcher) -> Self {
-        match self {
-            Self::Running => {
-                let logs = watcher.get_logs().await.unwrap();
-
-                // We may not have a deposit nor a withdrawal, that means no events -> no logs.
-                if logs.is_empty() {
-                    return Self::Running;
-                }
-
-                let pending_deposit_logs = watcher.get_pending_deposit_logs().await.unwrap();
-                let _deposit_txs = watcher
-                    .process_logs(
-                        logs,
-                        &pending_deposit_logs,
-                        watcher.store,
-                        watcher.blockchain,
-                    )
-                    .await
-                    .unwrap();
-                Self::Running
-            }
-            Self::Stopped => Self::Stopped,
-        }
     }
 }
 
@@ -349,15 +343,19 @@ impl Actor for L1Watcher {
                     .await
                     .try_send(L1WatcherToL1Watcher::WatchL1ToL2Tx)
                 {
-                    tracing::warn!("failed to send watch L1 to L2 tx message: {err}");
+                    warn!("failed to send watch L1 to L2 tx message: {err}");
                 }
             }
         });
     }
 
     async fn loop_body(&mut self, connections: Arc<Mutex<Self::Connections>>) {
-        connections.lock().await.try_receive(|msg, senders| {
-            self.state = self.state.handle_send_after(msg, senders).await;
-        });
+        connections
+            .lock()
+            .await
+            .try_receive(async |msg, senders| {
+                self.handle_send_after(msg, senders).await;
+            })
+            .await;
     }
 }
