@@ -4,7 +4,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
@@ -19,7 +19,8 @@ pub struct Genesis {
     /// Chain configuration
     pub config: ChainConfig,
     /// The initial state of the accounts in the genesis block.
-    pub alloc: HashMap<Address, GenesisAccount>,
+    /// This is a BTreeMap because: https://github.com/lambdaclass/ethrex/issues/2070
+    pub alloc: BTreeMap<Address, GenesisAccount>,
     /// Genesis header values
     pub coinbase: Address,
     pub difficulty: U256,
@@ -296,7 +297,7 @@ pub struct GenesisAccount {
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub code: Bytes,
     #[serde(default)]
-    pub storage: HashMap<H256, U256>,
+    pub storage: HashMap<U256, U256>,
     #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     pub balance: U256,
     #[serde(default, with = "crate::serde_utils::u64::hex_str")]
@@ -450,7 +451,7 @@ mod tests {
         let addr_b_storage = &genesis.alloc[&addr_b].storage;
         assert_eq!(
             addr_b_storage.get(
-                &H256::from_str(
+                &U256::from_str(
                     "0x0000000000000000000000000000000000000000000000000000000000000022"
                 )
                 .unwrap()
@@ -464,7 +465,7 @@ mod tests {
         );
         assert_eq!(
             addr_b_storage.get(
-                &H256::from_str(
+                &U256::from_str(
                     "0x0000000000000000000000000000000000000000000000000000000000000038"
                 )
                 .unwrap()

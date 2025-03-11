@@ -19,13 +19,16 @@ use crate::{
     },
     types::Node,
 };
-use ethrex_blockchain::mempool::{self};
-use ethrex_common::{H256, H512};
+use ethrex_blockchain::Blockchain;
+use ethrex_common::{
+    types::{MempoolTransaction, Transaction},
+    H256, H512,
+};
 use ethrex_storage::Store;
 use futures::SinkExt;
 use k256::{ecdsa::SigningKey, PublicKey, SecretKey};
 use rand::random;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{
@@ -38,13 +41,18 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
-use super::utils::log_peer_warn;
+use super::{
+    eth::transactions::NewPooledTransactionHashes, p2p::DisconnectReason, utils::log_peer_warn,
+};
 
 const CAP_P2P_5: (Capability, u8) = (Capability::P2p, 5);
 const CAP_ETH_68: (Capability, u8) = (Capability::Eth, 68);
 const CAP_SNAP_1: (Capability, u8) = (Capability::Snap, 1);
 const SUPPORTED_CAPABILITIES: [(Capability, u8); 3] = [CAP_P2P_5, CAP_ETH_68, CAP_SNAP_1];
-const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+const PERIODIC_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+const PERIODIC_TX_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const PERIODIC_TASKS_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+pub const MAX_PEERS_TCP_CONNECTIONS: usize = 100;
 
 pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 
@@ -69,10 +77,13 @@ pub(crate) struct RLPxConnection<S> {
     node: Node,
     framed: Framed<S, RLPxCodec>,
     storage: Store,
+    blockchain: Arc<Blockchain>,
     capabilities: Vec<(Capability, u8)>,
     negotiated_eth_version: u8,
     negotiated_snap_version: u8,
-    next_periodic_task_check: Instant,
+    next_periodic_ping: Instant,
+    next_tx_broadcast: Instant,
+    broadcasted_txs: HashSet<H256>,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
     /// since internally it's an Arc.
@@ -91,6 +102,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         stream: S,
         codec: RLPxCodec,
         storage: Store,
+        blockchain: Arc<Blockchain>,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
@@ -98,18 +110,49 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             node,
             framed: Framed::new(stream, codec),
             storage,
+            blockchain,
             capabilities: vec![],
             negotiated_eth_version: 0,
             negotiated_snap_version: 0,
-            next_periodic_task_check: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+            next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
+            next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
+            broadcasted_txs: HashSet::new(),
             connection_broadcast_send: connection_broadcast,
         }
+    }
+
+    async fn post_handshake_checks(
+        &self,
+        table: Arc<Mutex<crate::kademlia::KademliaTable>>,
+    ) -> Result<(), DisconnectReason> {
+        // Check if connected peers exceed the limit
+        let peer_count = {
+            let table_lock = table.lock().await;
+            table_lock.count_connected_peers()
+        };
+
+        if peer_count >= MAX_PEERS_TCP_CONNECTIONS {
+            return Err(DisconnectReason::TooManyPeers);
+        }
+
+        Ok(())
     }
 
     /// Handshake already performed, now it starts a peer connection.
     /// It runs in it's own task and blocks until the connection is dropped
     pub async fn start(&mut self, table: Arc<Mutex<crate::kademlia::KademliaTable>>) {
         log_peer_debug(&self.node, "Starting RLPx connection");
+
+        if let Err(reason) = self.post_handshake_checks(table.clone()).await {
+            self.connection_failed(
+                "Post handshake validations failed",
+                RLPxError::DisconnectSent(reason),
+                table,
+            )
+            .await;
+            return;
+        }
+
         if let Err(e) = self.exchange_hello_messages().await {
             self.connection_failed("Hello messages exchange failed", e, table)
                 .await;
@@ -142,31 +185,38 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         }
     }
 
+    async fn send_disconnect_message(&mut self, reason: Option<DisconnectReason>) {
+        self.send(Message::Disconnect(DisconnectMessage { reason }))
+            .await
+            .unwrap_or_else(|_| {
+                log_peer_error(
+                    &self.node,
+                    &format!("Could not send Disconnect message: ({:?}).", reason),
+                );
+            });
+    }
+
     async fn connection_failed(
         &mut self,
         error_text: &str,
         error: RLPxError,
         table: Arc<Mutex<crate::kademlia::KademliaTable>>,
     ) {
-        self.send(Message::Disconnect(DisconnectMessage {
-            reason: self.match_disconnect_reason(&error),
-        }))
-        .await
-        .unwrap_or_else(|_| {
-            log_peer_error(
-                &self.node,
-                &format!(
-                    "Could not send Disconnect message: ({:?}).",
-                    self.match_disconnect_reason(&error)
-                ),
-            )
-        });
+        log_peer_error(&self.node, &format!("{error_text}: ({error})"));
 
-        // Discard peer from kademlia table
+        // Send disconnect message only if error is different than RLPxError::DisconnectRequested
+        // because if it is a DisconnectRequested error it means that the peer requested the disconnection, not us.
+        if !matches!(error, RLPxError::DisconnectReceived(_)) {
+            self.send_disconnect_message(self.match_disconnect_reason(&error))
+                .await;
+        }
+
+        // Discard peer from kademlia table in some cases
         match error {
             // already connected, don't discard it
-            RLPxError::DisconnectRequested(s) if s == "Already connected" => {
-                log_peer_debug(&self.node, "Peer already connected don't replace it");
+            RLPxError::DisconnectReceived(DisconnectReason::AlreadyConnected)
+            | RLPxError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
+                log_peer_debug(&self.node, "Peer already connected, don't replace it");
             }
             _ => {
                 let remote_node_id = self.node.node_id;
@@ -181,9 +231,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let _ = self.framed.close().await;
     }
 
-    fn match_disconnect_reason(&self, error: &RLPxError) -> Option<u8> {
+    fn match_disconnect_reason(&self, error: &RLPxError) -> Option<DisconnectReason> {
         match error {
-            RLPxError::RLPDecodeError(_) => Some(2_u8),
+            RLPxError::DisconnectSent(reason) => Some(*reason),
+            RLPxError::DisconnectReceived(reason) => Some(*reason),
+            RLPxError::RLPDecodeError(_) => Some(DisconnectReason::NetworkError),
             // TODO build a proper matching between error types and disconnection reasons
             _ => None,
         }
@@ -242,9 +294,9 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
 
                 Ok(())
             }
-            Message::Disconnect(disconnect) => Err(RLPxError::DisconnectRequested(
-                disconnect.reason().to_string(),
-            )),
+            Message::Disconnect(disconnect) => {
+                Err(RLPxError::DisconnectReceived(disconnect.reason()))
+            }
             _ => {
                 // Fail if it is not a hello message
                 Err(RLPxError::BadRequest("Expected Hello message".to_string()))
@@ -272,6 +324,8 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
         };
 
+        // Send transactions transaction hashes from mempool at connection start
+        self.send_new_pooled_tx_hashes().await?;
         // Start listening for messages,
         loop {
             tokio::select! {
@@ -305,7 +359,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.handle_broadcast(broadcasted_msg?).await?
                 }
                 // Allow an interruption to check periodic tasks
-                _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => () // noop
+                _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => (), // noop
             }
             self.check_periodic_tasks().await?;
         }
@@ -321,11 +375,45 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
     }
 
     async fn check_periodic_tasks(&mut self) -> Result<(), RLPxError> {
-        if Instant::now() >= self.next_periodic_task_check {
+        if Instant::now() >= self.next_periodic_ping {
             self.send(Message::Ping(PingMessage {})).await?;
             log_peer_debug(&self.node, "Ping sent");
-            self.next_periodic_task_check = Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL;
+            self.next_periodic_ping = Instant::now() + PERIODIC_PING_INTERVAL;
         };
+        if Instant::now() >= self.next_tx_broadcast {
+            self.send_new_pooled_tx_hashes().await?;
+            self.next_tx_broadcast = Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL;
+        }
+        Ok(())
+    }
+
+    async fn send_new_pooled_tx_hashes(&mut self) -> Result<(), RLPxError> {
+        if self.capabilities.contains(&CAP_ETH_68) {
+            let filter =
+                |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
+            let txs: Vec<MempoolTransaction> = self
+                .blockchain
+                .mempool
+                .filter_transactions_with_filter_fn(&filter)?
+                .into_values()
+                .flatten()
+                .collect();
+            if !txs.is_empty() {
+                let tx_count = txs.len();
+                for tx in txs {
+                    self.send(Message::NewPooledTransactionHashes(
+                        NewPooledTransactionHashes::new(vec![(*tx).clone()], &self.blockchain)?,
+                    ))
+                    .await?;
+                    // Possible improvement: the mempool already knows the hash but the filter function does not return it
+                    self.broadcasted_txs.insert((*tx).compute_hash());
+                }
+                log_peer_debug(
+                    &self.node,
+                    &format!("Sent {} transactions to peer", tx_count),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -343,9 +431,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     &format!("Received Disconnect: {}", msg_data.reason()),
                 );
                 // TODO handle the disconnection request
-                return Err(RLPxError::DisconnectRequested(
-                    msg_data.reason().to_string(),
-                ));
+                return Err(RLPxError::DisconnectReceived(msg_data.reason()));
             }
             Message::Ping(_) => {
                 log_peer_debug(&self.node, "Sending pong message");
@@ -368,7 +454,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if is_synced {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
-                        if let Err(e) = mempool::add_transaction(tx.clone(), &self.storage) {
+                        if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()) {
                             log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
                             continue;
                         }
@@ -407,19 +493,19 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             {
                 //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
                 let hashes =
-                    new_pooled_transaction_hashes.get_transactions_to_request(&self.storage)?;
+                    new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
 
                 //TODO(#1416): Evaluate keeping track of the request-id.
                 let request = GetPooledTransactions::new(random(), hashes);
                 self.send(Message::GetPooledTransactions(request)).await?;
             }
             Message::GetPooledTransactions(msg) => {
-                let response = msg.handle(&self.storage)?;
+                let response = msg.handle(&self.blockchain)?;
                 self.send(Message::PooledTransactions(response)).await?;
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if is_synced {
-                    msg.handle(&self.node, &self.storage)?;
+                    msg.handle(&self.node, &self.blockchain)?;
                 }
             }
             Message::GetStorageRanges(req) => {

@@ -10,14 +10,14 @@ members = [
     "crates/blockchain/dev",
     "crates/common",
     "crates/common/rlp",
+    "crates/common/trie",
     "crates/l2/",
     "crates/l2/contracts",
     "crates/l2/prover",
     "crates/l2/sdk",
     "crates/networking/p2p",
     "crates/networking/rpc",
-    "crates/storage/store",
-    "crates/storage/trie",
+    "crates/storage",
     "crates/vm",
     "crates/vm/levm",
     "crates/vm/levm/bench/revm_comparison",
@@ -35,10 +35,10 @@ ethrex-blockchain = { path = "./crates/blockchain" }
 ethrex-common = { path = "./crates/common" }
 ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
-ethrex-storage = { path = "./crates/storage/store" }
+ethrex-storage = { path = "./crates/storage" }
 ethrex-vm = { path = "./crates/vm" }
 ethrex-levm = { path = "./crates/vm/levm" }
-ethrex-trie = { path = "./crates/storage/trie" }
+ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-sdk = { path = "./crates/l2/sdk" }

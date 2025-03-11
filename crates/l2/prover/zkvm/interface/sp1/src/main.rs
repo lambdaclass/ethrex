@@ -1,7 +1,7 @@
 #![no_main]
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::{backends::revm_b::REVM, db::EvmState};
+use ethrex_vm::{backends::revm::db::EvmState, backends::revm::REVM};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -49,10 +49,11 @@ pub fn main() {
         .unwrap_or_default();
     sp1_zkvm::io::commit(&cumulative_gas_used);
 
-    // Update tries and calculate final state root hash
+    // Update state trie
     update_tries(&mut state_trie, &mut storage_tries, &account_updates)
         .expect("failed to update state and storage tries");
 
+    // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
     if final_state_hash != block.header.state_root {
         panic!("invalid final state trie");

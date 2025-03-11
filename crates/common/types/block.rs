@@ -1,10 +1,10 @@
 use super::{
-    BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER, GAS_LIMIT_ADJUSTMENT_FACTOR,
-    GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
+    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER,
+    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::{
-    constants::MIN_BASE_FEE_PER_BLOB_GAS,
-    types::{requests::Requests, Receipt, Transaction},
+    constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
+    types::{Receipt, Transaction},
     Address, H256, U256,
 };
 use bytes::Bytes;
@@ -16,7 +16,6 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
-use k256::sha2::{Digest, Sha256};
 use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 
@@ -260,18 +259,6 @@ pub fn compute_withdrawals_root(withdrawals: &[Withdrawal]) -> H256 {
         .enumerate()
         .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
     Trie::compute_hash_from_unsorted_iter(iter)
-}
-
-// See https://github.com/ethereum/EIPs/blob/2a6b6965e64787815f7fffb9a4c27660d9683846/EIPS/eip-7685.md?plain=1#L62.
-pub fn compute_requests_hash(requests: &[Requests]) -> H256 {
-    let mut hasher = Sha256::new();
-    for request in requests {
-        let request_bytes = request.to_bytes();
-        if request_bytes.len() > 1 {
-            hasher.update(Sha256::digest(request_bytes));
-        }
-    }
-    H256::from_slice(&hasher.finalize())
 }
 
 impl RLPEncode for BlockBody {
@@ -572,6 +559,7 @@ pub fn validate_block_header(
 pub fn validate_prague_header_fields(
     header: &BlockHeader,
     parent_header: &BlockHeader,
+    chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.excess_blob_gas.is_none() {
         return Err(InvalidBlockHeaderError::ExcessBlobGasNotPresent);
@@ -579,9 +567,8 @@ pub fn validate_prague_header_fields(
     if header.blob_gas_used.is_none() {
         return Err(InvalidBlockHeaderError::BlobGasUsedNotPresent);
     }
-    if header.excess_blob_gas.unwrap() != calc_excess_blob_gas(parent_header) {
-        return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
-    }
+    validate_excess_blob_gas(header, parent_header, chain_config)?;
+
     if header.parent_beacon_block_root.is_none() {
         return Err(InvalidBlockHeaderError::ParentBeaconBlockRootNotPresent);
     }
@@ -596,6 +583,7 @@ pub fn validate_prague_header_fields(
 pub fn validate_cancun_header_fields(
     header: &BlockHeader,
     parent_header: &BlockHeader,
+    chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.excess_blob_gas.is_none() {
         return Err(InvalidBlockHeaderError::ExcessBlobGasNotPresent);
@@ -603,9 +591,7 @@ pub fn validate_cancun_header_fields(
     if header.blob_gas_used.is_none() {
         return Err(InvalidBlockHeaderError::BlobGasUsedNotPresent);
     }
-    if header.excess_blob_gas.unwrap() != calc_excess_blob_gas(parent_header) {
-        return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
-    }
+    validate_excess_blob_gas(header, parent_header, chain_config)?;
     if header.parent_beacon_block_root.is_none() {
         return Err(InvalidBlockHeaderError::ParentBeaconBlockRootNotPresent);
     }
@@ -635,15 +621,38 @@ pub fn validate_pre_cancun_header_fields(
     Ok(())
 }
 
-fn calc_excess_blob_gas(parent_header: &BlockHeader) -> u64 {
-    let parent_excess_blob_gas = parent_header.excess_blob_gas.unwrap_or_default();
-    let parent_blob_gas_used = parent_header.blob_gas_used.unwrap_or_default();
-    let parent_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
+fn validate_excess_blob_gas(
+    header: &BlockHeader,
+    parent_header: &BlockHeader,
+    chain_config: &ChainConfig,
+) -> Result<(), InvalidBlockHeaderError> {
+    let expected_excess_blob_gas = chain_config
+        .get_fork_blob_schedule(header.timestamp)
+        .map(|schedule| {
+            calc_excess_blob_gas(
+                parent_header.excess_blob_gas.unwrap_or_default(),
+                parent_header.blob_gas_used.unwrap_or_default(),
+                schedule.target,
+            )
+        })
+        .unwrap_or_default();
+    if header.excess_blob_gas.unwrap() != expected_excess_blob_gas {
+        return Err(InvalidBlockHeaderError::ExcessBlobGasIncorrect);
+    }
+    Ok(())
+}
 
-    if parent_blob_gas < 393216_u64 {
-        0u64
+pub fn calc_excess_blob_gas(
+    parent_excess_blob_gas: u64,
+    parent_blob_gas_used: u64,
+    target: u64,
+) -> u64 {
+    let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
+    let target_blob_gas_per_block = target * GAS_PER_BLOB;
+    if excess_blob_gas < target_blob_gas_per_block {
+        0
     } else {
-        parent_blob_gas - 393216_u64
+        excess_blob_gas - target_blob_gas_per_block
     }
 }
 

@@ -1,10 +1,9 @@
 use clap::{Arg, ArgAction, Command};
 use ethrex_p2p::types::Node;
-use ethrex_vm::backends::EVM;
 use tracing::Level;
 
 pub fn cli() -> Command {
-    Command::new("ethrex")
+    let cmd = Command::new("ethrex")
         .about("ethrex Execution client")
         .author("Lambdaclass")
         .arg(
@@ -101,23 +100,11 @@ pub fn cli() -> Command {
                 .help("If the datadir is the word `memory`, ethrex will use the InMemory Engine"),
         )
         .arg(
-            Arg::new("import")
-                .long("import")
-                .required(false)
-                .value_name("CHAIN_RLP_PATH"),
-        )
-        .arg(
             Arg::new("syncmode")
                 .long("syncmode")
                 .required(false)
                 .default_value("full")
                 .value_name("SYNC_MODE"),
-        )
-        .arg(
-            Arg::new("import_dir")
-                .long("import_dir")
-                .required(false)
-                .value_name("BLOCKS_DIR_PATH"),
         )
         .arg(
             Arg::new("metrics.port")
@@ -138,7 +125,6 @@ pub fn cli() -> Command {
                 .required(false)
                 .default_value("revm")
                 .value_name("EVM_BACKEND")
-                .value_parser(clap::value_parser!(EVM))
                 .help("Has to be `levm` or `revm`"),
         )
         .subcommand(
@@ -149,4 +135,56 @@ pub fn cli() -> Command {
                     .action(ArgAction::Set),
             ),
         )
+        .subcommand(
+            Command::new("import")
+                .about("Import blocks to the database") 
+                .arg(
+                    Arg::new("path")
+                        .required(true)
+                        .value_name("FILE_PATH/FOLDER")
+                        .help("Path to a RLP chain file or a folder containing files with individual Blocks")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("removedb")
+                        .long("removedb")
+                        .required(false)
+                        .action(clap::ArgAction::SetTrue)
+                )
+        );
+
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "based")] {
+            cmd.arg(
+                Arg::new("gateway.addr")
+                    .long("gateway.addr")
+                    .default_value("0.0.0.0")
+                    .value_name("GATEWAY_ADDRESS")
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                Arg::new("gateway.eth_port")
+                    .long("gateway.eth_port")
+                    .default_value("8546")
+                    .value_name("GATEWAY_ETH_PORT")
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                Arg::new("gateway.auth_port")
+                    .long("gateway.auth_port")
+                    .default_value("8553")
+                    .value_name("GATEWAY_AUTH_PORT")
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                Arg::new("gateway.jwtsecret")
+                .long("gateway.jwtsecret")
+                .default_value("jwt.hex")
+                .value_name("GATEWAY_JWTSECRET_PATH")
+                .action(ArgAction::Set),
+            )
+        } else {
+            cmd
+        }
+    }
 }

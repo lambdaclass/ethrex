@@ -81,6 +81,8 @@ pub enum ProposerError {
     StorageDataIsNone,
     #[error("Proposer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
+    #[error("Proposer failed to decode jwt_secret: {0}")]
+    FailedToDecodeJWT(#[from] hex::FromHexError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +95,8 @@ pub enum CommitterError {
     FailedToRetrieveBlockFromStorage(#[from] StoreError),
     #[error("Committer failed retrieve data from storage")]
     FailedToRetrieveDataFromStorage,
+    #[error("Committer registered a negative nonce in AccountUpdate")]
+    FailedToCalculateNonce,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage")]
