@@ -30,6 +30,8 @@ pub mod execution_cache;
 
 pub mod errors;
 
+pub mod the_proposer;
+
 pub struct Proposer {
     interval_ms: u64,
     coinbase_address: Address,

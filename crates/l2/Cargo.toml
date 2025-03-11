@@ -42,6 +42,8 @@ ethrex-sdk = { path = "./sdk" }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
 bincode = "1.3.3"
 
+crossbeam-channel = "0.5.14"
+
 [dev-dependencies]
 rand = "0.8.5"
 

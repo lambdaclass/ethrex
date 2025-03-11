@@ -2681,6 +2681,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
+ "crossbeam-channel",
  "directories",
  "envy",
  "ethereum-types",
