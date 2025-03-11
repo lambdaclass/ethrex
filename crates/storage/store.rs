@@ -444,7 +444,6 @@ impl Store {
         Ok(genesis_state_trie.hash()?)
     }
 
-    /// Adds all genesis accounts and returns the genesis block's state_root
     pub fn add_receipt(
         &self,
         block_hash: BlockHash,

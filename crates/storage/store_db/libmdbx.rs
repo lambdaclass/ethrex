@@ -140,41 +140,25 @@ impl StoreEngine for Store {
             let number = header.number;
             let hash = header.compute_block_hash();
 
-            let mut cursor = tx
-                .cursor::<TransactionLocations>()
-                .map_err(StoreError::LibmdbxError)?;
             for (index, transaction) in block.body.transactions.iter().enumerate() {
-                cursor
-                    .upsert(
-                        transaction.compute_hash().into(),
-                        (number, hash, index as u64).into(),
-                    )
-                    .map_err(StoreError::LibmdbxError)?;
+                tx.upsert::<TransactionLocations>(
+                    transaction.compute_hash().into(),
+                    (number, hash, index as u64).into(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
             }
 
-            let mut cursor = tx.cursor::<Bodies>().map_err(StoreError::LibmdbxError)?;
-            cursor
-                .upsert(hash.into(), block.body.into())
+            tx.upsert::<Bodies>(hash.into(), block.body.into())
                 .map_err(StoreError::LibmdbxError)?;
 
-            let mut cursor = tx.cursor::<Headers>().map_err(StoreError::LibmdbxError)?;
-            cursor
-                .upsert(hash.into(), header.into())
+            tx.upsert::<Headers>(hash.into(), header.into())
                 .map_err(StoreError::LibmdbxError)?;
 
-            let mut cursor = tx
-                .cursor::<BlockNumbers>()
-                .map_err(StoreError::LibmdbxError)?;
-            cursor
-                .upsert(hash.into(), number.into())
+            tx.upsert::<BlockNumbers>(hash.into(), number.into())
                 .map_err(StoreError::LibmdbxError)?;
 
             if as_canonical {
-                let mut cursor = tx
-                    .cursor::<CanonicalBlockHashes>()
-                    .map_err(StoreError::LibmdbxError)?;
-                cursor
-                    .upsert(number, hash.into())
+                tx.upsert::<CanonicalBlockHashes>(number, hash.into())
                     .map_err(StoreError::LibmdbxError)?;
             }
         }

@@ -5,9 +5,6 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
-use std::ops::Div;
-use std::time::Instant;
-
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -23,6 +20,7 @@ use ethrex_common::types::{
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
+use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
@@ -147,7 +145,7 @@ impl Blockchain {
     pub fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
-        mut should_commit_intermediate_tries: bool,
+        should_commit_intermediate_tries: bool,
         as_canonical: bool,
     ) -> Result<(), (ChainError, Option<Block>, H256)> {
         let mut last_valid_hash = H256::default();
@@ -163,10 +161,9 @@ impl Blockchain {
             }
         };
 
-        if self.evm_engine == EvmEngine::LEVM {
-            // levm does not support batch block processing because it does not persist the state between block executions
-            should_commit_intermediate_tries = true;
-        }
+        // levm does not support batch block processing because it does not persist the state between block executions
+        // so we need to commit to the db after every block
+        let is_levm = self.evm_engine == EvmEngine::LEVM;
 
         let Some(mut state_trie) = self
             .storage
@@ -212,27 +209,28 @@ impl Blockchain {
             // Validate the block pre-execution
             validate_block(block, &parent_header, &chain_config)?;
 
-            let BlockExecutionResult {
-                receipts,
-                requests,
-                account_updates,
-            } = vm.execute_block_without_clearing_state(block)?;
+            let execution_result = vm.execute_block_without_clearing_state(block)?;
 
-            validate_gas_used(&receipts, &block.header)?;
+            validate_gas_used(&execution_result.receipts, &block.header)?;
 
-            // todo only execute transactions
-            // batch account updates to merge the repeated accounts
-            self.storage
-                .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
+            self.storage.apply_account_updates_to_trie(
+                &execution_result.account_updates,
+                &mut state_trie,
+            )?;
 
-            if should_commit_intermediate_tries || is_last_block {
+            if should_commit_intermediate_tries || is_last_block || is_levm {
+                //TODO hash_no_commit, validate and then commit
                 let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
                 validate_state_root(&block.header, root_hash)?;
-                validate_receipts_root(&block.header, &receipts)?;
-                validate_requests_hash(&block.header, &chain_config, &requests)?;
+                validate_receipts_root(&block.header, &execution_result.receipts)?;
+                validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
             }
 
-            all_receipts.push((block_hash, receipts));
+            if is_levm {
+                self.store_block(block, execution_result)?;
+            } else {
+                all_receipts.push((block_hash, execution_result.receipts));
+            }
 
             last_valid_hash = block_hash;
 
@@ -245,12 +243,14 @@ impl Blockchain {
             };
         }
 
-        self.storage
-            .add_batch_of_blocks(blocks, as_canonical)
-            .map_err(|e| (e.into(), None, last_valid_hash))?;
-        self.storage
-            .add_batch_of_receipts(all_receipts)
-            .map_err(|e| (e.into(), None, last_valid_hash))?;
+        if !is_levm {
+            self.storage
+                .add_batch_of_blocks(blocks, as_canonical)
+                .map_err(|e| (e.into(), None, last_valid_hash))?;
+            self.storage
+                .add_batch_of_receipts(all_receipts)
+                .map_err(|e| (e.into(), None, last_valid_hash))?;
+        }
 
         Ok(())
     }
@@ -558,7 +558,7 @@ pub fn is_canonical(
     block_hash: BlockHash,
 ) -> Result<bool, StoreError> {
     match store.get_canonical_block_hash(block_number)? {
-        Some(hash) => Ok(hash == block_hash),
+        Some(hash) if hash == block_hash => Ok(true),
         _ => Ok(false),
     }
 }
