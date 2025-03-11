@@ -68,7 +68,7 @@ impl Blockchain {
     pub fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
-        should_commit_intermediate_tries: bool,
+        mut should_commit_intermediate_tries: bool,
     ) -> Result<(), (ChainError, Option<Block>)> {
         let first_block_header = match blocks.first() {
             Some(block) => block.header.clone(),
@@ -80,7 +80,8 @@ impl Blockchain {
         };
 
         if self.evm_engine == EvmEngine::LEVM {
-            panic!("LEVM engine is not supported for add blocks in batch");
+            // levm does not support batch block processing because it does not persist the state between block executions
+            should_commit_intermediate_tries = true;
         }
 
         let Some(mut state_trie) = self
