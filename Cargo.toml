@@ -1,30 +1,30 @@
 [workspace]
 members = [
+    "cmd/ef_tests/blockchain",
+    "cmd/ef_tests/state",
+    "cmd/ethrex",
+    "cmd/ethrex_l2",
+    "cmd/hive_report",
+    "cmd/loc",
     "crates/blockchain",
     "crates/blockchain/dev",
     "crates/common",
+    "crates/common/rlp",
+    "crates/common/trie",
+    "crates/l2/",
+    "crates/l2/contracts",
+    "crates/l2/prover",
+    "crates/l2/sdk",
     "crates/networking/p2p",
     "crates/networking/rpc",
-    "crates/storage/store",
+    "crates/storage",
     "crates/vm",
-    "crates/storage/trie",
-    "crates/common/rlp",
-    "cmd/ethrex",
-    "cmd/ef_tests/ethrex",
-    "cmd/ef_tests/levm",
-    "cmd/ethrex_l2",
-    "cmd/hive_report",
     "crates/vm/levm",
     "crates/vm/levm/bench/revm_comparison",
-    "crates/l2/",
-    "crates/l2/prover",
-    "crates/l2/contracts",
-    "crates/l2/sdk",
-    "cmd/loc",
 ]
 resolver = "2"
 
-default-members = ["cmd/ethrex", "cmd/ethrex_l2", "crates/l2/prover", "cmd/loc"]
+default-members = ["cmd/ethrex"]
 
 [workspace.package]
 version = "0.1.0"
@@ -32,12 +32,13 @@ edition = "2021"
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain" }
-ethrex-core = { path = "./crates/common" }
-ethrex-net = { path = "./crates/networking/p2p" }
+ethrex-common = { path = "./crates/common" }
+ethrex-p2p = { path = "./crates/networking/p2p" }
 ethrex-rpc = { path = "./crates/networking/rpc" }
-ethrex-storage = { path = "./crates/storage/store" }
+ethrex-storage = { path = "./crates/storage" }
 ethrex-vm = { path = "./crates/vm" }
-ethrex-trie = { path = "./crates/storage/trie" }
+ethrex-levm = { path = "./crates/vm/levm" }
+ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
@@ -66,7 +67,7 @@ reqwest = { version = "0.12.7", features = ["json"] }
 redb = "2.2.0"
 snap = "1.1.1"
 k256 = { version = "0.13.3", features = ["ecdh"] }
-secp256k1 = { version = "0.29", default-features = false, features = [
+secp256k1 = { version = "0.29.1", default-features = false, features = [
     "global-context",
     "recovery",
     "rand",

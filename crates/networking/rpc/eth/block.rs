@@ -12,12 +12,8 @@ use crate::{
     utils::RpcErr,
     RpcApiContext, RpcHandler,
 };
-use ethrex_core::{
-    types::{
-        calculate_base_fee_per_blob_gas, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        Receipt,
-    },
-    U256,
+use ethrex_common::types::{
+    calculate_base_fee_per_blob_gas, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt,
 };
 use ethrex_storage::Store;
 
@@ -83,15 +79,7 @@ impl RpcHandler for GetBlockByNumberRequest {
             _ => return Ok(Value::Null),
         };
         let hash = header.compute_block_hash();
-        // TODO (#307): Remove TotalDifficulty.
-        let total_difficulty = storage.get_block_total_difficulty(hash)?;
-        let block = RpcBlock::build(
-            header,
-            body,
-            hash,
-            self.hydrated,
-            total_difficulty.unwrap_or(U256::zero()),
-        );
+        let block = RpcBlock::build(header, body, hash, self.hydrated);
 
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -125,15 +113,7 @@ impl RpcHandler for GetBlockByHashRequest {
             _ => return Ok(Value::Null),
         };
         let hash = header.compute_block_hash();
-        // TODO (#307): Remove TotalDifficulty.
-        let total_difficulty = storage.get_block_total_difficulty(hash)?;
-        let block = RpcBlock::build(
-            header,
-            body,
-            hash,
-            self.hydrated,
-            total_difficulty.unwrap_or(U256::zero()),
-        );
+        let block = RpcBlock::build(header, body, hash, self.hydrated);
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -331,8 +311,16 @@ impl RpcHandler for GetBlobBaseFee {
             Ok(header) => header,
             Err(error) => return Err(RpcErr::Internal(error.to_string())),
         };
-        let blob_base_fee =
-            calculate_base_fee_per_blob_gas(parent_header.excess_blob_gas.unwrap_or_default());
+
+        let config = context.storage.get_chain_config()?;
+        let blob_base_fee = calculate_base_fee_per_blob_gas(
+            parent_header.excess_blob_gas.unwrap_or_default(),
+            config
+                .get_fork_blob_schedule(header.timestamp)
+                .map(|schedule| schedule.base_fee_update_fraction)
+                .unwrap_or_default(),
+        );
+
         serde_json::to_value(format!("{:#x}", blob_base_fee))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -349,8 +337,17 @@ pub fn get_all_block_rpc_receipts(
     if header.parent_hash.is_zero() {
         return Ok(receipts);
     }
-    let blob_gas_price =
-        calculate_base_fee_per_blob_gas(header.excess_blob_gas.unwrap_or_default());
+    // TODO: Here we are calculating the base_fee_per_blob_gas with the current header.
+    // Check if we should be passing the parent header instead
+    let config = storage.get_chain_config()?;
+    let blob_base_fee = calculate_base_fee_per_blob_gas(
+        header.excess_blob_gas.unwrap_or_default(),
+        config
+            .get_fork_blob_schedule(header.timestamp)
+            .map(|schedule| schedule.base_fee_update_fraction)
+            .unwrap_or_default(),
+    );
+
     // Fetch receipt info from block
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
     // Fetch receipt for each tx in the block and add block and tx info
@@ -364,7 +361,7 @@ pub fn get_all_block_rpc_receipts(
         };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info =
-            RpcReceiptTxInfo::from_transaction(tx.clone(), index, gas_used, blob_gas_price);
+            RpcReceiptTxInfo::from_transaction(tx.clone(), index, gas_used, blob_base_fee);
         let receipt = RpcReceipt::new(
             receipt.clone(),
             tx_info,

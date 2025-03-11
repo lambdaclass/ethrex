@@ -1,5 +1,5 @@
 use bytes::BufMut;
-use ethrex_core::H512;
+use ethrex_common::H512;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -15,11 +15,12 @@ use super::{
     utils::{pubkey2id, snappy_compress},
 };
 
-#[derive(Debug, Clone, PartialEq, Copy)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Capability {
     P2p,
     Eth,
     Snap,
+    UnsupportedCapability(String),
 }
 
 impl RLPEncode for Capability {
@@ -28,6 +29,7 @@ impl RLPEncode for Capability {
             Self::P2p => "p2p".encode(buf),
             Self::Eth => "eth".encode(buf),
             Self::Snap => "snap".encode(buf),
+            Self::UnsupportedCapability(name) => name.encode(buf),
         }
     }
 }
@@ -39,7 +41,7 @@ impl RLPDecode for Capability {
             "p2p" => Ok((Capability::P2p, rest)),
             "eth" => Ok((Capability::Eth, rest)),
             "snap" => Ok((Capability::Snap, rest)),
-            _ => Err(RLPDecodeError::UnexpectedString),
+            other => Ok((Capability::UnsupportedCapability(other.to_string()), rest)),
         }
     }
 }
@@ -63,7 +65,7 @@ impl RLPxMessage for HelloMessage {
     fn encode(&self, mut buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         Encoder::new(&mut buf)
             .encode_field(&5_u8) // protocolVersion
-            .encode_field(&"Ethereum(++)/1.0.0") // clientId
+            .encode_field(&"Ethrex/0.1.0") // clientId
             .encode_field(&self.capabilities) // capabilities
             .encode_field(&0u8) // listenPort (ignored)
             .encode_field(&pubkey2id(&self.node_id)) // nodeKey

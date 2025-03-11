@@ -1,4 +1,4 @@
-use ethrex_core::{
+use ethrex_common::{
     types::{Block, BlockHash, BlockHeader, BlockNumber},
     H256,
 };
@@ -8,7 +8,6 @@ use crate::{
     error::{self, InvalidForkChoice},
     is_canonical,
 };
-use tracing::error;
 
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
 /// - The finalized, safe and head hashes must correspond to already saved blocks.
@@ -28,9 +27,6 @@ pub fn apply_fork_choice(
     if head_hash.is_zero() {
         return Err(InvalidForkChoice::InvalidHeadHash);
     }
-
-    // We get the block bodies even if we only use headers them so we check that they are
-    // stored too.
 
     let finalized_res = if !finalized_hash.is_zero() {
         store.get_block_by_hash(finalized_hash)?
@@ -55,15 +51,10 @@ pub fn apply_fork_choice(
     }
 
     let Some(head_block) = head_res else {
-        if let Some(block) = store.get_pending_block(head_hash)? {
-            trigger_sync(block);
-        };
         return Err(InvalidForkChoice::Syncing);
     };
 
     let head = head_block.header;
-
-    total_difficulty_check(&head_hash, &head, store)?;
 
     let latest = store.get_latest_block_number()?;
 
@@ -134,18 +125,9 @@ pub fn apply_fork_choice(
         store.update_safe_block_number(safe.header.number)?;
     }
     store.update_latest_block_number(head.number)?;
+    store.update_sync_status(true)?;
 
     Ok(head)
-}
-
-// Trigger a backfill sync from the block until we find a valid block that we're familiar with or
-// something goes wrong.
-fn trigger_sync(head_block: Block) {
-    // TODO(#438): add immediate reorg if all needed blocks are pending.
-    error!(
-        "A sync for block {} should be triggered but it's not yet supported.",
-        head_block.header.compute_block_hash()
-    );
 }
 
 // Checks that block 1 is prior to block 2 and that if the second is present, the first one is too.
@@ -212,55 +194,4 @@ fn find_link_with_canonical_chain(
     }
 
     Ok(None)
-}
-
-fn total_difficulty_check<'a>(
-    head_block_hash: &'a H256,
-    head_block: &'a BlockHeader,
-    storage: &'a Store,
-) -> Result<(), InvalidForkChoice> {
-    // This check is performed only for genesis or for blocks with difficulty.
-    if head_block.difficulty.is_zero() && head_block.number != 0 {
-        return Ok(());
-    }
-
-    let total_difficulty = storage
-        .get_block_total_difficulty(*head_block_hash)?
-        .ok_or(StoreError::Custom(
-            "Block difficulty not found for head block".to_string(),
-        ))?;
-
-    let terminal_total_difficulty = storage
-        .get_chain_config()?
-        .terminal_total_difficulty
-        .ok_or(StoreError::Custom(
-            "Terminal total difficulty not found in chain config".to_string(),
-        ))?;
-
-    // Check that the header is post-merge.
-    if total_difficulty < terminal_total_difficulty.into() {
-        return Err(InvalidForkChoice::PreMergeBlock);
-    }
-
-    if head_block.number == 0 {
-        return Ok(());
-    }
-
-    // Non genesis checks
-
-    let parent_total_difficulty = storage
-        .get_block_total_difficulty(head_block.parent_hash)?
-        .ok_or(StoreError::Custom(
-            "Block difficulty not found for parent block".to_string(),
-        ))?;
-
-    // TODO(#790): is this check necessary and correctly implemented?
-    if parent_total_difficulty >= terminal_total_difficulty.into() {
-        Err((StoreError::Custom(
-            "Parent block is already post terminal total difficulty".to_string(),
-        ))
-        .into())
-    } else {
-        Ok(())
-    }
 }

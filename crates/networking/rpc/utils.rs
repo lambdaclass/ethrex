@@ -12,6 +12,7 @@ pub enum RpcErr {
     WrongParam(String),
     BadParams(String),
     MissingParam(String),
+    TooLargeRequest,
     BadHexFormat(u64),
     UnsuportedFork(String),
     Internal(String),
@@ -46,6 +47,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -32000,
                 data: None,
                 message: format!("Expected parameter: {parameter_name} is missing"),
+            },
+            RpcErr::TooLargeRequest => RpcErrorMetadata {
+                code: -38004,
+                data: None,
+                message: "Too large request".to_string(),
             },
             RpcErr::UnsuportedFork(context) => RpcErrorMetadata {
                 code: -38005,
@@ -246,13 +252,22 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
 
 #[cfg(test)]
 pub mod test_utils {
-    use std::{net::SocketAddr, str::FromStr};
+    use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
-    use ethrex_core::H512;
-    use ethrex_net::{sync::SyncManager, types::Node};
+    use ethrex_blockchain::Blockchain;
+    use ethrex_common::H512;
+    use ethrex_p2p::{
+        sync::SyncManager,
+        types::{Node, NodeRecord},
+    };
     use ethrex_storage::{EngineType, Store};
+    use k256::ecdsa::SigningKey;
 
     use crate::start_api;
+    #[cfg(feature = "based")]
+    use crate::{EngineClient, EthClient};
+    #[cfg(feature = "based")]
+    use bytes::Bytes;
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
@@ -263,6 +278,19 @@ pub mod test_utils {
             tcp_port: 30303,
             node_id: node_id_1,
         }
+    }
+
+    pub fn example_local_node_record() -> NodeRecord {
+        let node_id_1 = H512::from_str("d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666").unwrap();
+        let node = Node {
+            ip: "127.0.0.1".parse().unwrap(),
+            udp_port: 30303,
+            tcp_port: 30303,
+            node_id: node_id_1,
+        };
+        let signer = SigningKey::random(&mut rand::rngs::OsRng);
+
+        NodeRecord::from_node(node, 0, &signer).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,
@@ -284,16 +312,26 @@ pub mod test_utils {
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
             .expect("Failed to build test genesis");
-
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
+        #[cfg(feature = "based")]
+        let gateway_eth_client = EthClient::new("");
+        #[cfg(feature = "based")]
+        let gateway_auth_client = EngineClient::new("", Bytes::default());
         start_api(
             http_addr,
             authrpc_addr,
             storage,
+            blockchain,
             jwt_secret,
             local_p2p_node,
+            example_local_node_record(),
             SyncManager::dummy(),
+            #[cfg(feature = "based")]
+            gateway_eth_client,
+            #[cfg(feature = "based")]
+            gateway_auth_client,
         )
         .await;
     }

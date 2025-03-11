@@ -4,9 +4,9 @@ use ethrex_blockchain::{
     latest_canonical_block_hash,
     payload::{create_payload, BuildPayloadArgs},
 };
-use ethrex_core::types::BlockHeader;
+use ethrex_common::types::BlockHeader;
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     types::{
@@ -14,7 +14,7 @@ use crate::{
         payload::PayloadStatus,
     },
     utils::RpcRequest,
-    RpcApiContext, RpcErr, RpcHandler,
+    RpcApiContext, RpcErr, RpcHandler, SyncStatus,
 };
 
 #[derive(Debug)]
@@ -25,8 +25,7 @@ pub struct ForkChoiceUpdatedV1 {
 
 impl RpcHandler for ForkChoiceUpdatedV1 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse(params)?;
-
+        let (fork_choice_state, payload_attributes) = parse(params, false)?;
         Ok(ForkChoiceUpdatedV1 {
             fork_choice_state,
             payload_attributes,
@@ -37,11 +36,16 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 1)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            validate_v1(attributes, head_block)?;
+            let chain_config = context.storage.get_chain_config()?;
+            if chain_config.is_cancun_activated(attributes.timestamp) {
+                return Err(RpcErr::UnsuportedFork(
+                    "forkChoiceV1 used to build Cancun payload".to_string(),
+                ));
+            }
+            validate_attributes_v1(attributes, &head_block)?;
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 1)?;
             response.set_id(payload_id);
         }
-
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -54,8 +58,7 @@ pub struct ForkChoiceUpdatedV2 {
 
 impl RpcHandler for ForkChoiceUpdatedV2 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse(params)?;
-
+        let (fork_choice_state, payload_attributes) = parse(params, false)?;
         Ok(ForkChoiceUpdatedV2 {
             fork_choice_state,
             payload_attributes,
@@ -66,11 +69,20 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            validate_v2(attributes, head_block, &context)?;
+            let chain_config = context.storage.get_chain_config()?;
+            if chain_config.is_cancun_activated(attributes.timestamp) {
+                return Err(RpcErr::UnsuportedFork(
+                    "forkChoiceV2 used to build Cancun payload".to_string(),
+                ));
+            } else if chain_config.is_shanghai_activated(attributes.timestamp) {
+                validate_attributes_v2(attributes, &head_block)?;
+            } else {
+                // Behave as a v1
+                validate_attributes_v1(attributes, &head_block)?;
+            }
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 2)?;
             response.set_id(payload_id);
         }
-
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -96,29 +108,66 @@ impl From<ForkChoiceUpdatedV3> for RpcRequest {
 
 impl RpcHandler for ForkChoiceUpdatedV3 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse(params)?;
-
+        let (fork_choice_state, payload_attributes) = parse(params, true)?;
         Ok(ForkChoiceUpdatedV3 {
             fork_choice_state,
             payload_attributes,
         })
     }
 
+    #[cfg(feature = "based")]
+    async fn relay_to_gateway_or_fallback(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<Value, RpcErr> {
+        info!("Relaying engine_forkchoiceUpdatedV3 to gateway");
+
+        let request = Self::parse(&req.params)?;
+
+        let gateway_auth_client = context.gateway_auth_client.clone();
+
+        let gateway_request = gateway_auth_client
+            .engine_forkchoice_updated_v3(request.fork_choice_state, request.payload_attributes);
+
+        // Parse it again as it was consumed for gateway_response and it is the same as cloning it.
+        let request = Self::parse(&req.params)?;
+        let client_response = request.handle(context);
+
+        let gateway_response = gateway_request
+            .await
+            .map_err(|err| {
+                RpcErr::Internal(format!(
+                    "Could not relay engine_forkchoiceUpdatedV3 to gateway: {err}",
+                ))
+            })
+            .and_then(|response| {
+                serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+            });
+
+        if gateway_response.is_err() {
+            warn!(error = ?gateway_response, "Gateway engine_forkchoiceUpdatedV3 failed, falling back to local node");
+        } else {
+            info!("Successfully relayed engine_forkchoiceUpdatedV3 to gateway");
+        }
+
+        gateway_response.or(client_response)
+    }
+
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 3)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            validate_v3(attributes, head_block, &context)?;
+            validate_attributes_v3(attributes, &head_block, &context)?;
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 3)?;
             response.set_id(payload_id);
         }
-
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
 fn parse(
     params: &Option<Vec<Value>>,
+    is_v3: bool,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV3>), RpcErr> {
     let params = params
         .as_ref()
@@ -137,7 +186,13 @@ fn parse(
                 None
             }
         };
-
+    if let Some(attr) = &payload_attributes {
+        if !is_v3 && attr.parent_beacon_block_root.is_some() {
+            return Err(RpcErr::InvalidPayloadAttributes(
+                "Attribute parent_beacon_block_root is non-null".to_string(),
+            ));
+        }
+    }
     Ok((forkchoice_state, payload_attributes))
 }
 
@@ -146,26 +201,88 @@ fn handle_forkchoice(
     context: RpcApiContext,
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
-    info!(
+    debug!(
         "New fork choice request v{} with head: {:#x}, safe: {:#x}, finalized: {:#x}.",
         version,
         fork_choice_state.head_block_hash,
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash
     );
+    // Check if there is an ongoing sync before applying the forkchoice
+    let fork_choice_res = match context.sync_status()? {
+        // Apply current fork choice
+        SyncStatus::Inactive => {
+            let invalid_ancestors = {
+                let lock = context.syncer.try_lock();
+                match lock {
+                    Ok(sync) => sync.invalid_ancestors.clone(),
+                    Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+                }
+            };
 
-    match apply_fork_choice(
-        &context.storage,
-        fork_choice_state.head_block_hash,
-        fork_choice_state.safe_block_hash,
-        fork_choice_state.finalized_block_hash,
-    ) {
-        Ok(head) => Ok((
-            Some(head),
-            ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                fork_choice_state.head_block_hash,
-            )),
-        )),
+            // Check head block hash in invalid_ancestors
+            if let Some(latest_valid_hash) =
+                invalid_ancestors.get(&fork_choice_state.head_block_hash)
+            {
+                warn!(
+                    "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
+                    latest_valid_hash
+                );
+                Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
+            } else {
+                // Check parent block hash in invalid_ancestors (if head block exists)
+                let check_parent = context
+                    .storage
+                    .get_block_header_by_hash(fork_choice_state.head_block_hash)?
+                    .and_then(|head_block| {
+                        warn!(
+                            "Checking parent for invalid ancestor {}",
+                            head_block.parent_hash
+                        );
+                        invalid_ancestors.get(&head_block.parent_hash).copied()
+                    });
+
+                if let Some(latest_valid_hash) = check_parent {
+                    Err(InvalidForkChoice::InvalidAncestor(latest_valid_hash))
+                } else {
+                    // All checks passed, apply fork choice
+                    apply_fork_choice(
+                        &context.storage,
+                        fork_choice_state.head_block_hash,
+                        fork_choice_state.safe_block_hash,
+                        fork_choice_state.finalized_block_hash,
+                    )
+                }
+            }
+        }
+        // Restart sync if needed
+        _ => Err(InvalidForkChoice::Syncing),
+    };
+
+    match fork_choice_res {
+        Ok(head) => {
+            // Remove included transactions from the mempool after we accept the fork choice
+            // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
+            if let Ok(Some(block)) = context.storage.get_block_by_hash(head.compute_block_hash()) {
+                for tx in &block.body.transactions {
+                    context
+                        .blockchain
+                        .remove_transaction_from_pool(&tx.compute_hash())
+                        .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                }
+            } else {
+                return Err(RpcErr::Internal(
+                    "Failed to get block by hash to remove transactions from the mempool"
+                        .to_string(),
+                ));
+            }
+            Ok((
+                Some(head),
+                ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
+                    fork_choice_state.head_block_hash,
+                )),
+            ))
+        }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
@@ -175,14 +292,13 @@ fn handle_forkchoice(
                 }
                 InvalidForkChoice::Syncing => {
                     // Start sync
-                    let current_number = context.storage.get_latest_block_number()?;
-                    let Some(current_head) =
-                        context.storage.get_canonical_block_hash(current_number)?
-                    else {
-                        return Err(RpcErr::Internal(
-                            "Missing latest canonical block".to_owned(),
-                        ));
-                    };
+                    context
+                        .storage
+                        .update_sync_status(false)
+                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    let current_head = context.storage.get_latest_canonical_block_hash()?.ok_or(
+                        RpcErr::Internal("Missing latest canonical block".to_owned()),
+                    )?;
                     let sync_head = fork_choice_state.head_block_hash;
                     tokio::spawn(async move {
                         // If we can't get hold of the syncer, then it means that there is an active sync in process
@@ -194,9 +310,29 @@ fn handle_forkchoice(
                     });
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
+                InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
+                    warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
+                    return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
+                }
+                InvalidForkChoice::InvalidAncestor(last_valid_hash) => {
+                    ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                        last_valid_hash,
+                        InvalidForkChoice::InvalidAncestor(last_valid_hash).to_string(),
+                    ))
+                }
                 reason => {
-                    warn!("Invalid fork choice state. Reason: {:#?}", reason);
-                    return Err(RpcErr::InvalidForkChoiceState(reason.to_string()));
+                    warn!(
+                        "Invalid fork choice payload. Reason: {}",
+                        reason.to_string()
+                    );
+                    let latest_valid_hash =
+                        context.storage.get_latest_canonical_block_hash()?.ok_or(
+                            RpcErr::Internal("Missing latest canonical block".to_owned()),
+                        )?;
+                    ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                        latest_valid_hash,
+                        reason.to_string(),
+                    ))
                 }
             };
             Ok((None, forkchoice_response))
@@ -204,48 +340,40 @@ fn handle_forkchoice(
     }
 }
 
-fn validate_v1(attributes: &PayloadAttributesV3, head_block: BlockHeader) -> Result<(), RpcErr> {
+fn validate_attributes_v1(
+    attributes: &PayloadAttributesV3,
+    head_block: &BlockHeader,
+) -> Result<(), RpcErr> {
+    if attributes.withdrawals.is_some() {
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
+    }
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_v2(
+fn validate_attributes_v2(
     attributes: &PayloadAttributesV3,
-    head_block: BlockHeader,
-    context: &RpcApiContext,
+    head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
-    let chain_config = context.storage.get_chain_config()?;
     if attributes.withdrawals.is_none() {
-        return Err(RpcErr::WrongParam(
-            "forkChoiceV2 withdrawals is null".to_string(),
-        ));
-    }
-    if attributes.parent_beacon_block_root.is_some() {
-        return Err(RpcErr::InvalidPayloadAttributes(
-            "forkChoiceV2 with Beacon Root".to_string(),
-        ));
-    }
-    if !chain_config.is_shanghai_activated(attributes.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
-            "forkChoiceV2 used to build pre-Shanghai payload".to_string(),
-        ));
-    }
-    if chain_config.is_cancun_activated(attributes.timestamp) {
-        return Err(RpcErr::UnsuportedFork(
-            "forkChoiceV2 used to build Cancun payload".to_string(),
-        ));
+        return Err(RpcErr::WrongParam("withdrawals".to_string()));
     }
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_v3(
+fn validate_attributes_v3(
     attributes: &PayloadAttributesV3,
-    head_block: BlockHeader,
+    head_block: &BlockHeader,
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
     let chain_config = context.storage.get_chain_config()?;
+    // Specification indicates this order of validations:
+    // https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#specification-1
+    if attributes.withdrawals.is_none() {
+        return Err(RpcErr::InvalidPayloadAttributes("withdrawals".to_string()));
+    }
     if attributes.parent_beacon_block_root.is_none() {
         return Err(RpcErr::InvalidPayloadAttributes(
-            "Null Parent Beacon Root".to_string(),
+            "Attribute parent_beacon_block_root is null".to_string(),
         ));
     }
     if !chain_config.is_cancun_activated(attributes.timestamp) {
@@ -258,7 +386,7 @@ fn validate_v3(
 
 fn validate_timestamp(
     attributes: &PayloadAttributesV3,
-    head_block: BlockHeader,
+    head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
     if attributes.timestamp <= head_block.timestamp {
         return Err(RpcErr::InvalidPayloadAttributes(

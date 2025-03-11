@@ -1,6 +1,6 @@
 use crate::account::Account;
 use bytes::Bytes;
-use ethrex_core::{types::Log, Address};
+use ethrex_common::{types::Log, Address};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror;
@@ -90,6 +90,8 @@ pub enum TxValidationError {
     InsufficientAccountFunds,
     #[error("Nonce is max (overflow)")]
     NonceIsMax,
+    #[error("Nonce mismatch")]
+    NonceMismatch,
     #[error("Initcode size exceeded")]
     InitcodeSizeExceeded,
     #[error("Priority fee greater than max fee per gas")]
@@ -112,8 +114,16 @@ pub enum TxValidationError {
     Type3TxBlobCountExceeded,
     #[error("Type3TxContractCreation")]
     Type3TxContractCreation,
+    #[error("Type 4 transactions are not supported before the Prague fork")]
+    Type4TxPreFork,
+    #[error("Type4TxAuthorizationListIsEmpty")]
+    Type4TxAuthorizationListIsEmpty,
+    #[error("Type4TxContractCreation")]
+    Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
+    #[error("Gas limit is too low")]
+    GasLimitTooLow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error, Serialize, Deserialize)]
@@ -146,7 +156,7 @@ pub enum InternalError {
     ArithmeticOperationUnderflow,
     #[error("Arithmetic operation divided by zero")]
     ArithmeticOperationDividedByZero,
-    #[error("Accound should have been cached")]
+    #[error("Account should have been cached")]
     AccountShouldHaveBeenCached,
     #[error("Tried to convert one type to another")]
     ConversionError,
@@ -180,6 +190,10 @@ pub enum InternalError {
     UndefinedState(i32), // This error is temporarily for things that cause an undefined state.
     #[error("Invalid precompile address. Tried to execute a precompile that does not exist.")]
     InvalidPrecompileAddress,
+    #[error("Spec Id doesn't match to any fork")]
+    InvalidSpecId,
+    #[error("Account should had been delegated")]
+    AccountNotDelegated,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -194,20 +208,19 @@ pub enum PrecompileError {
     EvaluationError,
     #[error("This is a default error")]
     DefaultError,
+    #[error("The G1 point is not in the curve")]
+    BLS12381G1PointNotInCurve,
+    #[error("The G2 point is not in the curve")]
+    BLS12381G2PointNotInCurve,
 }
 
 #[derive(Debug, Clone)]
-pub enum OpcodeSuccess {
-    Continue,
-    Result(ResultReason),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResultReason {
-    Stop,
-    Revert,
-    Return,
-    SelfDestruct,
+/// Note: "Halt" does not mean "Error during execution" it simply
+/// means that the execution stopped. It's not called "Stop" because
+/// "Stop" is an Opcode
+pub enum OpcodeResult {
+    Continue { pc_increment: usize },
+    Halt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,19 +230,16 @@ pub enum TxResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TransactionReport {
+pub struct ExecutionReport {
     pub result: TxResult,
     pub new_state: HashMap<Address, Account>,
     pub gas_used: u64,
     pub gas_refunded: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
-    // This only applies to create transactions. It's fundamentally ambiguous since
-    // a transaction could create multiple new contracts, but whatever.
-    pub created_address: Option<Address>,
 }
 
-impl TransactionReport {
+impl ExecutionReport {
     /// Function to add gas to report without exceeding the maximum gas limit
     pub fn add_gas_with_max(&mut self, gas: u64, max: u64) -> Result<(), VMError> {
         let new_gas_used = self

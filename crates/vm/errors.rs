@@ -1,5 +1,6 @@
 use ethereum_types::{H160, H256};
-use ethrex_core::types::BlockHash;
+use ethrex_common::{types::BlockHash, Address};
+use ethrex_levm::errors::VMError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use revm::primitives::{
@@ -18,9 +19,11 @@ pub enum EvmError {
     #[error("Execution DB error: {0}")]
     ExecutionDB(#[from] ExecutionDBError),
     #[error("{0}")]
-    Custom(String),
-    #[error("{0}")]
     Precompile(String),
+    #[error("Invalid EVM or EVM not supported: {0}")]
+    InvalidEVM(String),
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(Debug, Error)]
@@ -43,14 +46,18 @@ pub enum ExecutionDBError {
     StorageValueNotFound(RevmAddress, RevmU256),
     #[error("Hash of block with number {0} not found")]
     BlockHashNotFound(u64),
-    #[error("Missing account {0} info while trying to create ExecutionDB")]
-    NewMissingAccountInfo(RevmAddress),
     #[error("Missing state trie of block {0} while trying to create ExecutionDB")]
     NewMissingStateTrie(BlockHash),
     #[error(
         "Missing storage trie of block {0} and address {1} while trying to create ExecutionDB"
     )]
-    NewMissingStorageTrie(BlockHash, H160),
+    NewMissingStorageTrie(BlockHash, Address),
+    #[error("Missing account {0} info while trying to create ExecutionDB")]
+    NewMissingAccountInfo(Address),
+    #[error("Missing storage of address {0} and key {1} while trying to create ExecutionDB")]
+    NewMissingStorage(Address, H256),
+    #[error("Missing code of hash {0} while trying to create ExecutionDB")]
+    NewMissingCode(H256),
     #[error("The account {0} is not included in the stored pruned state trie")]
     MissingAccountInStateTrie(H160),
     #[error("Missing storage trie of account {0}")]
@@ -105,19 +112,14 @@ impl From<RevmError<ExecutionDBError>> for EvmError {
     }
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "levm")] {
-        use ethrex_levm::errors::VMError;
-        impl From<VMError> for EvmError {
-            fn from(value: VMError) -> Self {
-                if value.is_internal() {
-                    // We don't categorize our internal errors yet, so we label them as "Custom"
-                    EvmError::Custom(value.to_string())
-                } else {
-                    // If an error is not internal it means it is a transaction validation error.
-                    EvmError::Transaction(value.to_string())
-                }
-            }
+impl From<VMError> for EvmError {
+    fn from(value: VMError) -> Self {
+        if value.is_internal() {
+            // We don't categorize our internal errors yet, so we label them as "Custom"
+            EvmError::Custom(value.to_string())
+        } else {
+            // If an error is not internal it means it is a transaction validation error.
+            EvmError::Transaction(value.to_string())
         }
     }
 }

@@ -2,7 +2,7 @@ use crate::{
     constants::{MEMORY_EXPANSION_QUOTIENT, WORD_SIZE_IN_BYTES_USIZE},
     errors::{InternalError, OutOfGasError, VMError},
 };
-use ethrex_core::U256;
+use ethrex_common::U256;
 
 pub type Memory = Vec<u8>;
 

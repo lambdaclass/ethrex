@@ -14,12 +14,13 @@ pub struct LinesOfCodeReporterOptions {
     pub compare_detailed: bool,
 }
 
-#[derive(Default, Serialize, Deserialize, Clone, Copy)]
+#[derive(Default, Serialize, Deserialize, Clone)]
 pub struct LinesOfCodeReport {
     pub ethrex: usize,
     pub ethrex_l1: usize,
     pub ethrex_l2: usize,
     pub levm: usize,
+    pub ethrex_crates: Vec<(String, usize)>,
 }
 
 pub fn pr_message(
@@ -37,6 +38,8 @@ pub fn pr_message(
     table.add_row(row!["File", "Lines", "Diff"]);
 
     let mut total_lines_changed: i64 = 0;
+    let mut total_lines_added: i64 = 0;
+    let mut total_lines_removed: i64 = 0;
 
     for file_path in sorted_file_paths {
         let current_loc = *new_report.get(file_path).unwrap() as i64;
@@ -47,14 +50,24 @@ pub fn pr_message(
             continue;
         }
 
-        total_lines_changed = if current_loc > previous_loc {
-            total_lines_changed + loc_diff
+        if loc_diff > 0 {
+            total_lines_added += loc_diff;
         } else {
-            total_lines_changed - loc_diff
+            total_lines_removed += loc_diff.abs();
+        }
+
+        total_lines_changed += loc_diff.abs();
+
+        // remove "ethrex/" and everything before it
+        const ETHREX_PREFIX: &str = "ethrex/";
+        let file_path_printable = if let Some(idx) = file_path.find(ETHREX_PREFIX) {
+            &file_path[idx + ETHREX_PREFIX.len()..]
+        } else {
+            file_path
         };
 
         table.add_row(row![
-            file_path,
+            file_path_printable,
             current_loc,
             match current_loc.cmp(&previous_loc) {
                 std::cmp::Ordering::Greater => format!("+{loc_diff}"),
@@ -64,18 +77,69 @@ pub fn pr_message(
         ]);
     }
 
-    if total_lines_changed != 0 {
-        format!(
-            "```\n{table}\nTotal lines changed: {}\n```",
-            match total_lines_changed.cmp(&0) {
-                std::cmp::Ordering::Greater => format!("+{total_lines_changed}"),
-                std::cmp::Ordering::Less => format!("{total_lines_changed}"),
-                std::cmp::Ordering::Equal => "-".to_owned(),
-            }
-        )
-    } else {
-        "The amount of lines of code in the project has not changed.".to_owned()
+    if total_lines_changed == 0 {
+        return "".to_string();
     }
+
+    let mut pr_message = String::new();
+
+    pr_message.push_str("<h2>Lines of code report</h2>\n");
+    pr_message.push('\n');
+
+    pr_message.push_str(&pr_message_summary(
+        total_lines_added,
+        total_lines_removed,
+        total_lines_changed,
+    ));
+
+    pr_message.push('\n');
+    pr_message.push_str("<details>\n");
+    pr_message.push_str("<summary>Detailed view</summary>\n");
+    pr_message.push('\n');
+    pr_message.push_str("```\n");
+    pr_message.push_str(&format!("{table}\n"));
+    pr_message.push_str("```\n");
+    pr_message.push_str("</details>\n");
+
+    pr_message
+}
+
+fn pr_message_summary(
+    total_lines_added: i64,
+    total_lines_removed: i64,
+    total_lines_changed: i64,
+) -> String {
+    let mut pr_message = String::new();
+
+    pr_message.push_str(&format!(
+        "Total lines added: `{}`\n",
+        match total_lines_added.cmp(&0) {
+            std::cmp::Ordering::Greater => format!("{total_lines_added}"),
+            std::cmp::Ordering::Less =>
+                unreachable!("total_lines_added should never be less than 0"),
+            std::cmp::Ordering::Equal => format!("{total_lines_added}"),
+        }
+    ));
+    pr_message.push_str(&format!(
+        "Total lines removed: `{}`\n",
+        match total_lines_removed.cmp(&0) {
+            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal =>
+                format!("{total_lines_removed}"),
+            std::cmp::Ordering::Less =>
+                unreachable!("total_lines_removed should never be less than 0"),
+        }
+    ));
+    pr_message.push_str(&format!(
+        "Total lines changed: `{}`\n",
+        match total_lines_changed.cmp(&0) {
+            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal =>
+                format!("{total_lines_changed}"),
+            std::cmp::Ordering::Less =>
+                unreachable!("total_lines_changed should never be less than 0"),
+        }
+    ));
+
+    pr_message
 }
 
 pub fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeReport) -> String {
@@ -83,6 +147,32 @@ pub fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeRepor
     let ethrex_l2_diff = new_report.ethrex_l2.abs_diff(old_report.ethrex_l2);
     let levm_diff = new_report.levm.abs_diff(old_report.levm);
     let ethrex_diff_total = ethrex_l1_diff + ethrex_l2_diff + levm_diff;
+
+    let ethrex_crates_mrkdwn =
+        new_report
+            .ethrex_crates
+            .iter()
+            .fold(String::new(), |acc, (crate_name, loc)| {
+                let old_loc = old_report
+                    .ethrex_crates
+                    .iter()
+                    .find(|(old_crate_name, _)| old_crate_name == crate_name)
+                    .map(|(_, old_loc)| old_loc)
+                    .unwrap_or(&0);
+
+                let loc_diff = loc.abs_diff(*old_loc);
+                format!(
+                    "{}*{}*: {} {}\\n",
+                    acc,
+                    crate_name,
+                    loc,
+                    match loc.cmp(old_loc) {
+                        std::cmp::Ordering::Greater => format!("(+{loc_diff})"),
+                        std::cmp::Ordering::Less => format!("(-{loc_diff})"),
+                        std::cmp::Ordering::Equal => "".to_string(),
+                    }
+                )
+            });
 
     format!(
         r#"{{
@@ -98,11 +188,32 @@ pub fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeRepor
             "type": "divider"
         }},
         {{
+            "type": "header",
+            "text": {{
+                "type": "plain_text",
+                "text": "Summary"
+            }}
+        }},
+        {{
             "type": "section",
             "text": {{
                 "type": "mrkdwn",
                 "text": "*ethrex L1:* {} {}\n*ethrex L2:* {} {}\n*levm:* {} {}\n*ethrex (total):* {} {}"
-            }}             
+            }}
+        }},
+        {{
+            "type": "header",
+            "text": {{
+                "type": "plain_text",
+                "text": "Crates"
+            }}
+        }},
+        {{
+            "type": "section",
+            "text": {{
+                "type": "mrkdwn",
+                "text": "{}"
+            }}
         }}
     ]
 }}"#,
@@ -130,6 +241,7 @@ pub fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeRepor
             std::cmp::Ordering::Less => format!("(-{ethrex_diff_total})"),
             std::cmp::Ordering::Equal => "".to_string(),
         },
+        ethrex_crates_mrkdwn
     )
 }
 
@@ -139,14 +251,44 @@ pub fn github_step_summary(old_report: LinesOfCodeReport, new_report: LinesOfCod
     let levm_diff = new_report.levm.abs_diff(old_report.levm);
     let ethrex_diff_total = ethrex_l1_diff + ethrex_l2_diff + levm_diff;
 
+    let ethrex_crates_github =
+        new_report
+            .ethrex_crates
+            .iter()
+            .fold(String::new(), |acc, (crate_name, loc)| {
+                let old_loc = old_report
+                    .ethrex_crates
+                    .iter()
+                    .find(|(old_crate_name, _)| old_crate_name == crate_name)
+                    .map(|(_, old_loc)| old_loc)
+                    .unwrap_or(&0);
+
+                let loc_diff = loc.abs_diff(*old_loc);
+                format!(
+                    "{}{}: {} {}\n",
+                    acc,
+                    crate_name,
+                    loc,
+                    match loc.cmp(old_loc) {
+                        std::cmp::Ordering::Greater => format!("(+{loc_diff})"),
+                        std::cmp::Ordering::Less => format!("(-{loc_diff})"),
+                        std::cmp::Ordering::Equal => "".to_string(),
+                    }
+                )
+            });
+
     format!(
         r#"```
 ethrex loc summary
 ====================
 ethrex L1: {} {}
 ethrex L2: {} {}
-levm: {} ({})
+levm: {} {}
 ethrex (total): {} {}
+
+ethrex crates loc
+=================
+{}
 ```"#,
         new_report.ethrex_l1,
         if new_report.ethrex > old_report.ethrex {
@@ -172,6 +314,7 @@ ethrex (total): {} {}
         } else {
             format!("(-{ethrex_diff_total})")
         },
+        ethrex_crates_github
     )
 }
 

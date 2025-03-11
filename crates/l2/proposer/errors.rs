@@ -3,10 +3,10 @@ use std::sync::mpsc::SendError;
 use crate::utils::config::errors::ConfigError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
-use ethrex_core::types::{BlobsBundleError, FakeExponentialError};
-use ethrex_dev::utils::engine_client::errors::EngineClientError;
-use ethrex_l2_sdk::eth_client::errors::{CalldataEncodeError, EthClientError};
+use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_sdk::merkle_tree::MerkleError;
+use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
+use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use tokio::task::JoinError;
@@ -81,6 +81,8 @@ pub enum ProposerError {
     StorageDataIsNone,
     #[error("Proposer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
+    #[error("Proposer failed to decode jwt_secret: {0}")]
+    FailedToDecodeJWT(#[from] hex::FromHexError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +95,8 @@ pub enum CommitterError {
     FailedToRetrieveBlockFromStorage(#[from] StoreError),
     #[error("Committer failed retrieve data from storage")]
     FailedToRetrieveDataFromStorage,
+    #[error("Committer registered a negative nonce in AccountUpdate")]
+    FailedToCalculateNonce,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage")]
@@ -117,6 +121,8 @@ pub enum CommitterError {
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

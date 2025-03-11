@@ -1,5 +1,5 @@
-use ethrex_blockchain::constants::GAS_PER_BLOB;
-use ethrex_core::{
+use ethrex_common::{
+    constants::GAS_PER_BLOB,
     serde_utils,
     types::{BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType},
     Address, Bloom, Bytes, H256,
@@ -138,18 +138,18 @@ impl RpcReceiptBlockInfo {
 #[serde(rename_all = "camelCase")]
 pub struct RpcReceiptTxInfo {
     pub transaction_hash: H256,
-    #[serde(with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(with = "ethrex_common::serde_utils::u64::hex_str")]
     pub transaction_index: u64,
     pub from: Address,
     pub to: Option<Address>,
     pub contract_address: Option<Address>,
-    #[serde(with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(with = "ethrex_common::serde_utils::u64::hex_str")]
     pub gas_used: u64,
-    #[serde(with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(with = "ethrex_common::serde_utils::u64::hex_str")]
     pub effective_gas_price: u64,
     #[serde(
         skip_serializing_if = "Option::is_none",
-        with = "ethrex_core::serde_utils::u64::hex_str_opt",
+        with = "ethrex_common::serde_utils::u64::hex_str_opt",
         default = "Option::default"
     )]
     pub blob_gas_price: Option<u64>,
@@ -207,7 +207,7 @@ impl RpcReceiptTxInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_core::{
+    use ethrex_common::{
         types::{Log, TxType},
         Bloom, Bytes,
     };

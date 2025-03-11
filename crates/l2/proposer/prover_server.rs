@@ -10,16 +10,18 @@ use crate::utils::{
         save_state::{StateFileType, StateType, *},
     },
 };
-use ethrex_core::{
+use ethrex_common::{
     types::{Block, BlockHeader},
     Address, H256, U256,
 };
-use ethrex_l2_sdk::{
-    calldata::{encode_calldata, Value},
-    eth_client::{eth_sender::Overrides, EthClient, WrappedTransaction},
-};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
-use ethrex_vm::{execution_db::ExecutionDB, EvmError};
+use ethrex_vm::{
+    backends::revm::execution_db::{ExecutionDB, ToExecDB},
+    db::StoreWrapper,
+    EvmError,
+};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -405,11 +407,16 @@ impl ProverServer {
 
         let block = Block::new(header, body);
 
-        let db = ExecutionDB::from_exec(&block, &self.store).map_err(EvmError::ExecutionDB)?;
+        let parent_hash = block.header.parent_hash;
+        let store = StoreWrapper {
+            store: self.store.clone(),
+            block_hash: parent_hash,
+        };
+        let db = store.to_exec_db(&block).map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store
-            .get_block_header_by_hash(block.header.parent_hash)?
+            .get_block_header_by_hash(parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
         debug!("Created prover input for block {block_number}");
@@ -504,7 +511,7 @@ impl ProverServer {
             .await?;
 
             if last_committed_block == last_verified_block {
-                warn!("No new blocks to prove");
+                debug!("No new blocks to prove");
                 continue;
             }
 

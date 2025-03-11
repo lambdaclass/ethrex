@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUST_VERSION: 1.81.0
+  RUST_VERSION: 1.82.0
 
 jobs:
   test:
@@ -34,5 +34,5 @@ jobs:
       - name: Run L2 integration test
         run: |
           cd crates/l2
-          cp .env.example .env
+          cp config_example.toml config.toml
           make ci_test

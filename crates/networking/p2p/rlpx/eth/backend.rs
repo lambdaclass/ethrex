@@ -1,13 +1,11 @@
-use ethrex_core::{types::ForkId, U256};
+use ethrex_common::{types::ForkId, U256};
 use ethrex_storage::Store;
 
 use crate::rlpx::error::RLPxError;
 
 use super::status::StatusMessage;
 
-pub const ETH_VERSION: u32 = 68;
-
-pub fn get_status(storage: &Store) -> Result<StatusMessage, RLPxError> {
+pub fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RLPxError> {
     let chain_config = storage.get_chain_config()?;
     let total_difficulty = U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
     let network_id = chain_config.chain_id;
@@ -23,9 +21,14 @@ pub fn get_status(storage: &Store) -> Result<StatusMessage, RLPxError> {
 
     let genesis = genesis_header.compute_block_hash();
     let block_hash = block_header.compute_block_hash();
-    let fork_id = ForkId::new(chain_config, genesis, block_header.timestamp, block_number);
+    let fork_id = ForkId::new(
+        chain_config,
+        genesis_header,
+        block_header.timestamp,
+        block_number,
+    );
     Ok(StatusMessage {
-        eth_version: ETH_VERSION,
+        eth_version,
         network_id,
         total_difficulty,
         block_hash,
@@ -34,20 +37,28 @@ pub fn get_status(storage: &Store) -> Result<StatusMessage, RLPxError> {
     })
 }
 
-pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), RLPxError> {
+pub fn validate_status(
+    msg_data: StatusMessage,
+    storage: &Store,
+    eth_version: u32,
+) -> Result<(), RLPxError> {
     let chain_config = storage.get_chain_config()?;
 
     // These blocks must always be available
     let genesis_header = storage
         .get_block_header(0)?
         .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
-    let block_number = storage.get_latest_block_number()?;
-    let block_header = storage
-        .get_block_header(block_number)?
-        .ok_or(RLPxError::NotFound(format!("Block {block_number}")))?;
-
-    let genesis = genesis_header.compute_block_hash();
-    let fork_id = ForkId::new(chain_config, genesis, block_header.timestamp, block_number);
+    let genesis_hash = genesis_header.compute_block_hash();
+    let latest_block_number = storage.get_latest_block_number()?;
+    let latest_block_header = storage
+        .get_block_header(latest_block_number)?
+        .ok_or(RLPxError::NotFound(format!("Block {latest_block_number}")))?;
+    let fork_id = ForkId::new(
+        chain_config,
+        genesis_header.clone(),
+        latest_block_header.timestamp,
+        latest_block_number,
+    );
 
     //Check networkID
     if msg_data.network_id != chain_config.chain_id {
@@ -56,22 +67,26 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
         ));
     }
     //Check Protocol Version
-    if msg_data.eth_version != ETH_VERSION {
+    if msg_data.eth_version != eth_version {
         return Err(RLPxError::HandshakeError(
             "Eth protocol version does not match".to_string(),
         ));
     }
     //Check Genesis
-    if msg_data.genesis != genesis {
+    if msg_data.genesis != genesis_hash {
         return Err(RLPxError::HandshakeError(
             "Genesis does not match".to_string(),
         ));
     }
     // Check ForkID
-    if msg_data.fork_id != fork_id {
-        return Err(RLPxError::HandshakeError(
-            "Fork Id does not match".to_string(),
-        ));
+    if !fork_id.is_valid(
+        msg_data.fork_id,
+        latest_block_number,
+        latest_block_header.timestamp,
+        chain_config,
+        genesis_header,
+    ) {
+        return Err(RLPxError::HandshakeError("Invalid Fork Id".to_string()));
     }
 
     Ok(())
@@ -81,7 +96,7 @@ pub fn validate_status(msg_data: StatusMessage, storage: &Store) -> Result<(), R
 mod tests {
     use super::validate_status;
     use crate::rlpx::eth::status::StatusMessage;
-    use ethrex_core::{
+    use ethrex_common::{
         types::{ForkId, Genesis},
         H256, U256,
     };
@@ -105,18 +120,20 @@ mod tests {
             .expect("Failed to add genesis block to DB");
         let config = genesis.config;
         let total_difficulty = U256::from(config.terminal_total_difficulty.unwrap_or_default());
-        let genesis_hash = genesis.get_block().hash();
-        let fork_id = ForkId::new(config, genesis_hash, 2707305664, 123);
+        let genesis_header = genesis.get_block().header;
+        let genesis_hash = genesis_header.compute_block_hash();
+        let fork_id = ForkId::new(config, genesis_header, 2707305664, 123);
 
+        let eth_version = 68;
         let message = StatusMessage {
-            eth_version: 68u32,
+            eth_version,
             network_id: 3503995874084926,
             total_difficulty,
             block_hash: H256::random(),
             genesis: genesis_hash,
             fork_id,
         };
-        let result = validate_status(message, &storage);
+        let result = validate_status(message, &storage, eth_version);
         assert!(result.is_ok());
     }
 }

@@ -1,13 +1,13 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-use ethrex_core::types::Block;
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::Block;
 use std::path::Path;
 use tracing::info;
 
-use ethrex_blockchain::add_block;
 use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::execution_db::ExecutionDB;
+use ethrex_vm::{backends::revm::execution_db::ToExecDB, db::StoreWrapper};
 use zkvm_interface::io::ProgramInput;
 
 #[tokio::test]
@@ -61,8 +61,7 @@ async fn test_performance_sp1_zkvm() {
 async fn setup() -> (ProgramInput, Block) {
     let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test_data"));
 
-    // Another use is genesis-execution-api.json in conjunction with chain.rlp(20 blocks not too loaded).
-    let genesis_file_path = path.join("genesis-l2-old.json");
+    let genesis_file_path = path.join("genesis-l2.json");
     // l2-loadtest.rlp has blocks with many txs.
     let chain_file_path = path.join("l2-loadtest.rlp");
 
@@ -75,17 +74,27 @@ async fn setup() -> (ProgramInput, Block) {
     let blocks = ethrex_l2::utils::test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
     info!("Number of blocks to insert: {}", blocks.len());
 
+    let blockchain = Blockchain::default_with_store(store.clone());
     for block in &blocks {
-        add_block(block, &store).unwrap();
+        info!(
+            "txs {} in block{}",
+            block.body.transactions.len(),
+            block.header.number
+        );
+        blockchain.add_block(block).unwrap();
     }
-    let block_to_prove = blocks.last().unwrap();
-
-    let db = ExecutionDB::from_exec(block_to_prove, &store).unwrap();
+    let block_to_prove = blocks.get(3).unwrap();
 
     let parent_block_header = store
         .get_block_header_by_hash(block_to_prove.header.parent_hash)
         .unwrap()
         .unwrap();
+
+    let store = StoreWrapper {
+        store: store.clone(),
+        block_hash: block_to_prove.header.parent_hash,
+    };
+    let db = store.to_exec_db(&block_to_prove).unwrap();
 
     let input = ProgramInput {
         block: block_to_prove.clone(),

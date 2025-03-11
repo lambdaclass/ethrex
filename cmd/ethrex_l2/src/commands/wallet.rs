@@ -2,10 +2,10 @@ use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
-use ethrex_core::types::{PrivilegedTxType, Transaction};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
 use ethrex_l2_sdk::merkle_tree::merkle_proof;
+use ethrex_l2_sdk::{get_withdrawal_hash, COMMON_BRIDGE_L2_ADDRESS, L2_WITHDRAW_SIGNATURE};
+use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
 use ethrex_rpc::types::block::BlockBodyWrapper;
 use eyre::OptionExt;
 use hex::FromHexError;
@@ -24,6 +24,8 @@ pub(crate) enum Command {
         l2: bool,
         #[arg(long = "l1", required = false)]
         l1: bool,
+        #[arg(long = "wei", required = false, default_value_t = false)]
+        wei: bool,
     },
     #[clap(about = "Deposit funds into some wallet.")]
     Deposit {
@@ -221,26 +223,14 @@ async fn get_withdraw_merkle_proof(
 
     let (index, tx_withdrawal_hash) = transactions
         .iter()
-        .filter(|tx| match &tx.tx {
-            Transaction::PrivilegedL2Transaction(tx) => tx.tx_type == PrivilegedTxType::Withdrawal,
-            _ => false,
-        })
         .find_position(|tx| tx.hash == tx_hash)
-        .map(|(i, tx)| match &tx.tx {
-            Transaction::PrivilegedL2Transaction(tx) => {
-                (i as u64, tx.get_withdrawal_hash().unwrap())
-            }
-            _ => unreachable!(),
-        })
+        .map(|(i, tx)| (i as u64, get_withdrawal_hash(&tx.tx).unwrap()))
         .ok_or_eyre("Transaction is not a Withdrawal")?;
 
     let path = merkle_proof(
         transactions
             .iter()
-            .filter_map(|tx| match &tx.tx {
-                Transaction::PrivilegedL2Transaction(tx) => tx.get_withdrawal_hash(),
-                _ => None,
-            })
+            .filter_map(|tx| get_withdrawal_hash(&tx.tx))
             .collect(),
         tx_withdrawal_hash,
     )
@@ -265,17 +255,24 @@ impl Command {
                 token_address,
                 l2,
                 l1,
+                wei,
             } => {
                 if token_address.is_some() {
                     todo!("Handle ERC20 balances")
                 }
                 if !l1 || l2 {
                     let account_balance = rollup_client.get_balance(from).await?;
-                    println!("[L2] Account balance: {account_balance}");
+                    println!(
+                        "[L2] Account balance: {}",
+                        balance_in_wei(wei, account_balance)
+                    );
                 }
                 if l1 {
                     let account_balance = eth_client.get_balance(from).await?;
-                    println!("[L1] Account balance: {account_balance}");
+                    println!(
+                        "[L1] Account balance: {}",
+                        balance_in_wei(wei, account_balance)
+                    );
                 }
             }
             Command::Deposit {
@@ -432,10 +429,12 @@ impl Command {
             } => {
                 let withdraw_transaction = rollup_client
                     .build_privileged_transaction(
-                        PrivilegedTxType::Withdrawal,
                         to.unwrap_or(cfg.wallet.address),
-                        to.unwrap_or(cfg.wallet.address),
-                        Bytes::new(),
+                        COMMON_BRIDGE_L2_ADDRESS,
+                        Bytes::from(encode_calldata(
+                            L2_WITHDRAW_SIGNATURE,
+                            &[Value::Address(from)],
+                        )?),
                         Overrides {
                             nonce,
                             from: Some(cfg.wallet.address),
@@ -604,4 +603,66 @@ pub async fn wait_for_transaction_receipt(client: &EthClient, tx_hash: H256) -> 
     }
     println!("Transaction confirmed");
     Ok(())
+}
+
+pub fn balance_in_wei(wei: bool, balance: U256) -> String {
+    if wei {
+        format!("{balance}")
+    } else {
+        let mut balance = format!("{balance}");
+        let len = balance.len();
+
+        balance = match len {
+            18 => {
+                let mut front = "0.".to_owned();
+                front.push_str(&balance);
+                front
+            }
+            0..=17 => {
+                let mut front = "0.".to_owned();
+                let zeros = "0".repeat(18 - len);
+                front.push_str(&zeros);
+                front.push_str(&balance);
+                front
+            }
+            19.. => {
+                balance.insert(len - 18, '.');
+                balance
+            }
+        };
+        balance
+    }
+}
+
+#[test]
+fn test_balance_in_ether() {
+    // test more than 1 ether
+    assert_eq!(
+        "999999999.999003869993631450",
+        balance_in_wei(
+            false,
+            U256::from_dec_str("999999999999003869993631450").unwrap()
+        )
+    );
+
+    // test 0.5
+    assert_eq!(
+        "0.509003869993631450",
+        balance_in_wei(
+            false,
+            U256::from_dec_str("000000000509003869993631450").unwrap()
+        )
+    );
+
+    // test 0.005
+    assert_eq!(
+        "0.005090038699936314",
+        balance_in_wei(
+            false,
+            U256::from_dec_str("000000000005090038699936314").unwrap()
+        )
+    );
+
+    // test 0.0
+    assert_eq!("0.000000000000000000", balance_in_wei(false, U256::zero()));
 }

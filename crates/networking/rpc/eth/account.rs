@@ -1,4 +1,3 @@
-use ethrex_blockchain::mempool;
 use serde_json::Value;
 use tracing::info;
 
@@ -6,7 +5,7 @@ use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::RpcApiContext;
 use crate::{utils::RpcErr, RpcHandler};
-use ethrex_core::{Address, BigEndianHash, H256, U256};
+use ethrex_common::{Address, BigEndianHash, H256, U256};
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -162,7 +161,7 @@ impl RpcHandler for GetTransactionCountRequest {
 
         // If the tag is Pending, we need to get the nonce from the mempool
         let pending_nonce = if self.block == BlockTag::Pending {
-            mempool::get_nonce(&self.address, &context.storage)?
+            context.blockchain.mempool.get_nonce(&self.address)?
         } else {
             None
         };

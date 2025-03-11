@@ -1,13 +1,15 @@
+use std::sync::Arc;
+
 use crate::{
-    discv4::{time_now_unix, FindNodeRequest},
-    peer_channels::PeerChannels,
-    rlpx::p2p::Capability,
-    types::Node,
+    discv4::messages::FindNodeRequest,
+    rlpx::{message::Message as RLPxMessage, p2p::Capability},
+    types::{Node, NodeRecord},
 };
-use ethrex_core::{H256, H512, U256};
+use ethrex_common::{H256, H512, U256};
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::info;
+use tokio::sync::{mpsc, Mutex};
+use tracing::debug;
 
 pub const MAX_NODES_PER_BUCKET: usize = 16;
 const NUMBER_OF_BUCKETS: usize = 256;
@@ -64,7 +66,19 @@ impl KademliaTable {
         let node_id = node.node_id;
         let bucket_idx = bucket_number(node_id, self.local_node_id);
 
-        self.insert_node_inner(node, bucket_idx)
+        self.insert_node_inner(node, bucket_idx, false)
+    }
+
+    /// Inserts a node into the table, even if the bucket is full.
+    /// # Returns
+    /// A tuple containing:
+    ///     1. PeerData: none if the peer was already in the table or as a potential replacement
+    ///     2. A bool indicating if the node was inserted to the table
+    pub fn insert_node_forced(&mut self, node: Node) -> (Option<PeerData>, bool) {
+        let node_id = node.node_id;
+        let bucket_idx = bucket_number(node_id, self.local_node_id);
+
+        self.insert_node_inner(node, bucket_idx, true)
     }
 
     #[cfg(test)]
@@ -73,10 +87,15 @@ impl KademliaTable {
         node: Node,
         bucket_idx: usize,
     ) -> (Option<PeerData>, bool) {
-        self.insert_node_inner(node, bucket_idx)
+        self.insert_node_inner(node, bucket_idx, false)
     }
 
-    fn insert_node_inner(&mut self, node: Node, bucket_idx: usize) -> (Option<PeerData>, bool) {
+    fn insert_node_inner(
+        &mut self,
+        node: Node,
+        bucket_idx: usize,
+        force_push: bool,
+    ) -> (Option<PeerData>, bool) {
         let node_id = node.node_id;
 
         let peer_already_in_table = self.buckets[bucket_idx]
@@ -94,11 +113,17 @@ impl KademliaTable {
             return (None, false);
         }
 
-        let peer = PeerData::new(node, time_now_unix(), 0, false);
+        let peer = PeerData::new(node, NodeRecord::default(), false);
 
-        if self.buckets[bucket_idx].peers.len() == MAX_NODES_PER_BUCKET {
-            self.insert_as_replacement(&peer, bucket_idx);
-            (Some(peer), false)
+        if self.buckets[bucket_idx].peers.len() >= MAX_NODES_PER_BUCKET {
+            if force_push {
+                self.remove_from_replacements(node_id, bucket_idx);
+                self.buckets[bucket_idx].peers.push(peer.clone());
+                (Some(peer), true)
+            } else {
+                self.insert_as_replacement(&peer, bucket_idx);
+                (Some(peer), false)
+            }
         } else {
             self.remove_from_replacements(node_id, bucket_idx);
             self.buckets[bucket_idx].peers.push(peer.clone());
@@ -148,7 +173,7 @@ impl KademliaTable {
         nodes.iter().map(|a| a.0).collect()
     }
 
-    pub fn pong_answered(&mut self, node_id: H512) {
+    pub fn pong_answered(&mut self, node_id: H512, pong_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -156,12 +181,12 @@ impl KademliaTable {
 
         let peer = peer.unwrap();
         peer.is_proven = true;
-        peer.last_pong = time_now_unix();
+        peer.last_pong = pong_at;
         peer.last_ping_hash = None;
         peer.revalidation = peer.revalidation.and(Some(true));
     }
 
-    pub fn update_peer_ping(&mut self, node_id: H512, ping_hash: Option<H256>) {
+    pub fn update_peer_ping(&mut self, node_id: H512, ping_hash: Option<H256>, ping_at: u64) {
         let peer = self.get_by_node_id_mut(node_id);
         if peer.is_none() {
             return;
@@ -169,17 +194,7 @@ impl KademliaTable {
 
         let peer = peer.unwrap();
         peer.last_ping_hash = ping_hash;
-        peer.last_ping = time_now_unix();
-    }
-
-    pub fn update_peer_ping_with_revalidation(&mut self, node_id: H512, ping_hash: Option<H256>) {
-        let Some(peer) = self.get_by_node_id_mut(node_id) else {
-            return;
-        };
-
-        peer.last_ping_hash = ping_hash;
-        peer.last_ping = time_now_unix();
-        peer.revalidation = Some(false);
+        peer.last_ping = ping_at;
     }
 
     /// ## Returns
@@ -217,7 +232,7 @@ impl KademliaTable {
     }
 
     /// Returns an iterator for all peers in the table
-    fn iter_peers(&self) -> impl Iterator<Item = &PeerData> {
+    pub fn iter_peers(&self) -> impl Iterator<Item = &PeerData> {
         self.buckets.iter().flat_map(|bucket| bucket.peers.iter())
     }
 
@@ -225,7 +240,7 @@ impl KademliaTable {
     fn filter_peers<'a>(
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
-    ) -> impl Iterator<Item = &PeerData> + 'a {
+    ) -> impl Iterator<Item = &'a PeerData> {
         self.iter_peers().filter(|peer| filter(peer))
     }
 
@@ -234,10 +249,11 @@ impl KademliaTable {
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
     ) -> Option<&'a PeerData> {
+        let filtered_peers: Vec<&PeerData> = self.filter_peers(filter).collect();
         let peer_idx = rand::random::<usize>()
-            .checked_rem(self.filter_peers(filter).count())
+            .checked_rem(filtered_peers.len())
             .unwrap_or_default();
-        self.filter_peers(filter).nth(peer_idx)
+        filtered_peers.get(peer_idx).cloned()
     }
 
     /// Replaces the peer with the given id with the latest replacement stored.
@@ -292,50 +308,28 @@ impl KademliaTable {
         channels: PeerChannels,
         capabilities: Vec<Capability>,
     ) {
-        let bucket_idx = bucket_number(self.local_node_id, node_id);
-        if let Some(peer) = self.buckets.get_mut(bucket_idx).and_then(|bucket| {
-            bucket
-                .peers
-                .iter_mut()
-                .find(|peer| peer.node.node_id == node_id)
-        }) {
+        let peer = self.get_by_node_id_mut(node_id);
+        if let Some(peer) = peer {
             peer.channels = Some(channels);
             peer.supported_capabilities = capabilities;
+            peer.is_connected = true;
+        } else {
+            debug!(
+                "[PEERS] Peer with node_id {:?} not found in the kademlia table when trying to init backend communication",
+                node_id
+            );
         }
     }
 
     /// Returns the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currenlty busy
-    /// If no peer is found, this method will try again after 10 seconds
-    pub async fn get_peer_channels(&self, capability: Capability) -> PeerChannels {
+    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
+    pub fn get_peer_channels(&self, capability: Capability) -> Option<PeerChannels> {
         let filter = |peer: &PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
             peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
         };
-        loop {
-            if let Some(channels) = self
-                .get_random_peer_with_filter(&filter)
-                .and_then(|peer| peer.channels.clone())
-            {
-                return channels;
-            }
-            info!("[Sync] No peers available, retrying in 10 sec");
-            // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-        }
-    }
-
-    /// Outputs total amount of peers, active peers, and active peers supporting the Snap Capability to the command line
-    pub fn show_peer_stats(&self) {
-        let active_filter = |peer: &PeerData| -> bool { peer.channels.as_ref().is_some() };
-        let snap_active_filter = |peer: &PeerData| -> bool {
-            peer.channels.as_ref().is_some()
-                && peer.supported_capabilities.contains(&Capability::Snap)
-        };
-        let total_peers = self.iter_peers().count();
-        let active_peers = self.filter_peers(&active_filter).count();
-        let snap_active_peers = self.filter_peers(&snap_active_filter).count();
-        info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}")
+        self.get_random_peer_with_filter(&filter)
+            .and_then(|peer| peer.channels.clone())
     }
 }
 
@@ -353,11 +347,13 @@ pub fn bucket_number(node_id_1: H512, node_id_2: H512) -> usize {
 #[derive(Debug, Clone)]
 pub struct PeerData {
     pub node: Node,
+    pub record: NodeRecord,
     pub last_ping: u64,
     pub last_pong: u64,
     pub last_ping_hash: Option<H256>,
     pub is_proven: bool,
     pub find_node_request: Option<FindNodeRequest>,
+    pub enr_request_hash: Option<H256>,
     pub supported_capabilities: Vec<Capability>,
     /// a ration to track the peers's ping responses
     pub liveness: u16,
@@ -365,21 +361,27 @@ pub struct PeerData {
     pub revalidation: Option<bool>,
     /// communication channels between the peer data and its active connection
     pub channels: Option<PeerChannels>,
+    /// Starts as false when a node is added. Set to true when a connection si active. When a
+    /// connection fails, the peer record is removed, so no need to set it to false.
+    pub is_connected: bool,
 }
 
 impl PeerData {
-    pub fn new(record: Node, last_ping: u64, last_pong: u64, is_proven: bool) -> Self {
+    pub fn new(node: Node, record: NodeRecord, is_proven: bool) -> Self {
         Self {
-            node: record,
-            last_ping,
-            last_pong,
+            node,
+            record,
+            last_ping: 0,
+            last_pong: 0,
             is_proven,
             liveness: 1,
             last_ping_hash: None,
             find_node_request: None,
+            enr_request_hash: None,
             revalidation: None,
             channels: None,
             supported_capabilities: vec![],
+            is_connected: false,
         }
     }
 
@@ -401,10 +403,39 @@ impl PeerData {
     }
 }
 
+pub const MAX_MESSAGES_IN_PEER_CHANNEL: usize = 25;
+
+#[derive(Debug, Clone)]
+/// Holds the respective sender and receiver ends of the communication channels bewteen the peer data and its active connection
+pub struct PeerChannels {
+    pub(crate) sender: mpsc::Sender<RLPxMessage>,
+    pub(crate) receiver: Arc<Mutex<mpsc::Receiver<RLPxMessage>>>,
+}
+
+impl PeerChannels {
+    /// Sets up the communication channels for the peer
+    /// Returns the channel endpoints to send to the active connection's listen loop
+    pub(crate) fn create() -> (Self, mpsc::Sender<RLPxMessage>, mpsc::Receiver<RLPxMessage>) {
+        let (sender, connection_receiver) =
+            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
+        let (connection_sender, receiver) =
+            mpsc::channel::<RLPxMessage>(MAX_MESSAGES_IN_PEER_CHANNEL);
+        (
+            Self {
+                sender,
+                receiver: Arc::new(Mutex::new(receiver)),
+            },
+            connection_sender,
+            connection_receiver,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::network::node_id_from_signing_key;
+
     use super::*;
-    use crate::node_id_from_signing_key;
     use hex_literal::hex;
     use k256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
     use std::{

@@ -11,12 +11,12 @@ use super::message::Message;
 pub(crate) enum RLPxError {
     #[error("{0}")]
     HandshakeError(String),
-    #[error("{0}")]
-    ConnectionError(String),
-    #[error("Invalid connection state")]
-    InvalidState(),
-    #[error("Disconnect received")]
-    Disconnect(),
+    #[error("No matching capabilities")]
+    NoMatchingCapabilities(),
+    #[error("Peer disconnected")]
+    Disconnected(),
+    #[error("Disconnect requested: {0}")]
+    DisconnectRequested(String),
     #[error("Not Found: {0}")]
     NotFound(String),
     #[error("Invalid peer id")]
@@ -45,6 +45,8 @@ pub(crate) enum RLPxError {
     SendMessage(String),
     #[error("Error when inserting transaction in the mempool: {0}")]
     MempoolError(#[from] MempoolError),
+    #[error("Io Error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly

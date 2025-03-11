@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ethrex-l2.workspace = true
+ethrex-sdk.workspace = true
+ethrex-common.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-prover.workspace = true
+ethrex-rlp.workspace = true
+ethrex-rpc.workspace = true
+
 serde_json.workspace = true
 serde.workspace = true
 bytes.workspace = true
@@ -25,14 +33,6 @@ itertools = "0.13.0"
 strum = "0.26.3"
 secp256k1.workspace = true
 keccak-hash.workspace = true
-
-ethrex-l2.workspace = true
-ethrex-sdk.workspace = true
-ethrex-core.workspace = true
-ethrex-blockchain.workspace = true
-ethrex-prover.workspace = true
-ethrex-rlp.workspace = true
-ethrex-rpc.workspace = true
 
 [[bin]]
 name = "ethrex_l2"

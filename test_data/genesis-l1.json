@@ -16,9 +16,15 @@
     "terminalTotalDifficultyPassed": true,
     "shanghaiTime": 0,
     "cancunTime": 0,
-    "pragueTime": 1718232101
+    "pragueTime": 1718232101,
+    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa"
   },
   "alloc": {
+    "0x0F792be4B0c0cb4DAE440Ef133E90C0eCD48CCCC": {
+      "code": "0x3373fffffffffffffffffffffffffffffffffffffffe14604657602036036042575f35600143038111604257611fff81430311604257611fff9006545f5260205ff35b5f5ffd5b5f35611fff60014303065500",
+      "balance": "0",
+      "nonce": "0x1"
+    },
     "0x4e59b44847b379578588920cA78FbF26c0B4956C": {
       "balance": "0",
       "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"

@@ -15,5 +15,5 @@ services:
     ports:
       - 127.0.0.1:8545:8545
     volumes:
-      - ../../../test_data/genesis-l1.json:/genesis-l1.json
-    command: --network /genesis-l1.json --http.addr 0.0.0.0 --http.port 8545 --metrics.port 3701
+      - ../../../test_data/genesis-l1-dev.json:/genesis-l1-dev.json
+    command: --network /genesis-l1-dev.json --http.addr 0.0.0.0 --http.port 8545 --metrics.port 3701 --dev
