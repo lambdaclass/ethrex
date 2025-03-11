@@ -82,7 +82,6 @@ impl REVM {
                 cumulative_gas_used,
                 result.logs(),
             );
-
             receipts.push(receipt);
         }
 
