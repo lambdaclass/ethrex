@@ -594,10 +594,10 @@ fn handle_new_payload_v3(
 ) -> Result<PayloadStatus, RpcErr> {
     // Ignore incoming
     // Check sync status
-    match context.sync_status()? {
-        SyncStatus::Active | SyncStatus::Pending => return Ok(PayloadStatus::syncing()),
-        SyncStatus::Inactive => {}
-    }
+    // match context.sync_status()? {
+    //     SyncStatus::Active | SyncStatus::Pending => return Ok(PayloadStatus::syncing()),
+    //     SyncStatus::Inactive => {}
+    // }
 
     // Validate block hash
     if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
