@@ -1,6 +1,7 @@
-use ethrex_common::{constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS, types::ChainConfig};
+use ethrex_common::{types::ChainConfig, H160};
 use lazy_static::lazy_static;
 use serde::Deserialize;
+use std::str::FromStr;
 
 // Chain config for different forks as defined on https://ethereum.github.io/execution-spec-tests/v3.0.0/consuming_tests/common_types/#fork
 lazy_static! {
@@ -43,7 +44,8 @@ lazy_static! {
     };
     pub static ref CANCUN_TO_PRAGUE_AT_15K_CONFIG: ChainConfig = ChainConfig {
         prague_time: Some(0x3a98),
-        deposit_contract_address: *MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+        deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
+            .unwrap(),
         ..*CANCUN_CONFIG
     };
     pub static ref PRAGUE_CONFIG: ChainConfig = ChainConfig {
