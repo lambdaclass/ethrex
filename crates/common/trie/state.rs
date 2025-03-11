@@ -57,30 +57,7 @@ impl TrieState {
     // Writes a node and its children into the DB
     fn commit_node(&mut self, node_hash: &NodeHash) -> Result<(), TrieError> {
         let mut to_commit = vec![];
-        let mut stack = vec![node_hash.clone()]; // Stack to process nodes iteratively
-
-        while let Some(current_hash) = stack.pop() {
-            let Some(node) = self.cache.remove(&current_hash) else {
-                // If the node is not in the cache, it is already stored in the DB
-                continue;
-            };
-
-            // Push children to the stack for later processing
-            match node {
-                Node::Branch(ref n) => {
-                    for child in n.choices.iter() {
-                        if child.is_valid() {
-                            stack.push(child.clone());
-                        }
-                    }
-                }
-                Node::Extension(ref n) => stack.push(n.child.clone()),
-                Node::Leaf(_) => {}
-            }
-
-            // Collect the node for batch insertion
-            to_commit.push((current_hash.into(), node.encode_to_vec()));
-        }
+        self.commit_node_tail_recursive(node_hash, &mut to_commit)?;
 
         self.db.put_batch(to_commit)?;
 
