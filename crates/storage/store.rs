@@ -327,6 +327,10 @@ impl Store {
                     Some(encoded_state) => AccountState::decode(&encoded_state)?,
                     None => AccountState::default(),
                 };
+                // println!(
+                //     "BEFORE addr: {:?} account_state: {:?} ",
+                //     update.address, account_state,
+                // );
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
                     account_state.balance = info.balance;
@@ -336,6 +340,10 @@ impl Store {
                         self.add_account_code(info.code_hash, code.clone())?;
                     }
                 }
+                // println!(
+                //     "AFTER addr: {:?} account_state: {:?} ",
+                //     update.address, account_state,
+                // );
                 // Store the added storage in the account's storage trie and compute its new root
                 if !update.added_storage.is_empty() {
                     let mut storage_trie = self.engine.open_storage_trie(

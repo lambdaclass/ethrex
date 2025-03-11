@@ -65,7 +65,9 @@ impl LEVM {
         let mut cumulative_gas_used = 0;
 
         for tx in block.body.transactions.iter() {
-            // println!("{:?}", tx);
+            // println!("TRANSACTION BLOCK {:?}", tx);
+            // println!("CALLDATA LEN {:?}", tx.data().len());
+            // println!("CALLDATA {:?}", tx.data());
             let report = Self::execute_tx(
                 tx,
                 block_header,
@@ -124,8 +126,29 @@ impl LEVM {
             }
         }
 
+        // println!("LEVM CACHE: {:?}", &block_cache);
+
         let requests =
             extract_all_requests_levm(&receipts, &store, &block.header, &mut block_cache)?;
+
+        // println!("BLOCK HEADER WITHDRAWALS: {:?}", &block.header);
+
+        // println!("LEVM CACHE AFTER REQUESTS: {:?}", &block_cache);
+
+        // let state_transitions = Self::get_state_transitions(None, &store_wrapper, &block_cache)?;
+        // for state_transition in state_transitions {
+        //     if account_updates
+        //         .iter()
+        //         .filter(|a| a.address == state_transition.address)
+        //         .count()
+        //         == 0
+        //     {
+        //         println!("New state transition: {:?}", state_transition.address);
+        //         account_updates.push(state_transition);
+        //     } else {
+        //         println!("Repeated state transition: {:?}", state_transition.address);
+        //     }
+        // }
 
         account_updates.extend(Self::get_state_transitions(
             None,
@@ -133,7 +156,11 @@ impl LEVM {
             &block_cache,
         )?);
 
-        println!("LEVM Account updates: {:?}", account_updates);
+        // panic!();
+
+        // println!("LEVM CACHE: {:?}", &block_cache);
+
+        // println!("LEVM Account updates: {:?}", account_updates);
 
         Ok(BlockExecutionResult {
             receipts,
@@ -184,6 +211,14 @@ impl LEVM {
             difficulty: block_header.difficulty,
         };
 
+        // let addr =
+        //     Address::from_slice(&hex::decode("00000961ef480eb55e80d19ad83579a64c007002").unwrap());
+        // if let TxKind::Call(to) = tx.to() {
+        //     if addr == to {
+        //         println!("Cache before tx {:?}", &block_cache);
+        //     }
+        // };
+
         let mut vm = VM::new(
             tx.to(),
             env,
@@ -195,7 +230,14 @@ impl LEVM {
             tx.authorization_list(),
         )?;
 
-        vm.execute().map_err(VMError::into)
+        let res = vm.execute().map_err(VMError::into);
+        // println!("VM RES {:?}", res);
+        // if let TxKind::Call(to) = tx.to() {
+        //     if addr == to {
+        //         println!("Cache before tx {:?}", &block_cache);
+        //     }
+        // }
+        res
     }
 
     pub fn get_state_transitions(
@@ -208,12 +250,15 @@ impl LEVM {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         let store = store_wrapper.store.clone();
         let block_hash = store_wrapper.block_hash;
+        // println!("LEVM NEW STATE: {:?}", new_state);
         for (new_state_account_address, new_state_account) in new_state {
+            // println!("new_state_account_address: {:?}", new_state_account_address);
             let initial_account_state = store
                 .get_account_info_by_hash(block_hash, *new_state_account_address)
                 .expect("Error getting account info by address")
                 .unwrap_or_default();
             let mut updates = 0;
+            // println!("initial_account_state: {:?}", initial_account_state);
             if initial_account_state.balance != new_state_account.info.balance {
                 updates += 1;
             }
@@ -231,8 +276,20 @@ impl LEVM {
                     .get_account_code(potential_new_bytecode_hash)
                     .expect("Error getting account code by hash");
                 let code = new_state_account.info.bytecode.clone();
+                // println!("code: {:?}", code);
+                // println!(
+                //     "potential_new_bytecode_hash: {:?}",
+                //     potential_new_bytecode_hash
+                // );
                 // The code is present in the current database
+                // let addr = Address::from_slice(
+                //     &hex::decode("00000961ef480eb55e80d19ad83579a64c007002").unwrap(),
+                // );
+                // if addr == *new_state_account_address {
+                //     println!("current_bytecode: {:x?}", current_bytecode);
+                // }
                 if let Some(current_bytecode) = current_bytecode {
+                    // println!("current_bytecode: {:x?}", current_bytecode);
                     if current_bytecode != code {
                         // The code has changed
                         Some(code)
@@ -254,6 +311,10 @@ impl LEVM {
                 added_storage.insert(*key, value.current_value);
                 updates += 1;
             }
+
+            // if !added_storage.is_empty() {
+            //     println!("added_storage {:?}", &added_storage);
+            // }
 
             if updates == 0 && !new_state_account.is_empty() {
                 continue;
@@ -453,13 +514,15 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
+    dbg!("NEW STATE BEFORE VM {:?}", &new_state);
+
     let mut vm = VM::new(
         TxKind::Call(contract_address),
         env,
         U256::zero(),
         calldata.into(),
         store_wrapper,
-        CacheDB::new(),
+        new_state.clone(),
         vec![],
         None,
     )
@@ -469,9 +532,14 @@ pub fn generic_system_contract_levm(
 
     report.new_state.remove(&system_address);
 
+    let addr =
+        Address::from_slice(&hex::decode("00000961ef480eb55e80d19ad83579a64c007002").unwrap());
+    // println!("OLD CACHE FOR ADDR {:?}", new_state.get(&addr));
+    // println!("NEW CACHE FOR ADDR {:?}", report.new_state.get(&addr));
+
     match report.result {
         TxResult::Success => {
-            new_state.extend(report.new_state.clone());
+            // new_state.extend(report.new_state.clone());
         }
         _ => {
             return Err(EvmError::Custom(
@@ -481,6 +549,18 @@ pub fn generic_system_contract_levm(
     }
 
     // new_state is a CacheDB coming from outside the function
+    for (address, account) in report.new_state.iter_mut() {
+        if let Some(existing_account) = new_state.get(address) {
+            let mut existing_storage = existing_account.storage.clone();
+            existing_storage.extend(account.storage.clone());
+            // println!("ADDRESS {:?}", address);
+            // println!("EXISTING STORAGE {:?}", existing_storage);
+            // println!("STORAGE REPORT {:?}", account.storage);
+            account.storage = existing_storage;
+            account.info.balance = existing_account.info.balance;
+            // println!("NEW STORAGE {:?}", account.storage);
+        }
+    }
     new_state.extend(report.new_state.clone());
 
     Ok(report)
@@ -494,6 +574,7 @@ pub fn extract_all_requests_levm(
     header: &BlockHeader,
     cache: &mut CacheDB,
 ) -> Result<Vec<Requests>, EvmError> {
+    // let cache = &mut cache.clone();
     let config = store.get_chain_config()?;
     let fork = config.fork(header.timestamp);
 
@@ -519,6 +600,10 @@ pub fn extract_all_requests_levm(
         None => Default::default(),
     };
 
+    // println!("WITHDRAWALS DATA: {:?}", &withdrawals_data);
+
+    // println!("LEVM CACHE AFTER WITHDRAWALS: {:?}", &cache);
+
     let consolidation_data: Vec<u8> =
         match LEVM::dequeue_consolidation_requests(header, store, cache) {
             Some(report) => {
@@ -528,8 +613,11 @@ pub fn extract_all_requests_levm(
             None => Default::default(),
         };
 
+    // println!("LEVM CACHE AFTER CONSOLIDATION: {:?}", &cache);
+
     let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
+    // println!("WITHDRAWALS: {:?}", &withdrawals);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
     Ok(vec![deposits, withdrawals, consolidation])

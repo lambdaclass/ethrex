@@ -59,6 +59,7 @@ impl RLPDecode for EncodedRequests {
     }
 }
 
+#[derive(Debug)]
 pub enum Requests {
     Deposit(Vec<Deposit>),
     Withdrawal(Vec<u8>),

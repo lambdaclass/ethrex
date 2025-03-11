@@ -399,6 +399,7 @@ impl VM {
     }
 
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        // println!("Executing transaction");
         let mut initial_call_frame = self
             .call_frames
             .pop()
