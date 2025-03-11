@@ -45,7 +45,7 @@ pub type NodeRLP = Vec<u8>;
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     /// Hash of the current node
-    pub root: Option<NodeHash>,
+    root: Option<NodeHash>,
     /// Contains the trie's nodes
     pub(crate) state: TrieState,
 }
