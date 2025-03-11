@@ -558,27 +558,33 @@ fn handle_new_payload_v3(
     expected_blob_versioned_hashes: Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
     // Ignore incoming
-    match context.sync_status()? {
-        SyncStatus::Active | SyncStatus::Pending => Ok(PayloadStatus::syncing()),
-        SyncStatus::Inactive => {
-            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
-                return Ok(PayloadStatus::invalid_with_err(&error_msg));
-            }
-            let blob_versioned_hashes: Vec<H256> = block
-                .body
-                .transactions
-                .iter()
-                .flat_map(|tx| tx.blob_versioned_hashes())
-                .collect();
-
-            if expected_blob_versioned_hashes != blob_versioned_hashes {
-                return Ok(PayloadStatus::invalid_with_err(
-                    "Invalid blob_versioned_hashes",
-                ));
-            }
-            execute_payload(&block, &context)
-        }
+    // match dbg!(context.sync_status()?) {
+    // SyncStatus::Active | SyncStatus::Pending => {
+    //     dbg!("Sync status");
+    //     Ok(PayloadStatus::syncing())
+    // }
+    // SyncStatus::Inactive => {
+    // _ => {
+    if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
+        dbg!("HAY UN ERROR EN LA VALIDACION DEL SERVER");
+        return Ok(PayloadStatus::invalid_with_err(&error_msg));
     }
+    let blob_versioned_hashes: Vec<H256> = block
+        .body
+        .transactions
+        .iter()
+        .flat_map(|tx| tx.blob_versioned_hashes())
+        .collect();
+
+    if expected_blob_versioned_hashes != blob_versioned_hashes {
+        return Ok(PayloadStatus::invalid_with_err(
+            "Invalid blob_versioned_hashes",
+        ));
+    }
+    dbg!("esta todo bien loco, no pasa nada");
+    dbg!(execute_payload(&block, &context))
+    // }
+    // }
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
