@@ -34,7 +34,7 @@ pub const MAX_TRIES_IN_STORE: usize = 128;
 
 #[derive(Debug)]
 pub struct Blockchain {
-    evm_engine: EvmEngine,
+    pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
 }

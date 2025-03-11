@@ -182,8 +182,11 @@ impl SyncManager {
             Err(e) => return Err(e.into()),
         };
 
+        // TODO(#2126): To avoid modifying the current_head while backtracking we use a separate search_head
+        let mut search_head = current_head;
+
         loop {
-            debug!("Requesting Block Headers from {current_head}");
+            debug!("Requesting Block Headers from {search_head}");
             let block_header_limit = match self.sync_mode {
                 SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
                 // In Full sync mode, request the same number of block bodies as headers,
@@ -193,11 +196,7 @@ impl SyncManager {
 
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(
-                    current_head,
-                    BlockRequestOrder::OldToNew,
-                    block_header_limit,
-                )
+                .request_block_headers(search_head, BlockRequestOrder::OldToNew, block_header_limit)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -212,6 +211,18 @@ impl SyncManager {
                 Some(header) => header.clone(),
                 None => continue,
             };
+            // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
+            // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
+            if first_block_header == last_block_header
+                && first_block_header.compute_block_hash() == search_head
+                && search_head != sync_head
+            {
+                // There is no path to the sync head this goes back until it find a common ancerstor
+                warn!("Sync failed to find target block header, going back to the previous parent");
+                search_head = first_block_header.parent_hash;
+                continue;
+            }
+
             let mut block_hashes = block_headers
                 .iter()
                 .map(|header| header.compute_block_hash())
@@ -247,6 +258,7 @@ impl SyncManager {
                     "Syncing head not found, updated current_head {:?}",
                     last_block_hash
                 );
+                search_head = last_block_hash;
                 current_head = last_block_hash;
                 if self.sync_mode == SyncMode::Snap {
                     store.set_header_download_checkpoint(current_head)?;
@@ -272,8 +284,13 @@ impl SyncManager {
             all_block_hashes.extend_from_slice(&block_hashes[..]);
 
             if self.sync_mode == SyncMode::Full {
-                self.download_and_run_blocks(&block_hashes, &block_headers, store.clone())
-                    .await?;
+                self.download_and_run_blocks(
+                    &block_hashes,
+                    &block_headers,
+                    sync_head,
+                    store.clone(),
+                )
+                .await?;
             }
 
             // in full sync mode, headers are added if after added after the execution and validation
@@ -343,6 +360,7 @@ impl SyncManager {
         &mut self,
         block_hashes: &[BlockHash],
         block_headers: &[BlockHeader],
+        sync_head: BlockHash,
         store: Store,
     ) -> Result<(), SyncError> {
         let mut current_chunk_idx = 0;

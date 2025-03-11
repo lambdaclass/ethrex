@@ -18,8 +18,8 @@ use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
 use ethrex_vm::{
+    backends::revm::execution_db::{ExecutionDB, ToExecDB},
     db::StoreWrapper,
-    execution_db::{ExecutionDB, ToExecDB},
     EvmError,
 };
 use secp256k1::SecretKey;
