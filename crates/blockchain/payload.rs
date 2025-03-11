@@ -24,7 +24,7 @@ use ethrex_vm::{
 };
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 
 use sha3::{Digest, Keccak256};
 
@@ -171,6 +171,7 @@ pub struct PayloadBuildContext<'a> {
     pub blobs_bundle: BlobsBundle,
     pub store: Store,
     pub vm: Evm,
+    pub account_updates: Vec<AccountUpdate>,
 }
 
 impl<'a> PayloadBuildContext<'a> {
@@ -200,6 +201,7 @@ impl<'a> PayloadBuildContext<'a> {
             blobs_bundle: BlobsBundle::default(),
             store: storage.clone(),
             vm,
+            account_updates: Vec::new(),
         })
     }
 }
@@ -222,12 +224,38 @@ impl<'a> PayloadBuildContext<'a> {
     }
 }
 
+pub struct PayloadBuildResult {
+    pub blobs_bundle: BlobsBundle,
+    pub block_value: U256,
+    pub receipts: Vec<Receipt>,
+    pub requests: Vec<EncodedRequests>,
+    pub account_updates: Vec<AccountUpdate>,
+}
+
+impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
+    fn from(value: PayloadBuildContext) -> Self {
+        let PayloadBuildContext {
+            blobs_bundle,
+            block_value,
+            requests,
+            receipts,
+            account_updates,
+            ..
+        } = value;
+
+        Self {
+            blobs_bundle,
+            block_value,
+            requests,
+            receipts,
+            account_updates,
+        }
+    }
+}
+
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub fn build_payload(
-        &self,
-        payload: &mut Block,
-    ) -> Result<(BlobsBundle, Vec<EncodedRequests>, U256), ChainError> {
+    pub fn build_payload(&self, payload: &mut Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -253,7 +281,7 @@ impl Blockchain {
             }
         }
 
-        Ok((context.blobs_bundle, context.requests, context.block_value))
+        Ok(context.into())
     }
 
     fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -508,6 +536,7 @@ impl Blockchain {
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
         context.payload.header.requests_hash = context.requests_hash;
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        context.account_updates = account_updates;
         Ok(())
     }
 }

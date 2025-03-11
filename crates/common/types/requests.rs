@@ -59,6 +59,7 @@ impl RLPDecode for EncodedRequests {
     }
 }
 
+#[derive(Clone)]
 pub enum Requests {
     Deposit(Vec<Deposit>),
     Withdrawal(Vec<u8>),
@@ -110,7 +111,7 @@ impl Requests {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Deposit {
     pub pub_key: Bytes48,
     pub withdrawal_credentials: Bytes32,

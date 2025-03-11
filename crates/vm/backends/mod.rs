@@ -341,6 +341,7 @@ impl Evm {
     }
 }
 
+#[derive(Clone)]
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
