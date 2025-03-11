@@ -5,6 +5,9 @@ pub mod mempool;
 pub mod payload;
 mod smoke_test;
 
+use std::ops::Div;
+use std::time::Instant;
+
 use constants::MAX_INITCODE_SIZE;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
@@ -119,8 +122,8 @@ impl Blockchain {
         // Processes requests from receipts, computes the requests_hash and compares it against the header
         validate_requests_hash(&block.header, &chain_config, &requests)?;
 
-        store_block(&self.storage, block.clone())?;
-        store_receipts(&self.storage, receipts, block_hash)?;
+        self.storage.add_block(block.clone())?;
+        self.storage.add_receipts(block_hash, receipts)?;
 
         Ok(())
     }
