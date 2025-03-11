@@ -56,8 +56,9 @@ impl BeaconClient {
             .map_err(BeaconClientError::from)?;
 
         match response {
-            BeaconResponse::Success(res) => serde_json::from_value::<T>(res.data)
-                .map_err(|err| BeaconClientError::DeserializeError(err)),
+            BeaconResponse::Success(res) => {
+                serde_json::from_value::<T>(res.data).map_err(BeaconClientError::DeserializeError)
+            }
             BeaconResponse::Error(err) => Err(BeaconClientError::RpcError(err.code, err.message)),
         }
     }
