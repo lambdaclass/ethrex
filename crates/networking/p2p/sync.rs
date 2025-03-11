@@ -417,7 +417,39 @@ impl SyncManager {
         let last_block = blocks.last().unwrap().clone();
         let blocks_len = blocks.len();
 
-        let latest_block_number = store.get_latest_block_number()?;
+        if let Err((error, block)) = self.add_blocks(blocks, store.clone()) {
+            warn!("Failed to add block during FullSync: {error}");
+            if let Some(block) = block {
+                self.invalid_ancestors
+                    .insert(block.hash(), block.header.parent_hash);
+
+                // TODO(#2127): Just marking the failing ancestor and the sync head is enough
+                // to fix the Missing Ancestors hive test, we want to look at a more robust
+                // solution in the future if needed.
+                self.invalid_ancestors
+                    .insert(sync_head, block.header.parent_hash);
+            }
+
+            return Err(error.into());
+        }
+
+        store.update_latest_block_number(last_block.header.number)?;
+        debug!("Executed & stored {} blocks", blocks_len);
+
+        Ok(())
+    }
+
+    fn add_blocks(
+        &self,
+        mut blocks: Vec<Block>,
+        store: Store,
+    ) -> Result<(), (ChainError, Option<Block>)> {
+        let last_block = blocks.last().unwrap().clone();
+        let blocks_len = blocks.len();
+        let latest_block_number = store
+            .get_latest_block_number()
+            .map_err(|e| (e.into(), None))?;
+
         if last_block.header.number.saturating_sub(latest_block_number) <= MAX_TRIES_IN_STORE as u64
         {
             if blocks_len <= MAX_TRIES_IN_STORE {
@@ -435,9 +467,6 @@ impl SyncManager {
         } else {
             self.blockchain.add_blocks_in_batch(blocks, false)?;
         }
-
-        store.update_latest_block_number(last_block.header.number)?;
-        debug!("Executed & stored {} blocks", blocks_len);
 
         Ok(())
     }

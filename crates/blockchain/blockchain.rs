@@ -57,40 +57,52 @@ impl Blockchain {
     }
 
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
-        self.add_blocks_in_batch(vec![block], false)
+        match self.add_blocks_in_batch(vec![block], false) {
+            Ok(_) => Ok(()),
+            Err((err, _)) => Err(err),
+        }
     }
 
+    /// Adds multiple blocks in a batch.
+    /// If an error occurs, returns a tuple containing the error type and the failing block (if the error was caused by block processing).
     pub fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
         should_commit_intermediate_tries: bool,
-    ) -> Result<(), ChainError> {
+    ) -> Result<(), (ChainError, Option<Block>)> {
         let first_block_header = match blocks.first() {
             Some(block) => block.header.clone(),
-            None => return Err(ChainError::Custom("First block not found".into())),
+            None => return Err((ChainError::Custom("First block not found".into()), None)),
         };
         let last_block_header = match blocks.last() {
             Some(block) => block.header.clone(),
-            None => return Err(ChainError::Custom("Last block not found".into())),
+            None => return Err((ChainError::Custom("Last block not found".into()), None)),
         };
 
         if self.evm_engine == EvmEngine::LEVM {
             panic!("LEVM engine is not supported for add blocks in batch");
         }
 
-        let Some(mut state_trie) = self.storage.state_trie(first_block_header.parent_hash)? else {
-            return Err(ChainError::ParentNotFound);
+        let Some(mut state_trie) = self
+            .storage
+            .state_trie(first_block_header.parent_hash)
+            .map_err(|e| (e.into(), None))?
+        else {
+            return Err((ChainError::ParentNotFound, None));
         };
 
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
-        let chain_config: ChainConfig = self.storage.get_chain_config()?;
+        let chain_config: ChainConfig = self
+            .storage
+            .get_chain_config()
+            .map_err(|e| (e.into(), None))?;
         let mut vm = Evm::new(
             self.evm_engine,
             self.storage.clone(),
             first_block_header.parent_hash,
         );
 
-        for (i, block) in blocks.iter().enumerate() {
+        let mut add_block = |block: &Block, i: usize| -> Result<(), ChainError> {
             let is_first_block = i == 0;
             let is_last_block = i == blocks.len() - 1;
 
@@ -138,15 +150,29 @@ impl Blockchain {
             }
 
             all_receipts.push((block_hash, receipts));
+
+            Ok(())
+        };
+
+        for (i, block) in blocks.iter().enumerate() {
+            if let Err(err) = add_block(block, i) {
+                return Err((err, Some(block.clone())));
+            };
         }
 
         if !should_commit_intermediate_tries {
-            let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
-            validate_state_root(&last_block_header, root_hash)?;
+            let root_hash = state_trie
+                .hash()
+                .map_err(|e| (ChainError::StoreError(e.into()), None))?;
+            validate_state_root(&last_block_header, root_hash).map_err(|e| (e.into(), None))?;
         }
 
-        self.storage.add_batch_of_blocks(blocks)?;
-        self.storage.add_batch_of_receipts(all_receipts)?;
+        self.storage
+            .add_batch_of_blocks(blocks)
+            .map_err(|e| (e.into(), None))?;
+        self.storage
+            .add_batch_of_receipts(all_receipts)
+            .map_err(|e| (e.into(), None))?;
 
         Ok(())
     }
