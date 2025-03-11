@@ -247,7 +247,7 @@ impl VM {
                 let initial_call_frame = CallFrame::new(
                     env.origin,
                     address_to,
-                    code_address,
+                    address_to,
                     bytecode,
                     value,
                     calldata,
