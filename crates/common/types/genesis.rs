@@ -718,4 +718,20 @@ mod tests {
         };
         assert_eq!(&config, &expected_chain_config);
     }
+
+    #[test]
+    fn deserialize_chain_config_missing_deposit_contract_address() {
+        let json = r#"
+            {
+                "chainId": 123
+            }
+            "#;
+
+        let result: Result<ChainConfig, _> = serde_json::from_str(json);
+
+        assert!(result.is_err());
+
+        let error_message = result.unwrap_err().to_string();
+        assert!(error_message.contains("missing field `depositContractAddress`"),);
+    }
 }
