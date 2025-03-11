@@ -57,8 +57,8 @@ impl BeaconClient {
 
         match response {
             BeaconResponse::Success(res) => serde_json::from_value::<T>(res.data)
-                .map_err(|_| BeaconClientError::Custom("Unexpected format".to_string())),
-            BeaconResponse::Error(err) => Err(BeaconClientError::Custom(err.message)),
+                .map_err(|err| BeaconClientError::DeserializeError(err)),
+            BeaconResponse::Error(err) => Err(BeaconClientError::RpcError(err.code, err.message)),
         }
     }
 
