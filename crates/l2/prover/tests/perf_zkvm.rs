@@ -7,7 +7,7 @@ use tracing::info;
 
 use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{db::StoreWrapper, execution_db::ToExecDB};
+use ethrex_vm::{backends::revm::execution_db::ToExecDB, db::StoreWrapper};
 use zkvm_interface::io::ProgramInput;
 
 #[tokio::test]

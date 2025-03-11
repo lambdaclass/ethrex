@@ -1,16 +1,23 @@
-use super::constants::{
+pub mod db;
+pub mod execution_db;
+pub mod execution_result;
+pub mod helpers;
+#[cfg(feature = "l2")]
+mod mods;
+
+use super::BlockExecutionResult;
+use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use super::BlockExecutionResult;
 use crate::spec_id;
 use crate::EvmError;
-use crate::EvmState;
-use crate::ExecutionResult;
+use db::EvmState;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
+use execution_result::ExecutionResult;
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
 use revm::{
@@ -38,9 +45,6 @@ use std::cmp::min;
 
 #[derive(Debug)]
 pub struct REVM;
-
-#[cfg(feature = "l2")]
-use crate::mods;
 
 /// The struct implements the following functions:
 /// [REVM::execute_block]

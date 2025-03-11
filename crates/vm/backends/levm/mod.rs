@@ -1,8 +1,10 @@
-use super::constants::{
+pub(crate) mod db;
+
+use super::BlockExecutionResult;
+use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use super::BlockExecutionResult;
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use ethrex_common::types::requests::Requests;
@@ -254,8 +256,7 @@ impl LEVM {
         for (new_state_account_address, new_state_account) in new_state {
             // println!("new_state_account_address: {:?}", new_state_account_address);
             let initial_account_state = store
-                .get_account_info_by_hash(block_hash, *new_state_account_address)
-                .expect("Error getting account info by address")
+                .get_account_info_by_hash(block_hash, *new_state_account_address)?
                 .unwrap_or_default();
             let mut updates = 0;
             // println!("initial_account_state: {:?}", initial_account_state);

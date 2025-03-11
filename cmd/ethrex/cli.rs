@@ -100,23 +100,11 @@ pub fn cli() -> Command {
                 .help("If the datadir is the word `memory`, ethrex will use the InMemory Engine"),
         )
         .arg(
-            Arg::new("import")
-                .long("import")
-                .required(false)
-                .value_name("CHAIN_RLP_PATH"),
-        )
-        .arg(
             Arg::new("syncmode")
                 .long("syncmode")
                 .required(false)
                 .default_value("full")
                 .value_name("SYNC_MODE"),
-        )
-        .arg(
-            Arg::new("import_dir")
-                .long("import_dir")
-                .required(false)
-                .value_name("BLOCKS_DIR_PATH"),
         )
         .arg(
             Arg::new("metrics.port")
@@ -146,6 +134,23 @@ pub fn cli() -> Command {
                     .value_name("DATABASE_DIRECTORY")
                     .action(ArgAction::Set),
             ),
+        )
+        .subcommand(
+            Command::new("import")
+                .about("Import blocks to the database") 
+                .arg(
+                    Arg::new("path")
+                        .required(true)
+                        .value_name("FILE_PATH/FOLDER")
+                        .help("Path to a RLP chain file or a folder containing files with individual Blocks")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("removedb")
+                        .long("removedb")
+                        .required(false)
+                        .action(clap::ArgAction::SetTrue)
+                )
         );
 
     cfg_if::cfg_if! {
