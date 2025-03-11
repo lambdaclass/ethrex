@@ -50,6 +50,4 @@ pub enum StoreError {
     MempoolWriteLock(String),
     #[error("Failed to lock mempool for reading")]
     MempoolReadLock(String),
-    #[error("Missing deposit contract address")]
-    MissingDepositContractAddress,
 }

@@ -35,7 +35,8 @@ pub static ref CANCUN_CONFIG: ChainConfig = ChainConfig {
     terminal_total_difficulty_passed: false,
     verkle_time: None,
     blob_schedule: BlobSchedule::default(),
-        deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
+    // Mainnet address
+    deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
 };
 }
 pub const MAINNET_CHAIN_ID: u64 = 0x1;

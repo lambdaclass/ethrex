@@ -44,6 +44,7 @@ lazy_static! {
     };
     pub static ref CANCUN_TO_PRAGUE_AT_15K_CONFIG: ChainConfig = ChainConfig {
         prague_time: Some(0x3a98),
+        // Mainnet address
         deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
             .unwrap(),
         ..*CANCUN_CONFIG
