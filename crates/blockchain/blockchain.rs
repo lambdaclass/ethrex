@@ -57,26 +57,40 @@ impl Blockchain {
     }
 
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
-        match self.add_blocks_in_batch(vec![block], false) {
+        match self.add_blocks_in_batch(vec![block], false, false) {
             Ok(_) => Ok(()),
-            Err((err, _)) => Err(err),
+            Err((err, _, _)) => Err(err),
         }
     }
 
     /// Adds multiple blocks in a batch.
-    /// If an error occurs, returns a tuple containing the error type and the failing block (if the error was caused by block processing).
+    ///
+    /// If an error occurs, returns a tuple containing:
+    /// - The error type (`ChainError`).
+    /// - The failing block (if the error was caused by block processing).
+    /// - The last valid block hash (`H256`).
+    ///
+    /// `should_commit_intermediate_tries` determines whether the state tries for each block  
+    /// should be stored in the database (the last one is always stored).
+    ///
+    /// `as_canonical` determines whether the block number should be set as canonical for the block hash when committing to the db.
     pub fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
         mut should_commit_intermediate_tries: bool,
-    ) -> Result<(), (ChainError, Option<Block>)> {
+        as_canonical: bool,
+    ) -> Result<(), (ChainError, Option<Block>, H256)> {
+        let mut last_valid_hash = H256::default();
+
         let first_block_header = match blocks.first() {
             Some(block) => block.header.clone(),
-            None => return Err((ChainError::Custom("First block not found".into()), None)),
-        };
-        let last_block_header = match blocks.last() {
-            Some(block) => block.header.clone(),
-            None => return Err((ChainError::Custom("Last block not found".into()), None)),
+            None => {
+                return Err((
+                    ChainError::Custom("First block not found".into()),
+                    None,
+                    last_valid_hash,
+                ))
+            }
         };
 
         if self.evm_engine == EvmEngine::LEVM {
@@ -87,16 +101,17 @@ impl Blockchain {
         let Some(mut state_trie) = self
             .storage
             .state_trie(first_block_header.parent_hash)
-            .map_err(|e| (e.into(), None))?
+            .map_err(|e| (e.into(), None, last_valid_hash))?
         else {
-            return Err((ChainError::ParentNotFound, None));
+            return Err((ChainError::ParentNotFound, None, last_valid_hash));
         };
 
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
         let chain_config: ChainConfig = self
             .storage
             .get_chain_config()
-            .map_err(|e| (e.into(), None))?;
+            .map_err(|e| (e.into(), None, last_valid_hash))?;
+
         let mut vm = Evm::new(
             self.evm_engine,
             self.storage.clone(),
@@ -140,40 +155,32 @@ impl Blockchain {
             self.storage
                 .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
 
-            if should_commit_intermediate_tries {
+            if should_commit_intermediate_tries || is_last_block {
                 let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
                 validate_state_root(&block.header, root_hash)?;
-            }
-
-            if is_last_block {
                 validate_receipts_root(&block.header, &receipts)?;
                 validate_requests_hash(&block.header, &chain_config, &requests)?;
             }
 
             all_receipts.push((block_hash, receipts));
 
+            last_valid_hash = block_hash;
+
             Ok(())
         };
 
         for (i, block) in blocks.iter().enumerate() {
             if let Err(err) = add_block(block, i) {
-                return Err((err, Some(block.clone())));
+                return Err((err, Some(block.clone()), last_valid_hash));
             };
         }
 
-        if !should_commit_intermediate_tries {
-            let root_hash = state_trie
-                .hash()
-                .map_err(|e| (ChainError::StoreError(e.into()), None))?;
-            validate_state_root(&last_block_header, root_hash).map_err(|e| (e.into(), None))?;
-        }
-
         self.storage
-            .add_batch_of_blocks(blocks)
-            .map_err(|e| (e.into(), None))?;
+            .add_batch_of_blocks(blocks, as_canonical)
+            .map_err(|e| (e.into(), None, last_valid_hash))?;
         self.storage
             .add_batch_of_receipts(all_receipts)
-            .map_err(|e| (e.into(), None))?;
+            .map_err(|e| (e.into(), None, last_valid_hash))?;
 
         Ok(())
     }
@@ -182,7 +189,7 @@ impl Blockchain {
     pub fn import_blocks(&self, blocks: Vec<Block>, should_commit_intermediate_tries: bool) {
         let size = blocks.len();
         let last_block = blocks.last().unwrap().header.clone();
-        if let Err(err) = self.add_blocks_in_batch(blocks, should_commit_intermediate_tries) {
+        if let Err(err) = self.add_blocks_in_batch(blocks, should_commit_intermediate_tries, true) {
             warn!("Failed to add blocks: {:?}.", err);
         };
         if let Err(err) = self.storage.update_latest_block_number(last_block.number) {

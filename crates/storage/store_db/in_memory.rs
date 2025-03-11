@@ -143,7 +143,11 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn add_batch_of_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
+    fn add_batch_of_blocks(
+        &self,
+        blocks: Vec<Block>,
+        as_canonical: bool,
+    ) -> Result<(), StoreError> {
         for block in blocks {
             let header = block.header;
             let number = header.number;
@@ -159,7 +163,9 @@ impl StoreEngine for Store {
             self.add_block_body(hash, block.body)?;
             self.add_block_header(hash, header)?;
             self.add_block_number(hash, number)?;
-            self.set_canonical_block(number, hash)?;
+            if as_canonical {
+                self.set_canonical_block(number, hash)?;
+            }
         }
 
         Ok(())

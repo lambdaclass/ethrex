@@ -417,17 +417,15 @@ impl SyncManager {
         let last_block = blocks.last().unwrap().clone();
         let blocks_len = blocks.len();
 
-        if let Err((error, block)) = self.add_blocks(blocks, store.clone()) {
+        if let Err((error, block, last_valid_hash)) = self.add_blocks(blocks, store.clone()) {
             warn!("Failed to add block during FullSync: {error}");
             if let Some(block) = block {
-                self.invalid_ancestors
-                    .insert(block.hash(), block.header.parent_hash);
+                self.invalid_ancestors.insert(block.hash(), last_valid_hash);
 
                 // TODO(#2127): Just marking the failing ancestor and the sync head is enough
                 // to fix the Missing Ancestors hive test, we want to look at a more robust
                 // solution in the future if needed.
-                self.invalid_ancestors
-                    .insert(sync_head, block.header.parent_hash);
+                self.invalid_ancestors.insert(sync_head, last_valid_hash);
             }
 
             return Err(error.into());
@@ -443,17 +441,17 @@ impl SyncManager {
         &self,
         mut blocks: Vec<Block>,
         store: Store,
-    ) -> Result<(), (ChainError, Option<Block>)> {
+    ) -> Result<(), (ChainError, Option<Block>, H256)> {
         let last_block = blocks.last().unwrap().clone();
         let blocks_len = blocks.len();
         let latest_block_number = store
             .get_latest_block_number()
-            .map_err(|e| (e.into(), None))?;
+            .map_err(|e| (e.into(), None, H256::default()))?;
 
         if last_block.header.number.saturating_sub(latest_block_number) <= MAX_TRIES_IN_STORE as u64
         {
             if blocks_len <= MAX_TRIES_IN_STORE {
-                self.blockchain.add_blocks_in_batch(blocks, true)?;
+                self.blockchain.add_blocks_in_batch(blocks, true, true)?;
             } else {
                 let idx = blocks_len - MAX_TRIES_IN_STORE;
                 // Using `split_off` avoids cloning the slice, which would be necessary if we used `[..idx]` and `[idx..]` directly.
@@ -461,11 +459,11 @@ impl SyncManager {
                 let tail = blocks.split_off(idx);
                 let head = std::mem::take(&mut blocks);
 
-                self.blockchain.add_blocks_in_batch(head, false)?;
-                self.blockchain.add_blocks_in_batch(tail, true)?;
+                self.blockchain.add_blocks_in_batch(head, false, true)?;
+                self.blockchain.add_blocks_in_batch(tail, true, true)?;
             }
         } else {
-            self.blockchain.add_blocks_in_batch(blocks, false)?;
+            self.blockchain.add_blocks_in_batch(blocks, false, true)?;
         }
 
         Ok(())

@@ -10,14 +10,14 @@ use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
-    /// Add a batch of blocks in a single tx
-    /// This will store -> BlockHeader, BlockBody, BlockTransaction, BlockNumber
+    /// Add a batch of blocks in a single transaction.
+    /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     ///
-    /// TODO: Currently, when adding each block, we assume it's part of the canonical chain
-    /// and set the canonical hash to the block number. This approach is used to optimize
-    /// for writing all blocks in a single transaction. However, this is a temporary measure,
-    /// and we should revisit this assumption when implementing sidechains.
-    fn add_batch_of_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
+    /// If `as_canonical` is true, each block is assumed to be part of the canonical chain,  
+    /// and the canonical hash is set to the block number. This optimizes writes when  
+    /// processing blocks in bulk.  
+    fn add_batch_of_blocks(&self, blocks: Vec<Block>, as_canonical: bool)
+        -> Result<(), StoreError>;
 
     /// Add block header
     fn add_block_header(
