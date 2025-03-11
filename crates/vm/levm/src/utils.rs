@@ -714,9 +714,6 @@ pub fn eip7702_get_code(
     // Address is the delgated address
     let account = get_account_no_push_cache(cache, db.clone(), address);
     let bytecode = account.info.bytecode.clone();
-    // println!("Address: {:?}", address);
-    // println!("Bytecode: {:?}", bytecode);
-    // println!("Bytecode size: {:?}", bytecode.len());
 
     // If the Address doesn't have a delegation code
     // return false meaning that is not a delegation

@@ -224,6 +224,7 @@ impl LEVM {
                     .get_account_code(potential_new_bytecode_hash)
                     .expect("Error getting account code by hash");
                 let code = new_state_account.info.bytecode.clone();
+                // The code is present in the current database
                 if let Some(current_bytecode) = current_bytecode {
                     if current_bytecode != code {
                         // The code has changed
@@ -462,9 +463,7 @@ pub fn generic_system_contract_levm(
     report.new_state.remove(&system_address);
 
     match report.result {
-        TxResult::Success => {
-            // new_state.extend(report.new_state.clone());
-        }
+        TxResult::Success => {}
         _ => {
             return Err(EvmError::Custom(
                 "ERROR in generic_system_contract_levm(). TX didn't succeed.".to_owned(),
@@ -494,7 +493,6 @@ pub fn extract_all_requests_levm(
     header: &BlockHeader,
     cache: &mut CacheDB,
 ) -> Result<Vec<Requests>, EvmError> {
-    // let cache = &mut cache.clone();
     let config = store.get_chain_config()?;
     let fork = config.fork(header.timestamp);
 
