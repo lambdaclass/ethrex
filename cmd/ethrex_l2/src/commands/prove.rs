@@ -1,6 +1,7 @@
 use clap::Args;
 use ethrex_l2::utils::test_data_io::{generate_program_input, read_chain_file, read_genesis_file};
 use ethrex_prover_lib::prove;
+use tracing::info;
 
 #[derive(Args)]
 pub(crate) struct Command {
@@ -31,12 +32,9 @@ impl Command {
         let program_input = generate_program_input(genesis, chain, self.block_number)?;
 
         prove(program_input).expect("proving failed");
-        // TODO: implement get_gas
-        // println!(
-        //     "Total gas consumption: {}",
-        //         get_gas()
-        //         .expect("failed to deserialize gas consumption")
-        // );
+        info!("Proof generated successfully");
+        // TODO: Print total gas from pre-execution done in generate_program_input() (to_exec_db()
+        // call)
         Ok(())
     }
 }

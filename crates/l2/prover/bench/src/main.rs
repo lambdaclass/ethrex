@@ -108,7 +108,5 @@ async fn main() {
         block_number
     );
 
-    // get_gas() is unimplemented for SP1
-    // let gas = prover.get_gas().expect("failed to get execution gas");
-    // println!("total gas consumption: {gas}");
+    // TODO: Print total gas from pre-execution (to_exec_db() call)
 }

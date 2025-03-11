@@ -71,12 +71,3 @@ pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error
         calldata,
     })
 }
-
-#[allow(unused)]
-fn get_gas(stdout: &[u8]) -> Result<u64, Box<dyn std::error::Error>> {
-    unimplemented!()
-    // TODO: return stdout as proving output
-    // Ok(risc0_zkvm::serde::from_slice(
-    //     stdout.get(..8).unwrap_or_default(), // first 8 bytes
-    // )?)
-}
