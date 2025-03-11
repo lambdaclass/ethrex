@@ -7,6 +7,25 @@ use serde_json::{json, Value};
 
 pub type ExchangeCapabilitiesRequest = Vec<String>;
 
+/// List of capabilities that the execution layer client supports. Add new capabilities here.
+/// More info: https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#engine_exchangecapabilities
+pub const CAPABILITIES: [&str; 14] = [
+    "engine_forkchoiceUpdatedV1",
+    "engine_forkchoiceUpdatedV2",
+    "engine_forkchoiceUpdatedV3",
+    "engine_newPayloadV1",
+    "engine_newPayloadV2",
+    "engine_newPayloadV3",
+    "engine_newPayloadV4",
+    "engine_getPayloadV1",
+    "engine_getPayloadV2",
+    "engine_getPayloadV3",
+    "engine_getPayloadV4",
+    "engine_exchangeTransitionConfigurationV1",
+    "engine_getPayloadBodiesByHashV1",
+    "engine_getPayloadBodiesByRangeV1",
+];
+
 impl From<ExchangeCapabilitiesRequest> for RpcRequest {
     fn from(val: ExchangeCapabilitiesRequest) -> Self {
         RpcRequest {
@@ -31,6 +50,6 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
     }
 
     fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        Ok(json!(*self))
+        Ok(json!(CAPABILITIES))
     }
 }

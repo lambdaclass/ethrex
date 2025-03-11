@@ -1,4 +1,4 @@
-FROM rust:1.81 AS chef
+FROM rust:1.82 AS chef
 
 RUN apt-get update && apt-get install -y \
 	build-essential \
@@ -12,7 +12,9 @@ RUN cargo install cargo-chef
 WORKDIR /ethrex
 
 FROM chef AS planner
-COPY . .
+COPY crates ./crates
+COPY cmd ./cmd
+COPY Cargo.* .
 # Determine the crates that need to be built from dependencies
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -23,12 +25,15 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Optional build flags
 ARG BUILD_FLAGS=""
-COPY . .
+COPY crates ./crates
+COPY cmd ./cmd
+COPY Cargo.* ./
 RUN cargo build --release $BUILD_FLAGS
 
 FROM ubuntu:24.04
 WORKDIR /usr/local/bin
 
+COPY cmd/ethrex/networks ./cmd/ethrex/networks
 COPY --from=builder ethrex/target/release/ethrex .
 EXPOSE 8545
 ENTRYPOINT [ "./ethrex" ]

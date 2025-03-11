@@ -4,8 +4,11 @@ use ethereum_types::{Address, H160, H256};
 use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::eth_client::errors::{CalldataEncodeError, EthClientError};
-use ethrex_l2_sdk::eth_client::{eth_sender::Overrides, EthClient};
+use ethrex_rpc::clients::eth::{
+    errors::{CalldataEncodeError, EthClientError},
+    eth_sender::Overrides,
+    EthClient,
+};
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use spinoff::{spinner, spinners, Color, Spinner};
@@ -14,6 +17,9 @@ use std::{
     process::Command,
     str::FromStr,
 };
+
+mod utils;
+use utils::compile_contract;
 
 struct SetupResult {
     deployer_address: Address,
@@ -40,7 +46,7 @@ pub enum DeployError {
     #[error("Deployer dependency error: {0}")]
     DependencyError(String),
     #[error("Deployer compilation error: {0}")]
-    CompilationError(String),
+    CompilationError(#[from] utils::ContractCompilationError),
     #[error("Deployer EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
@@ -68,6 +74,25 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
+    #[allow(clippy::expect_fun_call, clippy::expect_used)]
+    let toml_config = std::env::var("CONFIG_FILE").expect(
+        format!(
+            "CONFIG_FILE environment variable not defined. Expected in {}, line: {}
+If running locally, a reasonable value would be CONFIG_FILE=config.toml",
+            file!(),
+            line!()
+        )
+        .as_str(),
+    );
+
+    match ethrex_l2::parse_toml::read_toml(toml_config) {
+        Ok(_) => (),
+        Err(err) => {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        }
+    };
+
     let setup_result = setup()?;
     download_contract_deps(&setup_result.contracts_path)?;
     compile_contracts(&setup_result.contracts_path)?;
@@ -249,105 +274,13 @@ fn download_contract_deps(contracts_path: &Path) -> Result<(), DeployError> {
 }
 
 fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
-    // Both the contract path and the output path are relative to where the Makefile is.
-    if !Command::new("solc")
-        .arg("--bin")
-        .arg(
-            contracts_path
-                .join("src/l1/OnChainProposer.sol")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("-o")
-        .arg(
-            contracts_path
-                .join("solc_out")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("--overwrite")
-        .arg("--allow-paths")
-        .arg(
-            contracts_path
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .spawn()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to spawn solc: {err}")))?
-        .wait()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to wait for solc: {err}")))?
-        .success()
-    {
-        return Err(DeployError::CompilationError(
-            "Failed to compile OnChainProposer.sol".to_owned(),
-        ));
-    }
-
-    if !Command::new("solc")
-        .arg("--bin")
-        .arg(
-            contracts_path
-                .join("src/l1/CommonBridge.sol")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("-o")
-        .arg(
-            contracts_path
-                .join("solc_out")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("--overwrite")
-        .arg("--allow-paths")
-        .arg(
-            contracts_path
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .spawn()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to spawn solc: {err}")))?
-        .wait()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to wait for solc: {err}")))?
-        .success()
-    {
-        return Err(DeployError::CompilationError(
-            "Failed to compile CommonBridge.sol".to_owned(),
-        ));
-    }
-
-    if !Command::new("solc")
-        .arg("--bin")
-        .arg(
-            contracts_path
-                .join("lib/sp1-contracts/contracts/src/v3.0.0/SP1VerifierGroth16.sol")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("-o")
-        .arg(
-            contracts_path
-                .join("solc_out")
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .arg("--overwrite")
-        .arg("--allow-paths")
-        .arg(
-            contracts_path
-                .to_str()
-                .ok_or(DeployError::FailedToGetStringFromPath)?,
-        )
-        .spawn()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to spawn solc: {err}")))?
-        .wait()
-        .map_err(|err| DeployError::CompilationError(format!("Failed to wait for solc: {err}")))?
-        .success()
-    {
-        return Err(DeployError::CompilationError(
-            "Failed to compile SP1VerifierGroth16.sol".to_owned(),
-        ));
-    }
+    compile_contract(contracts_path, "src/l1/OnChainProposer.sol", false)?;
+    compile_contract(contracts_path, "src/l1/CommonBridge.sol", false)?;
+    compile_contract(
+        contracts_path,
+        "lib/sp1-contracts/contracts/src/v3.0.0/SP1VerifierGroth16.sol",
+        false,
+    )?;
     Ok(())
 }
 

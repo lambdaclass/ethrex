@@ -38,28 +38,37 @@ mod tests {
         BASE_PRICE_IN_WEI,
     };
 
+    use crate::utils::test_utils::example_local_node_record;
     use crate::{
         map_http_requests,
         utils::{parse_json_hex, test_utils::example_p2p_node, RpcRequest},
         RpcApiContext, RpcHandler,
     };
-    use ethrex_net::{sync::SyncManager, types::Node};
+    #[cfg(feature = "based")]
+    use crate::{EngineClient, EthClient};
+    #[cfg(feature = "based")]
+    use bytes::Bytes;
+    use ethrex_blockchain::Blockchain;
+    use ethrex_p2p::sync::SyncManager;
     use serde_json::{json, Value};
-    use std::{net::Ipv4Addr, sync::Arc};
+    use std::sync::Arc;
     use tokio::sync::Mutex;
 
     fn default_context() -> RpcApiContext {
+        let storage = setup_store();
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         RpcApiContext {
-            storage: setup_store(),
+            storage,
+            blockchain,
             jwt_secret: Default::default(),
-            local_p2p_node: Node {
-                ip: std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                udp_port: Default::default(),
-                tcp_port: Default::default(),
-                node_id: Default::default(),
-            },
+            local_p2p_node: example_p2p_node(),
+            local_node_record: example_local_node_record(),
             active_filters: Default::default(),
             syncer: Arc::new(Mutex::new(SyncManager::dummy())),
+            #[cfg(feature = "based")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "based")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
         }
     }
 
@@ -115,8 +124,8 @@ mod tests {
         let response = gas_price.handle(context).unwrap();
         assert_eq!(response, Value::Null);
     }
-    #[test]
-    fn request_smoke_test() {
+    #[tokio::test]
+    async fn request_smoke_test() {
         let raw_json = json!(
         {
             "jsonrpc":"2.0",
@@ -130,7 +139,7 @@ mod tests {
 
         add_eip1559_tx_blocks(&context.storage, 100, 3);
 
-        let response = map_http_requests(&request, context).unwrap();
+        let response = map_http_requests(&request, context).await.unwrap();
         assert_eq!(response, expected_response)
     }
 }

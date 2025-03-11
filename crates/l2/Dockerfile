@@ -1,4 +1,4 @@
-FROM rust:1.81 AS chef
+FROM rust:1.82 AS chef
 
 RUN apt-get update && apt-get install -y \
 	build-essential \
@@ -25,7 +25,8 @@ COPY . .
 RUN cargo build --release --features l2
 
 FROM ubuntu:24.04
-WORKDIR /usr/local/bin
+ENV CI_ETHREX_WORKDIR=$CI_ETHREX_WORKDIR
+WORKDIR $CI_ETHREX_WORKDIR
 
 COPY --from=builder ethrex/target/release/ethrex .
 EXPOSE 1729

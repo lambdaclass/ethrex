@@ -58,8 +58,16 @@ pub fn pr_message(
 
         total_lines_changed += loc_diff.abs();
 
+        // remove "ethrex/" and everything before it
+        const ETHREX_PREFIX: &str = "ethrex/";
+        let file_path_printable = if let Some(idx) = file_path.find(ETHREX_PREFIX) {
+            &file_path[idx + ETHREX_PREFIX.len()..]
+        } else {
+            file_path
+        };
+
         table.add_row(row![
-            file_path,
+            file_path_printable,
             current_loc,
             match current_loc.cmp(&previous_loc) {
                 std::cmp::Ordering::Greater => format!("+{loc_diff}"),
@@ -69,32 +77,60 @@ pub fn pr_message(
         ]);
     }
 
-    let mut pr_message = String::new();
-
-    if total_lines_changed > 0 {
-        pr_message.push_str(&format!("```{table}\n"));
+    if total_lines_changed == 0 {
+        return "".to_string();
     }
 
+    let mut pr_message = String::new();
+
+    pr_message.push_str("<h2>Lines of code report</h2>\n");
+    pr_message.push('\n');
+
+    pr_message.push_str(&pr_message_summary(
+        total_lines_added,
+        total_lines_removed,
+        total_lines_changed,
+    ));
+
+    pr_message.push('\n');
+    pr_message.push_str("<details>\n");
+    pr_message.push_str("<summary>Detailed view</summary>\n");
+    pr_message.push('\n');
+    pr_message.push_str("```\n");
+    pr_message.push_str(&format!("{table}\n"));
+    pr_message.push_str("```\n");
+    pr_message.push_str("</details>\n");
+
+    pr_message
+}
+
+fn pr_message_summary(
+    total_lines_added: i64,
+    total_lines_removed: i64,
+    total_lines_changed: i64,
+) -> String {
+    let mut pr_message = String::new();
+
     pr_message.push_str(&format!(
-        "Total lines added: {}\n",
+        "Total lines added: `{}`\n",
         match total_lines_added.cmp(&0) {
-            std::cmp::Ordering::Greater => format!("+{total_lines_added}"),
+            std::cmp::Ordering::Greater => format!("{total_lines_added}"),
             std::cmp::Ordering::Less =>
                 unreachable!("total_lines_added should never be less than 0"),
             std::cmp::Ordering::Equal => format!("{total_lines_added}"),
         }
     ));
     pr_message.push_str(&format!(
-        "Total lines removed: {}\n",
+        "Total lines removed: `{}`\n",
         match total_lines_removed.cmp(&0) {
-            std::cmp::Ordering::Greater =>
-                unreachable!("total_lines_removed should never be greater than 0"),
-            std::cmp::Ordering::Less | std::cmp::Ordering::Equal =>
+            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal =>
                 format!("{total_lines_removed}"),
+            std::cmp::Ordering::Less =>
+                unreachable!("total_lines_removed should never be less than 0"),
         }
     ));
     pr_message.push_str(&format!(
-        "Total lines changed: {}\n",
+        "Total lines changed: `{}`\n",
         match total_lines_changed.cmp(&0) {
             std::cmp::Ordering::Greater | std::cmp::Ordering::Equal =>
                 format!("{total_lines_changed}"),
@@ -102,7 +138,6 @@ pub fn pr_message(
                 unreachable!("total_lines_changed should never be less than 0"),
         }
     ));
-    pr_message.push_str("```");
 
     pr_message
 }
@@ -164,7 +199,7 @@ pub fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeRepor
             "text": {{
                 "type": "mrkdwn",
                 "text": "*ethrex L1:* {} {}\n*ethrex L2:* {} {}\n*levm:* {} {}\n*ethrex (total):* {} {}"
-            }}             
+            }}
         }},
         {{
             "type": "header",
@@ -178,7 +213,7 @@ pub fn slack_message(old_report: LinesOfCodeReport, new_report: LinesOfCodeRepor
             "text": {{
                 "type": "mrkdwn",
                 "text": "{}"
-            }}             
+            }}
         }}
     ]
 }}"#,

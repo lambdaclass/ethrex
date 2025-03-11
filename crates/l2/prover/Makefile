@@ -12,10 +12,10 @@ RISC0_DEV_MODE?=1
 RUST_LOG?="info"
 perf-risc0:
 	@echo "Using RISC0_DEV_MODE: ${RISC0_DEV_MODE}"
-	RISC0_DEV_MODE=${RISC0_DEV_MODE} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features build_risc0 -- test_performance_zkvm --exact --show-output
+	RISC0_DEV_MODE=${RISC0_DEV_MODE} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features "build_risc0,l2" -- test_performance_zkvm --exact --show-output
 
 perf-risc0-gpu:
-	RUSTFLAGS="-C target-cpu=native" RISC0_DEV_MODE=0 RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features "build_risc0,gpu" -- test_performance_zkvm --exact --show-output
+	RUSTFLAGS="-C target-cpu=native" RISC0_DEV_MODE=0 RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features "build_risc0,l2,gpu" -- test_performance_zkvm --exact --show-output
 
 ########################################################################
 ###############                  SP1                     ###############
@@ -27,11 +27,11 @@ SP1_PROVER?=mock
 RUST_LOG?="info"
 perf-sp1:
 	@echo "Using SP1_PROVER: ${SP1_PROVER}"
-	SP1_PROVER=${SP1_PROVER} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features build_sp1 -- test_performance_sp1_zkvm --exact --show-output
+	SP1_PROVER=${SP1_PROVER} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features "build_sp1,l2" -- test_performance_sp1_zkvm --exact --show-output
 	
 perf-sp1-gpu:
 	@echo "Using SP1_PROVER: ${SP1_PROVER}"
-	SP1_PROVER=${SP1_PROVER} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features "build_sp1, gpu" -- test_performance_sp1_zkvm --exact --show-output
+	SP1_PROVER=${SP1_PROVER} RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features "build_sp1,l2,gpu" -- test_performance_sp1_zkvm --exact --show-output
 
 ########################################################################
 ########## L2 Prover comparison with rsp. Uses GPU by default ##########
@@ -39,7 +39,7 @@ perf-sp1-gpu:
 ETHREX_L2_BIN := ./target/release/ethrex_l2
 RSP_BIN := ./target/release/rsp
 
-GENESIS_FILE := $(ROOT_DIRECTORY)/test_data/genesis-l2-old.json
+GENESIS_FILE := $(ROOT_DIRECTORY)/test_data/genesis-l2.json
 CHAIN_FILE := $(ROOT_DIRECTORY)/test_data/l2-loadtest.rlp
 RSP_CACHE := $(ROOT_DIRECTORY)/test_data/rsp
 

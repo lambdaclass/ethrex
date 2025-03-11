@@ -14,12 +14,12 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.81.0
+  RUST_VERSION: 1.82.0
 
 jobs:
   ef-test:
-    # "Integration Test" is a required check, don't change the name
-    name: Integration Test
+    if: ${{ github.event_name != 'merge_group' }}
+    name: EF Tests Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -41,12 +41,241 @@ jobs:
       - name: Run tests
         run: |
           cd crates/vm/levm
-          make run-evm-ef-tests-ci | tee test_result.txt
+          set -o pipefail
+          make run-evm-ef-tests-ci | tee test_result_pr.txt
 
-      - name: Show test summary
+      - name: Show test summary -- full
+        run: |
+          cd crates/vm/levm && awk '/Summary: /,0' test_result_pr.txt
+
+      - name: Show test summary -- short
+        run: |
+          bash .github/scripts/parse_test_result.sh crates/vm/levm/test_result_pr.txt | tee crates/vm/levm/test_result_pr_short.txt
+          echo "PR's test results:"
+          cat crates/vm/levm/test_result_pr_short.txt
+
+      - name: Upload PR branch EF-test results.
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-ef-test-data
+          path: crates/vm/levm/test_result_pr_short.txt
+
+      - name: Check EF-TESTS status is 100%
         run: |
           cd crates/vm/levm
-          awk '/Summary: /,0' test_result.txt
+          if [ "$(awk '/Summary:/ {print $(NF)}' test_result_pr_short.txt)" != "(100.00%)" ]; then
+              echo "Percentage is not 100%."
+              # exit 1 # uncomment when we expect 100% pass-rate
+          fi
+
+  ef-test-main:
+    if: ${{ github.event_name != 'merge_group' }}
+    name: EF Tests Check main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download EF Tests
+        run: |
+          cd crates/vm/levm
+          make download-evm-ef-tests
+
+      - name: Run tests
+        run: |
+          cd crates/vm/levm
+          set -o pipefail
+          make run-evm-ef-tests-ci | tee test_result_main.txt
+
+      - name: Show test summary -- full
+        run: |
+          cd crates/vm/levm && awk '/Summary: /,0' test_result_main.txt
+
+      - name: Show test summary -- short
+        run: |
+          bash .github/scripts/parse_test_result.sh crates/vm/levm/test_result_main.txt | tee crates/vm/levm/test_result_main_short.txt
+          echo "Main's test results:"
+          cat crates/vm/levm/test_result_main_short.txt
+
+      - name: Upload main branch EF-test results.
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-ef-test-data
+          path: crates/vm/levm/test_result_main_short.txt
+
+      - name: Check EF-TESTS status is 100%
+        run: |
+          cd crates/vm/levm
+          if [ "$(awk '/Summary:/ {print $(NF)}' test_result_main_short.txt)" != "(100.00%)" ]; then
+              echo "Percentage is not 100%."
+              # exit 1 # uncomment when we expect 100% pass-rate
+          fi
+
+  compare-ef-tests:
+    if: ${{ github.event_name != 'merge_group' }}
+    name: EF Tests Compare
+    needs: [ef-test-main, ef-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Download main branch ef tests
+        uses: actions/download-artifact@v4
+        with:
+          name: main-ef-test-data
+          path: crates/vm/levm/
+
+      - name: Download PR branch ef tests
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-ef-test-data
+          path: crates/vm/levm/
+
+     # NOTE: diff will exit with a non 0 exit code when there are differences
+      - name: Compare files
+        id: branch_diffs
+        continue-on-error: true
+        run: |
+          cd crates/vm/levm
+          diff test_result_main_short.txt test_result_pr_short.txt
+
+      - name: Compare results
+        if: ${{ steps.branch_diffs.outcome == 'failure' && github.event_name == 'pull_request' }}
+        run: |
+          bash .github/scripts/compare_ef_tests.sh crates/vm/levm/test_result_main_short.txt crates/vm/levm/test_result_pr_short.txt | tee crates/vm/levm/ef_tests_comparison.md
+
+      - name: Find comment
+        continue-on-error: true
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "EF Tests Comparison"
+
+      # If we have a failure, means that there are EF-tests differences.
+      # If the condition is met, create or update the comment with the summary.
+      - name: Create comment
+        if: ${{ steps.branch_diffs.outcome == 'failure' && github.event_name == 'pull_request' }}
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: crates/vm/levm/ef_tests_comparison.md
+          edit-mode: replace
+
+      # If we don't have a failure, means that there are no differences in EF-tests.
+      # If comment-id != '', means that we've already created the comment.
+      # If both conditions are met, update the comment saying that all tests pass.
+      - name: Update comment
+        if: ${{ steps.branch_diffs.outcome != 'failure' && github.event_name == 'pull_request' && steps.fc.outputs.comment-id != '' }}
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            # EF Tests Comparison
+            Same results between main branch and the current PR.
+          edit-mode: replace
+
+  hive-report-creation:
+    uses: ./.github/workflows/common_hive_reports.yaml
+    with:
+      evm: levm
+      job_type: trigger
+
+  hive-report-creation-main:
+    uses: ./.github/workflows/common_hive_reports.yaml
+    with:
+      evm: levm
+      job_type: main
+
+  # Check we don't have a regression against main
+  hive-test:
+    if: ${{ github.event_name != 'merge_group' }}
+    name: Hive Tests Check
+    needs: [hive-report-creation, hive-report-creation-main]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Download results (pr)
+        uses: actions/download-artifact@v4
+        with:
+          name: results_levm_trigger.md
+
+      - name: Rename result (1)
+        run: |
+          cp results.md results_levm.md
+          echo "RESULTS:"
+          cat results_levm.md
+
+      - name: Download results (main)
+        uses: actions/download-artifact@v4
+        with:
+          name: results_levm_main.md
+        # If we don't have the file it will use the result(1) file
+        continue-on-error: true
+
+      - name: Rename result (2)
+        run: |
+          cp results.md results_levm_main.md
+          echo "RESULTS:"
+          cat results_levm_main.md
+
+      - name: Create diff message
+        run: |
+          bash .github/scripts/hive_levm_revm_diff.sh results_levm_main.md results_levm.md >> diff.md
+          cat diff.md >> $GITHUB_STEP_SUMMARY
+          echo "SUMMARY:"
+          cat diff.md
+
+      - name: Check Regression
+        run: |
+          if grep -q "No differences found" diff.md; then
+            echo "No differences found."
+          elif ! grep -q "regression" diff.md; then
+            echo "No regression found."
+          else
+            echo "Differences found."
+            exit 1
+          fi
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  all-tests:
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [hive-test, ef-test]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ always() && needs.hive-test.result != 'skipped' && needs.ef-test.result != 'skipped' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.hive-test.result }}" != "success" ]; then
+            echo "Job Hive Tests Check failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.ef-test.result }}" != "success" ]; then
+            echo "Job EF Tests Check failed"
+            exit 1
+          fi
+
   test:
     # "Test" is a required check, don't change the name
     name: Test
@@ -87,6 +316,9 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: hyperfine@1.16
+
+      - name: Install solc
+        uses: pontem-network/get-solc@master
 
       - name: Run benchmarks
         run: |

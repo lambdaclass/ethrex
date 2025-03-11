@@ -1,7 +1,8 @@
-use crate::config::EthrexL2Config;
+use crate::{commands::wallet::balance_in_wei, config::EthrexL2Config};
 use clap::Subcommand;
 use colored::{self, Colorize};
-use ethrex_l2_sdk::eth_client::EthClient;
+use ethrex_common::Address;
+use ethrex_rpc::clients::eth::EthClient;
 use keccak_hash::H256;
 use std::str::FromStr;
 
@@ -12,7 +13,7 @@ pub(crate) enum Command {
         short_flag = 'l'
     )]
     LatestBlocks,
-    #[clap(about = "Get the current block_number.", short_flag = 'b')]
+    #[clap(about = "Get the current block_number.", alias = "bl")]
     BlockNumber {
         #[arg(long = "l2", required = false)]
         l2: bool,
@@ -27,6 +28,17 @@ pub(crate) enum Command {
         l1: bool,
         #[arg(short = 'h', required = true)]
         tx_hash: String,
+    },
+    #[clap(about = "Get the account's balance info.", short_flag = 'b')]
+    Balance {
+        #[arg(long = "l2", required = false)]
+        l2: bool,
+        #[arg(long = "l1", required = false)]
+        l1: bool,
+        #[arg(short = 'a', required = true)]
+        account: Address,
+        #[arg(long = "wei", required = false, default_value_t = false)]
+        wei: bool,
     },
 }
 
@@ -87,6 +99,22 @@ impl Command {
                         .await?
                         .ok_or(eyre::Error::msg("Not found"))?;
                     println!("[L1]:\n{tx}");
+                }
+            }
+
+            Command::Balance {
+                l2,
+                l1,
+                wei,
+                account,
+            } => {
+                if !l1 || l2 {
+                    let account_balance = rollup_client.get_balance(account).await?;
+                    println!("{}", balance_in_wei(wei, account_balance));
+                }
+                if l1 {
+                    let account_balance = eth_client.get_balance(account).await?;
+                    println!("{}", balance_in_wei(wei, account_balance));
                 }
             }
         }

@@ -1,10 +1,11 @@
 use risc0_zkvm::guest::env;
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::{execute_block, get_state_transitions, EvmState};
+use ethrex_vm::{backends::revm::db::EvmState, backends::revm::REVM};
+
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
-    trie::update_tries,
+    trie::{update_tries, verify_db},
 };
 
 fn main() {
@@ -14,37 +15,45 @@ fn main() {
         db,
     } = env::read();
     let mut state = EvmState::from(db.clone());
+    let chain_config = state
+        .chain_config()
+        .expect("Failed to get chain config from state");
 
-    // Validate the block pre-execution
-    validate_block(&block, &parent_block_header, &state).expect("invalid block");
+    // Validate the block
+    validate_block(&block, &parent_block_header, &chain_config).expect("invalid block");
 
-    // Validate the initial state
+    // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
-        .build_tries()
+        .get_tries()
         .expect("failed to build state and storage tries or state is not valid");
 
+    // Validate the initial state
     let initial_state_hash = state_trie.hash_no_commit();
     if initial_state_hash != parent_block_header.state_root {
         panic!("invalid initial state trie");
     }
+    if !verify_db(&db, &state_trie, &storage_tries).expect("failed to validate database") {
+        panic!("invalid database")
+    };
 
-    let receipts = execute_block(&block, &mut state).expect("failed to execute block");
+    let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
+    let receipts = result.receipts;
+    let account_updates = result.account_updates;
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
+    // Output gas for measurement purposes
     let cumulative_gas_used = receipts
         .last()
         .map(|last_receipt| last_receipt.cumulative_gas_used)
         .unwrap_or_default();
-
     env::write(&cumulative_gas_used);
 
-    let account_updates = get_state_transitions(&mut state);
-
-    // Update tries and calculate final state root hash
+    // Update state trie
     update_tries(&mut state_trie, &mut storage_tries, &account_updates)
         .expect("failed to update state and storage tries");
-    let final_state_hash = state_trie.hash_no_commit();
 
+    // Calculate final state root hash and check
+    let final_state_hash = state_trie.hash_no_commit();
     if final_state_hash != block.header.state_root {
         panic!("invalid final state trie");
     }

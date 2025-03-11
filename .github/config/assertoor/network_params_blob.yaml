@@ -1,23 +1,22 @@
 participants:
+  - el_type: geth
+    el_image: ethereum/client-go:v1.15.2
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.0-beta.0
+    validator_count: 32
+    count: 2
   - el_type: ethrex
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v5.3.0
-    validator_count: 32
-  - el_type: geth
-    el_image: ethereum/client-go:v1.14.12
-    cl_type: lighthouse
-    cl_image: sigp/lighthouse:v5.3.0
-    validator_count: 32
-  - el_type: geth
-    el_image: ethereum/client-go:v1.14.12
-    cl_type: lighthouse
-    cl_image: sigp/lighthouse:v5.3.0
+    cl_image: sigp/lighthouse:v7.0.0-beta.0
     validator_count: 32
 
 additional_services:
   - assertoor
   - tx_spammer
   - dora
+
+network_params:
+  electra_fork_epoch: 1
 
 assertoor_params:
   image: ethpandaops/assertoor:v0.0.12

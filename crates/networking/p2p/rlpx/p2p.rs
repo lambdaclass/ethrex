@@ -1,5 +1,5 @@
 use bytes::BufMut;
-use ethrex_core::H512;
+use ethrex_common::H512;
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -65,7 +65,7 @@ impl RLPxMessage for HelloMessage {
     fn encode(&self, mut buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         Encoder::new(&mut buf)
             .encode_field(&5_u8) // protocolVersion
-            .encode_field(&"Ethereum(++)/1.0.0") // clientId
+            .encode_field(&"Ethrex/0.1.0") // clientId
             .encode_field(&self.capabilities) // capabilities
             .encode_field(&0u8) // listenPort (ignored)
             .encode_field(&pubkey2id(&self.node_id)) // nodeKey

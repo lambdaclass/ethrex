@@ -9,17 +9,20 @@ debug/
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
-cmd/ef_tests/ethrex/vectors
-cmd/ef_tests/levm/vectors
+cmd/ef_tests/blockchain/vectors
+
+cmd/ef_tests/state/vectors
 
 # Repos checked out by make target
 hive/
 ethereum-package/
 
 .docker_build_stamp
+.ef_tests_stamp_file
 
 **/.DS_Store
 **/.vscode
+**/.idea
 
 
 # EVM Mlir stuff
@@ -39,7 +42,7 @@ jwt.hex
 # Used by the make test target
 /tmp
 
-tests_v3.0.0.tar.gz
+tests*.tar.gz
 
 .env
 
@@ -56,7 +59,7 @@ loc_report.json
 ethrex.redb
 
 # used by Flamegraph and Samply
-cmd/ef_tests/levm/levm_perfgraphs
+cmd/ef_tests/state/levm_perfgraphs
 *.svg
 prof_*.json
 prof.json

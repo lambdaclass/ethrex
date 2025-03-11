@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+#[cfg(feature = "based")]
+use crate::utils::RpcRequest;
 use crate::{
     eth::block,
     types::{
@@ -7,16 +11,19 @@ use crate::{
     utils::RpcErr,
     RpcApiContext, RpcHandler,
 };
-use ethrex_core::{
+use ethrex_blockchain::Blockchain;
+use ethrex_common::{
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
     H256, U256,
 };
 
-use ethrex_blockchain::mempool;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{evm_state, ExecutionResult, SpecId};
+use ethrex_vm::{
+    backends::{revm::execution_result::ExecutionResult, Evm},
+    SpecId,
+};
 use serde::Serialize;
 
 use serde_json::Value;
@@ -68,7 +75,7 @@ pub struct AccessListResult {
     access_list: Vec<AccessListEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    #[serde(with = "ethrex_core::serde_utils::u64::hex_str")]
+    #[serde(with = "ethrex_common::serde_utils::u64::hex_str")]
     gas_used: u64,
 }
 
@@ -105,7 +112,13 @@ impl RpcHandler for CallRequest {
             _ => return Ok(Value::Null),
         };
         // Run transaction
-        let result = simulate_tx(&self.transaction, &header, context.storage, SpecId::CANCUN)?;
+        let result = simulate_tx(
+            &self.transaction,
+            &header,
+            context.storage,
+            context.blockchain,
+            SpecId::CANCUN,
+        )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -233,7 +246,7 @@ impl RpcHandler for GetTransactionByHashRequest {
                 _ => return Ok(Value::Null),
             };
 
-        let transaction: ethrex_core::types::Transaction =
+        let transaction: ethrex_common::types::Transaction =
             match storage.get_transaction_by_location(block_hash, index)? {
                 Some(transaction) => transaction,
                 _ => return Ok(Value::Null),
@@ -319,38 +332,16 @@ impl RpcHandler for CreateAccessListRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
+
+        let mut vm = Evm::new(
+            context.blockchain.evm_engine,
+            context.storage.clone(),
+            header.compute_block_hash(),
+        );
+
         // Run transaction and obtain access list
-        let (gas_used, access_list, error) = match ethrex_vm::create_access_list(
-            &self.transaction,
-            &header,
-            &mut evm_state(context.storage, header.compute_block_hash()),
-            SpecId::CANCUN,
-        )? {
-            (
-                ExecutionResult::Success {
-                    reason: _,
-                    gas_used,
-                    gas_refunded: _,
-                    logs: _,
-                    output: _,
-                },
-                access_list,
-            ) => (gas_used, access_list, None),
-            (
-                ExecutionResult::Revert {
-                    gas_used,
-                    output: _,
-                },
-                access_list,
-            ) => (
-                gas_used,
-                access_list,
-                Some("Transaction Reverted".to_string()),
-            ),
-            (ExecutionResult::Halt { reason, gas_used }, access_list) => {
-                (gas_used, access_list, Some(reason))
-            }
-        };
+        let (gas_used, access_list, error) =
+            vm.create_access_list(&self.transaction, &header, SpecId::CANCUN)?;
         let result = AccessListResult {
             access_list: access_list
                 .into_iter()
@@ -430,6 +421,7 @@ impl RpcHandler for EstimateGasRequest {
     }
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
+        let blockchain = &context.blockchain;
         let block = self.block.clone().unwrap_or_default();
         info!("Requested estimate on block: {}", block);
         let block_header = match block.resolve_block_header(storage)? {
@@ -463,6 +455,7 @@ impl RpcHandler for EstimateGasRequest {
                     &value_transfer_transaction,
                     &block_header,
                     storage.clone(),
+                    blockchain.clone(),
                     spec_id,
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
@@ -490,7 +483,13 @@ impl RpcHandler for EstimateGasRequest {
         // Check whether the execution is possible
         let mut transaction = transaction.clone();
         transaction.gas = Some(highest_gas_limit);
-        let result = simulate_tx(&transaction, &block_header, storage.clone(), spec_id)?;
+        let result = simulate_tx(
+            &transaction,
+            &block_header,
+            storage.clone(),
+            blockchain.clone(),
+            spec_id,
+        )?;
 
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
@@ -513,7 +512,13 @@ impl RpcHandler for EstimateGasRequest {
             }
             transaction.gas = Some(middle_gas_limit);
 
-            let result = simulate_tx(&transaction, &block_header, storage.clone(), spec_id);
+            let result = simulate_tx(
+                &transaction,
+                &block_header,
+                storage.clone(),
+                blockchain.clone(),
+                spec_id,
+            );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
             } else {
@@ -546,14 +551,16 @@ fn simulate_tx(
     transaction: &GenericTransaction,
     block_header: &BlockHeader,
     storage: Store,
+    blockchain: Arc<Blockchain>,
     spec_id: SpecId,
 ) -> Result<ExecutionResult, RpcErr> {
-    match ethrex_vm::simulate_tx_from_generic(
-        transaction,
-        block_header,
-        &mut evm_state(storage, block_header.compute_block_hash()),
-        spec_id,
-    )? {
+    let mut vm = Evm::new(
+        blockchain.evm_engine,
+        storage.clone(),
+        block_header.compute_block_hash(),
+    );
+
+    match vm.simulate_tx_from_generic(transaction, block_header, spec_id)? {
         ExecutionResult::Revert {
             gas_used: _,
             output,
@@ -567,38 +574,82 @@ fn simulate_tx(
 
 impl RpcHandler for SendRawTransactionRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<SendRawTransactionRequest, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 1 {
-            return Err(RpcErr::BadParams(format!(
-                "Expected one param and {} were provided",
-                params.len()
-            )));
-        };
-
-        let str_data = serde_json::from_value::<String>(params[0].clone())?;
-        let str_data = str_data
-            .strip_prefix("0x")
-            .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
-        let data = hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))?;
+        let data = get_transaction_data(params)?;
 
         let transaction = SendRawTransactionRequest::decode_canonical(&data)
             .map_err(|error| RpcErr::BadParams(error.to_string()))?;
 
         Ok(transaction)
     }
+
+    #[cfg(feature = "based")]
+    async fn relay_to_gateway_or_fallback(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<Value, RpcErr> {
+        use tracing::warn;
+
+        info!("Relaying eth_sendRawTransaction to gateway");
+
+        let gateway_eth_client = context.gateway_eth_client.clone();
+
+        let tx_data = get_transaction_data(&req.params)?;
+
+        let gateway_request = gateway_eth_client.send_raw_transaction(&tx_data);
+
+        let client_response = Self::call(req, context);
+
+        let gateway_response = gateway_request
+            .await
+            .map_err(|err| {
+                RpcErr::Internal(format!(
+                    "Could not relay eth_sendRawTransaction to gateway: {err}",
+                ))
+            })
+            .and_then(|hash| {
+                serde_json::to_value(format!("{hash:#x}"))
+                    .map_err(|error| RpcErr::Internal(error.to_string()))
+            });
+
+        if gateway_response.is_err() {
+            warn!(error = ?gateway_response, "Gateway eth_sendRawTransaction failed, falling back to local node");
+        } else {
+            info!("Successfully relayed eth_sendRawTransaction to gateway");
+        }
+
+        gateway_response.or(client_response)
+    }
+
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            mempool::add_blob_transaction(
+            context.blockchain.add_blob_transaction_to_pool(
                 wrapped_blob_tx.tx.clone(),
                 wrapped_blob_tx.blobs_bundle.clone(),
-                &context.storage,
             )
         } else {
-            mempool::add_transaction(self.to_transaction(), &context.storage)
+            context
+                .blockchain
+                .add_transaction_to_pool(self.to_transaction())
         }?;
         serde_json::to_value(format!("{:#x}", hash))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
+}
+
+fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, RpcErr> {
+    let params = rpc_req_params
+        .as_ref()
+        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+    if params.len() != 1 {
+        return Err(RpcErr::BadParams(format!(
+            "Expected one param and {} were provided",
+            params.len()
+        )));
+    };
+
+    let str_data = serde_json::from_value::<String>(params[0].clone())?;
+    let str_data = str_data
+        .strip_prefix("0x")
+        .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
+    hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))
 }

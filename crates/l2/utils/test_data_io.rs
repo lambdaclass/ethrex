@@ -1,11 +1,11 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
-use ethrex_blockchain::add_block;
-use ethrex_core::types::{Block, Genesis};
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::execution_db::ExecutionDB;
+use ethrex_vm::{backends::revm::execution_db::ToExecDB, db::StoreWrapper};
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -35,10 +35,9 @@ pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
 /// before calling `send_commitment()` to send the block commitment.
 pub fn generate_rlp(
     up_to_block_number: u64,
-    block: Block,
     store: &Store,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if block.header.number == up_to_block_number {
+    if store.get_latest_block_number()? == up_to_block_number {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let file_name = "l2-test.rlp";
 
@@ -72,16 +71,21 @@ pub fn generate_program_input(
     // create store
     let store = Store::new("memory", EngineType::InMemory)?;
     store.add_initial_state(genesis)?;
+    // create blockchain
+    let blockchain = Blockchain::default_with_store(store.clone());
     for block in chain {
-        add_block(&block, &store)?;
+        blockchain.add_block(&block)?;
     }
 
+    let parent_hash = block.header.parent_hash;
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
-        .ok_or(ProverInputError::InvalidParentBlock(
-            block.header.parent_hash,
-        ))?;
-    let db = ExecutionDB::from_exec(&block, &store)?;
+        .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
+    let store = StoreWrapper {
+        store,
+        block_hash: parent_hash,
+    };
+    let db = store.to_exec_db(&block)?;
 
     Ok(ProgramInput {
         db,

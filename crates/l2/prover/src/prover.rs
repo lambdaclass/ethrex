@@ -1,9 +1,11 @@
 use crate::errors::ProverError;
-use ethrex_l2::utils::prover::proving_systems::{ProverType, ProvingOutput, Risc0Proof, Sp1Proof};
+use ethrex_l2::utils::prover::proving_systems::{
+    ExecuteOutput, ProverType, ProvingOutput, Risc0Proof, Sp1Proof,
+};
 use tracing::info;
 
 // risc0
-use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts};
+use risc0_zkvm::{default_executor, default_prover, ExecutorEnv, ProverOpts};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     methods::ZKVM_SP1_PROGRAM_ELF,
@@ -49,6 +51,9 @@ pub fn create_prover(prover_type: ProverType) -> Box<dyn Prover> {
 pub trait Prover {
     /// Generates the groth16 proof
     fn prove(&mut self, input: ProgramInput) -> Result<ProvingOutput, Box<dyn std::error::Error>>;
+    /// Executes without proving
+    fn execute(&mut self, input: ProgramInput)
+        -> Result<ExecuteOutput, Box<dyn std::error::Error>>;
     /// Verifies the proof
     fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>>;
     /// Gets the EVM gas consumed by the verified block
@@ -100,6 +105,23 @@ impl<'a> Prover for Risc0Prover<'a> {
         )))
     }
 
+    fn execute(
+        &mut self,
+        input: ProgramInput,
+    ) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
+        let env = ExecutorEnv::builder()
+            .stdout(&mut self.stdout)
+            .write(&input)?
+            .build()?;
+
+        let executor = default_executor();
+
+        let session_info = executor.execute(env, self.elf)?;
+
+        info!("Successfully generated session info.");
+        Ok(ExecuteOutput::RISC0(session_info))
+    }
+
     fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {
         // Verify the proof.
         match proving_output {
@@ -131,23 +153,39 @@ impl<'a> Prover for Sp1Prover<'a> {
         stdin.write(&input);
 
         // Generate the ProverClient
-        let client = ProverClient::new();
+        let client = ProverClient::from_env();
         let (pk, vk) = client.setup(self.elf);
 
         // Proof information by proving the specified ELF binary.
         // This struct contains the receipt along with statistics about execution of the guest
-        let proof = client.prove(&pk, stdin).groth16().run()?;
+        let proof = client.prove(&pk, &stdin).groth16().run()?;
         // Wrap Proof and vk
         let sp1_proof = Sp1Proof::new(proof, vk);
         info!("Successfully generated SP1Proof.");
         Ok(ProvingOutput::SP1(sp1_proof))
     }
 
+    fn execute(
+        &mut self,
+        input: ProgramInput,
+    ) -> Result<ExecuteOutput, Box<dyn std::error::Error>> {
+        let mut stdin = SP1Stdin::new();
+        stdin.write(&input);
+
+        // Generate the ProverClient
+        let client = ProverClient::from_env();
+
+        let output = client.execute(self.elf, &stdin).run()?;
+
+        info!("Successfully executed SP1 program.");
+        Ok(ExecuteOutput::SP1(output))
+    }
+
     fn verify(&self, proving_output: &ProvingOutput) -> Result<(), Box<dyn std::error::Error>> {
         // Verify the proof.
         match proving_output {
             ProvingOutput::SP1(complete_proof) => {
-                let client = ProverClient::new();
+                let client = ProverClient::from_env();
                 client.verify(&complete_proof.proof, &complete_proof.vk)?;
             }
             ProvingOutput::RISC0(_) => return Err(Box::new(ProverError::IncorrectProverType)),

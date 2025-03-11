@@ -1,0 +1,46 @@
+[package]
+name = "ef_tests-state"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ethrex-blockchain.workspace = true
+ethrex-common.workspace = true
+ethrex-storage.workspace = true
+ethrex-rlp.workspace = true
+ethrex-vm.workspace = true
+ethrex-levm.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+hex.workspace = true
+keccak-hash.workspace = true
+colored = "2.1.0"
+spinoff = "0.8.0"
+thiserror.workspace = true
+clap = { version = "4.3", features = ["derive"] }
+clap_complete = "4.5.17"
+itertools = "0.13.0"
+revm = { version = "19.0.0", features = [
+    "serde",
+    "std",
+    "serde-json",
+    "optional_no_base_fee",
+    "optional_block_gas_limit",
+], default-features = false }
+
+[dev-dependencies]
+hex = "0.4.3"
+
+[lib]
+path = "./lib.rs"
+
+[features]
+default = ["c-kzg", "blst"]
+c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+blst = ["ethrex-vm/blst"]
+
+[[test]]
+name = "all"
+harness = false
