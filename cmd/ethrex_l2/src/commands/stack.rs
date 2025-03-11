@@ -1,8 +1,19 @@
 use crate::{config::EthrexL2Config, utils::config::confirm};
 use clap::Subcommand;
-use eyre::ContextCompat;
+use ethrex_common::{Address, U256};
+use ethrex_rpc::{
+    clients::{beacon::BeaconClient, eth::BlockByNumber},
+    EthClient,
+};
+use eyre::{ContextCompat, OptionExt};
+use keccak_hash::keccak;
+use reqwest::Url;
 use secp256k1::SecretKey;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    thread::sleep,
+    time::Duration,
+};
 
 pub const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
@@ -64,6 +75,21 @@ pub(crate) enum Command {
     Restart {
         #[clap(short = 'y', long, help = "Forces the restart without confirmation.")]
         force: bool,
+    },
+    #[clap(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
+    BlobsSaver {
+        #[clap(
+            short = 'c',
+            long = "contract",
+            help = "The contract address to listen to."
+        )]
+        contract_address: Address,
+        #[clap(short = 'd', long, help = "The directory to save the blobs.")]
+        data_dir: PathBuf,
+        #[clap(short = 'e', long)]
+        l1_eth_rpc: Url,
+        #[clap(short = 'b', long)]
+        l1_beacon_rpc: Url,
     },
 }
 
@@ -162,6 +188,73 @@ impl Command {
                     .await?;
                 } else {
                     println!("Aborted.");
+                }
+            }
+            Command::BlobsSaver {
+                l1_eth_rpc,
+                l1_beacon_rpc,
+                contract_address,
+                data_dir,
+            } => {
+                let eth_client = EthClient::new(l1_eth_rpc.as_str());
+                let beacon_client = BeaconClient::new(l1_beacon_rpc);
+
+                // Keep delay for finality
+                let mut current_block = eth_client.get_block_number().await? - U256::from(64);
+                let event_signature = keccak("BlockCommitted(bytes32)");
+
+                loop {
+                    // Wait for a block
+                    sleep(Duration::from_secs(12));
+
+                    let logs = eth_client
+                        .get_logs(
+                            current_block,
+                            current_block,
+                            contract_address,
+                            event_signature,
+                        )
+                        .await?;
+
+                    if !logs.is_empty() {
+                        // Get parent beacon block root hash from block
+                        let block = eth_client
+                            .get_block_by_number(BlockByNumber::Number(current_block.as_u64()))
+                            .await?;
+                        let parent_beacon_hash = block
+                            .header
+                            .parent_beacon_block_root
+                            .ok_or_eyre("Unknown parent beacon root")?;
+
+                        // Get block slot from parent beacon block
+                        let parent_beacon_block =
+                            beacon_client.get_block_by_hash(parent_beacon_hash).await?;
+                        let target_slot = parent_beacon_block.message.slot + 1;
+
+                        // Get blobs from block's slot
+                        let mut block_blobs = beacon_client.get_blobs_by_slot(target_slot).await?;
+
+                        // Get versioned hashes from transactions
+                        let mut l2_blob_hashes = vec![];
+                        for log in logs {
+                            let tx = eth_client
+                                .get_transaction_by_hash(log.transaction_hash)
+                                .await?
+                                .ok_or_eyre(format!(
+                                    "Transaction {:#x} not found",
+                                    log.transaction_hash
+                                ))?;
+                            l2_blob_hashes.extend(tx.blob_versioned_hashes.ok_or_eyre(format!(
+                                "Blobs not found in transaction {:#x}",
+                                log.transaction_hash
+                            ))?);
+                        }
+
+                        // Only keep L2 commitment's blobs
+                        block_blobs.retain(|blob| l2_blob_hashes.contains(&blob.versioned_hash()));
+                    }
+
+                    current_block += U256::one();
                 }
             }
         }
