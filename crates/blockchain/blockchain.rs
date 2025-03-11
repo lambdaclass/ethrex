@@ -87,47 +87,23 @@ impl Blockchain {
         validate_gas_used(&receipts, &block.header)?;
 
         // Apply the account updates over the last block's state and compute the new state root
-        let mut since_two = Instant::now();
         let new_state_root = state
             .database()
             .ok_or(ChainError::StoreError(StoreError::MissingStore))?
             .apply_account_updates(block.header.parent_hash, &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
-        let mut interval_two = Instant::now().duration_since(since_two).as_millis();
-        info!("Applying account updates took {}ms", interval_two,);
 
         // Check state root matches the one in block header after execution
         validate_state_root(&block.header, new_state_root)?;
 
         // Check receipts root matches the one in block header after execution
-        since_two = Instant::now();
         validate_receipts_root(&block.header, &receipts)?;
-        interval_two = Instant::now().duration_since(since_two).as_millis();
-        info!(
-            "Validating {} receipts, took {}ms",
-            receipts.len(),
-            interval_two,
-        );
 
         // Processes requests from receipts, computes the requests_hash and compares it against the header
-        since_two = Instant::now();
         validate_requests_hash(&block.header, &chain_config, &requests)?;
-        interval_two = Instant::now().duration_since(since_two).as_millis();
-        info!(
-            "Validating {} requests, took {}ms",
-            receipts.len(),
-            interval_two,
-        );
 
-        since_two = Instant::now();
         store_block(&self.storage, block.clone())?;
-        interval_two = Instant::now().duration_since(since_two).as_millis();
-        info!("Storing block took {}ms", interval_two);
-
-        since_two = Instant::now();
         store_receipts(&self.storage, receipts, block_hash)?;
-        interval_two = Instant::now().duration_since(since_two).as_millis();
-        info!("Storing receipts, took {}ms", interval_two,);
 
         let interval = Instant::now().duration_since(since).as_millis();
         let mut throughput = 0.0;
