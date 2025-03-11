@@ -56,15 +56,19 @@ impl Blockchain {
     }
 
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
-        self.add_blocks_in_batch(vec![block])
+        self.add_blocks_in_batch(vec![block], false)
     }
 
-    pub fn add_blocks_in_batch(&self, blocks: Vec<Block>) -> Result<(), ChainError> {
+    pub fn add_blocks_in_batch(
+        &self,
+        blocks: Vec<Block>,
+        should_commit_intermediate_tries: bool,
+    ) -> Result<(), ChainError> {
         let first_block_header = match blocks.first() {
             Some(block) => block.header.clone(),
             None => return Err(ChainError::Custom("First block not found".into())),
         };
-        let last_block_header = match blocks.first() {
+        let last_block_header = match blocks.last() {
             Some(block) => block.header.clone(),
             None => return Err(ChainError::Custom("Last block not found".into())),
         };
@@ -122,6 +126,11 @@ impl Blockchain {
             self.storage
                 .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
 
+            if should_commit_intermediate_tries {
+                let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
+                validate_state_root(&block.header, root_hash)?;
+            }
+
             if is_last_block {
                 validate_receipts_root(&block.header, &receipts)?;
                 validate_requests_hash(&block.header, &chain_config, &requests)?;
@@ -130,9 +139,10 @@ impl Blockchain {
             all_receipts.push((block_hash, receipts));
         }
 
-        // Compute state trie root hash, validate it and commit to db
-        let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
-        validate_state_root(&last_block_header, root_hash)?;
+        if !should_commit_intermediate_tries {
+            let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
+            validate_state_root(&last_block_header, root_hash)?;
+        }
 
         self.storage.add_batch_of_blocks(blocks)?;
         self.storage.add_batch_of_receipts(all_receipts)?;
@@ -141,10 +151,10 @@ impl Blockchain {
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks(&self, blocks: Vec<Block>) {
+    pub fn import_blocks(&self, blocks: Vec<Block>, should_commit_intermediate_tries: bool) {
         let size = blocks.len();
         let last_block = blocks.last().unwrap().header.clone();
-        if let Err(err) = self.add_blocks_in_batch(blocks) {
+        if let Err(err) = self.add_blocks_in_batch(blocks, should_commit_intermediate_tries) {
             warn!("Failed to add blocks: {:?}.", err);
         };
         if let Err(err) = self.storage.update_latest_block_number(last_block.number) {
@@ -164,13 +174,12 @@ impl Blockchain {
                 );
             }
             EvmEngine::REVM => {
-                apply_fork_choice(
+                let _ = apply_fork_choice(
                     &self.storage,
                     last_block_hash,
                     last_block_hash,
                     last_block_hash,
-                )
-                .unwrap();
+                );
             }
         }
         info!("Added {size} blocks to blockchain");
@@ -444,10 +453,7 @@ pub fn is_canonical(
     block_hash: BlockHash,
 ) -> Result<bool, StoreError> {
     match store.get_canonical_block_hash(block_number)? {
-        Some(hash) => {
-            info!("CANONICAL HASH {} PROVIDED HASH {}", hash, block_hash);
-            Ok(hash == block_hash)
-        }
+        Some(hash) => Ok(hash == block_hash),
         _ => Ok(false),
     }
 }

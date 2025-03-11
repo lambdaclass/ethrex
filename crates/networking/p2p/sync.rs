@@ -399,7 +399,7 @@ impl SyncManager {
         let last_block = blocks.last().unwrap().clone();
         let blocks_len = blocks.len();
 
-        self.blockchain.add_blocks_in_batch(blocks)?;
+        self.blockchain.add_blocks_in_batch(blocks, false)?;
 
         store.update_latest_block_number(last_block.header.number)?;
         debug!("Executed & stored {} blocks", blocks_len);
