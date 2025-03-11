@@ -17,8 +17,13 @@ pub enum RpcErr {
     UnsuportedFork(String),
     Internal(String),
     Vm(String),
-    Revert { data: String },
-    Halt { reason: String, gas_used: u64 },
+    Revert {
+        data: String,
+    },
+    Halt {
+        reason: String,
+        gas_used: u64,
+    },
     AuthenticationError(AuthenticationError),
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),

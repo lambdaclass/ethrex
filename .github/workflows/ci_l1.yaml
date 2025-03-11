@@ -140,7 +140,7 @@ jobs:
           enclave_name: ${{ matrix.enclave_name }}
           kurtosis_version: "1.4.2"
           ethereum_package_url: "github.com/lambdaclass/ethereum-package"
-          ethereum_package_branch: "ethrex-integration"
+          ethereum_package_branch: "ethrex-integration-pectra"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
@@ -155,17 +155,9 @@ jobs:
             simulation: ethereum/rpc-compat
             test_pattern: ""
             ethrex_flags: ""
-          - name: "Devp2p discv4 tests"
+          - name: "Devp2p tests"
             simulation: devp2p
-            test_pattern: discv4
-            ethrex_flags: ""
-          - name: "Devp2p snap tests"
-            simulation: devp2p
-            test_pattern: /AccountRange|StorageRanges|ByteCodes|TrieNodes
-            ethrex_flags: ""
-          - name: "Devp2p eth tests"
-            simulation: devp2p
-            test_pattern: eth/Status|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest
+            test_pattern: discv4|eth|snap/Ping|Findnode|Amplification|Status|AccountRange|StorageRanges|ByteCodes|TrieNodes|GetBlockHeaders|SimultaneousRequests|SameRequestID|ZeroRequestID|GetBlockBodies|MaliciousHandshake|MaliciousStatus|Transaction|NewPooledTxs|GetBlockReceipts|LargeTxRequest # InvalidTxs|BlobViolations
             ethrex_flags: ""
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
@@ -173,7 +165,7 @@ jobs:
             ethrex_flags: ""
           - name: "Cancun Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering, Single|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain, Depth=5|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Invalid Missing .* .*CanonicalReOrg=False|Request Blob Pooled Transactions"
+            test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering, Single|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain, Depth=5|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Invalid Missing Ancestor Syncing ReOrg|Request Blob Pooled Transactions"
             ethrex_flags: ""
           - name: "Paris Engine tests"
             simulation: ethereum/engine
@@ -212,7 +204,7 @@ jobs:
 
       # By default ethrex uses revm as evm backend.
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 4
+        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:

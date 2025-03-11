@@ -10,8 +10,8 @@ use engine::{
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
         GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
-        GetPayloadV2Request, GetPayloadV3Request, NewPayloadV1Request, NewPayloadV2Request,
-        NewPayloadV3Request, NewPayloadV4Request,
+        GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
+        NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
     ExchangeCapabilitiesRequest,
 };
@@ -408,6 +408,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context)
         }
+        "engine_getPayloadV4" => GetPayloadV4Request::call(req, context),
         "engine_getPayloadV3" => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "based")] {
