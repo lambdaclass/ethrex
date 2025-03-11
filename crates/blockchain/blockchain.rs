@@ -56,11 +56,78 @@ impl Blockchain {
         }
     }
 
-    pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
-        match self.add_blocks_in_batch(vec![block], false, false) {
-            Ok(_) => Ok(()),
-            Err((err, _, _)) => Err(err),
+    pub fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
+        let since = Instant::now();
+
+        // Validate if it can be the new head and find the parent
+        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            // If the parent is not present, we store it as pending.
+            self.storage.add_pending_block(block.clone())?;
+            return Err(ChainError::ParentNotFound);
+        };
+        let chain_config = self.storage.get_chain_config()?;
+
+        // Validate the block pre-execution
+        validate_block(block, &parent_header, &chain_config)?;
+
+        let mut vm = Evm::new(
+            self.evm_engine,
+            self.storage.clone(),
+            block.header.parent_hash,
+        );
+        let execution_result = vm.execute_block(block)?;
+
+        let interval = Instant::now().duration_since(since).as_millis();
+        if interval != 0 {
+            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
         }
+
+        Ok(execution_result)
+    }
+
+    pub fn store_block(
+        &self,
+        block: &Block,
+        execution_result: BlockExecutionResult,
+    ) -> Result<(), ChainError> {
+        // Assumes block is valid
+        let BlockExecutionResult {
+            receipts,
+            requests,
+            account_updates,
+        } = execution_result;
+        let chain_config = self.storage.get_chain_config()?;
+
+        let block_hash = block.header.compute_block_hash();
+
+        validate_gas_used(&receipts, &block.header)?;
+
+        // Apply the account updates over the last block's state and compute the new state root
+        let new_state_root = self
+            .storage
+            .apply_account_updates(block.header.parent_hash, &account_updates)?
+            .ok_or(ChainError::ParentStateNotFound)?;
+
+        // Check state root matches the one in block header
+        validate_state_root(&block.header, new_state_root)?;
+
+        // Check receipts root matches the one in block header
+        validate_receipts_root(&block.header, &receipts)?;
+
+        // Processes requests from receipts, computes the requests_hash and compares it against the header
+        validate_requests_hash(&block.header, &chain_config, &requests)?;
+
+        store_block(&self.storage, block.clone())?;
+        store_receipts(&self.storage, receipts, block_hash)?;
+
+        Ok(())
+    }
+
+    pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
+        self.execute_block(&block)
+            .and_then(|res| self.store_block(&block, res))
     }
 
     /// Adds multiple blocks in a batch.
