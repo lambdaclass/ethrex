@@ -18,6 +18,7 @@ ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-storage.workspace = true
+ethrex-trie.workspace = true
 ethrex-vm.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 hex.workspace = true

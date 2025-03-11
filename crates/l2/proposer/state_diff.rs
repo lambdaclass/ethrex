@@ -2,6 +2,10 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
+use ethrex_common::types::{AccountInfo, AccountState};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_storage::{hash_address, AccountUpdate};
+use ethrex_trie::Trie;
 
 use super::errors::StateDiffError;
 
@@ -59,17 +63,6 @@ impl TryFrom<u8> for AccountStateDiffType {
     }
 }
 
-impl Default for StateDiff {
-    fn default() -> Self {
-        StateDiff {
-            version: 1,
-            modified_accounts: HashMap::new(),
-            withdrawal_logs: Vec::new(),
-            deposit_logs: Vec::new(),
-        }
-    }
-}
-
 impl From<AccountStateDiffType> for u8 {
     fn from(value: AccountStateDiffType) -> Self {
         match value {
@@ -78,6 +71,27 @@ impl From<AccountStateDiffType> for u8 {
             AccountStateDiffType::Storage => 4,
             AccountStateDiffType::Bytecode => 8,
             AccountStateDiffType::BytecodeHash => 16,
+        }
+    }
+}
+
+pub trait AccountStateDiffCmp {
+    fn is(&self, r#type: AccountStateDiffType) -> bool;
+}
+
+impl AccountStateDiffCmp for u8 {
+    fn is(&self, r#type: AccountStateDiffType) -> bool {
+        return self & r#type as u8 != 0;
+    }
+}
+
+impl Default for StateDiff {
+    fn default() -> Self {
+        StateDiff {
+            version: 1,
+            modified_accounts: HashMap::new(),
+            withdrawal_logs: Vec::new(),
+            deposit_logs: Vec::new(),
         }
     }
 }
@@ -118,8 +132,115 @@ impl StateDiff {
         Ok(Bytes::from(encoded))
     }
 
-    pub fn decode() -> Result<Self, String> {
-        unimplemented!()
+    pub fn decode(bytes: Bytes) -> Result<Self, StateDiffError> {
+        if bytes[0] != 0x01 {
+            return Err(StateDiffError::UnsupportedVersion(bytes[0]));
+        }
+
+        let accounts_updated = u16::from_be_bytes([bytes[1], bytes[2]]);
+
+        let mut modified_accounts = HashMap::with_capacity(accounts_updated as usize);
+        let mut offset = 3;
+
+        for _ in 0..accounts_updated {
+            let (bytes_read, address, account_diff) =
+                AccountStateDiff::decode(bytes[offset..].to_vec().into())?;
+            offset += bytes_read;
+            modified_accounts.insert(address, account_diff);
+        }
+
+        let withdrawal_logs_len = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
+        offset += 2;
+
+        let mut withdrawal_logs = Vec::with_capacity(withdrawal_logs_len as usize);
+        for _ in 0..withdrawal_logs_len {
+            let address = Address::from_slice(&bytes[offset..offset + 20]);
+            offset += 20;
+            let amount = U256::from_big_endian(&bytes[offset..offset + 32]);
+            offset += 32;
+            let tx_hash = H256::from_slice(&bytes[offset..offset + 32]);
+            offset += 32;
+
+            withdrawal_logs.push(WithdrawalLog {
+                address,
+                amount,
+                tx_hash,
+            });
+        }
+
+        let deposit_logs_len = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
+        offset += 2;
+
+        let mut deposit_logs = Vec::with_capacity(deposit_logs_len as usize);
+        for _ in 0..deposit_logs_len {
+            let address = Address::from_slice(&bytes[offset..offset + 20]);
+            offset += 20;
+            let amount = U256::from_big_endian(&bytes[offset..offset + 32]);
+            offset += 32;
+
+            deposit_logs.push(DepositLog {
+                address,
+                amount,
+                nonce: Default::default(),
+            });
+        }
+
+        Ok(Self {
+            version: 1,
+            modified_accounts,
+            withdrawal_logs,
+            deposit_logs,
+        })
+    }
+
+    pub fn to_account_updates(
+        &self,
+        prev_state: &Trie,
+    ) -> Result<Vec<AccountUpdate>, StateDiffError> {
+        let mut account_updates = Vec::new();
+
+        for (address, diff) in &self.modified_accounts {
+            let account_state = match prev_state
+                .get(&hash_address(address))
+                .map_err(|e| StateDiffError::DbError(e))?
+            {
+                Some(rlp) => AccountState::decode(&rlp)
+                    .map_err(|e| StateDiffError::FailedToDeserializeStateDiff(e.to_string()))?,
+                None => AccountState::default(),
+            };
+
+            let balance = diff.new_balance.unwrap_or(account_state.balance);
+            let nonce = account_state.nonce + diff.nonce_diff as u64;
+            let bytecode_hash = diff.bytecode_hash.unwrap_or(account_state.code_hash);
+
+            let account_info = if diff.new_balance.is_some()
+                || diff.nonce_diff != 0
+                || diff.bytecode_hash.is_some()
+            {
+                Some(AccountInfo {
+                    balance,
+                    nonce,
+                    code_hash: bytecode_hash,
+                })
+            } else {
+                None
+            };
+
+            let mut storage = HashMap::with_capacity(diff.storage.len());
+            for (key, pair) in diff.storage.iter() {
+                storage.insert(*key, *pair);
+            }
+
+            account_updates.push(AccountUpdate {
+                address: *address,
+                removed: false,
+                info: account_info,
+                code: diff.bytecode.clone(),
+                added_storage: storage,
+            });
+        }
+
+        Ok(account_updates)
     }
 }
 
@@ -182,5 +303,81 @@ impl AccountStateDiff {
         }
 
         Ok((r#type, Bytes::from(encoded)))
+    }
+
+    /// Returns a tuple of the number of bytes read and the decoded `AccountStateDiff`
+    pub fn decode(bytes: Bytes) -> Result<(usize, Address, Self), StateDiffError> {
+        let mut offset = 0;
+
+        let update_type = bytes[offset];
+        offset += 1;
+
+        let address = Address::from_slice(&bytes[offset..offset + 20]);
+        offset += 20;
+
+        let new_balance = if update_type.is(AccountStateDiffType::NewBalance) {
+            let balance = U256::from_big_endian(&bytes[offset..offset + 32]);
+            offset += 32;
+            Some(balance)
+        } else {
+            None
+        };
+
+        let nonce_diff = if update_type.is(AccountStateDiffType::NonceDiff) {
+            let nonce = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
+            offset += 2;
+            Some(nonce)
+        } else {
+            None
+        };
+
+        let mut storage_diff = Vec::new();
+        if update_type.is(AccountStateDiffType::Storage) {
+            let storage_slots_updated = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
+            offset += 2;
+
+            for _ in 0..storage_slots_updated {
+                let key = H256::from_slice(&bytes[offset..offset + 32]);
+                offset += 32;
+                let new_value = U256::from_big_endian(&bytes[offset..offset + 32]);
+                offset += 32;
+
+                storage_diff.push((key, new_value));
+            }
+        }
+
+        let bytecode = if update_type.is(AccountStateDiffType::Bytecode) {
+            let bytecode_len = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
+            offset += 2;
+
+            let bytecode = bytes[offset..offset + bytecode_len as usize]
+                .to_vec()
+                .into();
+            offset += bytecode_len as usize;
+
+            Some(bytecode)
+        } else {
+            None
+        };
+
+        let bytecode_hash = if update_type.is(AccountStateDiffType::BytecodeHash) {
+            let bytecode_hash = H256::from_slice(&bytes[offset..offset + 32]);
+            offset += 32;
+            Some(bytecode_hash)
+        } else {
+            None
+        };
+
+        Ok((
+            offset,
+            address,
+            AccountStateDiff {
+                new_balance,
+                nonce_diff: nonce_diff.unwrap_or(0),
+                storage: storage_diff,
+                bytecode,
+                bytecode_hash,
+            },
+        ))
     }
 }

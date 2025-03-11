@@ -2691,6 +2691,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "ethrex-storage",
+ "ethrex-trie",
  "ethrex-vm",
  "hex",
  "jsonwebtoken",
