@@ -20,13 +20,14 @@ use ethrex_common::types::{
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
-use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
 use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
+
+pub const MAX_TRIES_IN_STORE: usize = 128;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config

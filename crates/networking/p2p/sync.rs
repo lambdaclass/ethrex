@@ -6,7 +6,7 @@ mod storage_healing;
 mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::{error::ChainError, Blockchain};
+use ethrex_blockchain::{error::ChainError, Blockchain, MAX_TRIES_IN_STORE};
 use ethrex_common::{
     types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
@@ -399,7 +399,24 @@ impl SyncManager {
         let last_block = blocks.last().unwrap().clone();
         let blocks_len = blocks.len();
 
-        self.blockchain.add_blocks_in_batch(blocks, false)?;
+        let latest_block_number = store.get_latest_block_number()?;
+        if last_block.header.number.saturating_sub(latest_block_number) <= MAX_TRIES_IN_STORE as u64
+        {
+            if blocks_len <= MAX_TRIES_IN_STORE {
+                self.blockchain.add_blocks_in_batch(blocks, true)?;
+            } else {
+                let idx = blocks_len - MAX_TRIES_IN_STORE;
+                // Using `split_off` avoids cloning the slice, which would be necessary if we used `[..idx]` and `[idx..]` directly.
+                // This is avoids cloning all blocks which might get expensive if they are large.
+                let tail = blocks.split_off(idx);
+                let head = std::mem::take(&mut blocks);
+
+                self.blockchain.add_blocks_in_batch(head, false)?;
+                self.blockchain.add_blocks_in_batch(tail, true)?;
+            }
+        } else {
+            self.blockchain.add_blocks_in_batch(blocks, false)?;
+        }
 
         store.update_latest_block_number(last_block.header.number)?;
         debug!("Executed & stored {} blocks", blocks_len);
