@@ -34,7 +34,7 @@ use tokio::{runtime::Runtime, sync::mpsc};
 
 pub struct Store {
     db: Arc<Database>,
-    block_task: mpsc::UnboundedSender<Storable>,
+    write_queue: mpsc::UnboundedSender<Storable>,
 }
 enum Storable {
     Body {
@@ -71,51 +71,80 @@ impl Storable {
 
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
-        let (task_tx, mut task_rx) = mpsc::unbounded_channel::<Storable>();
+        let (write_queue, mut write_rx) = mpsc::unbounded_channel::<Storable>();
 
         let db = Arc::new(init_db(Some(path)));
         let db_for_task = db.clone();
-        let _writer = tokio::task::spawn(async move {
-            loop {
-                tokio::select! {
-                    () = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
 
-                    },
-                    Some(storable) = task_rx.recv() => {
-                        Self::write_it(storable, db_for_task.clone()).await;
+        // Spawn background task to process writes
+        tokio::task::spawn(async move {
+            while let Some(storable) = write_rx.recv().await {
+                // Process in a blocking task to avoid blocking the tokio runtime
+                let db = db_for_task.clone();
+                tokio::task::spawn_blocking(move || {
+                    let txn = match db.begin_readwrite() {
+                        Ok(txn) => txn,
+                        Err(e) => {
+                            eprintln!("Failed to begin transaction: {:?}", e);
+                            return;
+                        }
+                    };
+
+                    let result = match storable {
+                        Storable::Body { hash, body } => {
+                            txn.upsert::<Bodies>(hash.into(), body.into())
+                        }
+                        Storable::Header { hash, header } => {
+                            txn.upsert::<Headers>(hash.into(), header.into())
+                        }
+                        Storable::BlockNumber { hash, number } => {
+                            txn.upsert::<BlockNumbers>(hash.into(), number.into())
+                        }
+                    };
+
+                    if let Err(e) = result {
+                        eprintln!("Write operation failed: {:?}", e);
+                        return;
                     }
-                }
+
+                    if let Err(e) = txn.commit() {
+                        eprintln!("Transaction commit failed: {:?}", e);
+                    }
+                });
             }
         });
 
-        Ok(Self {
-            db: db.clone(),
-            block_task: task_tx,
-        })
+        Ok(Self { db, write_queue })
     }
 
-    async fn write_it(storable: Storable, db: Arc<Database>) {
+    // Async write - use for non-critical operations
+    pub fn write_async(&self, storable: Storable) -> Result<(), StoreError> {
+        self.write_queue.send(storable).unwrap();
+        Ok(())
+    }
+
+    // Sync write - use when sequential ordering matters
+    pub fn write_sync(&self, storable: Storable) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
         match storable {
             Storable::Body { hash, body } => {
-                Self::__write::<Bodies>(db, hash.into(), body.into()).unwrap()
+                txn.upsert::<Bodies>(hash.into(), body.into())
+                    .map_err(StoreError::LibmdbxError)?;
             }
             Storable::Header { hash, header } => {
-                Self::__write::<Headers>(db, hash.into(), header.into()).unwrap()
+                txn.upsert::<Headers>(hash.into(), header.into())
+                    .map_err(StoreError::LibmdbxError)?;
             }
             Storable::BlockNumber { hash, number } => {
-                Self::__write::<BlockNumbers>(db, hash.into(), number.into()).unwrap()
+                txn.upsert::<BlockNumbers>(hash.into(), number.into())
+                    .map_err(StoreError::LibmdbxError)?;
             }
         }
-    }
 
-    fn __write<T: Table>(
-        db: Arc<Database>,
-        key: T::Key,
-        value: T::Value,
-    ) -> Result<(), StoreError> {
-        let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
-        txn.upsert::<T>(key, value)
-            .map_err(StoreError::LibmdbxError)?;
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
@@ -169,9 +198,8 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.block_task
-            .send(Storable::from_block_header(block_hash, block_header))
-            .expect("FAILED TO SEND MSG");
+        self.write::<Headers>(block_hash.into(), block_header.into())
+            .unwrap();
         Ok(())
     }
 
@@ -203,10 +231,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        self.block_task
-            .send(Storable::from_block_body(block_hash, block_body))
-            .expect("FAILED TO SEND MSG");
-        Ok(())
+        self.write::<Bodies>(block_hash.into(), block_body.into())
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
@@ -236,10 +261,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.block_task
-            .send(Storable::from_block_number(block_hash, block_number))
-            .expect("FAILED TO SEND MSG");
-        Ok(())
+        self.write::<BlockNumbers>(block_hash.into(), block_number)
     }
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
