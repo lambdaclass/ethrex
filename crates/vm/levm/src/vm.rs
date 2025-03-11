@@ -240,7 +240,7 @@ impl VM {
                     created_accounts: HashSet::new(),
                 };
 
-                let (_is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
+                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytecode) =
                     eip7702_get_code(&mut cache, db.clone(), &mut substate, address_to)?;
 
                 // CALL tx
