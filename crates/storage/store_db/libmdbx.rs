@@ -992,6 +992,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         mode: Mode::ReadWrite(ReadWriteOptions {
             // Set max DB size to 1TB
             max_size: Some(1024_isize.pow(4)),
+            growth_step: Some(1024_isize.pow(3)),
             ..Default::default()
         }),
         ..Default::default()
