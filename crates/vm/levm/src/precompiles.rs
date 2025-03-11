@@ -32,6 +32,7 @@ use lambdaworks_math::{
 };
 use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
+#[cfg(feature = "l2")]
 use p256::{
     ecdsa::{signature::hazmat::PrehashVerifier, Signature as P256Signature, VerifyingKey},
     EncodedPoint,
@@ -39,6 +40,8 @@ use p256::{
 use sha3::Digest;
 use std::ops::Mul;
 
+#[cfg(feature = "l2")]
+use crate::gas_cost::P256VERIFY_COST;
 use crate::{
     call_frame::CallFrame,
     constants::VERSIONED_HASH_VERSION_KZG,
@@ -48,7 +51,7 @@ use crate::{
         BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST,
         BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECADD_COST_PRE_ISTANBUL, ECMUL_COST,
         ECMUL_COST_PRE_ISTANBUL, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
-        P256VERIFY_COST, POINT_EVALUATION_COST,
+        POINT_EVALUATION_COST,
     },
 };
 
@@ -1702,6 +1705,7 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
     Ok(Scalar::from_raw(scalar_le))
 }
 
+#[cfg(feature = "l2")]
 /// Signature verification in the “secp256r1” elliptic curve
 pub fn p_256_verify(
     calldata: &Bytes,
@@ -1716,11 +1720,21 @@ pub fn p_256_verify(
     let calldata = fill_with_zeros(calldata, 160)?;
 
     // Parse parameters
-    let message_hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
-    let r = calldata.get(32..64).ok_or(InternalError::SlicingError)?;
-    let s = calldata.get(64..96).ok_or(InternalError::SlicingError)?;
-    let x = calldata.get(96..128).ok_or(InternalError::SlicingError)?;
-    let y = calldata.get(128..160).ok_or(InternalError::SlicingError)?;
+    let message_hash = calldata
+        .get(0..32)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let r = calldata
+        .get(32..64)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let s = calldata
+        .get(64..96)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let x = calldata
+        .get(96..128)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let y = calldata
+        .get(128..160)
+        .ok_or(PrecompileError::ParsingInputError)?;
 
     // Build verifier
     let Ok(verifier) = VerifyingKey::from_encoded_point(&EncodedPoint::from_affine_coordinates(
@@ -1742,6 +1756,8 @@ pub fn p_256_verify(
     // Verify message signature
     let success = verifier.verify_prehash(message_hash, &signature).is_ok();
 
+    // If the verification succeeds, returns 1 in a 32-byte format.
+    // If the verification fails, returns an empty `Bytes` object.
     if success {
         let mut result = [0; 32];
         result[31] = 1;

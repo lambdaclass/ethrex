@@ -6,6 +6,8 @@ use ethrex_common::{
     types::{Fork, TxKind},
     Address, H256, U256,
 };
+#[cfg(feature = "l2")]
+use ethrex_levm::precompiles::p_256_verify;
 use ethrex_levm::{
     account::Account,
     constants::*,
@@ -21,15 +23,13 @@ use ethrex_levm::{
     operations::Operation,
     precompiles::{
         blake2f, bls12_g1msm, bls12_pairing_check, ecadd, ecmul, ecpairing, ecrecover, identity,
-        modexp, p_256_verify, ripemd_160, sha2_256,
+        modexp, ripemd_160, sha2_256,
     },
     testing::{new_vm_with_ops, new_vm_with_ops_addr_bal_db, new_vm_with_ops_db, ops_to_bytecode},
     utils::{calculate_create_address, word_to_address},
     vm::{Storage, VM},
     Environment,
 };
-use serde::Deserialize;
-use std::fs;
 use std::{borrow::BorrowMut, collections::HashMap, sync::Arc};
 
 fn create_opcodes(size: usize, offset: usize, value_to_transfer: usize) -> Vec<Operation> {
@@ -4729,6 +4729,13 @@ fn pairing_infinity() {
     assert_eq!(result.unwrap(), zero);
 }
 
+#[cfg(feature = "l2")]
+use serde::Deserialize;
+
+#[cfg(feature = "l2")]
+use std::fs;
+
+#[cfg(feature = "l2")]
 #[derive(Debug, Deserialize)]
 struct P256TestCase {
     input: String,
@@ -4737,6 +4744,7 @@ struct P256TestCase {
     name: String,
 }
 
+#[cfg(feature = "l2")]
 #[test]
 fn p_256_verify_test() {
     // Taken from https://github.com/ulerdogan/go-ethereum/tree/ulerdogan-secp256r1.
