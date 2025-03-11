@@ -10,6 +10,7 @@ use keccak_hash::keccak;
 use reqwest::Url;
 use secp256k1::SecretKey;
 use std::{
+    fs::create_dir_all,
     path::{Path, PathBuf},
     thread::sleep,
     time::Duration,
@@ -196,6 +197,8 @@ impl Command {
                 contract_address,
                 data_dir,
             } => {
+                create_dir_all(data_dir.clone())?;
+
                 let eth_client = EthClient::new(l1_eth_rpc.as_str());
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
@@ -252,6 +255,14 @@ impl Command {
 
                         // Only keep L2 commitment's blobs
                         block_blobs.retain(|blob| l2_blob_hashes.contains(&blob.versioned_hash()));
+
+                        for blob in block_blobs.into_iter() {
+                            let blob_path =
+                                data_dir.join(format!("{}-{}.blob", target_slot, blob.index));
+                            std::fs::write(blob_path, blob.blob)?;
+                        }
+
+                        println!("Saved blobs for slot {}", target_slot);
                     }
 
                     current_block += U256::one();
