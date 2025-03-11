@@ -133,7 +133,7 @@ run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all H
 	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
 
 run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive &&  HIVE_LOGLEVEL=1 ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
