@@ -30,15 +30,122 @@ use serde_json;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
+use tokio::{runtime::Runtime, sync::mpsc};
 
 pub struct Store {
     db: Arc<Database>,
+    write_queue: mpsc::UnboundedSender<Storable>,
 }
+enum Storable {
+    Body {
+        hash: BlockHash,
+        body: BlockBody,
+    },
+    Header {
+        hash: BlockHashRLP,
+        header: BlockHeader,
+    },
+    BlockNumber {
+        hash: BlockHashRLP,
+        number: BlockNumber,
+    },
+}
+
+impl Storable {
+    fn from_block_body(hash: BlockHash, body: BlockBody) -> Self {
+        Storable::Body { hash, body }
+    }
+    fn from_block_header(hash: BlockHash, header: BlockHeader) -> Self {
+        Storable::Header {
+            hash: hash.into(),
+            header,
+        }
+    }
+    fn from_block_number(hash: BlockHash, number: BlockNumber) -> Self {
+        Storable::BlockNumber {
+            hash: hash.into(),
+            number,
+        }
+    }
+}
+
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Arc::new(init_db(Some(path))),
-        })
+        let (write_queue, mut write_rx) = mpsc::unbounded_channel::<Storable>();
+
+        let db = Arc::new(init_db(Some(path)));
+        let db_for_task = db.clone();
+
+        // Spawn background task to process writes
+        tokio::task::spawn(async move {
+            while let Some(storable) = write_rx.recv().await {
+                // Process in a blocking task to avoid blocking the tokio runtime
+                let db = db_for_task.clone();
+                tokio::task::spawn_blocking(move || {
+                    let txn = match db.begin_readwrite() {
+                        Ok(txn) => txn,
+                        Err(e) => {
+                            eprintln!("Failed to begin transaction: {:?}", e);
+                            return;
+                        }
+                    };
+
+                    let result = match storable {
+                        Storable::Body { hash, body } => {
+                            txn.upsert::<Bodies>(hash.into(), body.into())
+                        }
+                        Storable::Header { hash, header } => {
+                            txn.upsert::<Headers>(hash.into(), header.into())
+                        }
+                        Storable::BlockNumber { hash, number } => {
+                            txn.upsert::<BlockNumbers>(hash.into(), number.into())
+                        }
+                    };
+
+                    if let Err(e) = result {
+                        eprintln!("Write operation failed: {:?}", e);
+                        return;
+                    }
+
+                    if let Err(e) = txn.commit() {
+                        eprintln!("Transaction commit failed: {:?}", e);
+                    }
+                });
+            }
+        });
+
+        Ok(Self { db, write_queue })
+    }
+
+    // Async write - use for non-critical operations
+    pub fn write_async(&self, storable: Storable) -> Result<(), StoreError> {
+        self.write_queue.send(storable).unwrap();
+        Ok(())
+    }
+
+    // Sync write - use when sequential ordering matters
+    pub fn write_sync(&self, storable: Storable) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        match storable {
+            Storable::Body { hash, body } => {
+                txn.upsert::<Bodies>(hash.into(), body.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+            Storable::Header { hash, header } => {
+                txn.upsert::<Headers>(hash.into(), header.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+            Storable::BlockNumber { hash, number } => {
+                txn.upsert::<BlockNumbers>(hash.into(), number.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+
+        txn.commit().map_err(StoreError::LibmdbxError)
     }
 
     // Helper method to write into a libmdbx table
@@ -92,6 +199,8 @@ impl StoreEngine for Store {
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
         self.write::<Headers>(block_hash.into(), block_header.into())
+            .unwrap();
+        Ok(())
     }
 
     fn add_block_headers(
