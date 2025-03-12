@@ -419,6 +419,10 @@ mod tests {
             prover_type: ProverType::RISC0,
             calldata: Vec::new(),
         };
+        let pico_calldata = ProofCalldata {
+            prover_type: ProverType::Pico,
+            calldata: Vec::new(),
+        };
 
         // Write all the account_updates and proofs for each block
         for block in &blocks {
@@ -438,6 +442,11 @@ mod tests {
             )?;
 
             write_state(block.header.number, &StateType::Proof(sp1_calldata.clone()))?;
+
+            write_state(
+                block.header.number,
+                &StateType::Proof(pico_calldata.clone()),
+            )?;
         }
 
         // Check if the latest block_number saved matches the latest block in the chain.rlp

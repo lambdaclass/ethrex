@@ -440,6 +440,13 @@ impl ProverServer {
             ));
         }
 
+        let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
+        if pico_proof.prover_type != ProverType::Pico {
+            return Err(ProverServerError::Custom(
+                "Pico Proof isn't present".to_string(),
+            ));
+        }
+
         debug!("Sending proof for {block_number}");
 
         let calldata = encode_calldata(
@@ -447,6 +454,7 @@ impl ProverServer {
             &[
                 risc0_proof.calldata.as_slice(),
                 sp1_proof.calldata.as_slice(),
+                pico_proof.calldata.as_slice(),
             ]
             .concat(),
         )?;
