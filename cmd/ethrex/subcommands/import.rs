@@ -16,7 +16,7 @@ use super::removedb;
 
 fn get_import_blocks(path: &str) -> Vec<Block> {
     let path_metadata = metadata(path).expect("Failed to read path");
-    let blocks = if path_metadata.is_dir() {
+    if path_metadata.is_dir() {
         let mut blocks = vec![];
         let dir_reader = fs::read_dir(path).expect("Failed to read blocks directory");
         for file_res in dir_reader {
@@ -31,9 +31,7 @@ fn get_import_blocks(path: &str) -> Vec<Block> {
     } else {
         info!("Importing blocks from chain file: {}", path);
         utils::read_chain_file(path)
-    };
-
-    blocks
+    }
 }
 
 pub fn import_blocks_from_path(
