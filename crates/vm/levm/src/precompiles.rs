@@ -213,12 +213,10 @@ pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
         return false;
     }
 
-    cfg_if::cfg_if! {
-    if #[cfg(feature = "l2")] {
-        if RIP_PRECOMPILES.contains(callee_address) {
-            return true;
-        }
-    }}
+    #[cfg(feature = "l2")]
+    if RIP_PRECOMPILES.contains(callee_address) {
+        return true;
+    }
 
     PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }
@@ -297,6 +295,10 @@ pub fn execute_precompile(
         }
         address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
             bls12_map_fp2_tp_g2(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
+        #[cfg(feature = "l2")]
+        address if address == P256VERIFY_ADDRESS => {
+            p_256_verify(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
@@ -1720,21 +1722,15 @@ pub fn p_256_verify(
     let calldata = fill_with_zeros(calldata, 160)?;
 
     // Parse parameters
-    let message_hash = calldata
-        .get(0..32)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let r = calldata
-        .get(32..64)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let s = calldata
-        .get(64..96)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let x = calldata
-        .get(96..128)
-        .ok_or(PrecompileError::ParsingInputError)?;
-    let y = calldata
-        .get(128..160)
-        .ok_or(PrecompileError::ParsingInputError)?;
+    debug_assert!(calldata.len() >= 160);
+    if calldata.len() < 160 {
+        return Err(VMError::Internal(InternalError::SlicingError));
+    }
+    let message_hash = &calldata[0..32];
+    let r = &calldata[32..64];
+    let s = &calldata[64..96];
+    let x = &calldata[96..128];
+    let y = &calldata[128..160];
 
     // Build verifier
     let Ok(verifier) = VerifyingKey::from_encoded_point(&EncodedPoint::from_affine_coordinates(
