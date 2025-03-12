@@ -16,7 +16,7 @@ For more detailed documentation on each part of the system:
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp .env.example .env` &rarr; check if you want to change any config.
+3. `cp config_example.toml config.toml` &rarr; check if you want to change any config.
 4. `make init`
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
