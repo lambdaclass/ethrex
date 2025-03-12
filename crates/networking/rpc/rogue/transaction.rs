@@ -44,6 +44,7 @@ where
     ))
 }
 // This endpoint is inspired by the work of Ithaca in Odyssey
+// https://ithaca.xyz/updates/exp-0000
 // You can check the reference implementation here
 // https://github.com/ithacaxyz/odyssey/blob/main/crates/wallet/src/lib.rs
 impl RpcHandler for RogueSponsoredTx {
