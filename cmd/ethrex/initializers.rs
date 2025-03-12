@@ -427,13 +427,13 @@ pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
         warn!("No valid addresses provided, rogue_SendTransaction will always fail");
         return Vec::new();
     };
-    let addresses: Vec<Address> =
-        dbg!(fs::read_to_string(path).unwrap_or_else(|_| panic!("Failed to load file {}", path)))
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| line.to_string().parse::<Address>())
-            .filter_map(Result::ok)
-            .collect();
+    let addresses: Vec<Address> = fs::read_to_string(path)
+        .unwrap_or_else(|_| panic!("Failed to load file {}", path))
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.to_string().parse::<Address>())
+        .filter_map(Result::ok)
+        .collect();
     if addresses.is_empty() {
         warn!("No valid addresses provided, rogue_SendTransaction will always fail");
     }
