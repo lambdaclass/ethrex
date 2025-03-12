@@ -40,6 +40,11 @@ pub struct Blockchain {
     pub mempool: Mempool,
 }
 
+pub struct BatchBlockProcessingFailure {
+    pub last_valid_hash: H256,
+    pub failed_block_hash: H256,
+}
+
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
         Self {
@@ -134,9 +139,8 @@ impl Blockchain {
     /// Adds multiple blocks in a batch.
     ///
     /// If an error occurs, returns a tuple containing:
-    /// - The error type (`ChainError`).
-    /// - The failing block (if the error was caused by block processing).
-    /// - The last valid block hash (`H256`).
+    /// - The error type ([`ChainError`]).
+    /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// `should_commit_intermediate_tries` determines whether the state tries for each block  
     /// should be stored in the database (the last one is always stored).
@@ -147,7 +151,7 @@ impl Blockchain {
         blocks: Vec<Block>,
         should_commit_intermediate_tries: bool,
         as_canonical: bool,
-    ) -> Result<(), (ChainError, Option<Block>, H256)> {
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         match self.evm_engine {
             // LEVM does not support batch block processing as it does not persist the state between block executions
             // Therefore, we must commit to the db after each block
@@ -156,13 +160,24 @@ impl Blockchain {
                 for block in blocks {
                     let block_hash = block.hash();
                     let block_number = block.header.number;
+
                     if let Err(e) = self.add_block(block) {
-                        return Err((e, Some(block), last_valid_hash));
+                        return Err((
+                            e,
+                            Some(BatchBlockProcessingFailure {
+                                last_valid_hash,
+                                failed_block_hash: block_hash,
+                            }),
+                        ));
                     };
-                    last_valid_hash = block_hash;
+
                     if as_canonical {
-                        self.storage.set_canonical_block(block_number, block_hash);
+                        self.storage
+                            .set_canonical_block(block_number, block_hash)
+                            .map_err(|e| (e.into(), None))?;
                     }
+
+                    last_valid_hash = block_hash;
                 }
 
                 Ok(())
@@ -180,33 +195,27 @@ impl Blockchain {
         blocks: Vec<Block>,
         should_commit_intermediate_tries: bool,
         as_canonical: bool,
-    ) -> Result<(), (ChainError, Option<Block>, H256)> {
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
         let first_block_header = match blocks.first() {
             Some(block) => block.header.clone(),
-            None => {
-                return Err((
-                    ChainError::Custom("First block not found".into()),
-                    None,
-                    last_valid_hash,
-                ))
-            }
+            None => return Err((ChainError::Custom("First block not found".into()), None)),
         };
 
         let Some(mut state_trie) = self
             .storage
             .state_trie(first_block_header.parent_hash)
-            .map_err(|e| (e.into(), None, last_valid_hash))?
+            .map_err(|e| (e.into(), None))?
         else {
-            return Err((ChainError::ParentNotFound, None, last_valid_hash));
+            return Err((ChainError::ParentNotFound, None));
         };
 
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
         let chain_config: ChainConfig = self
             .storage
             .get_chain_config()
-            .map_err(|e| (e.into(), None, last_valid_hash))?;
+            .map_err(|e| (e.into(), None))?;
 
         let mut vm = Evm::new(
             self.evm_engine,
@@ -265,16 +274,22 @@ impl Blockchain {
 
         for (i, block) in blocks.iter().enumerate() {
             if let Err(err) = add_block(block, i) {
-                return Err((err, Some(block.clone()), last_valid_hash));
+                return Err((
+                    err,
+                    Some(BatchBlockProcessingFailure {
+                        failed_block_hash: block.hash(),
+                        last_valid_hash,
+                    }),
+                ));
             };
         }
 
         self.storage
             .add_batch_of_blocks(blocks, as_canonical)
-            .map_err(|e| (e.into(), None, last_valid_hash))?;
+            .map_err(|e| (e.into(), None))?;
         self.storage
             .add_batch_of_receipts(all_receipts)
-            .map_err(|e| (e.into(), None, last_valid_hash))?;
+            .map_err(|e| (e.into(), None))?;
 
         Ok(())
     }
@@ -283,7 +298,9 @@ impl Blockchain {
     pub fn import_blocks(&self, blocks: Vec<Block>, should_commit_intermediate_tries: bool) {
         let size = blocks.len();
         let last_block = blocks.last().unwrap().header.clone();
-        if let Err(err) = self.add_blocks_in_batch(blocks, should_commit_intermediate_tries, true) {
+        if let Err((err, _)) =
+            self.add_blocks_in_batch(blocks, should_commit_intermediate_tries, true)
+        {
             warn!("Failed to add blocks: {:?}.", err);
         };
         if let Err(err) = self.storage.update_latest_block_number(last_block.number) {

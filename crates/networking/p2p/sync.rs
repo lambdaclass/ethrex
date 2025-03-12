@@ -6,7 +6,9 @@ mod storage_healing;
 mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::{error::ChainError, Blockchain, MAX_TRIES_IN_STORE};
+use ethrex_blockchain::{
+    error::ChainError, BatchBlockProcessingFailure, Blockchain, MAX_TRIES_IN_STORE,
+};
 use ethrex_common::{
     types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
@@ -443,10 +445,15 @@ impl SyncManager {
 
         let blocks_len = blocks.len();
 
-        if let Err((error, block, last_valid_hash)) = self.add_blocks(blocks, store.clone()) {
+        if let Err((error, failure)) = self.add_blocks(blocks, store.clone()) {
             warn!("Failed to add block during FullSync: {error}");
-            if let Some(block) = block {
-                self.invalid_ancestors.insert(block.hash(), last_valid_hash);
+            if let Some(BatchBlockProcessingFailure {
+                failed_block_hash,
+                last_valid_hash,
+            }) = failure
+            {
+                self.invalid_ancestors
+                    .insert(failed_block_hash, last_valid_hash);
 
                 // TODO(#2127): Just marking the failing ancestor and the sync head is enough
                 // to fix the Missing Ancestors hive test, we want to look at a more robust
@@ -467,12 +474,12 @@ impl SyncManager {
         &self,
         mut blocks: Vec<Block>,
         store: Store,
-    ) -> Result<(), (ChainError, Option<Block>, H256)> {
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let last_block = blocks.last().unwrap().clone();
         let blocks_len = blocks.len();
         let latest_block_number = store
             .get_latest_block_number()
-            .map_err(|e| (e.into(), None, H256::default()))?;
+            .map_err(|e| (e.into(), None))?;
 
         if last_block.header.number.saturating_sub(latest_block_number) <= MAX_TRIES_IN_STORE as u64
         {
