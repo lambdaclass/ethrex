@@ -359,8 +359,6 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getProof" => GetProofRequest::call(req, context),
         "eth_gasPrice" => GasPrice::call(req, context),
         "eth_maxPriorityFeePerGas" => eth::max_priority_fee::MaxPriorityFee::call(req, context),
-        #[cfg(feature = "l2")]
-        "rogue_sendTransaction" => RogueSponsoredTx::call(req, context),
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
