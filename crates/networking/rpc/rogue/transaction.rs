@@ -171,7 +171,7 @@ impl RpcHandler for RogueSponsoredTx {
             ethrex_common::types::Transaction::EIP7702Transaction(tx) => {
                 GenericTransaction::from(tx)
             }
-            _ => unreachable!("Not possible"),
+            _ => unreachable!("This should never happen, we are creating the tx"),
         };
         generic.gas = None;
 
@@ -207,7 +207,7 @@ impl RpcHandler for RogueSponsoredTx {
                 tx.nonce = nonce;
                 tx.sign_inplace(&sponsor_pk);
             }
-            _ => unreachable!("not possible"),
+            _ => unreachable!("This should never happen, we are creating the tx"),
         }
 
         tx.handle(context)
