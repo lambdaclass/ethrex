@@ -14,17 +14,6 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 
 #[inline]
 fn block_import() {
-    let log_level = "info";
-    let log_filter = EnvFilter::builder()
-        .with_default_directive(
-            Directive::from_str(log_level).expect("Not supported log level provided"),
-        )
-        .from_env_lossy();
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(log_filter)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-
     let data_dir = DEFAULT_DATADIR;
     set_datadir(data_dir);
     removedb::remove_db(&data_dir);
