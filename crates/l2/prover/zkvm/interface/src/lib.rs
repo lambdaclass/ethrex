@@ -51,7 +51,7 @@ pub mod io {
         /// final state trie root hash
         pub final_state_hash: H256,
         #[cfg(feature = "l2")]
-        /// deposit_logs_hash
+        /// hash of all the deposit logs made in executed block
         pub deposit_logs_hash: H256,
     }
 
