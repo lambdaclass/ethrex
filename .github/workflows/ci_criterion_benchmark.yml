@@ -27,6 +27,14 @@ jobs:
       run: sudo apt-get install -y gnuplot
     - name: Run benchmark
       run: cd cmd/ethrex && cargo bench --bench criterion_benchmark -- --output-format bencher |sed 2d | tee output.txt
+    - name: "Import GPG key"
+      id: import-gpg
+      uses: crazy-max/ghaction-import-gpg@v6
+      with:
+        gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+        passphrase: ${{ secrets.GPG_PASSPHRASE }}
+        git_user_signingkey: true
+        git_commit_gpgsign: true
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1
       with:
@@ -36,6 +44,10 @@ jobs:
         # Access token to deploy GitHub Pages branch
         github-token: ${{ secrets.GITHUB_TOKEN }}
         # Push and deploy GitHub pages branch automatically
-        auto-push: true
+        auto-push: false
         alert-threshold: '130%'
         comment-on-alert: true
+    - name: Amend commit
+      run: |
+        git commit --amend -s
+        git push
