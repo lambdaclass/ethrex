@@ -52,6 +52,16 @@ async fn main() {
         return;
     }
 
+    if let Some(subcommand_matches) = matches.subcommand_matches("import-in-batch") {
+        import::import_blocks_from_path_in_batch(
+            subcommand_matches,
+            data_dir,
+            evm_engine,
+            &network,
+        );
+        return;
+    }
+
     let store = init_store(&data_dir, &network);
 
     let blockchain = init_blockchain(evm_engine, store.clone());
