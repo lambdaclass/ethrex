@@ -28,7 +28,8 @@ use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
 
-pub const MAX_TRIES_IN_STORE: usize = 128;
+/// The number of latest tries to store in the database (meaning that we would have the state for the last 128 blocks)
+pub const STATE_TRIES_TO_KEEP: usize = 128;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -131,9 +132,9 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
-        self.execute_block(&block)
-            .and_then(|res| self.store_block(&block, res))
+    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+        self.execute_block(block)
+            .and_then(|res| self.store_block(block, res))
     }
 
     /// Adds multiple blocks in a batch.
@@ -148,7 +149,7 @@ impl Blockchain {
     /// `as_canonical` determines whether the block number should be set as canonical for the block hash when committing to the db.
     pub fn add_blocks_in_batch(
         &self,
-        blocks: Vec<Block>,
+        blocks: &[Block],
         should_commit_intermediate_tries: bool,
         as_canonical: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
@@ -192,7 +193,7 @@ impl Blockchain {
 
     fn add_blocks_in_batch_inner(
         &self,
-        blocks: Vec<Block>,
+        blocks: &[Block],
         should_commit_intermediate_tries: bool,
         as_canonical: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
@@ -295,7 +296,7 @@ impl Blockchain {
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks(&self, blocks: Vec<Block>, should_commit_intermediate_tries: bool) {
+    pub fn import_blocks(&self, blocks: &[Block], should_commit_intermediate_tries: bool) {
         let size = blocks.len();
         let last_block = blocks.last().unwrap().header.clone();
         if let Err((err, _)) =

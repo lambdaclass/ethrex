@@ -2,7 +2,7 @@ use std::fs::{self, metadata};
 
 use clap::ArgMatches;
 
-use ethrex_blockchain::MAX_TRIES_IN_STORE;
+use ethrex_blockchain::STATE_TRIES_TO_KEEP;
 use ethrex_vm::backends::EvmEngine;
 use tracing::info;
 
@@ -49,14 +49,11 @@ pub fn import_blocks_from_path(
         utils::read_chain_file(path)
     };
 
-    if blocks.len() <= MAX_TRIES_IN_STORE {
-        blockchain.import_blocks(blocks, true);
+    if blocks.len() <= STATE_TRIES_TO_KEEP {
+        blockchain.import_blocks(&blocks, true);
     } else {
-        let idx = blocks.len() - MAX_TRIES_IN_STORE;
-        let head = blocks[..idx].to_vec();
-        let tail = blocks[idx..].to_vec();
-
-        blockchain.import_blocks(head, false);
-        blockchain.import_blocks(tail, true);
+        let idx = blocks.len() - STATE_TRIES_TO_KEEP;
+        blockchain.import_blocks(&blocks[..idx], false);
+        blockchain.import_blocks(&blocks[idx..], true);
     }
 }

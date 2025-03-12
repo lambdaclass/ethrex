@@ -81,7 +81,7 @@ async fn setup() -> (ProgramInput, Block) {
             block.body.transactions.len(),
             block.header.number
         );
-        blockchain.add_block(block.clone()).unwrap();
+        blockchain.add_block(block).unwrap();
     }
     let block_to_prove = blocks.get(3).unwrap();
 

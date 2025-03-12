@@ -489,7 +489,7 @@ impl Store {
 
     pub fn add_batch_of_blocks(
         &self,
-        blocks: Vec<Block>,
+        blocks: &[Block],
         as_canonical: bool,
     ) -> Result<(), StoreError> {
         self.engine.add_batch_of_blocks(blocks, as_canonical)

@@ -422,7 +422,7 @@ mod tests {
         // create blockchain
         let blockchain = Blockchain::default_with_store(store.clone());
         for block in &blocks {
-            blockchain.add_block(block.clone()).unwrap();
+            blockchain.add_block(block).unwrap();
         }
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();

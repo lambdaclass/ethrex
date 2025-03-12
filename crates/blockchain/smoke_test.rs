@@ -28,21 +28,19 @@ mod blockchain_integration_test {
 
         // Add first block. We'll make it canonical.
         let block_1a = new_block(&store, &genesis_header);
-        let block_1a_header = block_1a.header.clone();
         let hash_1a = block_1a.hash();
-        blockchain.add_block(block_1a).unwrap();
+        blockchain.add_block(&block_1a).unwrap();
         store.set_canonical_block(1, hash_1a).unwrap();
         let retrieved_1a = store.get_block_header(1).unwrap().unwrap();
 
-        assert_eq!(retrieved_1a, block_1a_header);
+        assert_eq!(retrieved_1a, block_1a.header);
         assert!(is_canonical(&store, 1, hash_1a).unwrap());
 
         // Add second block at height 1. Will not be canonical.
         let block_1b = new_block(&store, &genesis_header);
-        let block_1b_header = block_1b.header.clone();
         let hash_1b = block_1b.hash();
         blockchain
-            .add_block(block_1b)
+            .add_block(&block_1b)
             .expect("Could not add block 1b.");
         let retrieved_1b = store.get_block_header_by_hash(hash_1b).unwrap().unwrap();
 
@@ -50,10 +48,10 @@ mod blockchain_integration_test {
         assert!(!is_canonical(&store, 1, hash_1b).unwrap());
 
         // Add a third block at height 2, child to the non canonical block.
-        let block_2 = new_block(&store, &block_1b_header);
+        let block_2 = new_block(&store, &block_1b.header);
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2)
+            .add_block(&block_2)
             .expect("Could not add block 2.");
         let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
 
@@ -63,7 +61,7 @@ mod blockchain_integration_test {
         // Receive block 2 as new head.
         apply_fork_choice(
             &store,
-            hash_2,
+            block_2.hash(),
             genesis_header.compute_block_hash(),
             genesis_header.compute_block_hash(),
         )
@@ -86,16 +84,15 @@ mod blockchain_integration_test {
 
         // Build a single valid block.
         let block_1 = new_block(&store, &genesis_header);
-        let block_1_header = block_1.header.clone();
         let hash_1 = block_1.header.compute_block_hash();
-        blockchain.add_block(block_1).unwrap();
+        blockchain.add_block(&block_1).unwrap();
         apply_fork_choice(&store, hash_1, H256::zero(), H256::zero()).unwrap();
 
         // Build a child, then change its parent, making it effectively a pending block.
-        let mut block_2 = new_block(&store, &block_1_header);
+        let mut block_2 = new_block(&store, &block_1.header);
         block_2.header.parent_hash = H256::random();
         let hash_2 = block_2.header.compute_block_hash();
-        let result = blockchain.add_block(block_2);
+        let result = blockchain.add_block(&block_2);
         assert!(matches!(result, Err(ChainError::ParentNotFound)));
 
         // block 2 should now be pending.
@@ -121,31 +118,30 @@ mod blockchain_integration_test {
         // Add first block. Not canonical.
         let block_1a = new_block(&store, &genesis_header);
         let hash_1a = block_1a.hash();
-        blockchain.add_block(block_1a).unwrap();
+        blockchain.add_block(&block_1a).unwrap();
         let retrieved_1a = store.get_block_header_by_hash(hash_1a).unwrap().unwrap();
 
         assert!(!is_canonical(&store, 1, hash_1a).unwrap());
 
         // Add second block at height 1. Canonical.
         let block_1b = new_block(&store, &genesis_header);
-        let block_1b_header = block_1b.header.clone();
         let hash_1b = block_1b.hash();
         blockchain
-            .add_block(block_1b)
+            .add_block(&block_1b)
             .expect("Could not add block 1b.");
         apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash).unwrap();
         let retrieved_1b = store.get_block_header(1).unwrap().unwrap();
 
         assert_ne!(retrieved_1a, retrieved_1b);
-        assert_eq!(retrieved_1b, block_1b_header);
+        assert_eq!(retrieved_1b, block_1b.header);
         assert!(is_canonical(&store, 1, hash_1b).unwrap());
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_1b);
 
         // Add a third block at height 2, child to the canonical one.
-        let block_2 = new_block(&store, &block_1b_header);
+        let block_2 = new_block(&store, &block_1b.header);
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2)
+            .add_block(&block_2)
             .expect("Could not add block 2.");
         apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
         let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
@@ -158,7 +154,7 @@ mod blockchain_integration_test {
         // Receive block 1a as new head.
         apply_fork_choice(
             &store,
-            hash_1a,
+            block_1a.hash(),
             genesis_header.compute_block_hash(),
             genesis_header.compute_block_hash(),
         )
@@ -183,17 +179,16 @@ mod blockchain_integration_test {
 
         // Add block at height 1.
         let block_1 = new_block(&store, &genesis_header);
-        let block_1_header = block_1.header.clone();
         let hash_1 = block_1.hash();
         blockchain
-            .add_block(block_1)
+            .add_block(&block_1)
             .expect("Could not add block 1b.");
 
         // Add child at height 2.
-        let block_2 = new_block(&store, &block_1_header);
+        let block_2 = new_block(&store, &block_1.header);
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2)
+            .add_block(&block_2)
             .expect("Could not add block 2.");
 
         assert!(!is_canonical(&store, 1, hash_1).unwrap());
@@ -233,16 +228,15 @@ mod blockchain_integration_test {
 
         // Add block at height 1.
         let block_1 = new_block(&store, &genesis_header);
-        let block_1_header = block_1.header.clone();
         blockchain
-            .add_block(block_1)
+            .add_block(&block_1)
             .expect("Could not add block 1b.");
 
         // Add child at height 2.
-        let block_2 = new_block(&store, &block_1_header);
+        let block_2 = new_block(&store, &block_1.header);
         let hash_2 = block_2.hash();
         blockchain
-            .add_block(block_2)
+            .add_block(&block_2)
             .expect("Could not add block 2.");
 
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), genesis_hash);
@@ -256,7 +250,7 @@ mod blockchain_integration_test {
         let block_1b = new_block(&store, &genesis_header);
         let hash_b = block_1b.hash();
         blockchain
-            .add_block(block_1b)
+            .add_block(&block_1b)
             .expect("Could not add block b.");
 
         // The latest block should be the same.

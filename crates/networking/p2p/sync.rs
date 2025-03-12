@@ -7,7 +7,7 @@ mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{
-    error::ChainError, BatchBlockProcessingFailure, Blockchain, MAX_TRIES_IN_STORE,
+    error::ChainError, BatchBlockProcessingFailure, Blockchain, STATE_TRIES_TO_KEEP,
 };
 use ethrex_common::{
     types::{Block, BlockHash, BlockHeader},
@@ -297,7 +297,7 @@ impl SyncManager {
                 .await?;
             }
 
-            // in full sync mode, headers are added if after added after the execution and validation
+            // in full sync mode, headers are added after the execution and validation
             if self.sync_mode == SyncMode::Snap {
                 store.add_block_headers(block_hashes.clone(), block_headers)?;
             }
@@ -342,7 +342,7 @@ impl SyncManager {
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
                     let block_number = block.header.number;
-                    self.blockchain.add_block(block)?;
+                    self.blockchain.add_block(&block)?;
                     store.set_canonical_block(block_number, *hash)?;
                     store.update_latest_block_number(block_number)?;
                 }
@@ -472,7 +472,7 @@ impl SyncManager {
 
     fn add_blocks(
         &self,
-        mut blocks: Vec<Block>,
+        blocks: Vec<Block>,
         store: Store,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let last_block = blocks.last().unwrap().clone();
@@ -481,22 +481,20 @@ impl SyncManager {
             .get_latest_block_number()
             .map_err(|e| (e.into(), None))?;
 
-        if last_block.header.number.saturating_sub(latest_block_number) <= MAX_TRIES_IN_STORE as u64
+        if last_block.header.number.saturating_sub(latest_block_number)
+            <= STATE_TRIES_TO_KEEP as u64
         {
-            if blocks_len <= MAX_TRIES_IN_STORE {
-                self.blockchain.add_blocks_in_batch(blocks, true, true)?;
+            if blocks_len <= STATE_TRIES_TO_KEEP {
+                self.blockchain.add_blocks_in_batch(&blocks, true, true)?;
             } else {
-                let idx = blocks_len - MAX_TRIES_IN_STORE;
-                // Using `split_off` avoids cloning the slice, which would be necessary if we used `[..idx]` and `[idx..]` directly.
-                // This is avoids cloning all blocks which might get expensive if they are large.
-                let tail = blocks.split_off(idx);
-                let head = std::mem::take(&mut blocks);
-
-                self.blockchain.add_blocks_in_batch(head, false, true)?;
-                self.blockchain.add_blocks_in_batch(tail, true, true)?;
+                let idx = blocks_len - STATE_TRIES_TO_KEEP;
+                self.blockchain
+                    .add_blocks_in_batch(&blocks[..idx], false, true)?;
+                self.blockchain
+                    .add_blocks_in_batch(&blocks[idx..], true, true)?;
             }
         } else {
-            self.blockchain.add_blocks_in_batch(blocks, false, true)?;
+            self.blockchain.add_blocks_in_batch(&blocks, false, true)?;
         }
 
         Ok(())

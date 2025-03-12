@@ -582,7 +582,7 @@ fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status = execute_payload(block, &context)?;
+    let payload_status = execute_payload(&block, &context)?;
     serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
@@ -624,7 +624,7 @@ fn handle_new_payload_v3(
     }
 
     // All checks passed, execute payload
-    execute_payload(block, &context)
+    execute_payload(&block, &context)
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
@@ -670,7 +670,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
-fn execute_payload(block: Block, context: &RpcApiContext) -> Result<PayloadStatus, RpcErr> {
+fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
     let storage = &context.storage;
     // Return the valid message directly if we have it.

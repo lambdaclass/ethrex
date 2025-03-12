@@ -143,13 +143,9 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn add_batch_of_blocks(
-        &self,
-        blocks: Vec<Block>,
-        as_canonical: bool,
-    ) -> Result<(), StoreError> {
+    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError> {
         for block in blocks {
-            let header = block.header;
+            let header = block.header.clone();
             let number = header.number;
             let hash = header.compute_block_hash();
             let locations = block
@@ -160,7 +156,7 @@ impl StoreEngine for Store {
                 .map(|(i, tx)| (tx.compute_hash(), number, hash, i as u64));
 
             self.add_transaction_locations(locations.collect())?;
-            self.add_block_body(hash, block.body)?;
+            self.add_block_body(hash, block.body.clone())?;
             self.add_block_header(hash, header)?;
             self.add_block_number(hash, number)?;
             if as_canonical {
@@ -231,10 +227,10 @@ impl StoreEngine for Store {
         receipts: Vec<(BlockHash, Vec<Receipt>)>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner();
-        for (index, (block_hash, receipts)) in receipts.iter().enumerate() {
-            let entry = store.receipts.entry(*block_hash).or_default();
+        for (index, (block_hash, receipts)) in receipts.into_iter().enumerate() {
+            let entry = store.receipts.entry(block_hash).or_default();
             for receipt in receipts {
-                entry.insert(index as u64, receipt.clone());
+                entry.insert(index as u64, receipt);
             }
         }
 

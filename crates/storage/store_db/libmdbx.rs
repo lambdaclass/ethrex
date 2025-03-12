@@ -125,20 +125,15 @@ impl StoreEngine for Store {
         self.write::<Bodies>(block_hash.into(), block_body.into())
     }
 
-    fn add_batch_of_blocks(
-        &self,
-        blocks: Vec<Block>,
-        as_canonical: bool,
-    ) -> Result<(), StoreError> {
+    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError> {
         let tx = self
             .db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?;
 
         for block in blocks {
-            let header = block.header;
-            let number = header.number;
-            let hash = header.compute_block_hash();
+            let number = block.header.number;
+            let hash = block.hash();
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 tx.upsert::<TransactionLocations>(
@@ -148,13 +143,19 @@ impl StoreEngine for Store {
                 .map_err(StoreError::LibmdbxError)?;
             }
 
-            tx.upsert::<Bodies>(hash.into(), block.body.into())
-                .map_err(StoreError::LibmdbxError)?;
+            tx.upsert::<Bodies>(
+                hash.into(),
+                BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+            )
+            .map_err(StoreError::LibmdbxError)?;
 
-            tx.upsert::<Headers>(hash.into(), header.into())
-                .map_err(StoreError::LibmdbxError)?;
+            tx.upsert::<Headers>(
+                hash.into(),
+                BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+            )
+            .map_err(StoreError::LibmdbxError)?;
 
-            tx.upsert::<BlockNumbers>(hash.into(), number.into())
+            tx.upsert::<BlockNumbers>(hash.into(), number)
                 .map_err(StoreError::LibmdbxError)?;
 
             if as_canonical {
