@@ -2,7 +2,7 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashBytes, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
+    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -34,6 +34,7 @@ use std::sync::Arc;
 pub struct Store {
     db: Arc<Database>,
 }
+
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         Ok(Self {
@@ -91,7 +92,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.write::<Headers>(block_hash.into(), block_header.into())
+        self.write::<Headers>(block_hash.to_fixed_bytes(), block_header.into())
     }
 
     fn add_block_headers(
@@ -122,7 +123,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        self.write::<Bodies>(block_hash.into(), block_body.into())
+        self.write::<Bodies>(block_hash.to_fixed_bytes(), block_body.into())
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
@@ -175,6 +176,10 @@ impl StoreEngine for Store {
         receipt: Receipt,
     ) -> Result<(), StoreError> {
         let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
+        let mut key: [u8; 40] = [0_u8; 40];
+        let _ = &key[0..32].copy_from_slice(&block_hash.to_fixed_bytes());
+        let _= &key[32..40].copy_from_slice(&index.to_be_bytes());
+        let entries = receipt.encode_to_vec();
         let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt.encode_to_vec()) else {
             return Err(StoreError::Custom("Invalid size".to_string()));
         };
@@ -187,9 +192,11 @@ impl StoreEngine for Store {
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
+            let mut key: [u8; 40] = [0_u8; 40];
+            &key[0..32].copy_from_slice(&hash.to_fixed_bytes());
+            &key[32..40].copy_from_slice(&index.to_be_bytes());
             let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
             let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            let key = (hash, index).into();
             IndexedChunk::read_from_db(&mut cursor, key)
         } else {
             Ok(None)
@@ -204,7 +211,7 @@ impl StoreEngine for Store {
         index: Index,
     ) -> Result<(), StoreError> {
         self.write::<TransactionLocations>(
-            transaction_hash.into(),
+            transaction_hash.to_fixed_bytes(),
             (block_number, block_hash, index).into(),
         )
     }
@@ -446,7 +453,10 @@ impl StoreEngine for Store {
         let mut key_values = vec![];
 
         for (index, receipt) in receipts.clone().into_iter().enumerate() {
-            let key = (block_hash, index as u64).into();
+            let mut key: [u8; 40] = [0_u8; 40];
+            &key[0..32].copy_from_slice(&block_hash.to_fixed_bytes());
+            &key[32..40].copy_from_slice(&index.to_be_bytes());
+            // let entries = receipt.encode_to_vec();
             let receipt_rlp = receipt.encode_to_vec();
             let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
                 continue;
@@ -460,8 +470,10 @@ impl StoreEngine for Store {
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
-        let mut receipt_index = 0;
-        let mut key = (*block_hash, 0).into();
+        let mut receipt_index = 0_u64;
+        let mut key: [u8; 40] = [0_u8; 40];
+        let _ = &key[0..32].copy_from_slice(&block_hash.to_fixed_bytes());
+        // let mut key = (*block_hash, 0).into();
         let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
         let mut cursor = txn
             .cursor::<Receipts>()
@@ -475,7 +487,10 @@ impl StoreEngine for Store {
         while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key)? {
             receipts.push(receipt);
             receipt_index += 1;
-            key = (*block_hash, receipt_index).into();
+            let mut key: [u8; 40] = [0_u8; 40];
+            let _ = &key[0..32].copy_from_slice(&block_hash.to_fixed_bytes());
+            let _ = &key[32..40].copy_from_slice(&receipt_index.to_be_bytes());
+            // key = (*block_hash, receipt_index).into();
         }
 
         Ok(receipts)
@@ -807,7 +822,7 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
 
 table!(
     /// The canonical block hash for each block number. It represents the canonical chain.
-    ( CanonicalBlockHashes ) BlockNumber => BlockHashBytes
+    ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
 );
 
 table!(
@@ -817,11 +832,12 @@ table!(
 
 table!(
     /// Block headers table.
-    ( Headers ) BlockHashBytes => BlockHeaderRLP
+    ( Headers ) [u8;32] => BlockHeaderRLP
 );
+
 table!(
     /// Block bodies table.
-    ( Bodies ) BlockHashBytes => BlockBodyRLP
+    ( Bodies ) [u8;32] => BlockBodyRLP
 );
 table!(
     /// Account codes table.
@@ -830,7 +846,7 @@ table!(
 
 dupsort!(
     /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+    ( Receipts ) [u8;40][Index] => IndexedChunk<Receipt>
 );
 
 dupsort!(
@@ -841,7 +857,7 @@ dupsort!(
 
 dupsort!(
     /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+    ( TransactionLocations ) [u8; 32] => Rlp<(BlockNumber, BlockHash, Index)>
 );
 
 table!(
@@ -872,7 +888,7 @@ table!(
 
 table!(
     /// Stores blocks that are pending validation.
-    ( PendingBlocks ) BlockHashBytes => BlockRLP
+    ( PendingBlocks ) BlockHashRLP => BlockRLP
 );
 table!(
     /// State Snapshot used by an ongoing sync process
