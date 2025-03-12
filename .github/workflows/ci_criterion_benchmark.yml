@@ -49,5 +49,5 @@ jobs:
         comment-on-alert: true
     - name: Amend commit
       run: |
-        git commit --amend -s
+        git commit --amend -s -m "Upload new benchmarks"
         git push
