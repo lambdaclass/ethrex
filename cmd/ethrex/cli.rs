@@ -151,6 +151,23 @@ pub fn cli() -> Command {
                         .required(false)
                         .action(clap::ArgAction::SetTrue)
                 )
+        )
+        .subcommand(
+            Command::new("import-in-batch")
+                .about("Import blocks to the database") 
+                .arg(
+                    Arg::new("path")
+                        .required(true)
+                        .value_name("FILE_PATH/FOLDER")
+                        .help("Path to a RLP chain file or a folder containing files with individual Blocks")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("removedb")
+                        .long("removedb")
+                        .required(false)
+                        .action(clap::ArgAction::SetTrue)
+                )
         );
 
     cfg_if::cfg_if! {
