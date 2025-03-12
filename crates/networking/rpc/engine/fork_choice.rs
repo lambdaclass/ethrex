@@ -214,28 +214,27 @@ fn handle_forkchoice(
     let fork_choice_res = {
         // Apply current fork choice
         // SyncStatus::Inactive => {
-        // let invalid_ancestors = {
-        //     let lock = context.syncer.try_lock();
-        //     match lock {
-        //         Ok(sync) => sync.invalid_ancestors.clone(),
-        //         Err(_) => {
-        //             dbg!("ESTA TODO MAL LOCO");
-        //             return Err(RpcErr::Internal("Internal error".into()));
-        //         }
-        //     }
-        // };
+        let invalid_ancestors = {
+            let lock = context.syncer.try_lock();
+            match lock {
+                Ok(sync) => sync.invalid_ancestors.clone(),
+                Err(_) => {
+                    dbg!("ESTA TODO MAL LOCO");
+                    std::collections::HashMap::new()
+                }
+            }
+        };
 
         // Check if the block has already been invalidated
-        // match invalid_ancestors.get(&fork_choice_state.head_block_hash) {
-        //     Some(latest_valid_hash) => Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash)),
-        //     None =>
-        apply_fork_choice(
-            &context.storage,
-            fork_choice_state.head_block_hash,
-            fork_choice_state.safe_block_hash,
-            fork_choice_state.finalized_block_hash,
-        )
-        // }
+        match invalid_ancestors.get(&fork_choice_state.head_block_hash) {
+            Some(latest_valid_hash) => Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash)),
+            None => apply_fork_choice(
+                &context.storage,
+                fork_choice_state.head_block_hash,
+                fork_choice_state.safe_block_hash,
+                fork_choice_state.finalized_block_hash,
+            ),
+        }
         // } // // Restart sync if needed
         // _ => Err(InvalidForkChoice::Syncing),
     };
