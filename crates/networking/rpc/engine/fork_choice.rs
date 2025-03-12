@@ -201,7 +201,7 @@ fn handle_forkchoice(
     context: RpcApiContext,
     version: usize,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
-    debug!(
+    info!(
         "New fork choice request v{} with head: {:#x}, safe: {:#x}, finalized: {:#x}.",
         version,
         fork_choice_state.head_block_hash,
@@ -216,13 +216,17 @@ fn handle_forkchoice(
                 let lock = context.syncer.try_lock();
                 match lock {
                     Ok(sync) => sync.invalid_ancestors.clone(),
-                    Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+                    Err(_) => {
+                        info!("Failed to aquire lock for invalid ancestors check"); 
+                        return Err(RpcErr::Internal("Internal error".into()));
+                    },
                 }
             };
 
             // Check if the block has already been invalidated
             match invalid_ancestors.get(&fork_choice_state.head_block_hash) {
                 Some(latest_valid_hash) => {
+                    info!("Invalid Ancestor Detected");
                     Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
                 }
                 None => apply_fork_choice(
