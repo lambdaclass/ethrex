@@ -13,7 +13,7 @@ use super::errors::StateDiffError;
 pub struct AccountStateDiff {
     pub new_balance: Option<U256>,
     pub nonce_diff: u16,
-    pub storage: Vec<(H256, U256)>,
+    pub storage: HashMap<H256, U256>,
     pub bytecode: Option<Bytes>,
     pub bytecode_hash: Option<H256>,
 }
@@ -226,17 +226,12 @@ impl StateDiff {
                 None
             };
 
-            let mut storage = HashMap::with_capacity(diff.storage.len());
-            for (key, pair) in diff.storage.iter() {
-                storage.insert(*key, *pair);
-            }
-
             account_updates.push(AccountUpdate {
                 address: *address,
                 removed: false,
                 info: account_info,
                 code: diff.bytecode.clone(),
-                added_storage: storage,
+                added_storage: diff.storage.clone(),
             });
         }
 
@@ -305,7 +300,8 @@ impl AccountStateDiff {
         Ok((r#type, Bytes::from(encoded)))
     }
 
-    /// Returns a tuple of the number of bytes read and the decoded `AccountStateDiff`
+    /// Returns a tuple of the number of bytes read, the address of the account
+    /// and the decoded `AccountStateDiff`
     pub fn decode(bytes: Bytes) -> Result<(usize, Address, Self), StateDiffError> {
         let mut offset = 0;
 
@@ -331,10 +327,11 @@ impl AccountStateDiff {
             None
         };
 
-        let mut storage_diff = Vec::new();
+        let mut storage_diff = HashMap::new();
         if update_type.is(AccountStateDiffType::Storage) {
             let storage_slots_updated = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
             offset += 2;
+            storage_diff.reserve(storage_slots_updated as usize);
 
             for _ in 0..storage_slots_updated {
                 let key = H256::from_slice(&bytes[offset..offset + 32]);
@@ -342,7 +339,7 @@ impl AccountStateDiff {
                 let new_value = U256::from_big_endian(&bytes[offset..offset + 32]);
                 offset += 32;
 
-                storage_diff.push((key, new_value));
+                storage_diff.insert(key, new_value);
             }
         }
 

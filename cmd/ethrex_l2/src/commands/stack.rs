@@ -1,5 +1,4 @@
 use crate::{config::EthrexL2Config, utils::config::confirm};
-use bytes::Bytes;
 use clap::Subcommand;
 use ethrex_common::{
     types::{bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
