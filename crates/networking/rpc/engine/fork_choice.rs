@@ -209,7 +209,6 @@ fn handle_forkchoice(
         fork_choice_state.finalized_block_hash
     );
     // Check if there is an ongoing sync before applying the forkchoice
-    dbg!("Apunto de  realizar un fork choice.");
     // let fork_choice_res = match dbg!(context.sync_status()?) {
     let fork_choice_res = {
         // Apply current fork choice
@@ -218,10 +217,7 @@ fn handle_forkchoice(
             let lock = context.syncer.try_lock();
             match lock {
                 Ok(sync) => sync.invalid_ancestors.clone(),
-                Err(_) => {
-                    dbg!("ESTA TODO MAL LOCO");
-                    std::collections::HashMap::new()
-                }
+                Err(_) => std::collections::HashMap::new(),
             }
         };
 

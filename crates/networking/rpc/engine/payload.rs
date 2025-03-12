@@ -529,9 +529,7 @@ fn validate_ancestors(
     block: &Block,
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
-    // dbg!("COMIENZA VALIDAR ANCESTRORS");
-    dbg!("No valido los ancestros");
-    // // Obtain the invalid ancestors from the syncer
+    // Obtain the invalid ancestors from the syncer
     let invalid_ancestors = match context.syncer.try_lock() {
         Ok(syncer) => syncer.invalid_ancestors.clone(),
         Err(_) => {
