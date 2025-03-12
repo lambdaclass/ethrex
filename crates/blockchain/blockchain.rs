@@ -191,19 +191,17 @@ impl Blockchain {
 
             let block_hash = block.header.compute_block_hash();
 
-            // Validate if it can be the new head and find the parent
-            let parent_header = match is_first_block {
+            let parent_header = if is_first_block {
                 // for the first block, we need to query the store
-                true => {
-                    let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-                        // If the parent is not present, we store it as pending.
-                        self.storage.add_pending_block(block.clone())?;
-                        return Err(ChainError::ParentNotFound);
-                    };
-                    parent_header
-                }
+                let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+                    // If the parent is not present, we store it as pending.
+                    self.storage.add_pending_block(block.clone())?;
+                    return Err(ChainError::ParentNotFound);
+                };
+                parent_header
+            } else {
                 // for the subsequent ones, the parent is the previous block
-                false => blocks[i - 1].header.clone(),
+                blocks[i - 1].header.clone()
             };
 
             // Validate the block pre-execution
@@ -219,9 +217,10 @@ impl Blockchain {
             )?;
 
             if should_commit_intermediate_tries || is_last_block || is_levm {
-                //TODO hash_no_commit, validate and then commit
-                let root_hash = state_trie.hash().map_err(StoreError::Trie)?;
+                let root_hash = state_trie.hash_no_commit();
                 validate_state_root(&block.header, root_hash)?;
+                // commit to db after validating the root
+                state_trie.hash().map_err(StoreError::Trie)?;
                 validate_receipts_root(&block.header, &execution_result.receipts)?;
                 validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
             }

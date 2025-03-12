@@ -288,6 +288,8 @@ impl SyncManager {
                     &block_hashes,
                     &block_headers,
                     sync_head,
+                    &mut current_head,
+                    &mut search_head,
                     store.clone(),
                 )
                 .await?;
@@ -361,6 +363,8 @@ impl SyncManager {
         block_hashes: &[BlockHash],
         block_headers: &[BlockHeader],
         sync_head: BlockHash,
+        current_head: &mut H256,
+        search_head: &mut H256,
         store: Store,
     ) -> Result<(), SyncError> {
         let mut current_chunk_idx = 0;
@@ -375,6 +379,9 @@ impl SyncManager {
         };
         let mut headers_idx = 0;
         let mut blocks: Vec<Block> = vec![];
+
+        let max_tries = 10;
+        let mut tries = 0;
 
         loop {
             debug!("Requesting Block Bodies");
@@ -410,6 +417,22 @@ impl SyncManager {
                         None => break,
                     };
                 };
+            } else {
+                tries += 1;
+                // If we fail to retrieve block bodies, increment the retry counter.
+                // This failure could be due to missing bodies for some headers, possibly because:
+                // - Some headers belong to a sidechain, and not all peers have the corresponding bodies.
+                // - We are not verifying headers before requesting the bodies so they might be invalid
+                //
+                // To mitigate this, we update `current_head` and `search_head` to the last successfully processed block.
+                // This makes sure that the next header request starts from the last confirmed block.
+                //
+                // TODO: validate headers before downloading the bodies
+                if tries >= max_tries {
+                    *current_head = blocks.last().unwrap().hash();
+                    *search_head = blocks.last().unwrap().hash();
+                    break;
+                }
             }
         }
 
