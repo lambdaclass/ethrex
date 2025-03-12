@@ -24,10 +24,24 @@ const GAS_LIMIT_HARD_LIMIT: u64 = 100000;
 pub struct RogueSponsoredTx {
     #[serde(rename(deserialize = "authorizationList"))]
     pub authorization_list: Option<AuthorizationList>,
+    #[serde(deserialize_with = "deserialize_hex_bytes")]
     pub data: Bytes,
     pub to: Address,
 }
 
+fn deserialize_hex_bytes<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(Bytes::from(
+        hex::decode(s.trim_start_matches("0x")).map_err(|err| {
+            serde::de::Error::custom(format!(
+                "error decoding hex data when deserializing bytes: {err}"
+            ))
+        })?,
+    ))
+}
 // This endpoint is inspired by the work of Ithaca in Odyssey
 // You can check the reference implementation here
 // https://github.com/ithacaxyz/odyssey/blob/main/crates/wallet/src/lib.rs
@@ -119,7 +133,6 @@ impl RpcHandler for RogueSponsoredTx {
         let mut tx = if let Some(auth_list) = &self.authorization_list {
             SendRawTransactionRequest::EIP7702(EIP7702Transaction {
                 chain_id,
-                nonce,
                 max_priority_fee_per_gas: 0,
                 max_fee_per_gas: 0,
                 gas_limit: GAS_LIMIT_HARD_LIMIT,
@@ -133,7 +146,6 @@ impl RpcHandler for RogueSponsoredTx {
         } else {
             SendRawTransactionRequest::EIP1559(EIP1559Transaction {
                 chain_id,
-                nonce,
                 max_priority_fee_per_gas: 0,
                 max_fee_per_gas: 0,
                 gas_limit: GAS_LIMIT_HARD_LIMIT,
@@ -177,12 +189,14 @@ impl RpcHandler for RogueSponsoredTx {
                 tx.gas_limit = gas_limit;
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
+                tx.nonce = nonce;
                 tx.sign_inplace(&sponsor_pk);
             }
             SendRawTransactionRequest::EIP1559(ref mut tx) => {
                 tx.gas_limit = gas_limit;
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
+                tx.nonce = nonce;
                 tx.sign_inplace(&sponsor_pk);
             }
             _ => unreachable!("not possible"),
