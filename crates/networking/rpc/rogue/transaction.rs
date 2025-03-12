@@ -18,7 +18,7 @@ use serde_json::Value;
 use std::str::FromStr;
 const DELGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
 const EIP7702_DELEGATED_CODE_LEN: usize = 23;
-// This could be an environment variable set in the config.toml
+// This could be an environment variable set in the config.toml is the max amount of gas we are willing to sponsor
 const GAS_LIMIT_HARD_LIMIT: u64 = 100000;
 
 #[derive(Deserialize, Debug)]
@@ -146,9 +146,6 @@ impl RpcHandler for RogueSponsoredTx {
         let mut tx = if let Some(auth_list) = &self.authorization_list {
             SendRawTransactionRequest::EIP7702(EIP7702Transaction {
                 chain_id,
-                max_priority_fee_per_gas: 0,
-                max_fee_per_gas: 0,
-                gas_limit: GAS_LIMIT_HARD_LIMIT,
                 to: self.to,
                 value: U256::zero(),
                 data: self.data.clone(),
@@ -159,9 +156,6 @@ impl RpcHandler for RogueSponsoredTx {
         } else {
             SendRawTransactionRequest::EIP1559(EIP1559Transaction {
                 chain_id,
-                max_priority_fee_per_gas: 0,
-                max_fee_per_gas: 0,
-                gas_limit: GAS_LIMIT_HARD_LIMIT,
                 to: TxKind::Call(self.to),
                 value: U256::zero(),
                 data: self.data.clone(),
@@ -170,7 +164,7 @@ impl RpcHandler for RogueSponsoredTx {
             })
         };
 
-        let generic = match tx.to_transaction() {
+        let mut generic = match tx.to_transaction() {
             ethrex_common::types::Transaction::EIP1559Transaction(tx) => {
                 GenericTransaction::from(tx)
             }
@@ -179,6 +173,7 @@ impl RpcHandler for RogueSponsoredTx {
             }
             _ => unreachable!("Not possible"),
         };
+        generic.gas = None;
 
         let estimate_gas_request = EstimateGasRequest {
             transaction: generic,
@@ -214,7 +209,7 @@ impl RpcHandler for RogueSponsoredTx {
             }
             _ => unreachable!("not possible"),
         }
-        dbg!(&tx.to_transaction());
-        dbg!(tx.handle(context))
+
+        tx.handle(context)
     }
 }
