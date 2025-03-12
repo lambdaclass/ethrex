@@ -2,7 +2,6 @@ use std::fs::{self, metadata};
 
 use clap::ArgMatches;
 
-use ethrex_blockchain::STATE_TRIES_TO_KEEP;
 use ethrex_vm::backends::EvmEngine;
 use tracing::info;
 
@@ -49,11 +48,5 @@ pub fn import_blocks_from_path(
         utils::read_chain_file(path)
     };
 
-    if blocks.len() <= STATE_TRIES_TO_KEEP {
-        blockchain.import_blocks(&blocks, true);
-    } else {
-        let idx = blocks.len() - STATE_TRIES_TO_KEEP;
-        blockchain.import_blocks(&blocks[..idx], false);
-        blockchain.import_blocks(&blocks[idx..], true);
-    }
+    blockchain.import_blocks(&blocks);
 }
