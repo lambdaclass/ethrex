@@ -148,6 +148,39 @@ impl Blockchain {
         should_commit_intermediate_tries: bool,
         as_canonical: bool,
     ) -> Result<(), (ChainError, Option<Block>, H256)> {
+        match self.evm_engine {
+            // LEVM does not support batch block processing as it does not persist the state between block executions
+            // Therefore, we must commit to the db after each block
+            EvmEngine::LEVM => {
+                let mut last_valid_hash = H256::default();
+                for block in blocks {
+                    let block_hash = block.hash();
+                    let block_number = block.header.number;
+                    if let Err(e) = self.add_block(block) {
+                        return Err((e, Some(block), last_valid_hash));
+                    };
+                    last_valid_hash = block_hash;
+                    if as_canonical {
+                        self.storage.set_canonical_block(block_number, block_hash);
+                    }
+                }
+
+                Ok(())
+            }
+            EvmEngine::REVM => self.add_blocks_in_batch_inner(
+                blocks,
+                should_commit_intermediate_tries,
+                as_canonical,
+            ),
+        }
+    }
+
+    fn add_blocks_in_batch_inner(
+        &self,
+        blocks: Vec<Block>,
+        should_commit_intermediate_tries: bool,
+        as_canonical: bool,
+    ) -> Result<(), (ChainError, Option<Block>, H256)> {
         let mut last_valid_hash = H256::default();
 
         let first_block_header = match blocks.first() {
@@ -160,10 +193,6 @@ impl Blockchain {
                 ))
             }
         };
-
-        // levm does not support batch block processing because it does not persist the state between block executions
-        // so we need to commit to the db after every block
-        let is_levm = self.evm_engine == EvmEngine::LEVM;
 
         let Some(mut state_trie) = self
             .storage
@@ -207,29 +236,27 @@ impl Blockchain {
             // Validate the block pre-execution
             validate_block(block, &parent_header, &chain_config)?;
 
-            let execution_result = vm.execute_block_without_clearing_state(block)?;
+            let BlockExecutionResult {
+                account_updates,
+                receipts,
+                requests,
+            } = vm.execute_block_without_clearing_state(block)?;
 
-            validate_gas_used(&execution_result.receipts, &block.header)?;
+            validate_gas_used(&receipts, &block.header)?;
 
-            self.storage.apply_account_updates_to_trie(
-                &execution_result.account_updates,
-                &mut state_trie,
-            )?;
+            self.storage
+                .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
 
-            if should_commit_intermediate_tries || is_last_block || is_levm {
+            if should_commit_intermediate_tries || is_last_block {
                 let root_hash = state_trie.hash_no_commit();
                 validate_state_root(&block.header, root_hash)?;
                 // commit to db after validating the root
                 state_trie.hash().map_err(StoreError::Trie)?;
-                validate_receipts_root(&block.header, &execution_result.receipts)?;
-                validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+                validate_receipts_root(&block.header, &receipts)?;
+                validate_requests_hash(&block.header, &chain_config, &requests)?;
             }
 
-            if is_levm {
-                self.store_block(block, execution_result)?;
-            } else {
-                all_receipts.push((block_hash, execution_result.receipts));
-            }
+            all_receipts.push((block_hash, receipts));
 
             last_valid_hash = block_hash;
 
@@ -242,14 +269,12 @@ impl Blockchain {
             };
         }
 
-        if !is_levm {
-            self.storage
-                .add_batch_of_blocks(blocks, as_canonical)
-                .map_err(|e| (e.into(), None, last_valid_hash))?;
-            self.storage
-                .add_batch_of_receipts(all_receipts)
-                .map_err(|e| (e.into(), None, last_valid_hash))?;
-        }
+        self.storage
+            .add_batch_of_blocks(blocks, as_canonical)
+            .map_err(|e| (e.into(), None, last_valid_hash))?;
+        self.storage
+            .add_batch_of_receipts(all_receipts)
+            .map_err(|e| (e.into(), None, last_valid_hash))?;
 
         Ok(())
     }
