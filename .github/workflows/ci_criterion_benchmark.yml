@@ -26,8 +26,12 @@ jobs:
         passphrase: ${{ secrets.PASSPHRASE }}
         git_user_signingkey: true
         git_commit_gpgsign: true
+    - name: Install gnuplot
+      run: apt-get install -y gnuplot
     - name: Run benchmark
       run: cd cmd/ethrex && cargo bench --bench criterion_benchmark -- --output-format bencher |sed 2d | tee output.txt
+    - name: Export TTY
+      run: export GPG_TTY=$(tty)
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1
       with:
