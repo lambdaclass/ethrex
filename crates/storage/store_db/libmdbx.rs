@@ -2,7 +2,7 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
+    BlockHashBytes, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -152,7 +152,8 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.write::<BlockNumbers>(block_hash.into(), block_number)
+        let hash_bytes = block_hash.as_fixed_bytes();
+        self.write::<BlockNumbers>(*hash_bytes, block_number)
     }
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
@@ -806,21 +807,21 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
 
 table!(
     /// The canonical block hash for each block number. It represents the canonical chain.
-    ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
+    ( CanonicalBlockHashes ) BlockNumber => BlockHashBytes
 );
 
 table!(
     /// Block hash to number table.
-    ( BlockNumbers ) BlockHashRLP => BlockNumber
+    ( BlockNumbers ) [u8;32] => BlockNumber
 );
 
 table!(
     /// Block headers table.
-    ( Headers ) BlockHashRLP => BlockHeaderRLP
+    ( Headers ) BlockHashBytes => BlockHeaderRLP
 );
 table!(
     /// Block bodies table.
-    ( Bodies ) BlockHashRLP => BlockBodyRLP
+    ( Bodies ) BlockHashBytes => BlockBodyRLP
 );
 table!(
     /// Account codes table.
@@ -871,7 +872,7 @@ table!(
 
 table!(
     /// Stores blocks that are pending validation.
-    ( PendingBlocks ) BlockHashRLP => BlockRLP
+    ( PendingBlocks ) BlockHashBytes => BlockRLP
 );
 table!(
     /// State Snapshot used by an ongoing sync process
@@ -1262,7 +1263,7 @@ mod tests {
     fn indexed_chunk_storage_limit_exceeded() {
         dupsort!(
             /// example table.
-            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
+            ( Example ) BlockHashBytes[Index] => IndexedChunk<Vec<u8>>
         );
 
         let tables = [table_info!(Example)].into_iter().collect();
