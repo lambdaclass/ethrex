@@ -534,7 +534,7 @@ fn validate_ancestors(
     // // Obtain the invalid ancestors from the syncer
     let invalid_ancestors = match context.syncer.try_lock() {
         Ok(syncer) => syncer.invalid_ancestors.clone(),
-        Err(err) => {
+        Err(_) => {
             dbg!("COULD NOT VERIFY ANCESTORS");
             std::collections::HashMap::new()
         }

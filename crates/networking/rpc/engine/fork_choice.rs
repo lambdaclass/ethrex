@@ -14,7 +14,7 @@ use crate::{
         payload::PayloadStatus,
     },
     utils::RpcRequest,
-    RpcApiContext, RpcErr, RpcHandler, SyncStatus,
+    RpcApiContext, RpcErr, RpcHandler,
 };
 
 #[derive(Debug)]
