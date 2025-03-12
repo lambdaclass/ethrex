@@ -30,9 +30,9 @@ jobs:
       run: sudo apt-get install -y gnuplot
     - name: Run benchmark
       run: cd cmd/ethrex && cargo bench --bench criterion_benchmark -- --output-format bencher |sed 2d | tee output.txt
-    - name: Export TTY
-      run: export GPG_TTY=$(tty)
     - name: Store benchmark result
+      env: 
+        GPG_TTY: $(tty)
       uses: benchmark-action/github-action-benchmark@v1
       with:
         tool: 'cargo'
