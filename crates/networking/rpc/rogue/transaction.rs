@@ -18,6 +18,7 @@ use serde_json::Value;
 use std::str::FromStr;
 const DELGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
 const EIP7702_DELEGATED_CODE_LEN: usize = 23;
+// This could be an environment variable set in the config.toml
 const GAS_LIMIT_HARD_LIMIT: u64 = 100000;
 
 #[derive(Deserialize, Debug)]
@@ -57,8 +58,19 @@ impl RpcHandler for RogueSponsoredTx {
                 params.len()
             )));
         };
-        serde_json::from_str::<RogueSponsoredTx>(params[0].clone().as_str().unwrap())
-            .map_err(|err| RpcErr::BadParams(err.to_string()))
+        serde_json::from_value(
+            params
+                .first()
+                .ok_or(RpcErr::InvalidRogueMessage(
+                    "Failed to parse request into rogue_SendTransaction".to_string(),
+                ))?
+                .clone(),
+        )
+        .map_err(|e| {
+            RpcErr::InvalidRogueMessage(format!(
+                "Failed to parse request into rogue_SendTransaction: {e}"
+            ))
+        })
     }
 
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -100,6 +112,7 @@ impl RpcHandler for RogueSponsoredTx {
                 ));
             }
         }
+        // This should be de address & private key of the l2 proposer for testing is a hardcoded address from a l2 rich account
         let sponsor_address = Address::from_str("0x000f17eB09AA3f28132323E6075C672949526d5A")
             .map_err(|_| RpcErr::InvalidRogueMessage("Invalid sponsor".to_string()))?;
         let sponsor_pk =
