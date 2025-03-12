@@ -425,19 +425,22 @@ impl SyncManager {
                 // - We are not verifying headers before requesting the bodies so they might be invalid
                 //
                 // To mitigate this, we update `current_head` and `search_head` to the last successfully processed block.
-                // This makes sure that the next header request starts from the last confirmed block.
+                // This makes sure that the next header request starts from the last confirmed block (see below).
                 //
                 // TODO: validate headers before downloading the bodies
                 if tries >= max_tries {
-                    *current_head = blocks.last().unwrap().hash();
-                    *search_head = blocks.last().unwrap().hash();
                     break;
                 }
             }
         }
 
         debug!("Starting to execute and validate blocks in batch");
-        let last_block = blocks.last().unwrap().clone();
+        let Some(last_block) = blocks.last().cloned() else {
+            return Err(SyncError::BodiesNotFound);
+        };
+        *current_head = last_block.hash();
+        *search_head = last_block.hash();
+
         let blocks_len = blocks.len();
 
         if let Err((error, block, last_valid_hash)) = self.add_blocks(blocks, store.clone()) {
@@ -688,4 +691,6 @@ enum SyncError {
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]
     CorruptDB,
+    #[error("No bodies were found for the given headers")]
+    BodiesNotFound,
 }
