@@ -86,6 +86,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
         }
     }
 

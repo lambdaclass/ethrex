@@ -82,7 +82,15 @@ impl RpcHandler for RogueSponsoredTx {
             ));
         }
         // If tx is not EIP-7702 check we are calling a delegated account
-        if self.authorization_list.is_none() {
+        if let Some(auth_list) = &self.authorization_list {
+            for tuple in auth_list {
+                if !context.valid_delegation_addresses.contains(&tuple.address) {
+                    return Err(RpcErr::InvalidRogueMessage(
+                        "Invalid tx trying delegate to an address that isn't sponsored".to_string(),
+                    ));
+                }
+            }
+        } else {
             let dest_account = context
                 .storage
                 .get_account_info(
@@ -110,6 +118,12 @@ impl RpcHandler for RogueSponsoredTx {
             if address.is_zero() {
                 return Err(RpcErr::InvalidRogueMessage(
                     "Invalid tx trying to call non delegated account".to_string(),
+                ));
+            }
+            if !context.valid_delegation_addresses.contains(&address) {
+                return Err(RpcErr::InvalidRogueMessage(
+                    "Invalid tx trying to call delegated address not in sponsored addresses"
+                        .to_string(),
                 ));
             }
         }

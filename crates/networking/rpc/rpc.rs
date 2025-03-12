@@ -37,6 +37,8 @@ use eth::{
     },
 };
 use ethrex_blockchain::Blockchain;
+#[cfg(feature = "l2")]
+use ethrex_common::Address;
 use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
 #[cfg(feature = "l2")]
 use rogue::transaction::RogueSponsoredTx;
@@ -94,6 +96,8 @@ pub struct RpcApiContext {
     gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
     gateway_auth_client: EngineClient,
+    #[cfg(feature = "l2")]
+    valid_delegation_addresses: Vec<Address>,
 }
 
 /// Describes the client's current sync status:
@@ -166,6 +170,7 @@ pub async fn start_api(
     syncer: SyncManager,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
+    #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -182,6 +187,8 @@ pub async fn start_api(
         gateway_eth_client,
         #[cfg(feature = "based")]
         gateway_auth_client,
+        #[cfg(feature = "l2")]
+        valid_delegation_addresses,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -516,6 +523,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -608,6 +617,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -645,6 +656,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -713,6 +726,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
         };
         // Process request
         let result = map_http_requests(&request, context).await;

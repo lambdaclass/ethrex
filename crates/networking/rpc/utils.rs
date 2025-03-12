@@ -336,6 +336,8 @@ pub mod test_utils {
         let gateway_eth_client = EthClient::new("");
         #[cfg(feature = "based")]
         let gateway_auth_client = EngineClient::new("", Bytes::default());
+        #[cfg(feature = "l2")]
+        let valid_delegation_addresses = Vec::new();
         start_api(
             http_addr,
             authrpc_addr,
@@ -349,6 +351,8 @@ pub mod test_utils {
             gateway_eth_client,
             #[cfg(feature = "based")]
             gateway_auth_client,
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses,
         )
         .await;
     }

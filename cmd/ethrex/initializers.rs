@@ -7,6 +7,8 @@ use crate::{
 use bytes::Bytes;
 use clap::ArgMatches;
 use ethrex_blockchain::Blockchain;
+#[cfg(feature = "l2")]
+use ethrex_common::Address;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::node_id_from_signing_key,
@@ -129,6 +131,8 @@ pub fn init_rpc_api(
         get_gateway_http_client(matches),
         #[cfg(feature = "based")]
         get_gateway_auth_client(matches),
+        #[cfg(feature = "l2")]
+        get_valid_delegation_addresses(matches),
     )
     .into_future();
 
@@ -415,4 +419,23 @@ pub fn get_http_socket_addr(matches: &ArgMatches) -> SocketAddr {
         .get_one::<String>("http.port")
         .expect("http.port is required");
     parse_socket_addr(http_addr, http_port).expect("Failed to parse http address and port")
+}
+
+#[cfg(feature = "l2")]
+pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
+    let Some(path) = matches.get_one::<String>("valid_addresses") else {
+        warn!("No valid addresses provided, rogue_SendTransaction will always fail");
+        return Vec::new();
+    };
+    let addresses: Vec<Address> =
+        dbg!(fs::read_to_string(path).unwrap_or_else(|_| panic!("Failed to load file {}", path)))
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.to_string().parse::<Address>())
+            .filter_map(Result::ok)
+            .collect();
+    if addresses.is_empty() {
+        warn!("No valid addresses provided, rogue_SendTransaction will always fail");
+    }
+    addresses
 }

@@ -452,6 +452,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
         };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -518,6 +520,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
         };
 
         map_http_requests(&uninstall_filter_req, context)
@@ -549,6 +553,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
         };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
