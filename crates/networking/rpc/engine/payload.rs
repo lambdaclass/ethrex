@@ -529,30 +529,32 @@ fn validate_ancestors(
     block: &Block,
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
-    // Obtain the invalid ancestors from the syncer
-    let invalid_ancestors = match context.syncer.try_lock() {
-        Ok(syncer) => syncer.invalid_ancestors.clone(),
-        Err(err) => {
-            dbg!("COULD NOT VERIFY ANCESTORS");
-            return Err(RpcErr::Internal(err.to_string()));
-        }
-    };
+    // dbg!("COMIENZA VALIDAR ANCESTRORS");
+    dbg!("No valido los ancestros");
+    // // Obtain the invalid ancestors from the syncer
+    // let invalid_ancestors = match context.syncer.try_lock() {
+    //     Ok(syncer) => syncer.invalid_ancestors.clone(),
+    //     Err(err) => {
+    //         dbg!("COULD NOT VERIFY ANCESTORS");
+    //         return Err(RpcErr::Internal(err.to_string()));
+    //     }
+    // };
 
-    // Check if the block has already been invalidated
-    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
-        return Ok(Some(PayloadStatus::invalid_with(
-            *latest_valid_hash,
-            "Header has been previously invalidated.".into(),
-        )));
-    }
+    // // Check if the block has already been invalidated
+    // if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
+    //     return Ok(Some(PayloadStatus::invalid_with(
+    //         *latest_valid_hash,
+    //         "Header has been previously invalidated.".into(),
+    //     )));
+    // }
 
-    // Check if the parent block has already been invalidated
-    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash) {
-        return Ok(Some(PayloadStatus::invalid_with(
-            *latest_valid_hash,
-            "Parent header has been previously invalidated.".into(),
-        )));
-    }
+    // // Check if the parent block has already been invalidated
+    // if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash) {
+    //     return Ok(Some(PayloadStatus::invalid_with(
+    //         *latest_valid_hash,
+    //         "Parent header has been previously invalidated.".into(),
+    //     )));
+    // }
 
     Ok(None)
 }
