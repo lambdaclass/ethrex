@@ -27,12 +27,27 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
+use std::borrow::Borrow;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
 
 pub struct Store {
     db: Arc<Database>,
+}
+
+pub fn key_for_headers(hash: &BlockHash, number: BlockNumber) -> [u8; 40] {
+    let mut key: [u8; 40] = [0_u8; 40];
+    let _ = &key[0..8].copy_from_slice(&number.to_be_bytes());
+    let _ = &key[8..40].copy_from_slice(&hash.to_fixed_bytes());
+    return key;
+}
+
+pub fn key_for_indexed_receipts(hash: &BlockHash, index: u64) -> [u8; 40] {
+    let mut key: [u8; 40] = [0_u8; 40];
+    &key[0..32].copy_from_slice(hash.to_fixed_bytes().borrow());
+    &key[32..40].copy_from_slice(&index.to_be_bytes()[..]);
+    return key;
 }
 
 impl Store {
@@ -92,7 +107,10 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.write::<Headers>(block_hash.to_fixed_bytes(), block_header.into())
+        self.write::<Headers>(
+            key_for_headers(&block_hash, block_header.number),
+            block_header.into(),
+        )
     }
 
     fn add_block_headers(
@@ -103,7 +121,7 @@ impl StoreEngine for Store {
         let hashes_and_headers = block_hashes
             .into_iter()
             .zip(block_headers)
-            .map(|(hash, header)| (hash.into(), header.into()));
+            .map(|(hash, header)| (key_for_headers(&hash, header.number), header.into()));
         self.write_batch::<Headers>(hashes_and_headers)
     }
 
@@ -112,7 +130,9 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self.read::<Headers>(hash.into())?.map(|b| b.to()))
+            Ok(self
+                .read::<Headers>(key_for_headers(&hash, block_number))?
+                .map(|b| b.to()))
         } else {
             Ok(None)
         }
@@ -145,7 +165,10 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        Ok(self.read::<Headers>(block_hash.into())?.map(|b| b.to()))
+        let number = self.get_block_number(block_hash).unwrap().unwrap();
+        Ok(self
+            .read::<Headers>(key_for_headers(&block_hash, number))?
+            .map(|b| b.to()))
     }
 
     fn add_block_number(
@@ -175,12 +198,10 @@ impl StoreEngine for Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
-        let mut key: [u8; 40] = [0_u8; 40];
-        let _ = &key[0..32].copy_from_slice(&block_hash.to_fixed_bytes());
-        let _= &key[32..40].copy_from_slice(&index.to_be_bytes());
-        let entries = receipt.encode_to_vec();
-        let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt.encode_to_vec()) else {
+        let Some(entries) = IndexedChunk::from::<Receipts>(
+            key_for_headers(&block_hash, index),
+            &receipt.encode_to_vec(),
+        ) else {
             return Err(StoreError::Custom("Invalid size".to_string()));
         };
         self.write_batch::<Receipts>(entries.into_iter())
@@ -192,12 +213,10 @@ impl StoreEngine for Store {
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            let mut key: [u8; 40] = [0_u8; 40];
-            &key[0..32].copy_from_slice(&hash.to_fixed_bytes());
-            &key[32..40].copy_from_slice(&index.to_be_bytes());
+            let key: [u8; 40] = [0_u8; 40];
             let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
             let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            IndexedChunk::read_from_db(&mut cursor, key)
+            IndexedChunk::read_from_db(&mut cursor, key_for_indexed_receipts(&hash, index))
         } else {
             Ok(None)
         }
@@ -453,10 +472,7 @@ impl StoreEngine for Store {
         let mut key_values = vec![];
 
         for (index, receipt) in receipts.clone().into_iter().enumerate() {
-            let mut key: [u8; 40] = [0_u8; 40];
-            &key[0..32].copy_from_slice(&block_hash.to_fixed_bytes());
-            &key[32..40].copy_from_slice(&index.to_be_bytes());
-            // let entries = receipt.encode_to_vec();
+            let key = key_for_headers(&block_hash, index as u64);
             let receipt_rlp = receipt.encode_to_vec();
             let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
                 continue;
@@ -471,9 +487,7 @@ impl StoreEngine for Store {
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
         let mut receipt_index = 0_u64;
-        let mut key: [u8; 40] = [0_u8; 40];
-        let _ = &key[0..32].copy_from_slice(&block_hash.to_fixed_bytes());
-        // let mut key = (*block_hash, 0).into();
+        let mut key = key_for_indexed_receipts(block_hash, receipt_index);
         let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
         let mut cursor = txn
             .cursor::<Receipts>()
@@ -487,10 +501,7 @@ impl StoreEngine for Store {
         while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key)? {
             receipts.push(receipt);
             receipt_index += 1;
-            let mut key: [u8; 40] = [0_u8; 40];
-            let _ = &key[0..32].copy_from_slice(&block_hash.to_fixed_bytes());
-            let _ = &key[32..40].copy_from_slice(&receipt_index.to_be_bytes());
-            // key = (*block_hash, receipt_index).into();
+            key = key_for_indexed_receipts(block_hash, receipt_index);
         }
 
         Ok(receipts)
@@ -832,7 +843,7 @@ table!(
 
 table!(
     /// Block headers table.
-    ( Headers ) [u8;32] => BlockHeaderRLP
+    ( Headers ) [u8;40] => BlockHeaderRLP
 );
 
 table!(
