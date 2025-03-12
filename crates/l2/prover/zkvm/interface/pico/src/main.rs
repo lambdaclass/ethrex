@@ -61,8 +61,26 @@ pub fn main() {
         panic!("invalid final state trie");
     }
 
-    commit(&ProgramOutput {
-        initial_state_hash,
-        final_state_hash,
-    });
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "l2")] {
+            let deposits = get_block_deposits(&block);
+            let deposit_logs_hash = get_deposit_hash(
+                deposits
+                    .iter()
+                    .filter_map(|tx| tx.get_deposit_hash())
+                    .collect(),
+            ).expect("failed to calculate deposit logs hash");
+
+            commit(&ProgramOutput {
+                initial_state_hash,
+                final_state_hash,
+                deposit_logs_hash
+            });
+        } else {
+            commit(&ProgramOutput {
+                initial_state_hash,
+                final_state_hash,
+            });
+        }
+    }
 }

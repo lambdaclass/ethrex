@@ -1,12 +1,15 @@
 use risc0_zkvm::guest::env;
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::{backends::revm::db::EvmState, backends::revm::REVM};
+use ethrex_vm::{backends::revm::REVM, backends::revm::db::EvmState};
 
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
 };
+
+#[cfg(feature = "l2")]
+use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
 
 fn main() {
     let ProgramInput {
@@ -58,8 +61,26 @@ fn main() {
         panic!("invalid final state trie");
     }
 
-    env::commit(&ProgramOutput {
-        initial_state_hash,
-        final_state_hash,
-    });
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "l2")] {
+            let deposits = get_block_deposits(&block);
+            let deposit_logs_hash = get_deposit_hash(
+                deposits
+                    .iter()
+                    .filter_map(|tx| tx.get_deposit_hash())
+                    .collect(),
+            ).expect("failed to calculate deposit logs hash");
+
+            env::commit(&ProgramOutput {
+                initial_state_hash,
+                final_state_hash,
+                deposit_logs_hash
+            });
+        } else {
+            env::commit(&ProgramOutput {
+                initial_state_hash,
+                final_state_hash,
+            });
+        }
+    }
 }

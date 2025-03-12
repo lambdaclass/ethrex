@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 risc0-zkvm = { version = "1.2.2", default-features = false, features = ["std"] }
 zkvm_interface = { path = "../" }
+cfg-if = "1.0.0"
 
 ethrex-common = { path = "../../../../../common", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
