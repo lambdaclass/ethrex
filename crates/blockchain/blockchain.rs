@@ -213,6 +213,7 @@ impl Blockchain {
         };
 
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
+        let mut total_gas_used = 0;
         let chain_config: ChainConfig = self
             .storage
             .get_chain_config()
@@ -267,11 +268,14 @@ impl Blockchain {
             }
 
             all_receipts.push((block_hash, receipts));
+            total_gas_used += block.header.gas_used;
 
             last_valid_hash = block_hash;
 
             Ok(())
         };
+
+        let interval = Instant::now();
 
         for (i, block) in blocks.iter().enumerate() {
             if let Err(err) = add_block(block, i) {
@@ -285,12 +289,20 @@ impl Blockchain {
             };
         }
 
+        let blocks_len = blocks.len();
         self.storage
             .add_batch_of_blocks(blocks, as_canonical)
             .map_err(|e| (e.into(), None))?;
         self.storage
             .add_batch_of_receipts(all_receipts)
             .map_err(|e| (e.into(), None))?;
+
+        let elapsed = interval.elapsed().as_millis();
+        if elapsed != 0 && total_gas_used != 0 {
+            let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (elapsed as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT RANGE OF {blocks_len}: {throughput} Gigagas/s TIME SPENT: {elapsed} msecs");
+        }
 
         Ok(())
     }
