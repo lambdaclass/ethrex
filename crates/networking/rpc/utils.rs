@@ -17,12 +17,19 @@ pub enum RpcErr {
     UnsuportedFork(String),
     Internal(String),
     Vm(String),
-    Revert { data: String },
-    Halt { reason: String, gas_used: u64 },
+    Revert {
+        data: String,
+    },
+    Halt {
+        reason: String,
+        gas_used: u64,
+    },
     AuthenticationError(AuthenticationError),
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
+    #[cfg(feature = "l2")]
+    InvalidRogueMessage(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -122,6 +129,12 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
+            #[cfg(feature = "l2")]
+            RpcErr::InvalidRogueMessage(reason) => RpcErrorMetadata {
+                code: -39000,
+                data: None,
+                message: format!("Invalid rogue message: {reason}",),
+            },
         }
     }
 }
@@ -150,6 +163,8 @@ pub enum RpcNamespace {
     Debug,
     Web3,
     Net,
+    #[cfg(feature = "l2")]
+    Rogue,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -178,6 +193,8 @@ impl RpcRequest {
                 "debug" => Ok(RpcNamespace::Debug),
                 "web3" => Ok(RpcNamespace::Web3),
                 "net" => Ok(RpcNamespace::Net),
+                #[cfg(feature = "l2")]
+                "rogue" => Ok(RpcNamespace::Rogue),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {

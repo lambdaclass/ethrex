@@ -38,6 +38,8 @@ use eth::{
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
+#[cfg(feature = "l2")]
+use rogue::transaction::RogueSponsoredTx;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -59,6 +61,8 @@ mod authentication;
 pub mod engine;
 mod eth;
 mod net;
+#[cfg(feature = "l2")]
+mod rogue;
 pub mod types;
 pub mod utils;
 mod web3;
@@ -279,6 +283,8 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
+        #[cfg(feature = "l2")]
+        Ok(RpcNamespace::Rogue) => map_rogue_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
@@ -346,6 +352,8 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getProof" => GetProofRequest::call(req, context),
         "eth_gasPrice" => GasPrice::call(req, context),
         "eth_maxPriorityFeePerGas" => eth::max_priority_fee::MaxPriorityFee::call(req, context),
+        #[cfg(feature = "l2")]
+        "rogue_sendTransaction" => RogueSponsoredTx::call(req, context),
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
@@ -432,6 +440,14 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
+    }
+}
+
+#[cfg(feature = "l2")]
+pub fn map_rogue_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "rogue_sendTransaction" => RogueSponsoredTx::call(req, context),
+        unknown_rogue_method => Err(RpcErr::MethodNotFound(unknown_rogue_method.to_owned())),
     }
 }
 

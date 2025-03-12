@@ -1,0 +1,193 @@
+use crate::{
+    eth::{fee_calculator::estimate_gas_tip, gas_price::GasPrice, transaction::EstimateGasRequest},
+    types::transaction::SendRawTransactionRequest,
+    utils::RpcErr,
+    RpcApiContext, RpcHandler,
+};
+use bytes::Bytes;
+use ethrex_common::{
+    types::{
+        AuthorizationList, EIP1559Transaction, EIP7702Transaction, GenericTransaction, Signable,
+        TxKind,
+    },
+    Address, U256,
+};
+use secp256k1::SecretKey;
+use serde::Deserialize;
+use serde_json::Value;
+use std::str::FromStr;
+const DELGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
+const EIP7702_DELEGATED_CODE_LEN: usize = 23;
+const GAS_LIMIT_HARD_LIMIT: u64 = 100000;
+
+#[derive(Deserialize, Debug)]
+pub struct RogueSponsoredTx {
+    #[serde(rename(deserialize = "authorizationList"))]
+    pub authorization_list: Option<AuthorizationList>,
+    pub data: Bytes,
+    pub to: Address,
+}
+
+// This endpoint is inspired by the work of Ithaca in Odyssey
+// You can check the reference implementation here
+// https://github.com/ithacaxyz/odyssey/blob/main/crates/wallet/src/lib.rs
+impl RpcHandler for RogueSponsoredTx {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams(format!(
+                "Expected one param and {} were provided",
+                params.len()
+            )));
+        };
+        serde_json::from_str::<RogueSponsoredTx>(params[0].clone().as_str().unwrap())
+            .map_err(|err| RpcErr::BadParams(err.to_string()))
+    }
+
+    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // Dont allow create txs
+        if self.to.is_zero() {
+            return Err(RpcErr::InvalidRogueMessage(
+                "Invalid Create transactions are not supported".to_string(),
+            ));
+        }
+        // If tx is not EIP-7702 check we are calling a delegated account
+        if self.authorization_list.is_none() {
+            let dest_account = context
+                .storage
+                .get_account_info(
+                    context
+                        .storage
+                        .get_latest_block_number()
+                        .map_err(RpcErr::from)?,
+                    self.to,
+                )
+                .map_err(RpcErr::from)?
+                .unwrap_or_default();
+            let code = context
+                .storage
+                .get_account_code(dest_account.code_hash)
+                .map_err(RpcErr::from)?
+                .unwrap_or_default();
+
+            let prefix: Vec<u8> = code.iter().take(3).copied().collect();
+            if code.len() != EIP7702_DELEGATED_CODE_LEN || prefix != DELGATION_PREFIX {
+                return Err(RpcErr::InvalidRogueMessage(
+                    "Invalid tx trying to call non delegated account".to_string(),
+                ));
+            }
+            let address = Address::from_slice(&code[3..]);
+            if address.is_zero() {
+                return Err(RpcErr::InvalidRogueMessage(
+                    "Invalid tx trying to call non delegated account".to_string(),
+                ));
+            }
+        }
+        let sponsor_address = Address::from_str("0x000f17eB09AA3f28132323E6075C672949526d5A")
+            .map_err(|_| RpcErr::InvalidRogueMessage("Invalid sponsor".to_string()))?;
+        let sponsor_pk =
+            SecretKey::from_str("63f6a20cc1d77dd3a602e43f564ca9b4d3b6da8a7227b052827542811c195071")
+                .map_err(|_| RpcErr::InvalidRogueMessage("Invalid pk".to_string()))?;
+        let latest_block_number = context
+            .storage
+            .get_latest_block_number()
+            .map_err(RpcErr::from)?;
+        let chain_config = context.storage.get_chain_config().map_err(RpcErr::from)?;
+        let chain_id = chain_config.chain_id;
+        let nonce = context
+            .storage
+            .get_nonce_by_account_address(latest_block_number, sponsor_address)
+            .map_err(RpcErr::from)?
+            .ok_or(RpcErr::InvalidRogueMessage("Invalid nonce".to_string()))?;
+        let max_priority_fee_per_gas = estimate_gas_tip(&context.storage)
+            .map_err(RpcErr::from)?
+            .unwrap_or_default();
+        let gas_price_request = GasPrice {}.handle(context.clone())?;
+        let max_fee_per_gas = u64::from_str_radix(
+            gas_price_request
+                .as_str()
+                .unwrap_or("0x0")
+                .strip_prefix("0x")
+                .unwrap(),
+            16,
+        )
+        .map_err(|err| RpcErr::Internal(err.to_string()))?;
+
+        let mut tx = if let Some(auth_list) = &self.authorization_list {
+            SendRawTransactionRequest::EIP7702(EIP7702Transaction {
+                chain_id,
+                nonce,
+                max_priority_fee_per_gas: 0,
+                max_fee_per_gas: 0,
+                gas_limit: GAS_LIMIT_HARD_LIMIT,
+                to: self.to,
+                value: U256::zero(),
+                data: self.data.clone(),
+                access_list: Vec::new(),
+                authorization_list: auth_list.clone(),
+                ..Default::default()
+            })
+        } else {
+            SendRawTransactionRequest::EIP1559(EIP1559Transaction {
+                chain_id,
+                nonce,
+                max_priority_fee_per_gas: 0,
+                max_fee_per_gas: 0,
+                gas_limit: GAS_LIMIT_HARD_LIMIT,
+                to: TxKind::Call(self.to),
+                value: U256::zero(),
+                data: self.data.clone(),
+                access_list: Vec::new(),
+                ..Default::default()
+            })
+        };
+
+        let generic = match tx.to_transaction() {
+            ethrex_common::types::Transaction::EIP1559Transaction(tx) => {
+                GenericTransaction::from(tx)
+            }
+            ethrex_common::types::Transaction::EIP7702Transaction(tx) => {
+                GenericTransaction::from(tx)
+            }
+            _ => unreachable!("Not possible"),
+        };
+
+        let estimate_gas_request = EstimateGasRequest {
+            transaction: generic,
+            block: None,
+        }
+        .handle(context.clone())?;
+        let gas_limit = u64::from_str_radix(
+            estimate_gas_request
+                .as_str()
+                .unwrap_or("0x0")
+                .strip_prefix("0x")
+                .unwrap(),
+            16,
+        )
+        .unwrap();
+        if gas_limit == 0 || gas_limit > GAS_LIMIT_HARD_LIMIT {
+            return Err(RpcErr::InvalidRogueMessage("tx too expensive".to_string()));
+        }
+        match tx {
+            SendRawTransactionRequest::EIP7702(ref mut tx) => {
+                tx.gas_limit = gas_limit;
+                tx.max_fee_per_gas = max_fee_per_gas;
+                tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
+                tx.sign_inplace(&sponsor_pk);
+            }
+            SendRawTransactionRequest::EIP1559(ref mut tx) => {
+                tx.gas_limit = gas_limit;
+                tx.max_fee_per_gas = max_fee_per_gas;
+                tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
+                tx.sign_inplace(&sponsor_pk);
+            }
+            _ => unreachable!("not possible"),
+        }
+        dbg!(&tx.to_transaction());
+        dbg!(tx.handle(context))
+    }
+}
