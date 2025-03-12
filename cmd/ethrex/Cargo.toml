@@ -40,6 +40,10 @@ ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 name = "ethrex"
 path = "./ethrex.rs"
 
+[lib]
+name = "ethrex"
+path = "./ethrex.rs"
+
 [features]
 default = ["libmdbx", "c-kzg", "blst"]
 dev = ["dep:ethrex-dev"]

@@ -7,16 +7,16 @@ use crate::{
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, time::Duration};
-use subcommands::{import, removedb};
+pub use subcommands::{import, removedb};
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
 mod cli;
 mod decode;
-mod initializers;
+pub mod initializers;
 mod networks;
 mod subcommands;
-mod utils;
+pub mod utils;
 
 pub const DEFAULT_DATADIR: &str = "ethrex";
 
