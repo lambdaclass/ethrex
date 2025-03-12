@@ -44,3 +44,4 @@ path = "./rpc.rs"
 
 [features]
 based = []
+l2 = []
