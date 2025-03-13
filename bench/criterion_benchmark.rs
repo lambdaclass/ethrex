@@ -26,7 +26,7 @@ fn block_import() {
         data_dir.to_owned(),
         evm_engine,
         &network,
-        "../../test_data/2000-blocks.rlp",
+        "../../test_data/l2-1k-erc20.rlp",
     );
 }
 
