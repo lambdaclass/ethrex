@@ -8,7 +8,7 @@ use crate::{
 
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
+        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
         PrivilegedL2Transaction, Receipt, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
         MIN_BASE_FEE_PER_BLOB_GAS,
     },

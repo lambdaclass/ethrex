@@ -82,7 +82,7 @@ pub trait AccountStateDiffCmp {
 
 impl AccountStateDiffCmp for u8 {
     fn is(&self, r#type: AccountStateDiffType) -> bool {
-        return self & r#type as u8 != 0;
+        self & r#type as u8 != 0
     }
 }
 
@@ -143,58 +143,42 @@ impl StateDiff {
         Ok(Bytes::from(encoded))
     }
 
-    pub fn decode(bytes: Bytes) -> Result<Self, StateDiffError> {
-        let mut offset = 0;
-        if bytes[offset] != 0x01 {
-            return Err(StateDiffError::UnsupportedVersion(bytes[offset]));
+    pub fn decode(bytes: &[u8]) -> Result<Self, StateDiffError> {
+        let mut decoder = Decoder::new(bytes);
+
+        let version = decoder.get_u8()?;
+        if version != 0x01 {
+            return Err(StateDiffError::UnsupportedVersion(version));
         }
-        offset += 1;
 
         // Header fields
-        let transactions_root = H256::from_slice(&bytes[offset..offset + 32]);
-        offset += 32;
-        let receipts_root = H256::from_slice(&bytes[offset..offset + 32]);
-        offset += 32;
-        let gas_limit = u64::from_be_bytes(bytes[offset..offset + 8].try_into().map_err(|_| {
-            StateDiffError::FailedToDeserializeStateDiff("Invalid gas limit".to_string())
-        })?);
-        offset += 8;
-        let gas_used = u64::from_be_bytes(bytes[offset..offset + 8].try_into().map_err(|_| {
-            StateDiffError::FailedToDeserializeStateDiff("Invalid gas used".to_string())
-        })?);
-        offset += 8;
-        let timestamp = u64::from_be_bytes(bytes[offset..offset + 8].try_into().map_err(|_| {
-            StateDiffError::FailedToDeserializeStateDiff("Invalid timestamp".to_string())
-        })?);
-        offset += 8;
-        let base_fee_per_gas =
-            u64::from_be_bytes(bytes[offset..offset + 8].try_into().map_err(|_| {
-                StateDiffError::FailedToDeserializeStateDiff("Invalid base fee per gas".to_string())
-            })?);
-        offset += 8;
+        let transactions_root = decoder.get_h256()?;
+        let receipts_root = decoder.get_h256()?;
+        let gas_limit = decoder.get_u64()?;
+        let gas_used = decoder.get_u64()?;
+        let timestamp = decoder.get_u64()?;
+        let base_fee_per_gas = decoder.get_u64()?;
 
-        let accounts_updated = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
-        offset += 2;
+        // Accounts diff
+        let accounts_updated = decoder.get_u16()?;
 
-        let mut modified_accounts = HashMap::with_capacity(accounts_updated as usize);
+        let mut modified_accounts = HashMap::with_capacity(accounts_updated.into());
         for _ in 0..accounts_updated {
-            let (bytes_read, address, account_diff) =
-                AccountStateDiff::decode(bytes[offset..].to_vec().into())?;
-            offset += bytes_read;
+            let next_bytes = bytes.get(decoder.consumed()..).ok_or(
+                StateDiffError::FailedToSerializeStateDiff("Not enough bytes".to_string()),
+            )?;
+            let (bytes_read, address, account_diff) = AccountStateDiff::decode(next_bytes)?;
+            decoder.advance(bytes_read);
             modified_accounts.insert(address, account_diff);
         }
 
-        let withdrawal_logs_len = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
-        offset += 2;
+        let withdrawal_logs_len = decoder.get_u16()?;
 
-        let mut withdrawal_logs = Vec::with_capacity(withdrawal_logs_len as usize);
+        let mut withdrawal_logs = Vec::with_capacity(withdrawal_logs_len.into());
         for _ in 0..withdrawal_logs_len {
-            let address = Address::from_slice(&bytes[offset..offset + 20]);
-            offset += 20;
-            let amount = U256::from_big_endian(&bytes[offset..offset + 32]);
-            offset += 32;
-            let tx_hash = H256::from_slice(&bytes[offset..offset + 32]);
-            offset += 32;
+            let address = decoder.get_address()?;
+            let amount = decoder.get_u256()?;
+            let tx_hash = decoder.get_h256()?;
 
             withdrawal_logs.push(WithdrawalLog {
                 address,
@@ -203,15 +187,12 @@ impl StateDiff {
             });
         }
 
-        let deposit_logs_len = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
-        offset += 2;
+        let deposit_logs_len = decoder.get_u16()?;
 
-        let mut deposit_logs = Vec::with_capacity(deposit_logs_len as usize);
+        let mut deposit_logs = Vec::with_capacity(deposit_logs_len.into());
         for _ in 0..deposit_logs_len {
-            let address = Address::from_slice(&bytes[offset..offset + 20]);
-            offset += 20;
-            let amount = U256::from_big_endian(&bytes[offset..offset + 32]);
-            offset += 32;
+            let address = decoder.get_address()?;
+            let amount = decoder.get_u256()?;
 
             deposit_logs.push(DepositLog {
                 address,
@@ -221,7 +202,6 @@ impl StateDiff {
         }
 
         Ok(Self {
-            version: 1,
             header: BlockHeader {
                 transactions_root,
                 receipts_root,
@@ -231,6 +211,7 @@ impl StateDiff {
                 base_fee_per_gas: Some(base_fee_per_gas),
                 ..Default::default()
             },
+            version,
             modified_accounts,
             withdrawal_logs,
             deposit_logs,
@@ -246,7 +227,7 @@ impl StateDiff {
         for (address, diff) in &self.modified_accounts {
             let account_state = match prev_state
                 .get(&hash_address(address))
-                .map_err(|e| StateDiffError::DbError(e))?
+                .map_err(StateDiffError::DbError)?
             {
                 Some(rlp) => AccountState::decode(&rlp)
                     .map_err(|e| StateDiffError::FailedToDeserializeStateDiff(e.to_string()))?,
@@ -254,7 +235,7 @@ impl StateDiff {
             };
 
             let balance = diff.new_balance.unwrap_or(account_state.balance);
-            let nonce = account_state.nonce + diff.nonce_diff as u64;
+            let nonce = account_state.nonce + u64::from(diff.nonce_diff);
             let bytecode_hash = diff.bytecode_hash.unwrap_or(account_state.code_hash);
 
             let account_info = if diff.new_balance.is_some()
@@ -346,71 +327,53 @@ impl AccountStateDiff {
 
     /// Returns a tuple of the number of bytes read, the address of the account
     /// and the decoded `AccountStateDiff`
-    pub fn decode(bytes: Bytes) -> Result<(usize, Address, Self), StateDiffError> {
-        let mut offset = 0;
+    pub fn decode(bytes: &[u8]) -> Result<(usize, Address, Self), StateDiffError> {
+        let mut decoder = Decoder::new(bytes);
 
-        let update_type = bytes[offset];
-        offset += 1;
+        let update_type = decoder.get_u8()?;
 
-        let address = Address::from_slice(&bytes[offset..offset + 20]);
-        offset += 20;
+        let address = decoder.get_address()?;
 
         let new_balance = if update_type.is(AccountStateDiffType::NewBalance) {
-            let balance = U256::from_big_endian(&bytes[offset..offset + 32]);
-            offset += 32;
-            Some(balance)
+            Some(decoder.get_u256()?)
         } else {
             None
         };
 
         let nonce_diff = if update_type.is(AccountStateDiffType::NonceDiff) {
-            let nonce = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
-            offset += 2;
-            Some(nonce)
+            Some(decoder.get_u16()?)
         } else {
             None
         };
 
         let mut storage_diff = HashMap::new();
         if update_type.is(AccountStateDiffType::Storage) {
-            let storage_slots_updated = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
-            offset += 2;
-            storage_diff.reserve(storage_slots_updated as usize);
+            let storage_slots_updated = decoder.get_u16()?;
+            storage_diff.reserve(storage_slots_updated.into());
 
             for _ in 0..storage_slots_updated {
-                let key = H256::from_slice(&bytes[offset..offset + 32]);
-                offset += 32;
-                let new_value = U256::from_big_endian(&bytes[offset..offset + 32]);
-                offset += 32;
+                let key = decoder.get_h256()?;
+                let new_value = decoder.get_u256()?;
 
                 storage_diff.insert(key, new_value);
             }
         }
 
         let bytecode = if update_type.is(AccountStateDiffType::Bytecode) {
-            let bytecode_len = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
-            offset += 2;
-
-            let bytecode = bytes[offset..offset + bytecode_len as usize]
-                .to_vec()
-                .into();
-            offset += bytecode_len as usize;
-
-            Some(bytecode)
+            let bytecode_len = decoder.get_u16()?;
+            Some(decoder.get_bytes(bytecode_len.into())?)
         } else {
             None
         };
 
         let bytecode_hash = if update_type.is(AccountStateDiffType::BytecodeHash) {
-            let bytecode_hash = H256::from_slice(&bytes[offset..offset + 32]);
-            offset += 32;
-            Some(bytecode_hash)
+            Some(decoder.get_h256()?)
         } else {
             None
         };
 
         Ok((
-            offset,
+            decoder.consumed(),
             address,
             AccountStateDiff {
                 new_balance,
@@ -420,5 +383,109 @@ impl AccountStateDiff {
                 bytecode_hash,
             },
         ))
+    }
+}
+
+struct Decoder {
+    bytes: Bytes,
+    offset: usize,
+}
+
+impl Decoder {
+    fn new(bytes: &[u8]) -> Self {
+        Decoder {
+            bytes: Bytes::copy_from_slice(bytes),
+            offset: 0,
+        }
+    }
+
+    fn consumed(&self) -> usize {
+        self.offset
+    }
+
+    fn advance(&mut self, size: usize) {
+        self.offset += size;
+    }
+
+    fn get_address(&mut self) -> Result<Address, StateDiffError> {
+        let res = Address::from_slice(self.bytes.get(self.offset..self.offset + 20).ok_or(
+            StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
+        )?);
+        self.offset += 20;
+
+        Ok(res)
+    }
+
+    fn get_u256(&mut self) -> Result<U256, StateDiffError> {
+        let res = U256::from_big_endian(self.bytes.get(self.offset..self.offset + 32).ok_or(
+            StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
+        )?);
+        self.offset += 32;
+
+        Ok(res)
+    }
+
+    fn get_h256(&mut self) -> Result<H256, StateDiffError> {
+        let res = H256::from_slice(self.bytes.get(self.offset..self.offset + 32).ok_or(
+            StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
+        )?);
+        self.offset += 32;
+
+        Ok(res)
+    }
+
+    fn get_u8(&mut self) -> Result<u8, StateDiffError> {
+        let res =
+            self.bytes
+                .get(self.offset)
+                .ok_or(StateDiffError::FailedToDeserializeStateDiff(
+                    "Not enough bytes".to_string(),
+                ))?;
+        self.offset += 1;
+
+        Ok(*res)
+    }
+
+    fn get_u16(&mut self) -> Result<u16, StateDiffError> {
+        let res = u16::from_be_bytes(
+            self.bytes
+                .get(self.offset..self.offset + 2)
+                .ok_or(StateDiffError::FailedToDeserializeStateDiff(
+                    "Not enough bytes".to_string(),
+                ))?
+                .try_into()
+                .map_err(|_| {
+                    StateDiffError::FailedToDeserializeStateDiff("Cannot parse u16".to_string())
+                })?,
+        );
+        self.offset += 2;
+
+        Ok(res)
+    }
+
+    fn get_u64(&mut self) -> Result<u64, StateDiffError> {
+        let res = u64::from_be_bytes(
+            self.bytes
+                .get(self.offset..self.offset + 8)
+                .ok_or(StateDiffError::FailedToDeserializeStateDiff(
+                    "Not enough bytes".to_string(),
+                ))?
+                .try_into()
+                .map_err(|_| {
+                    StateDiffError::FailedToDeserializeStateDiff("Cannot parse u64".to_string())
+                })?,
+        );
+        self.offset += 8;
+
+        Ok(res)
+    }
+
+    fn get_bytes(&mut self, size: usize) -> Result<Bytes, StateDiffError> {
+        let res = self.bytes.get(self.offset..self.offset + size).ok_or(
+            StateDiffError::FailedToDeserializeStateDiff("Not enough bytes".to_string()),
+        )?;
+        self.offset += size;
+
+        Ok(Bytes::copy_from_slice(res))
     }
 }

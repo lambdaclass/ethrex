@@ -314,7 +314,7 @@ impl Command {
                     }
 
                     let blob = bytes_from_blob(blob.into());
-                    let state_diff = StateDiff::decode(blob.to_vec().into())?;
+                    let state_diff = StateDiff::decode(&blob)?;
                     let account_updates = state_diff.to_account_updates(&new_trie)?;
 
                     new_trie = store
