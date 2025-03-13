@@ -1812,14 +1812,12 @@ fn validate_p256_parameters(r: &[u8], s: &[u8], x: &[u8], y: &[u8]) -> Result<bo
     }
 
     // Verify that the point formed by (x, y) is on the curve
-    let x = P256FieldElement::from_uint(x);
-    let y = P256FieldElement::from_uint(y);
+    let x: Option<P256FieldElement> = P256FieldElement::from_uint(x).into();
+    let y: Option<P256FieldElement> = P256FieldElement::from_uint(y).into();
 
-    if x.is_none().into() || y.is_none().into() {
+    let (Some(x), Some(y)) = (x, y) else {
         return Err(VMError::Internal(InternalError::SlicingError));
-    }
-    let x = x.unwrap();
-    let y = y.unwrap();
+    };
 
     // Curve equation: `y² = x³ + ax + b`
     let a_x = P256_A.multiply(&x);
