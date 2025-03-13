@@ -19,8 +19,8 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EvmEngine {
-    #[default]
     REVM,
+    #[default]
     LEVM,
 }
 
