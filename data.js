@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1741832627073,
+  "lastUpdate": 1741832923278,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -77,6 +77,32 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import",
             "value": 135084072543,
             "range": "± 444762404",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "af42dea9eed7c0e9d1a51ed486ce46d73a0ea53a",
+          "message": "feat(core): bench workflow",
+          "timestamp": "2025-03-12T18:31:00Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/2190/commits/af42dea9eed7c0e9d1a51ed486ce46d73a0ea53a"
+        },
+        "date": 1741832922410,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 134900625708,
+            "range": "± 572241796",
             "unit": "ns/iter"
           }
         ]
