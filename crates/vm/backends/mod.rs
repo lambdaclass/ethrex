@@ -19,7 +19,14 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EvmEngine {
+    #[cfg(not(feature = "l2"))]
+    #[default]
     REVM,
+    #[cfg(not(feature = "l2"))]
+    LEVM,
+    #[cfg(feature = "l2")]
+    REVM,
+    #[cfg(feature = "l2")]
     #[default]
     LEVM,
 }
