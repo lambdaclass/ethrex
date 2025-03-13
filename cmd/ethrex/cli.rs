@@ -2,7 +2,6 @@ use clap::{Arg, ArgAction, Command};
 use ethrex_p2p::types::Node;
 use tracing::Level;
 
-#[allow(dead_code)]
 pub fn cli() -> Command {
     let cmd = Command::new("ethrex")
         .about("ethrex Execution client")

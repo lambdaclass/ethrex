@@ -42,7 +42,7 @@ path = "./ethrex.rs"
 
 [lib]
 name = "ethrex"
-path = "./ethrex.rs"
+path = "./lib.rs"
 
 [features]
 default = ["libmdbx", "c-kzg", "blst"]

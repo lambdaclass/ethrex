@@ -1,4 +1,4 @@
-use crate::{
+use ethrex::{
     initializers::{
         get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_rpc_api,
         init_store, init_tracing,
@@ -7,23 +7,14 @@ use crate::{
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, time::Duration};
-pub use subcommands::{import, removedb};
 use tokio_util::task::TaskTracker;
 use tracing::info;
-
-mod cli;
-mod decode;
-pub mod initializers;
-mod networks;
-mod subcommands;
-pub mod utils;
 
 pub const DEFAULT_DATADIR: &str = "ethrex";
 
 #[tokio::main]
-#[allow(dead_code)]
 async fn main() {
-    let matches = cli::cli().get_matches();
+    let matches = ethrex::cli::cli().get_matches();
 
     init_tracing(&matches);
 
@@ -31,7 +22,7 @@ async fn main() {
         let data_dir = subcommand_matches
             .get_one::<String>("datadir")
             .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
-        removedb::remove_db(&data_dir);
+        ethrex::removedb::remove_db(&data_dir);
         return;
     }
 
@@ -49,7 +40,7 @@ async fn main() {
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
     if let Some(subcommand_matches) = matches.subcommand_matches("import") {
-        import::import_blocks_from_path(subcommand_matches, data_dir, evm_engine, &network);
+        ethrex::import::import_blocks_from_path(subcommand_matches, data_dir, evm_engine, &network);
         return;
     }
 
@@ -83,11 +74,11 @@ async fn main() {
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "dev")] {
-            use crate::initializers::init_dev_network;
+            use ethrex::initializers::init_dev_network;
 
             init_dev_network(&matches, &store, tracker.clone());
         } else {
-            use crate::initializers::{init_network};
+            use ethrex::initializers::{init_network};
 
             init_network(
                 &matches,
