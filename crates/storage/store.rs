@@ -463,7 +463,7 @@ impl Store {
 
     pub fn add_batch_of_receipts(
         &self,
-        batch: Vec<(BlockHash, Vec<Receipt>)>,
+        batch: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
         self.engine.add_batch_of_receipts(batch)
     }

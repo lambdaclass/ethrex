@@ -4,7 +4,7 @@ use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
-use std::{fmt::Debug, panic::RefUnwindSafe};
+use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
@@ -108,7 +108,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Adds a batch of receipts
     fn add_batch_of_receipts(
         &self,
-        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
+        blocks_receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError>;
 
     /// Obtain receipt for a canonical block represented by the block number.

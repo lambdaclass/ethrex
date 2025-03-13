@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
+use std::{borrow::Borrow, collections::HashMap, panic::RefUnwindSafe, sync::Arc};
 
 use crate::rlp::{AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP};
 use crate::store::MAX_SNAPSHOT_READS;
@@ -635,11 +635,11 @@ impl StoreEngine for RedBStore {
 
     fn add_batch_of_receipts(
         &self,
-        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
+        blocks_receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
         let mut key_values = vec![];
 
-        for (block_hash, receipts) in blocks_receipts {
+        for (block_hash, receipts) in blocks_receipts.into_iter() {
             for (index, receipt) in receipts.iter().enumerate() {
                 let kv = (
                     <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((

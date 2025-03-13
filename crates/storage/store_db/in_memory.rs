@@ -224,7 +224,7 @@ impl StoreEngine for Store {
 
     fn add_batch_of_receipts(
         &self,
-        receipts: Vec<(BlockHash, Vec<Receipt>)>,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner();
         for (index, (block_hash, receipts)) in receipts.into_iter().enumerate() {

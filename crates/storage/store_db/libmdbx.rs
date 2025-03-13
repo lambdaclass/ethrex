@@ -27,6 +27,7 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -501,11 +502,11 @@ impl StoreEngine for Store {
 
     fn add_batch_of_receipts(
         &self,
-        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
+        blocks_receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> std::result::Result<(), StoreError> {
         let mut key_values = vec![];
 
-        for (block_hash, receipts) in blocks_receipts {
+        for (block_hash, receipts) in blocks_receipts.into_iter() {
             for (index, receipt) in receipts.into_iter().enumerate() {
                 let key = (block_hash, index as u64).into();
                 let receipt_rlp = receipt.encode_to_vec();

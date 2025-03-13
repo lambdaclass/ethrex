@@ -18,12 +18,13 @@ use ethrex_common::types::{
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 
-use ethrex_common::{Address, H256};
+use ethrex_common::{Address, H160, H256};
 use mempool::Mempool;
+use std::collections::HashMap;
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::Store;
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
@@ -156,45 +157,53 @@ impl Blockchain {
         match self.evm_engine {
             // LEVM does not support batch block processing as it does not persist the state between block executions
             // Therefore, we must commit to the db after each block
-            EvmEngine::LEVM => {
-                let mut last_valid_hash = H256::default();
-                for block in blocks {
-                    let block_hash = block.hash();
-                    let block_number = block.header.number;
-
-                    if let Err(e) = self.add_block(block) {
-                        return Err((
-                            e,
-                            Some(BatchBlockProcessingFailure {
-                                last_valid_hash,
-                                failed_block_hash: block_hash,
-                            }),
-                        ));
-                    };
-
-                    if as_canonical {
-                        self.storage
-                            .set_canonical_block(block_number, block_hash)
-                            .map_err(|e| (e.into(), None))?;
-                    }
-
-                    last_valid_hash = block_hash;
+            EvmEngine::LEVM => self.add_blocks_in_batch_sequential(blocks, as_canonical),
+            EvmEngine::REVM => {
+                if should_commit_intermediate_tries {
+                    self.add_blocks_in_batch_sequential(blocks, as_canonical)
+                } else {
+                    self.add_blocks_in_batch_inner(blocks, as_canonical)
                 }
-
-                Ok(())
             }
-            EvmEngine::REVM => self.add_blocks_in_batch_inner(
-                blocks,
-                should_commit_intermediate_tries,
-                as_canonical,
-            ),
         }
+    }
+
+    fn add_blocks_in_batch_sequential(
+        &self,
+        blocks: &[Block],
+        as_canonical: bool,
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+        let mut last_valid_hash = H256::default();
+
+        for block in blocks {
+            let block_hash = block.hash();
+            let block_number = block.header.number;
+
+            if let Err(e) = self.add_block(block) {
+                return Err((
+                    e,
+                    Some(BatchBlockProcessingFailure {
+                        last_valid_hash,
+                        failed_block_hash: block_hash,
+                    }),
+                ));
+            };
+
+            if as_canonical {
+                self.storage
+                    .set_canonical_block(block_number, block_hash)
+                    .map_err(|e| (e.into(), None))?;
+            }
+
+            last_valid_hash = block_hash;
+        }
+
+        Ok(())
     }
 
     fn add_blocks_in_batch_inner(
         &self,
         blocks: &[Block],
-        should_commit_intermediate_tries: bool,
         as_canonical: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
@@ -212,7 +221,7 @@ impl Blockchain {
             return Err((ChainError::ParentNotFound, None));
         };
 
-        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
+        let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
         let mut total_gas_used = 0;
         let chain_config: ChainConfig = self
             .storage
@@ -225,9 +234,10 @@ impl Blockchain {
             first_block_header.parent_hash,
         );
 
+        let mut all_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
+
         let mut add_block = |block: &Block, i: usize| -> Result<(), ChainError> {
             let is_first_block = i == 0;
-            let is_last_block = i == blocks.len() - 1;
 
             let block_hash = block.header.compute_block_hash();
 
@@ -250,24 +260,27 @@ impl Blockchain {
             let BlockExecutionResult {
                 account_updates,
                 receipts,
-                requests,
-            } = vm.execute_block_without_clearing_state(block)?;
+                ..
+            } = vm.execute_block(block)?;
 
             validate_gas_used(&receipts, &block.header)?;
 
-            self.storage
-                .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
+            for account_update in account_updates {
+                let Some(cache) = all_account_updates.get_mut(&account_update.address) else {
+                    all_account_updates.insert(account_update.address, account_update);
+                    continue;
+                };
 
-            if should_commit_intermediate_tries || is_last_block {
-                let root_hash = state_trie.hash_no_commit();
-                validate_state_root(&block.header, root_hash)?;
-                // commit to db after validating the root
-                state_trie.hash().map_err(StoreError::Trie)?;
-                validate_receipts_root(&block.header, &receipts)?;
-                validate_requests_hash(&block.header, &chain_config, &requests)?;
+                cache.removed = account_update.removed;
+                cache.code = account_update.code;
+                cache.info = account_update.info;
+
+                for (k, v) in account_update.added_storage.into_iter() {
+                    cache.added_storage.insert(k, v);
+                }
             }
 
-            all_receipts.push((block_hash, receipts));
+            all_receipts.insert(block_hash, receipts);
             total_gas_used += block.header.gas_used;
 
             last_valid_hash = block_hash;
@@ -289,7 +302,31 @@ impl Blockchain {
             };
         }
 
+        // We have executed all the blocks
+        // Now we have to: apply account updates -> validate state root -> validate receipts -> store blocks, receipts, trie
+
+        let block = blocks.last().unwrap();
+
+        self.storage
+            .apply_account_updates_to_trie(
+                &all_account_updates.into_values().collect::<Vec<_>>(),
+                &mut state_trie,
+            )
+            .map_err(|e| (e.into(), None))?;
+
+        let root_hash = state_trie.hash_no_commit();
+        validate_state_root(&block.header, root_hash).map_err(|e| (e, None))?;
+
+        // commit to db after validating the root
+        state_trie
+            .hash()
+            .map_err(|e| (StoreError::Trie(e).into(), None))?;
+
+        validate_receipts_root(&block.header, all_receipts.get(&block.hash()).unwrap())
+            .map_err(|e| (e, None))?;
+
         let blocks_len = blocks.len();
+
         self.storage
             .add_batch_of_blocks(blocks, as_canonical)
             .map_err(|e| (e.into(), None))?;
