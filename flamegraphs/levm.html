@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LEVM Flamegraph Comparison</title>
+    <link rel="stylesheet" type="text/css" href="style.css" />
+</head>
+
+<body>
+    <header>
+        <h1>LEVM Flamegraph Comparison</h1>
+        <p class="last-updated">Last update: 2025-03-12T22:40:53</p>
+        <a href="index.html">Ethrex Flamegraph Comparison</a>
+    </header>
+    <main class="container">
+        <div class="column">
+            <div class="col-header">
+                <h2>LEVM</h2>
+                <a href="flamegraph_levm.svg" download="flamegraph_levm.svg">Download</a> |
+                <a href="flamegraph_levm.svg" target="_blank">Open</a>
+            </div>
+            <p class="time-elapsed">Time elapsed: 2 minutes 44 seconds</p>
+            <div class="object-container">
+                <object id="svg1" data="flamegraph_levm.svg" type="image/svg+xml"></object>
+            </div>
+        </div>
+        <div class="column">
+            <div class="col-header">
+                <h2>REVM</h2>
+                <a href="flamegraph_revm.svg" download="flamegraph_revm.svg">
+                    Download</a> |
+                <a href="flamegraph_revm.svg" target="_blank">Open</a>
+            </div>
+            <p class="time-elapsed">Time elapsed: 2 minutes 47 seconds</p>
+            <div class="object-container">
+                <object id="svg2" data="flamegraph_revm.svg" type="image/svg+xml"></object>
+            </div>
+        </div>
+    </main>
+    <script src="script.js"></script>
+</body>
+
+</html>
