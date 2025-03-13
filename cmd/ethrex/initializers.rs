@@ -66,18 +66,18 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
     let store = if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
-            } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
-            } else {
-                let engine_type = EngineType::InMemory;
-                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
-                panic!("Specify the desired database engine.");
-            }
-        }
-        Store::new(data_dir, engine_type).expect("Failed to create Store")
+        // cfg_if::cfg_if! {
+            // if #[cfg(feature = "redb")] {
+            //     let engine_type = EngineType::RedB;
+            // } else if #[cfg(feature = "libmdbx")] {
+            //     let engine_type = EngineType::Libmdbx;
+            // } else {
+            //     let engine_type = EngineType::InMemory;
+            //     error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+            //     panic!("Specify the desired database engine.");
+            // }
+        // }
+        Store::new(data_dir, EngineType::Fjall).expect("Failed to create Store")
     };
     let genesis = read_genesis_file(network);
     store
