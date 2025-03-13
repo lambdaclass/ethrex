@@ -133,7 +133,11 @@ pub fn get_account(cache: &mut CacheDB, db: Arc<dyn Database>, address: Address)
     match cache::get_account(cache, &address) {
         Some(acc) => acc.clone(),
         None => {
-            let account_info = db.get_account_info(address);
+            let account_info = db.get_account_info(address).unwrap_or(AccountInfo {
+                balance: U256::from(0),
+                bytecode: Bytes::from("0"),
+                nonce: 0,
+            });
             let account = Account {
                 info: account_info,
                 storage: HashMap::new(),
@@ -153,9 +157,19 @@ pub fn get_account_no_push_cache(
         Some(acc) => acc.clone(),
         None => {
             let account_info = db.get_account_info(address);
-            Account {
-                info: account_info,
-                storage: HashMap::new(),
+            match account_info {
+                Some(acc) => Account {
+                    info: acc,
+                    storage: HashMap::new(),
+                },
+                None => Account {
+                    info: AccountInfo {
+                        balance: U256::from(0),
+                        bytecode: Bytes::from("0"),
+                        nonce: 0,
+                    },
+                    storage: HashMap::new(),
+                },
             }
         }
     }
@@ -167,7 +181,7 @@ pub fn get_account_mut_vm(
     address: Address,
 ) -> Result<&mut Account, VMError> {
     if !cache::is_account_cached(cache, &address) {
-        let account_info = db.get_account_info(address);
+        let account_info = db.get_account_info(address).unwrap_or_default();
         let account = Account {
             info: account_info,
             storage: HashMap::new(),
@@ -221,7 +235,14 @@ pub fn access_account(
     let address_was_cold = accrued_substate.touched_accounts.insert(address);
     let account = match cache::get_account(cache, &address) {
         Some(account) => account.info.clone(),
-        None => db.get_account_info(address),
+        None => match db.get_account_info(address) {
+            Some(acc) => acc,
+            None => AccountInfo {
+                balance: U256::from(0),
+                bytecode: Bytes::from("0"),
+                nonce: 0,
+            },
+        },
     };
     (account, address_was_cold)
 }

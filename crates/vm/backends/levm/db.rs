@@ -5,24 +5,20 @@ use ethrex_levm::db::Database as LevmDatabase;
 use crate::db::StoreWrapper;
 
 impl LevmDatabase for StoreWrapper {
-    fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
+    fn get_account_info(&self, address: CoreAddress) -> Option<ethrex_levm::account::AccountInfo> {
         let acc_info = self
             .store
-            .get_account_info_by_hash(self.block_hash, address)
-            .unwrap_or(None)
-            .unwrap_or_default();
+            .get_account_info_by_hash(self.block_hash, address).ok()??;
 
         let acc_code = self
             .store
-            .get_account_code(acc_info.code_hash)
-            .unwrap()
-            .unwrap_or_default();
+            .get_account_code(acc_info.code_hash).ok()??;
 
-        ethrex_levm::account::AccountInfo {
+        Some(ethrex_levm::account::AccountInfo {
             balance: acc_info.balance,
             nonce: acc_info.nonce,
             bytecode: acc_code,
-        }
+        })
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
