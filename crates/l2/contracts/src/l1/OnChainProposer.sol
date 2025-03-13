@@ -37,13 +37,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev This is crucial for ensuring that only subsequents blocks are committed in the contract.
     uint256 public lastCommittedBlock;
 
-    /// @notice The next block to commit.
-    /// @dev This variable holds the block number of the next block to commit.
-    /// @dev `nextBlockToCommit` should be equal to `lastCommittedBlock` + 1.
-    /// @dev Only the block with the block number equal to `nextBlockToCommit` will be committed.
-    /// @dev This variable is called by the `l1_committer.rs`.
-    uint256 public nextBlockToCommit;
-
     /// @dev The sequencer addresses that are authorized to commit and verify blocks.
     mapping(address _authorizedAddress => bool)
         public authorizedSequencerAddresses;
@@ -131,10 +124,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 depositLogs
     ) external override onlySequencer {
         require(
-            blockNumber == nextBlockToCommit ||
-                (blockNumber == 0 &&
-                    lastCommittedBlock == 0 &&
-                    nextBlockToCommit == 0),
+            blockNumber == lastCommittedBlock + 1,
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
         require(
@@ -162,7 +152,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             depositLogs
         );
         lastCommittedBlock = blockNumber;
-        nextBlockToCommit = blockNumber + 1;
         emit BlockCommitted(commitment);
     }
 

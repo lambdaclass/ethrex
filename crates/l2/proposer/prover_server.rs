@@ -247,12 +247,6 @@ impl ProverServer {
             EthClient::get_last_verified_block(&self.eth_client, self.on_chain_proposer_address)
                 .await?;
 
-        let last_verified_block = if last_verified_block == u64::MAX {
-            0
-        } else {
-            last_verified_block
-        };
-
         let block_to_verify = last_verified_block + 1;
 
         let mut tx_submitted = false;

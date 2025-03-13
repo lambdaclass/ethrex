@@ -8,7 +8,7 @@ use crate::{
 
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
+        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
         PrivilegedL2Transaction, Receipt, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION,
         MIN_BASE_FEE_PER_BLOB_GAS,
     },
@@ -78,30 +78,30 @@ impl Committer {
 
     async fn main_logic(&self) -> Result<(), CommitterError> {
         loop {
-            let block_number_to_fetch = EthClient::get_next_block_to_commit(
+            let block_number_to_commit = 1 + EthClient::get_last_committed_block(
                 &self.eth_client,
                 self.on_chain_proposer_address,
             )
             .await?;
 
-            if let Some(block_to_commit_body) = self
+            if let Some(block_to_commit_header) = self
                 .store
-                .get_block_body(block_number_to_fetch)
+                .get_block_header(block_number_to_commit)
                 .map_err(CommitterError::from)?
             {
-                let block_to_commit_header = self
+                let block_to_commit_body = self
                     .store
-                    .get_block_header(block_number_to_fetch)
+                    .get_block_body(block_number_to_commit)
                     .map_err(CommitterError::from)?
                     .ok_or(CommitterError::FailedToGetInformationFromStorage(
-                        "Failed to get_block_header() after get_block_body()".to_owned(),
+                        "Failed to get_block_body() after get_block_header()".to_owned(),
                     ))?;
 
                 let mut txs_and_receipts = vec![];
                 for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
                     let receipt = self
                         .store
-                        .get_receipt(block_number_to_fetch, index.try_into()?)?
+                        .get_receipt(block_number_to_commit, index.try_into()?)?
                         .ok_or(CommitterError::InternalError(
                             "Transactions in a block should have a receipt".to_owned(),
                         ))?;
