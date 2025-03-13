@@ -25,12 +25,13 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 impl Clone for Fjall {
     fn clone(&self) -> Self {
         Self {
+            keyspace: self.keyspace.clone(),
             partitions: self.partitions.clone(),
         }
     }
@@ -38,10 +39,6 @@ impl Clone for Fjall {
 
 impl Debug for Fjall {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        // let buff = Vec::with_capacity(self.partitions.read().unwrap().keys().len());
-        // for p_key in self.partitions.read().unwrap().iter() {
-        //     buff.push(p_key.table_name());
-        // }
         f.write_str("FJALL DATABASE");
         Ok(())
     }
@@ -49,10 +46,17 @@ impl Debug for Fjall {
 
 pub struct Fjall {
     partitions: Arc<RwLock<HashMap<String, PartitionHandle>>>,
+    // DO NOT REMOVE
+    keyspace: Arc<Mutex<Keyspace>>,
 }
 
 pub fn init<P: AsRef<Path>>(folder: P) -> Fjall {
-    let keyspace = Config::new(folder).open().unwrap();
+    let keyspace = Config::new(folder)
+        .max_write_buffer_size(1_u64 * (10_u64.pow(9)))
+        // .fsync_ms(Some(500)
+        .max_open_files(16000)
+        .open()
+        .unwrap();
     let mut partitions = Default::default();
 
     // Initialize all partitions
@@ -73,6 +77,7 @@ pub fn init<P: AsRef<Path>>(folder: P) -> Fjall {
     init_partition::<StorageSnapshot>(&keyspace, &mut partitions).unwrap();
 
     Fjall {
+        keyspace: Arc::new(Mutex::new(keyspace)),
         partitions: Arc::new(RwLock::new(partitions)),
     }
 }
@@ -84,7 +89,10 @@ fn init_partition<T: FjallStorable>(
 ) -> Result<(), StoreError> {
     let table_name = T::table_name();
     let partition = keyspace
-        .open_partition(&table_name, PartitionCreateOptions::default())
+        .open_partition(
+            &table_name,
+            PartitionCreateOptions::default().max_memtable_size(64 * 1024 * 1024),
+        )
         .unwrap();
     partitions.insert(table_name.to_owned(), partition);
     Ok(())
@@ -619,7 +627,17 @@ impl StoreEngine for Fjall {
     }
 
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        let num = self
+            .partitions
+            .read()
+            .unwrap()
+            .get(BlockNumbers::table_name())
+            .unwrap()
+            .get("latest")
+            .unwrap()
+            .unwrap()
+            .to_vec();
+        Ok(Some(u64::from_be_bytes(num.try_into().unwrap())))
     }
 
     fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
