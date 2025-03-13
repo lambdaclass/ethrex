@@ -302,6 +302,8 @@ impl Command {
                 let mut new_trie = store
                     .state_trie(genesis_block_hash)?
                     .ok_or_eyre("Cannot open state trie")?;
+                let mut last_number = 0;
+                let mut last_hash = genesis_block_hash;
 
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
                 for file in files.into_iter().sorted_by_key(|f| f.file_name()) {
@@ -318,21 +320,24 @@ impl Command {
                     new_trie = store
                         .apply_account_updates_from_trie(new_trie, &account_updates)
                         .unwrap();
+
+                    let new_block = BlockHeader {
+                        number: last_number + 1,
+                        parent_hash: last_hash,
+                        state_root: new_trie.hash().expect("Error committing state"),
+                        ..state_diff.header
+                    };
+                    let new_block_hash = new_block.compute_block_hash();
+
+                    store.add_block_header(new_block_hash, new_block)?;
+                    store.add_block_number(new_block_hash, last_number + 1)?;
+                    store.set_canonical_block(last_number + 1, new_block_hash)?;
+
+                    last_number += 1;
+                    last_hash = new_block_hash;
                 }
 
-                let new_block = BlockHeader {
-                    parent_hash: genesis_block_hash,
-                    state_root: new_trie.hash().expect("Cannot hash trie"),
-                    number: 1,
-                    gas_limit: genesis_header.gas_limit,
-                    timestamp: genesis_header.timestamp,
-                    base_fee_per_gas: genesis_header.base_fee_per_gas,
-                    ..Default::default()
-                };
-                let new_block_hash = new_block.compute_block_hash();
-
-                store.add_block_header(new_block_hash, new_block)?;
-                store.set_canonical_block(1, new_block_hash)?;
+                store.update_latest_block_number(last_number)?;
             }
         }
         Ok(())
