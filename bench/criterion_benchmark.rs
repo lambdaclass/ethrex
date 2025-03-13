@@ -33,7 +33,9 @@ fn block_import() {
 pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Block import");
     group.sample_size(10);
-    group.bench_function("Block import", |b| b.iter(|| black_box(block_import())));
+    group.bench_function("Block import ERC20 transfers", |b| {
+        b.iter(|| black_box(block_import()))
+    });
     group.finish();
 }
 
