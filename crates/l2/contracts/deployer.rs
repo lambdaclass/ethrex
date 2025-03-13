@@ -652,15 +652,16 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
         let address = get_address_from_secret_key(&secret_key)?;
         let values = vec![Value::Address(address)];
         let calldata = encode_calldata("deposit(address)", &values)?;
-        let Some(acc) = genesis.alloc.get(&address) else {
+        let Some(_) = genesis.alloc.get(&address) else {
             println!(
                 "Skipping deposit for address {:?} as it is not in the genesis file",
                 address
             );
             continue;
         };
-        let value_to_deposit = acc
-            .balance
+
+        let get_balance = eth_client.get_balance(address).await?;
+        let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
         let overrides = Overrides {
