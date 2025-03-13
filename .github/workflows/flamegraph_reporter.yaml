@@ -425,9 +425,9 @@ jobs:
   upload-static-page:
     name: Upload artifacts for static page
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    # environment:
+    #   name: github-pages
+    #   url: ${{ steps.deployment.outputs.page_url }}
     needs: [generate-flamegraph-evm, flamegraph-ethrex, flamegraph-reth]
     steps:
       - name: Checkout sources
