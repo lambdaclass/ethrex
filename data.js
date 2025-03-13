@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1741823562254,
+  "lastUpdate": 1741828400163,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -77,6 +77,32 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import",
             "value": 135080382024,
             "range": "± 2252542839",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "c42bf442e4294cc89221653be832e3d672b32e19",
+          "message": "feat(core): bench workflow",
+          "timestamp": "2025-03-12T18:31:00Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/2190/commits/c42bf442e4294cc89221653be832e3d672b32e19"
+        },
+        "date": 1741828399456,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import",
+            "value": 140022765934,
+            "range": "± 633705895",
             "unit": "ns/iter"
           }
         ]
