@@ -214,11 +214,8 @@ fn handle_forkchoice(
         // Apply current fork choice
         // SyncStatus::Inactive => {
         let invalid_ancestors = {
-            let lock = context.syncer.try_lock();
-            match lock {
-                Ok(sync) => sync.invalid_ancestors.clone(),
-                Err(_) => std::collections::HashMap::new(),
-            }
+            let lock = context.storage.invalid_ancestors.blocking_lock();
+            lock
         };
 
         // Check if the block has already been invalidated

@@ -88,7 +88,7 @@ pub struct SyncManager {
     /// rather than tracking every subsequent invalid block.
     ///
     /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
-    pub invalid_ancestors: HashMap<BlockHash, BlockHash>,
+    // pub invalid_ancestors: HashMap<BlockHash, BlockHash>,
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
@@ -106,7 +106,6 @@ impl SyncManager {
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             cancel_token,
             blockchain,
@@ -121,7 +120,6 @@ impl SyncManager {
             sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
@@ -392,12 +390,20 @@ impl SyncManager {
                     let block = Block::new(header, body);
                     if let Err(error) = self.blockchain.add_block(&block) {
                         warn!("Failed to add block during FullSync: {error}");
-                        self.invalid_ancestors.insert(hash, last_valid_hash);
+                        store
+                            .invalid_ancestors
+                            .lock()
+                            .await
+                            .insert(hash, last_valid_hash);
 
                         // TODO(#2127): Just marking the failing ancestor and the sync head is enough
                         // to fix the Missing Ancestors hive test, we want to look at a more robust
                         // solution in the future if needed.
-                        self.invalid_ancestors.insert(sync_head, last_valid_hash);
+                        store
+                            .invalid_ancestors
+                            .lock()
+                            .await
+                            .insert(sync_head, last_valid_hash);
 
                         return Err(error.into());
                     }
