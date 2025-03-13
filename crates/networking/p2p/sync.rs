@@ -217,7 +217,7 @@ impl SyncManager {
                 .map(|header| header.compute_block_hash())
                 .collect::<Vec<_>>();
 
-            debug!(
+            info!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
                 first_block_header.number,
