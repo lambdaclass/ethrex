@@ -2755,6 +2755,7 @@ dependencies = [
 name = "ethrex-l2"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "bytes",
  "directories",
  "envy",

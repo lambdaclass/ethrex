@@ -78,7 +78,7 @@ jobs:
           BINS="base,head"
           hyperfine --setup "./bin/ethrex-base removedb" -w 5 -N -r 10 --show-output --export-markdown "bench_pr_comparison.md" \
           -L bin "$BINS" -n "{bin}" \
-          "./bin/ethrex-{bin} --network test_data/genesis-l2.json import ./test_data/l2-1k-erc20.rlp"
+          "./bin/ethrex-{bin} --network test_data/genesis-l2.json import ./test_data/l2-1k-erc20.rlp --removedb"
           echo -e "## Benchmark Block Execution Results Comparison Against Main\n\n$(cat bench_pr_comparison.md)" > bench_pr_comparison.md  
       - name: Upload PR results
         uses: actions/upload-artifact@v4
