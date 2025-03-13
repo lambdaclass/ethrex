@@ -113,6 +113,11 @@ jobs:
           name: main-ef-test-data
           path: crates/vm/levm/test_result_main_short.txt
 
+      - name: Check EF-TESTS from London to Prague is 100%
+        run: |
+          cd crates/vm/levm
+          awk '/Prague:/, /London:/ {print $1, $3}' test_result_main.txt | sed 's/[()]//g' | grep -v '100.00%' && echo "All percentage are not 100%." && exit 1 || echo "All percentage are 100%."
+
       - name: Check EF-TESTS status is 100%
         run: |
           cd crates/vm/levm
