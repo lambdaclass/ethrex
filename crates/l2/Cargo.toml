@@ -41,6 +41,7 @@ sp1-recursion-gnark-ffi = "4.1.1"
 ethrex-sdk = { path = "./sdk" }
 
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
+bincode = "1.3.3"
 
 [dev-dependencies]
 rand = "0.8.5"
