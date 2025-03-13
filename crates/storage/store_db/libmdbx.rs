@@ -27,6 +27,7 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
+use std::borrow::Borrow;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -34,6 +35,21 @@ use std::sync::Arc;
 pub struct Store {
     db: Arc<Database>,
 }
+
+pub fn key_for_headers(hash: &BlockHash, number: BlockNumber) -> [u8; 40] {
+    let mut key: [u8; 40] = [0_u8; 40];
+    let _ = &key[0..8].copy_from_slice(&number.to_be_bytes());
+    let _ = &key[8..40].copy_from_slice(&hash.to_fixed_bytes());
+    return key;
+}
+
+pub fn key_for_indexed_receipts(hash: &BlockHash, index: u64) -> [u8; 40] {
+    let mut key: [u8; 40] = [0_u8; 40];
+    &key[0..32].copy_from_slice(hash.to_fixed_bytes().borrow());
+    &key[32..40].copy_from_slice(&index.to_be_bytes()[..]);
+    return key;
+}
+
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         Ok(Self {
@@ -91,7 +107,10 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.write::<Headers>(block_hash.into(), block_header.into())
+        self.write::<Headers>(
+            key_for_headers(&block_hash, block_header.number),
+            block_header.into(),
+        )
     }
 
     fn add_block_headers(
@@ -102,7 +121,7 @@ impl StoreEngine for Store {
         let hashes_and_headers = block_hashes
             .into_iter()
             .zip(block_headers)
-            .map(|(hash, header)| (hash.into(), header.into()));
+            .map(|(hash, header)| (key_for_headers(&hash, header.number), header.into()));
         self.write_batch::<Headers>(hashes_and_headers)
     }
 
@@ -111,7 +130,9 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self.read::<Headers>(hash.into())?.map(|b| b.to()))
+            Ok(self
+                .read::<Headers>(key_for_headers(&hash, block_number))?
+                .map(|b| b.to()))
         } else {
             Ok(None)
         }
@@ -122,7 +143,7 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        self.write::<Bodies>(block_hash.into(), block_body.into())
+        self.write::<Bodies>(block_hash.to_fixed_bytes(), block_body.into())
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
@@ -144,7 +165,10 @@ impl StoreEngine for Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        Ok(self.read::<Headers>(block_hash.into())?.map(|b| b.to()))
+        let number = self.get_block_number(block_hash).unwrap().unwrap();
+        Ok(self
+            .read::<Headers>(key_for_headers(&block_hash, number))?
+            .map(|b| b.to()))
     }
 
     fn add_block_number(
@@ -152,7 +176,8 @@ impl StoreEngine for Store {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.write::<BlockNumbers>(block_hash.into(), block_number)
+        let hash_bytes = block_hash.as_fixed_bytes();
+        self.write::<BlockNumbers>(*hash_bytes, block_number)
     }
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
@@ -173,8 +198,10 @@ impl StoreEngine for Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
-        let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt.encode_to_vec()) else {
+        let Some(entries) = IndexedChunk::from::<Receipts>(
+            key_for_headers(&block_hash, index),
+            &receipt.encode_to_vec(),
+        ) else {
             return Err(StoreError::Custom("Invalid size".to_string()));
         };
         self.write_batch::<Receipts>(entries.into_iter())
@@ -186,10 +213,10 @@ impl StoreEngine for Store {
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
+            let key: [u8; 40] = [0_u8; 40];
             let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
             let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            let key = (hash, index).into();
-            IndexedChunk::read_from_db(&mut cursor, key)
+            IndexedChunk::read_from_db(&mut cursor, key_for_indexed_receipts(&hash, index))
         } else {
             Ok(None)
         }
@@ -203,7 +230,7 @@ impl StoreEngine for Store {
         index: Index,
     ) -> Result<(), StoreError> {
         self.write::<TransactionLocations>(
-            transaction_hash.into(),
+            transaction_hash.to_fixed_bytes(),
             (block_number, block_hash, index).into(),
         )
     }
@@ -445,7 +472,7 @@ impl StoreEngine for Store {
         let mut key_values = vec![];
 
         for (index, receipt) in receipts.clone().into_iter().enumerate() {
-            let key = (block_hash, index as u64).into();
+            let key = key_for_headers(&block_hash, index as u64);
             let receipt_rlp = receipt.encode_to_vec();
             let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
                 continue;
@@ -459,8 +486,8 @@ impl StoreEngine for Store {
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
-        let mut receipt_index = 0;
-        let mut key = (*block_hash, 0).into();
+        let mut receipt_index = 0_u64;
+        let mut key = key_for_indexed_receipts(block_hash, receipt_index);
         let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
         let mut cursor = txn
             .cursor::<Receipts>()
@@ -474,7 +501,7 @@ impl StoreEngine for Store {
         while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key)? {
             receipts.push(receipt);
             receipt_index += 1;
-            key = (*block_hash, receipt_index).into();
+            key = key_for_indexed_receipts(block_hash, receipt_index);
         }
 
         Ok(receipts)
@@ -811,16 +838,17 @@ table!(
 
 table!(
     /// Block hash to number table.
-    ( BlockNumbers ) BlockHashRLP => BlockNumber
+    ( BlockNumbers ) [u8;32] => BlockNumber
 );
 
 table!(
     /// Block headers table.
-    ( Headers ) BlockHashRLP => BlockHeaderRLP
+    ( Headers ) [u8;40] => BlockHeaderRLP
 );
+
 table!(
     /// Block bodies table.
-    ( Bodies ) BlockHashRLP => BlockBodyRLP
+    ( Bodies ) [u8;32] => BlockBodyRLP
 );
 table!(
     /// Account codes table.
@@ -829,7 +857,7 @@ table!(
 
 dupsort!(
     /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+    ( Receipts ) [u8;40][Index] => IndexedChunk<Receipt>
 );
 
 dupsort!(
@@ -840,7 +868,7 @@ dupsort!(
 
 dupsort!(
     /// Transaction locations table.
-    ( TransactionLocations ) TransactionHashRLP => Rlp<(BlockNumber, BlockHash, Index)>
+    ( TransactionLocations ) [u8; 32] => Rlp<(BlockNumber, BlockHash, Index)>
 );
 
 table!(
@@ -1262,7 +1290,7 @@ mod tests {
     fn indexed_chunk_storage_limit_exceeded() {
         dupsort!(
             /// example table.
-            ( Example ) BlockHashRLP[Index] => IndexedChunk<Vec<u8>>
+            ( Example ) BlockHashBytes[Index] => IndexedChunk<Vec<u8>>
         );
 
         let tables = [table_info!(Example)].into_iter().collect();
