@@ -308,7 +308,7 @@ impl Blockchain {
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks(&self, blocks: &Vec<Block>) {
+    pub fn import_blocks(&self, blocks: &[Block]) {
         let size = blocks.len();
         for block in blocks {
             let hash = block.hash();
