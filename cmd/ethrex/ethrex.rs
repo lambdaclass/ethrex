@@ -11,9 +11,11 @@ use std::{path::PathBuf, time::Duration};
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
+mod cli;
+
 #[tokio::main]
 async fn main() {
-    let matches = ethrex::cli::cli().get_matches();
+    let matches = cli::cli().get_matches();
 
     init_tracing(&matches);
 
