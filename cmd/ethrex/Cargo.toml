@@ -40,6 +40,10 @@ ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 name = "ethrex"
 path = "./ethrex.rs"
 
+[lib]
+name = "ethrex"
+path = "./lib.rs"
+
 [features]
 default = ["libmdbx", "c-kzg", "blst"]
 dev = ["dep:ethrex-dev"]
@@ -50,3 +54,12 @@ redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
 l2 = ["dep:ethrex-l2", "ethrex-vm/l2"]
 based = ["l2", "ethrex-rpc/based"]
+
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
+[[bench]]
+path = "../../bench/criterion_benchmark.rs"
+name = "criterion_benchmark"
+harness = false

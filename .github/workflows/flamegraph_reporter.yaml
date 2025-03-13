@@ -1,7 +1,7 @@
 name: Flamegraph Reporter
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -423,9 +423,6 @@ jobs:
   upload-static-page:
     name: Upload artifacts for static page
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     needs: [generate-flamegraph-evm, flamegraph-ethrex, flamegraph-reth]
     steps:
       - name: Checkout sources
@@ -470,6 +467,7 @@ jobs:
       - name: Update static page locally with new data
         shell: bash
         run: |
+          mkdir -p pages
           cp -r flamegraph_levm.svg pages/
           cp -r flamegraph_revm.svg pages/
           cp -r flamegraph_ethrex.svg pages/
@@ -498,12 +496,10 @@ jobs:
           time_revm_str="${minutes} minutes ${seconds} seconds"
           sed -i "s/{{REVM_TIME}}/${time_revm_str}/g" pages/levm.html
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: "pages/"
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./pages
+          destination_dir: flamegraphs
+          keep_files: true
