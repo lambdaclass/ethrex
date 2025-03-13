@@ -58,7 +58,7 @@ interface IOnChainProposer {
     /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the block to be verified.
     /// @param risc0ImageId Digest of the zkVM imageid.
-    /// @param risc0JournalDigest Digest of the public_inputs aka journal
+    /// @param risc0Journal public_inputs aka journal
     /// ----------------------------------------------------------------------
     /// @param sp1ProgramVKey Public verifying key
     /// @param sp1PublicValues Values used to perform the execution
