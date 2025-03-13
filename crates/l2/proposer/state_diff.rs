@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{AccountInfo, AccountState};
+use ethrex_common::types::{AccountInfo, AccountState, BlockHeader};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{hash_address, AccountUpdate};
 use ethrex_trie::Trie;
@@ -43,6 +43,7 @@ pub struct DepositLog {
 #[derive(Clone)]
 pub struct StateDiff {
     pub version: u8,
+    pub header: BlockHeader,
     pub modified_accounts: HashMap<Address, AccountStateDiff>,
     pub withdrawal_logs: Vec<WithdrawalLog>,
     pub deposit_logs: Vec<DepositLog>,
@@ -89,6 +90,7 @@ impl Default for StateDiff {
     fn default() -> Self {
         StateDiff {
             version: 1,
+            header: BlockHeader::default(),
             modified_accounts: HashMap::new(),
             withdrawal_logs: Vec::new(),
             deposit_logs: Vec::new(),
@@ -101,14 +103,23 @@ impl StateDiff {
         if self.version != 1 {
             return Err(StateDiffError::UnsupportedVersion(self.version));
         }
+
+        let mut encoded: Vec<u8> = Vec::new();
+        encoded.push(self.version);
+
+        // Header fields
+        encoded.extend(self.header.transactions_root.0);
+        encoded.extend(self.header.receipts_root.0);
+        encoded.extend(self.header.gas_limit.to_be_bytes());
+        encoded.extend(self.header.gas_used.to_be_bytes());
+        encoded.extend(self.header.timestamp.to_be_bytes());
+        encoded.extend(self.header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
+
         let modified_accounts_len: u16 = self
             .modified_accounts
             .len()
             .try_into()
             .map_err(StateDiffError::from)?;
-
-        let mut encoded: Vec<u8> = Vec::new();
-        encoded.push(self.version);
         encoded.extend(modified_accounts_len.to_be_bytes());
 
         for (address, diff) in &self.modified_accounts {
@@ -133,15 +144,39 @@ impl StateDiff {
     }
 
     pub fn decode(bytes: Bytes) -> Result<Self, StateDiffError> {
-        if bytes[0] != 0x01 {
-            return Err(StateDiffError::UnsupportedVersion(bytes[0]));
+        let mut offset = 0;
+        if bytes[offset] != 0x01 {
+            return Err(StateDiffError::UnsupportedVersion(bytes[offset]));
         }
+        offset += 1;
 
-        let accounts_updated = u16::from_be_bytes([bytes[1], bytes[2]]);
+        // Header fields
+        let transactions_root = H256::from_slice(&bytes[offset..offset + 32]);
+        offset += 32;
+        let receipts_root = H256::from_slice(&bytes[offset..offset + 32]);
+        offset += 32;
+        let gas_limit = u64::from_be_bytes(bytes[offset..offset + 8].try_into().map_err(|_| {
+            StateDiffError::FailedToDeserializeStateDiff("Invalid gas limit".to_string())
+        })?);
+        offset += 8;
+        let gas_used = u64::from_be_bytes(bytes[offset..offset + 8].try_into().map_err(|_| {
+            StateDiffError::FailedToDeserializeStateDiff("Invalid gas used".to_string())
+        })?);
+        offset += 8;
+        let timestamp = u64::from_be_bytes(bytes[offset..offset + 8].try_into().map_err(|_| {
+            StateDiffError::FailedToDeserializeStateDiff("Invalid timestamp".to_string())
+        })?);
+        offset += 8;
+        let base_fee_per_gas =
+            u64::from_be_bytes(bytes[offset..offset + 8].try_into().map_err(|_| {
+                StateDiffError::FailedToDeserializeStateDiff("Invalid base fee per gas".to_string())
+            })?);
+        offset += 8;
+
+        let accounts_updated = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
+        offset += 2;
 
         let mut modified_accounts = HashMap::with_capacity(accounts_updated as usize);
-        let mut offset = 3;
-
         for _ in 0..accounts_updated {
             let (bytes_read, address, account_diff) =
                 AccountStateDiff::decode(bytes[offset..].to_vec().into())?;
@@ -187,6 +222,15 @@ impl StateDiff {
 
         Ok(Self {
             version: 1,
+            header: BlockHeader {
+                transactions_root,
+                receipts_root,
+                gas_limit,
+                gas_used,
+                timestamp,
+                base_fee_per_gas: Some(base_fee_per_gas),
+                ..Default::default()
+            },
             modified_accounts,
             withdrawal_logs,
             deposit_logs,

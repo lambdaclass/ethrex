@@ -21,7 +21,10 @@ After executing each L2 block, the EVM will return the following data:
 The full state diff sent on every block will then be a sequence of bytes encoded as follows. We use the notation `un` for a sequence of `n` bits, so `u16` is a 16-bit sequence and `u96` a 96-bit one, we don’t really care about signedness here; if we don’t specify it, the value is of variable length and a field before it specifies it.
 
 - The first byte is a `u8`: the version header. For now it should always be one, but we reserve it for future changes to the encoding/compression format.
-- Next come the `ModifiedAccounts` list. The first two bytes (`u16`) are the amount of element it has, followed by its entries. Each entry correspond to an altered address and has the form:
+- Next come the block header info:
+  - The `tx_root` and `receipts_root` are `u256` values.
+  - The `gas_limit`, `gas_used`, `timestamp`, and `base_fee_per_gas` are `u64` values.
+- Next the `ModifiedAccounts` list. The first two bytes (`u16`) are the amount of element it has, followed by its entries. Each entry correspond to an altered address and has the form:
   - The first byte is the `type` of the modification. The value is a `u8`, constrained to the range `[1; 23]`, computed by adding the following values:
     - `1` if the balance of the EOA/contract was modified.
     - `2` if the nonce of the EOA/contract was modified.
@@ -45,6 +48,9 @@ To recap, using `||` for byte concatenation and `[]` for optional parameters, th
 
 ```jsx
 version_header_u8 ||
+// Block Header info
+tx_root_u256 || receipts_root_u256 ||
+gas_limit_u64 || gas_used_u64 || timestamp_u64 || base_fee_per_gas_u64
 // Modified Accounts
 number_of_modified_accounts_u16 ||
 (
