@@ -338,6 +338,8 @@ pub mod test_utils {
         let gateway_auth_client = EngineClient::new("", Bytes::default());
         #[cfg(feature = "l2")]
         let valid_delegation_addresses = Vec::new();
+        #[cfg(feature = "l2")]
+        let proposer_pk = String::new();
         start_api(
             http_addr,
             authrpc_addr,
@@ -353,6 +355,8 @@ pub mod test_utils {
             gateway_auth_client,
             #[cfg(feature = "l2")]
             valid_delegation_addresses,
+            #[cfg(feature = "l2")]
+            proposer_pk,
         )
         .await;
     }

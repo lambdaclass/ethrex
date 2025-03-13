@@ -1,4 +1,5 @@
 use crate::{
+    clients::eth::get_address_from_secret_key,
     eth::{fee_calculator::estimate_gas_tip, gas_price::GasPrice, transaction::EstimateGasRequest},
     types::transaction::SendRawTransactionRequest,
     utils::RpcErr,
@@ -86,7 +87,8 @@ impl RpcHandler for RogueSponsoredTx {
             for tuple in auth_list {
                 if !context.valid_delegation_addresses.contains(&tuple.address) {
                     return Err(RpcErr::InvalidRogueMessage(
-                        "Invalid tx trying delegate to an address that isn't sponsored".to_string(),
+                        "Invalid tx trying to delegate to an address that isn't sponsored"
+                            .to_string(),
                     ));
                 }
             }
@@ -127,12 +129,10 @@ impl RpcHandler for RogueSponsoredTx {
                 ));
             }
         }
-        // This should be de address & private key of the l2 proposer for testing is a hardcoded address from a l2 rich account
-        let sponsor_address = Address::from_str("0x000f17eB09AA3f28132323E6075C672949526d5A")
-            .map_err(|_| RpcErr::InvalidRogueMessage("Invalid sponsor".to_string()))?;
-        let sponsor_pk =
-            SecretKey::from_str("63f6a20cc1d77dd3a602e43f564ca9b4d3b6da8a7227b052827542811c195071")
-                .map_err(|_| RpcErr::InvalidRogueMessage("Invalid pk".to_string()))?;
+        let sponsor_pk = SecretKey::from_str(context.proposer_pk.trim_start_matches("0x"))
+            .map_err(|_| RpcErr::InvalidRogueMessage("Rogue Rpc Method not enabled".to_string()))?;
+        let sponsor_address = get_address_from_secret_key(&sponsor_pk)
+            .map_err(|_| RpcErr::InvalidRogueMessage("Rogue Rpc method not enabled".to_string()))?;
         let latest_block_number = context
             .storage
             .get_latest_block_number()

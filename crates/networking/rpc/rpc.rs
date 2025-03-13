@@ -37,11 +37,7 @@ use eth::{
     },
 };
 use ethrex_blockchain::Blockchain;
-#[cfg(feature = "l2")]
-use ethrex_common::Address;
 use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
-#[cfg(feature = "l2")]
-use rogue::transaction::RogueSponsoredTx;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -58,13 +54,18 @@ use utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
     RpcSuccessResponse,
 };
+cfg_if::cfg_if! {
+    if #[cfg(feature = "l2")] {
+        use rogue::transaction::RogueSponsoredTx;
+        use ethrex_common::Address;
+        mod rogue;
+    }
+}
 mod admin;
 mod authentication;
 pub mod engine;
 mod eth;
 mod net;
-#[cfg(feature = "l2")]
-mod rogue;
 pub mod types;
 pub mod utils;
 mod web3;
@@ -98,6 +99,8 @@ pub struct RpcApiContext {
     gateway_auth_client: EngineClient,
     #[cfg(feature = "l2")]
     valid_delegation_addresses: Vec<Address>,
+    #[cfg(feature = "l2")]
+    proposer_pk: String,
 }
 
 /// Describes the client's current sync status:
@@ -171,6 +174,7 @@ pub async fn start_api(
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
+    #[cfg(feature = "l2")] proposer_pk: String,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -189,6 +193,8 @@ pub async fn start_api(
         gateway_auth_client,
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
+        #[cfg(feature = "l2")]
+        proposer_pk,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -523,6 +529,8 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            proposer_pk: String::new(),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -617,6 +625,8 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            proposer_pk: String::new(),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -656,6 +666,8 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            proposer_pk: String::new(),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -726,6 +738,8 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            proposer_pk: String::new(),
         };
         // Process request
         let result = map_http_requests(&request, context).await;

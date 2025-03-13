@@ -454,6 +454,8 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            proposer_pk: String::new(),
         };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -522,6 +524,8 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            proposer_pk: String::new(),
         };
 
         map_http_requests(&uninstall_filter_req, context)
@@ -555,6 +559,8 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            proposer_pk: String::new(),
         };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {

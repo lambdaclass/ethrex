@@ -88,6 +88,8 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            proposer_pk: String::new(),
         }
     }
 

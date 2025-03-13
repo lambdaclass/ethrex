@@ -7,8 +7,12 @@ use crate::{
 use bytes::Bytes;
 use clap::ArgMatches;
 use ethrex_blockchain::Blockchain;
-#[cfg(feature = "l2")]
-use ethrex_common::Address;
+cfg_if::cfg_if!(
+    if #[cfg(feature="l2")] {
+        use ethrex_common::Address;
+        use ethrex_l2::utils::config::read_env_file;
+    }
+);
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::node_id_from_signing_key,
@@ -133,6 +137,8 @@ pub fn init_rpc_api(
         get_gateway_auth_client(matches),
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(matches),
+        #[cfg(feature = "l2")]
+        get_proposer_pk(),
     )
     .into_future();
 
@@ -438,4 +444,12 @@ pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
         warn!("No valid addresses provided, rogue_SendTransaction will always fail");
     }
     addresses
+}
+
+#[cfg(feature = "l2")]
+pub fn get_proposer_pk() -> String {
+    if let Err(e) = read_env_file() {
+        panic!("Failed to read .env file: {e}");
+    }
+    std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default()
 }
