@@ -21,6 +21,7 @@ pub mod utils;
 pub const DEFAULT_DATADIR: &str = "ethrex";
 
 #[tokio::main]
+#[allow(dead_code)]
 async fn main() {
     let matches = cli::cli().get_matches();
 
