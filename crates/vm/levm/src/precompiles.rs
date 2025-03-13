@@ -300,15 +300,12 @@ fn increase_precompile_consumed_gas(
 
 /// When slice length is less than 128, the rest is filled with zeros. If slice length is
 /// more than 128 the excess bytes are discarded.
-fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Result<Bytes, VMError> {
+fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     let mut padded_calldata = calldata.to_vec();
     if padded_calldata.len() < target_len {
-        let size_diff = target_len
-            .checked_sub(padded_calldata.len())
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?;
-        padded_calldata.extend(vec![0u8; size_diff]);
+        padded_calldata.resize(target_len, 0);
     }
-    Ok(padded_calldata.into())
+    padded_calldata.into()
 }
 
 /// ECDSA (Elliptic curve digital signature algorithm) public key recovery function.
@@ -323,7 +320,7 @@ pub fn ecrecover(
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 128)?;
+    let calldata = fill_with_zeros(calldata, 128);
 
     // Parse the input elements, first as a slice of bytes and then as an specific type of the crate
     let hash = calldata.get(0..32).ok_or(InternalError::SlicingError)?;
@@ -422,7 +419,7 @@ pub fn modexp(
     fork: Fork,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 96)?;
+    let calldata = fill_with_zeros(calldata, 96);
 
     let base_size = U256::from_big_endian(
         calldata
@@ -556,7 +553,7 @@ pub fn ecadd(
     fork: Fork,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 128)?;
+    let calldata = fill_with_zeros(calldata, 128);
     // https://eips.ethereum.org/EIPS/eip-1108
     let gas_cost = if fork < Fork::Istanbul {
         ECADD_COST_PRE_ISTANBUL
@@ -642,7 +639,7 @@ pub fn ecmul(
     fork: Fork,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
-    let calldata = fill_with_zeros(calldata, 96)?;
+    let calldata = fill_with_zeros(calldata, 96);
     // https://eips.ethereum.org/EIPS/eip-1108
     let gas_cost = if fork < Fork::Istanbul {
         ECMUL_COST_PRE_ISTANBUL
