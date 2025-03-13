@@ -2728,6 +2728,7 @@ dependencies = [
  "keccak-hash",
  "kzg-rs",
  "lambdaworks-math",
+ "lazy_static",
  "libsecp256k1",
  "num-bigint 0.4.6",
  "p256",

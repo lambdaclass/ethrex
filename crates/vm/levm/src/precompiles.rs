@@ -35,7 +35,8 @@ use num_bigint::BigUint;
 #[cfg(feature = "l2")]
 use p256::{
     ecdsa::{signature::hazmat::PrehashVerifier, Signature as P256Signature, VerifyingKey},
-    EncodedPoint,
+    elliptic_curve::{bigint::U256 as P256Uint, ff::PrimeField, Curve},
+    EncodedPoint, FieldElement as P256FieldElement, NistP256,
 };
 use sha3::Digest;
 use std::ops::Mul;
@@ -1715,7 +1716,6 @@ pub fn p_256_verify(
     consumed_gas: &mut u64,
 ) -> Result<Bytes, VMError> {
     let gas_cost = P256VERIFY_COST;
-
     increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
 
     // If calldata does not reach the required length, we should fill the rest with zeros
@@ -1731,6 +1731,10 @@ pub fn p_256_verify(
     let s = &calldata[64..96];
     let x = &calldata[96..128];
     let y = &calldata[128..160];
+
+    if !validate_p256_parameters(r, s, x, y)? {
+        return Ok(Bytes::new());
+    }
 
     // Build verifier
     let Ok(verifier) = VerifyingKey::from_encoded_point(&EncodedPoint::from_affine_coordinates(
@@ -1761,4 +1765,50 @@ pub fn p_256_verify(
     } else {
         Ok(Bytes::new())
     }
+}
+
+#[cfg(feature = "l2")]
+/// Following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L86
+fn validate_p256_parameters(r: &[u8], s: &[u8], x: &[u8], y: &[u8]) -> Result<bool, VMError> {
+    let r = P256Uint::from_be_slice(r);
+    let s = P256Uint::from_be_slice(s);
+    let x = P256Uint::from_be_slice(x);
+    let y = P256Uint::from_be_slice(y);
+
+    // Curve parameters.
+    // See https://neuromancer.sk/std/secg/secp256r1.
+    lazy_static::lazy_static! {
+        static ref P256_P: P256Uint = P256Uint::from_be_hex(P256FieldElement::MODULUS);
+        static ref P256_N: P256Uint = NistP256::ORDER;
+        static ref P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
+        static ref P256_B: P256FieldElement = P256FieldElement::from_uint( P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b")).unwrap();
+    }
+
+    // Verify that the r and s values are in (0, n) (exclusive)
+    if r == P256Uint::ZERO || r >= *P256_N || s == P256Uint::ZERO || s >= *P256_N {
+        return Ok(false);
+    }
+
+    // Verify that both x and y are in [0, p) (inclusive 0, exclusive p)
+    if x >= *P256_P || y >= *P256_P {
+        return Ok(false);
+    }
+
+    // Verify that the point formed by (x, y) is on the curve
+    let x = P256FieldElement::from_uint(x);
+    let y = P256FieldElement::from_uint(y);
+
+    if x.is_none().into() || y.is_none().into() {
+        return Err(VMError::Internal(InternalError::SlicingError));
+    }
+    let x = x.unwrap();
+    let y = y.unwrap();
+
+    // Curve equation: `y² = x³ + ax + b`
+    let a_x = P256_A.multiply(&x);
+    if y.square() == x.pow_vartime(&[3u64]).add(&a_x).add(&P256_B) {
+        return Ok(true);
+    }
+
+    Ok(false)
 }
