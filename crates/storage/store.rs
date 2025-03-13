@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
@@ -32,6 +32,14 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
+    /// when processing an invalid payload. To provide this, we must track invalid chains.
+    ///
+    /// We only store the last known valid head upon encountering a bad block,
+    /// rather than tracking every subsequent invalid block.
+    ///
+    /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
+    pub invalid_ancestors: Arc<Mutex<HashMap<BlockHash, BlockHash>>>,
 }
 
 #[allow(dead_code)]
@@ -81,9 +89,11 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
+                invalid_ancestors: Arc::new(Mutex::new(HashMap::new())),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                invalid_ancestors: Arc::new(Mutex::new(HashMap::new())),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
