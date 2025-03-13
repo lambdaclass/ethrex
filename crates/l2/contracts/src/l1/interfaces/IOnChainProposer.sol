@@ -72,7 +72,7 @@ interface IOnChainProposer {
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
-        bytes32 risc0JournalDigest,
+        bytes calldata risc0Journal,
         //sp1
         bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
