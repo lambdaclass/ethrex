@@ -16,7 +16,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// If `as_canonical` is true, each block is assumed to be part of the canonical chain,  
     /// and the canonical hash is set to the block number. This optimizes writes when  
     /// processing blocks in bulk.  
-    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError>;
+    fn add_batch_of_blocks(
+        &self,
+        blocks: &[Block],
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+        state_tries: Vec<Trie>,
+        storage_tries: Vec<(H256, Trie)>,
+        as_canonical: bool,
+    ) -> Result<(), StoreError>;
 
     /// Add block header
     fn add_block_header(

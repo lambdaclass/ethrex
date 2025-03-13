@@ -261,7 +261,7 @@ impl Blockchain {
                 account_updates,
                 receipts,
                 ..
-            } = vm.execute_block(block)?;
+            } = vm.execute_block_without_clearing_state(block)?;
 
             validate_gas_used(&receipts, &block.header)?;
 
@@ -305,9 +305,17 @@ impl Blockchain {
         // We have executed all the blocks
         // Now we have to: apply account updates -> validate state root -> validate receipts -> store blocks, receipts, trie
 
-        let block = blocks.last().unwrap();
+        let last_block = blocks.last().unwrap();
+        let blocks_len = blocks.len();
 
-        self.storage
+        validate_receipts_root(
+            &last_block.header,
+            all_receipts.get(&last_block.hash()).unwrap(),
+        )
+        .map_err(|e| (e, None))?;
+
+        let storage_tries_to_commit = self
+            .storage
             .apply_account_updates_to_trie(
                 &all_account_updates.into_values().collect::<Vec<_>>(),
                 &mut state_trie,
@@ -315,23 +323,16 @@ impl Blockchain {
             .map_err(|e| (e.into(), None))?;
 
         let root_hash = state_trie.hash_no_commit();
-        validate_state_root(&block.header, root_hash).map_err(|e| (e, None))?;
-
-        // commit to db after validating the root
-        state_trie
-            .hash()
-            .map_err(|e| (StoreError::Trie(e).into(), None))?;
-
-        validate_receipts_root(&block.header, all_receipts.get(&block.hash()).unwrap())
-            .map_err(|e| (e, None))?;
-
-        let blocks_len = blocks.len();
+        validate_state_root(&last_block.header, root_hash).map_err(|e| (e, None))?;
 
         self.storage
-            .add_batch_of_blocks(blocks, as_canonical)
-            .map_err(|e| (e.into(), None))?;
-        self.storage
-            .add_batch_of_receipts(all_receipts)
+            .add_batch_of_blocks(
+                blocks,
+                all_receipts,
+                vec![state_trie],
+                storage_tries_to_commit,
+                as_canonical,
+            )
             .map_err(|e| (e.into(), None))?;
 
         let elapsed = interval.elapsed().as_millis();

@@ -365,7 +365,7 @@ impl Store {
         &self,
         account_updates: &[AccountUpdate],
         state_trie: &mut Trie,
-    ) -> Result<Vec<Trie>, StoreError> {
+    ) -> Result<Vec<(H256, Trie)>, StoreError> {
         let mut new_storage_tries = vec![];
 
         for update in account_updates.iter() {
@@ -404,7 +404,7 @@ impl Store {
                         }
                     }
                     account_state.storage_root = storage_trie.hash_no_commit();
-                    new_storage_tries.push(storage_trie);
+                    new_storage_tries.push((H256::from_slice(&hashed_address), storage_trie));
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
@@ -493,9 +493,13 @@ impl Store {
     pub fn add_batch_of_blocks(
         &self,
         blocks: &[Block],
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+        state_tries: Vec<Trie>,
+        storage_tries: Vec<(H256, Trie)>,
         as_canonical: bool,
     ) -> Result<(), StoreError> {
-        self.engine.add_batch_of_blocks(blocks, as_canonical)
+        self.engine
+            .add_batch_of_blocks(blocks, receipts, state_tries, storage_tries, as_canonical)
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
