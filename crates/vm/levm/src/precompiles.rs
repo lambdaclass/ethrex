@@ -1710,6 +1710,9 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
 
 #[cfg(feature = "l2")]
 /// Signature verification in the “secp256r1” elliptic curve
+/// If the verification succeeds, returns 1 in a 32-bit big-endian format.
+/// If the verification fails, returns an empty `Bytes` object.
+/// Implemented following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L1.
 pub fn p_256_verify(
     calldata: &Bytes,
     gas_for_call: u64,
@@ -1762,7 +1765,7 @@ pub fn p_256_verify(
     // Verify message signature
     let success = verifier.verify_prehash(message_hash, &signature).is_ok();
 
-    // If the verification succeeds, returns 1 in a 32-byte format.
+    // If the verification succeeds, returns 1 in a 32-bit big-endian format.
     // If the verification fails, returns an empty `Bytes` object.
     if success {
         let mut result = [0; 32];
