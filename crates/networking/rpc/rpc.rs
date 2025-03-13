@@ -364,6 +364,7 @@ pub async fn map_engine_requests(
     req: &RpcRequest,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
+    info!("Received rpc req {}", req.method.as_str());
     match req.method.as_str() {
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context),
         "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context),
