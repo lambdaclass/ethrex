@@ -24,7 +24,10 @@ libmdbx = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
 # NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
 # We only need the runtime for the blocking databases to spawn blocking tasks
-tokio = { version = "1.41.1", optional = true, default-features = false, features = ["rt"] }
+tokio = { version = "1.41.1", optional = true, default-features = false, features = [
+    "rt",
+] }
+fjall = "2.6.7"
 
 [features]
 default = []
@@ -40,5 +43,5 @@ tokio = { workspace = true, features = ["full"] }
 [lib]
 path = "./lib.rs"
 
-[lints.clippy] 
-unwrap_used = "deny" 
+[lints.clippy]
+unwrap_used = "deny"
