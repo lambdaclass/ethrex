@@ -110,7 +110,7 @@ impl LEVM {
             {
                 // We check if it was in block_cache, if not, we get it from DB.
                 let mut account = block_cache.get(&address).cloned().unwrap_or({
-                    let acc_info = store_wrapper.get_account_info(address);
+                    let acc_info = store_wrapper.get_account_info(address).unwrap_or_default();
                     Account::from(acc_info)
                 });
 
