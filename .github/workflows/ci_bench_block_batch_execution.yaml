@@ -2,15 +2,15 @@ name: Benchmark Block batch execution against main
 
 on:
   pull_request:
-    branches: ["**"]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
 jobs:
   build-binaries:
+    if: contains(github.event.pull_request.labels.*.name, 'performance')
     strategy:
       matrix:
         branch: [base, head]
     name: Build ethrex for ${{ matrix.branch }}
-    if: contains(github.event.pull_request.labels.*.name, 'performance')
     runs-on: ubuntu-22.04
     steps:
       - name: Populate cache
@@ -42,6 +42,7 @@ jobs:
           cp target/release/ethrex bin/ethrex-${{ matrix.branch }}
 
   run-hyperfine:
+    if: contains(github.event.pull_request.labels.*.name, 'performance')
     name: Run benchmark against base branch
     needs: [build-binaries]
     runs-on: ubuntu-22.04
