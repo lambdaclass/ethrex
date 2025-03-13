@@ -1722,15 +1722,21 @@ pub fn p_256_verify(
     let calldata = fill_with_zeros(calldata, 160)?;
 
     // Parse parameters
-    debug_assert!(calldata.len() >= 160);
-    if calldata.len() < 160 {
-        return Err(VMError::Internal(InternalError::SlicingError));
-    }
-    let message_hash = &calldata[0..32];
-    let r = &calldata[32..64];
-    let s = &calldata[64..96];
-    let x = &calldata[96..128];
-    let y = &calldata[128..160];
+    let message_hash = calldata
+        .get(0..32)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let r = calldata
+        .get(32..64)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let s = calldata
+        .get(64..96)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let x = calldata
+        .get(96..128)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let y = calldata
+        .get(128..160)
+        .ok_or(PrecompileError::ParsingInputError)?;
 
     if !validate_p256_parameters(r, s, x, y)? {
         return Ok(Bytes::new());
