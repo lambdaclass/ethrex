@@ -530,10 +530,10 @@ fn validate_ancestors(
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
     // Obtain the invalid ancestors from the syncer
-    let invalid_ancestors = match context.syncer.try_lock() {
-        Ok(syncer) => syncer.invalid_ancestors.clone(),
-        Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-    };
+    let invalid_ancestors = context.storage.invalid_ancestors.blocking_lock();
+    //     Ok(syncer) => syncer.invalid_ancestors.clone(),
+    //     Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+    // };
 
     // Check if the block has already been invalidated
     if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
@@ -690,12 +690,16 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
     let add_block_to_invalid_ancestor = || {
-        let lock = context.syncer.try_lock();
-        if let Ok(mut syncer) = lock {
-            syncer
-                .invalid_ancestors
-                .insert(block_hash, latest_valid_hash);
-        };
+        context
+            .storage
+            .invalid_ancestors
+            .blocking_lock()
+            .insert(block_hash, latest_valid_hash);
+        // let lock = context.syncer.try_lock();
+        // if let Ok(mut syncer) = lock {
+        //     syncer
+        //         .invalid_ancestors
+        // };
     };
 
     match context.blockchain.add_block(block) {

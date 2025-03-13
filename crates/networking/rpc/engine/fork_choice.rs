@@ -213,11 +213,12 @@ fn handle_forkchoice(
         // Apply current fork choice
         SyncStatus::Inactive => {
             let invalid_ancestors = {
-                let lock = context.syncer.try_lock();
-                match lock {
-                    Ok(sync) => sync.invalid_ancestors.clone(),
-                    Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-                }
+                let lock = context.storage.invalid_ancestors.blocking_lock();
+                lock
+                // match lock {
+                //     Ok(sync) => sync.invalid_ancestors.clone(),
+                //     Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+                // }
             };
 
             // Check head block hash in invalid_ancestors
