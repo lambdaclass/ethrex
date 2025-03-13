@@ -360,11 +360,14 @@ impl Store {
     }
 
     /// Applies state transitions to the given trie and does not commit nor calculate root hash
+    /// Returns all the updated storage tries to be committed to the db
     pub fn apply_account_updates_to_trie(
         &self,
         account_updates: &[AccountUpdate],
         state_trie: &mut Trie,
-    ) -> Result<(), StoreError> {
+    ) -> Result<Vec<Trie>, StoreError> {
+        let mut new_storage_tries = vec![];
+
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -400,14 +403,14 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
-                    // TODO: don't commit to db here to batch all the writes in a single tx
-                    account_state.storage_root = storage_trie.hash()?;
+                    account_state.storage_root = storage_trie.hash_no_commit();
+                    new_storage_tries.push(storage_trie);
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
 
-        Ok(())
+        Ok(new_storage_tries)
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root

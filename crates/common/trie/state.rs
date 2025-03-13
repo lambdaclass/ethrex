@@ -46,6 +46,17 @@ impl TrieState {
         }
     }
 
+    /// Returns the cache changes that should be committed to the DB
+    pub fn get_nodes_to_commit_and_clear_cache(
+        &mut self,
+        root: &NodeHash,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, TrieError> {
+        let mut to_commit = vec![];
+        self.commit_node_tail_recursive(root, &mut to_commit)?;
+        self.cache.clear();
+        Ok(to_commit)
+    }
+
     /// Commits cache changes to DB and clears it
     /// Only writes nodes that follow the root's canonical trie
     pub fn commit(&mut self, root: &NodeHash) -> Result<(), TrieError> {
