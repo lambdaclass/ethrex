@@ -38,6 +38,23 @@ use p256::{
     elliptic_curve::{bigint::U256 as P256Uint, ff::PrimeField, Curve},
     EncodedPoint, FieldElement as P256FieldElement, NistP256,
 };
+
+// Secp256r1 curve parameters
+// See https://neuromancer.sk/std/secg/secp256r1
+#[cfg(feature = "l2")]
+const P256_P: P256Uint = P256Uint::from_be_hex(P256FieldElement::MODULUS);
+#[cfg(feature = "l2")]
+const P256_N: P256Uint = NistP256::ORDER;
+#[cfg(feature = "l2")]
+const P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
+#[cfg(feature = "l2")]
+const P256_B_UINT: P256Uint =
+    P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
+#[cfg(feature = "l2")]
+lazy_static::lazy_static! {
+    static ref P256_B: P256FieldElement = P256FieldElement::from_uint(P256_B_UINT).unwrap();
+}
+
 use sha3::Digest;
 use std::ops::Mul;
 
@@ -1784,22 +1801,13 @@ fn validate_p256_parameters(r: &[u8], s: &[u8], x: &[u8], y: &[u8]) -> Result<bo
     let x = P256Uint::from_be_slice(x);
     let y = P256Uint::from_be_slice(y);
 
-    // Curve parameters.
-    // See https://neuromancer.sk/std/secg/secp256r1.
-    lazy_static::lazy_static! {
-        static ref P256_P: P256Uint = P256Uint::from_be_hex(P256FieldElement::MODULUS);
-        static ref P256_N: P256Uint = NistP256::ORDER;
-        static ref P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
-        static ref P256_B: P256FieldElement = P256FieldElement::from_uint( P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b")).unwrap();
-    }
-
     // Verify that the r and s values are in (0, n) (exclusive)
-    if r == P256Uint::ZERO || r >= *P256_N || s == P256Uint::ZERO || s >= *P256_N {
+    if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N {
         return Ok(false);
     }
 
     // Verify that both x and y are in [0, p) (inclusive 0, exclusive p)
-    if x >= *P256_P || y >= *P256_P {
+    if x >= P256_P || y >= P256_P {
         return Ok(false);
     }
 
