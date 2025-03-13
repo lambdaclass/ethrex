@@ -16,7 +16,7 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 fn block_import() {
     let data_dir = DEFAULT_DATADIR;
     set_datadir(data_dir);
-    removedb::remove_db(&data_dir);
+    removedb::remove_db(data_dir);
 
     let evm_engine = "revm".to_owned().try_into().unwrap();
 
@@ -25,7 +25,7 @@ fn block_import() {
     import::import_blocks_from_datadir(
         data_dir.to_owned(),
         evm_engine,
-        &network,
+        network,
         "../../test_data/l2-1k-erc20.rlp",
     );
 }
@@ -34,7 +34,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Block import");
     group.sample_size(10);
     group.bench_function("Block import ERC20 transfers", |b| {
-        b.iter(|| black_box(block_import()))
+        b.iter(|| block_import())
     });
     group.finish();
 }
