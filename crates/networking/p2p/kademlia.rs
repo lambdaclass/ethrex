@@ -115,15 +115,10 @@ impl KademliaTable {
 
         let peer = PeerData::new(node, NodeRecord::default(), false);
 
-        if self.buckets[bucket_idx].peers.len() >= MAX_NODES_PER_BUCKET {
-            if force_push {
-                self.remove_from_replacements(node_id, bucket_idx);
-                self.buckets[bucket_idx].peers.push(peer.clone());
-                (Some(peer), true)
-            } else {
-                self.insert_as_replacement(&peer, bucket_idx);
-                (Some(peer), false)
-            }
+        // If bucket is full push to replacements. Unless forced
+        if self.buckets[bucket_idx].peers.len() >= MAX_NODES_PER_BUCKET && !force_push {
+            self.insert_as_replacement(&peer, bucket_idx);
+            (Some(peer), false)
         } else {
             self.remove_from_replacements(node_id, bucket_idx);
             self.buckets[bucket_idx].peers.push(peer.clone());
@@ -234,6 +229,11 @@ impl KademliaTable {
     /// Returns an iterator for all peers in the table
     pub fn iter_peers(&self) -> impl Iterator<Item = &PeerData> {
         self.buckets.iter().flat_map(|bucket| bucket.peers.iter())
+    }
+
+    /// Counts the number of connected peers
+    pub fn count_connected_peers(&self) -> usize {
+        self.filter_peers(&|peer| peer.is_connected).count()
     }
 
     /// Returns an iterator for all peers in the table that match the filter
