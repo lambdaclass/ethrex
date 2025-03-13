@@ -4,13 +4,12 @@ use ethrex::{
         init_store, init_tracing,
     },
     utils::{set_datadir, store_known_peers},
+    DEFAULT_DATADIR,
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, time::Duration};
 use tokio_util::task::TaskTracker;
 use tracing::info;
-
-pub const DEFAULT_DATADIR: &str = "ethrex";
 
 #[tokio::main]
 async fn main() {
