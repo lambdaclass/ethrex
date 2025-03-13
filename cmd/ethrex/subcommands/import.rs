@@ -53,7 +53,7 @@ pub fn import_blocks_from_path(
 
     let blocks = get_import_blocks(path);
 
-    blockchain.import_blocks(&blocks);
+    blockchain.import_blocks_in_batch(&blocks, false);
 }
 
 pub fn import_blocks_from_path_in_batch(
