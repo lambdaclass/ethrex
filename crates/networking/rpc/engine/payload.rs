@@ -1,4 +1,5 @@
 use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
@@ -793,10 +794,16 @@ fn build_payload_if_necessary(
         Ok(payload)
     } else {
         let (blobs_bundle, requests, block_value) = {
-            context
+            let PayloadBuildResult {
+                blobs_bundle,
+                block_value,
+                requests,
+                ..
+            } = context
                 .blockchain
                 .build_payload(&mut payload.block)
-                .map_err(|err| RpcErr::Internal(err.to_string()))?
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            (blobs_bundle, requests, block_value)
         };
 
         let new_payload = PayloadBundle {
