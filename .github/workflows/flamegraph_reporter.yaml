@@ -500,16 +500,6 @@ jobs:
           time_revm_str="${minutes} minutes ${seconds} seconds"
           sed -i "s/{{REVM_TIME}}/${time_revm_str}/g" pages/levm.html
 
-      # - name: Setup Pages
-      #   uses: actions/configure-pages@v5
-      # - name: Upload artifact
-      #   uses: actions/upload-pages-artifact@v3
-      #   with:
-      #     path: "pages/"
-      # - name: Deploy to GitHub Pages
-      #   id: deployment
-      #   uses: actions/deploy-pages@v4
-
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
