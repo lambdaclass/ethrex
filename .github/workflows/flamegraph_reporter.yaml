@@ -467,6 +467,7 @@ jobs:
       - name: Update static page locally with new data
         shell: bash
         run: |
+          mkdir -p pages
           cp -r flamegraph_levm.svg pages/
           cp -r flamegraph_revm.svg pages/
           cp -r flamegraph_ethrex.svg pages/
