@@ -76,6 +76,7 @@ pub fn open_store(data_dir: &str) -> Store {
     if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
     } else {
+<<<<<<< HEAD
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
                 let engine_type = EngineType::RedB;
@@ -86,6 +87,7 @@ pub fn open_store(data_dir: &str) -> Store {
                 panic!("Specify the desired database engine.");
             }
         }
+        let engine_type = EngineType::Fjall;
         Store::new(data_dir, engine_type).expect("Failed to create Store")
     }
 }
@@ -108,6 +110,26 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
         .await
         .expect("Failed to init rollup store");
     rollup_store
+=======
+        // cfg_if::cfg_if! {
+            // if #[cfg(feature = "redb")] {
+            //     let engine_type = EngineType::RedB;
+            // } else if #[cfg(feature = "libmdbx")] {
+            //     let engine_type = EngineType::Libmdbx;
+            // } else {
+            //     let engine_type = EngineType::InMemory;
+            //     error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
+            //     panic!("Specify the desired database engine.");
+            // }
+        // }
+        Store::new(data_dir, EngineType::Fjall).expect("Failed to create Store")
+    };
+    let genesis = read_genesis_file(network);
+    store
+        .add_initial_state(genesis.clone())
+        .expect("Failed to create genesis block");
+    store
+>>>>>>> 1f0f2b83b (feat: fjall)
 }
 
 pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {

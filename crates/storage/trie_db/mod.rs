@@ -9,3 +9,6 @@ pub mod redb_multitable;
 #[cfg(test)]
 mod test_utils;
 pub mod utils;
+
+pub mod fjall;
+pub mod fjall_dupsort;
