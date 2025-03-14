@@ -262,27 +262,17 @@ pub fn get_network(matches: &ArgMatches) -> String {
         .expect("network is required")
         .clone();
 
+    // Set preset genesis from known networks
     if network == "holesky" {
-        info!("Adding holesky preset bootnodes");
-        // Set holesky presets
         network = String::from(networks::HOLESKY_GENESIS_PATH);
     }
-
     if network == "sepolia" {
-        info!("Adding sepolia preset bootnodes");
-        // Set sepolia presets
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
     }
-
     if network == "mekong" {
-        info!("Adding mekong preset bootnodes");
-        // Set mekong presets
         network = String::from(networks::MEKONG_GENESIS_PATH);
     }
-
     if network == "ephemery" {
-        info!("Adding ephemery preset bootnodes");
-        // Set ephemery presets
         network = String::from(networks::EPHEMERY_GENESIS_PATH);
     }
 
@@ -297,27 +287,23 @@ pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec
         .map(Iterator::collect)
         .unwrap_or_default();
 
-    if network == "holesky" {
+    if network == networks::HOLESKY_GENESIS_PATH {
         info!("Adding holesky preset bootnodes");
-        // Set holesky presets
         bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
     }
 
-    if network == "sepolia" {
+    if network == networks::SEPOLIA_GENESIS_PATH {
         info!("Adding sepolia preset bootnodes");
-        // Set sepolia presets
         bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
     }
 
-    if network == "mekong" {
+    if network == networks::MEKONG_GENESIS_PATH {
         info!("Adding mekong preset bootnodes");
-        // Set mekong presets
         bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
-    if network == "ephemery" {
+    if network == networks::EPHEMERY_GENESIS_PATH {
         info!("Adding ephemery preset bootnodes");
-        // Set ephemery presets
         bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
     }
 
