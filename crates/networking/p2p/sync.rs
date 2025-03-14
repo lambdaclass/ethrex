@@ -163,6 +163,13 @@ impl SyncManager {
         sync_head: H256,
         store: Store,
     ) -> Result<(), SyncError> {
+        // DEBUG CODE PLEASE REMOVE
+        // Request sync_head just to show it
+        if let Some(sync_block) =  self.peers.request_block_headers(sync_head, BlockRequestOrder::NewToOld, 1).await {
+            info!("sync head block number: {}", sync_block[0].number);
+        } else {
+            info!("sync head not found in peers");
+        }
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
