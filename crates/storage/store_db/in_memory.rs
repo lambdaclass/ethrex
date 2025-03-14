@@ -149,6 +149,7 @@ impl StoreEngine for Store {
         receipts: HashMap<BlockHash, Vec<Receipt>>,
         state_tries: Vec<Trie>,
         storage_tries: Vec<(H256, Trie)>,
+        bytecodes: Vec<(H256, Bytes)>,
         as_canonical: bool,
     ) -> Result<(), StoreError> {
         for block in blocks {
@@ -170,6 +171,10 @@ impl StoreEngine for Store {
                 self.set_canonical_block(number, hash)?;
             }
             self.add_receipts(hash, receipts.get(&hash).unwrap().to_vec())?;
+        }
+
+        for (code_hash, code) in bytecodes {
+            self.add_account_code(code_hash, code)?;
         }
 
         // TODO store tries

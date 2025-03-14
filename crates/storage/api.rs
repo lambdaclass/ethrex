@@ -22,6 +22,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         receipts: HashMap<BlockHash, Vec<Receipt>>,
         state_tries: Vec<Trie>,
         storage_tries: Vec<(H256, Trie)>,
+        bytecodes: Vec<(H256, Bytes)>,
         as_canonical: bool,
     ) -> Result<(), StoreError>;
 

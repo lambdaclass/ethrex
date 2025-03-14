@@ -132,6 +132,7 @@ impl StoreEngine for Store {
         receipts: HashMap<BlockHash, Vec<Receipt>>,
         state_tries: Vec<Trie>,
         storage_tries: Vec<(H256, Trie)>,
+        bytecodes: Vec<(H256, Bytes)>,
         as_canonical: bool,
     ) -> Result<(), StoreError> {
         let tx = self
@@ -212,6 +213,11 @@ impl StoreEngine for Store {
                 )
                 .map_err(StoreError::LibmdbxError)?;
             }
+        }
+
+        for (code_hash, code) in bytecodes {
+            tx.upsert::<AccountCodes>(code_hash.into(), code.into())
+                .map_err(StoreError::LibmdbxError)?;
         }
 
         tx.commit().map_err(StoreError::LibmdbxError)

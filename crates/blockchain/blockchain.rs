@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::{AccountUpdate, DataToCommitAfterAccountUpdates, Store};
 use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
@@ -321,7 +321,10 @@ impl Blockchain {
             return Err((ChainError::ParentNotFound, None));
         };
 
-        let storage_tries_to_commit = self
+        let DataToCommitAfterAccountUpdates {
+            storage_tries,
+            bytecodes,
+        } = self
             .storage
             .apply_account_updates_to_trie(
                 &all_account_updates.into_values().collect::<Vec<_>>(),
@@ -337,7 +340,8 @@ impl Blockchain {
                 blocks,
                 all_receipts,
                 vec![state_trie],
-                storage_tries_to_commit,
+                storage_tries,
+                bytecodes,
                 as_canonical,
             )
             .map_err(|e| (e.into(), None))?;
