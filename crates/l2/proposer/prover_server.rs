@@ -39,7 +39,7 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)";
-
+const VERIFIER_CONTRACTS: [&str] = ["R0VERIFIER()", "SP1VERIFIER()"];
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
     pub block: Block,
@@ -257,8 +257,16 @@ impl ProverServer {
 
         let mut tx_submitted = false;
 
-        // If we have all the proofs send a transaction to verify them on chain
+        let verifier_contracts = EthClient::get_verifier_contracts(
+            &self.eth_client,
+            &VERIFIER_CONTRACTS,
+            self.on_chain_proposer_address,
+        )
+        .await?;
 
+        // check the addres of each verifier_contract
+
+        // If we have all the proofs send a transaction to verify them on chain
         let send_tx = match block_number_has_all_proofs(block_to_verify) {
             Ok(has_all_proofs) => has_all_proofs,
             Err(e) => {
