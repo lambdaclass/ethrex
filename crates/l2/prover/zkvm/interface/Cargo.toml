@@ -14,6 +14,7 @@ ethrex-vm = { path = "../../../../vm", default-features = false }
 ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
 ethrex-storage = { path = "../../../../storage", default-features = false }
 ethrex-trie = { path = "../../../../common/trie", default-features = false }
+keccak-hash = "0.11.0"
 
 # Temporarily pin version because 0.11.1 breaks compilation
 # alloy-rpc-types-engine = "=0.11.0"
