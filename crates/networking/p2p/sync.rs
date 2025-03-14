@@ -81,14 +81,6 @@ pub struct SyncManager {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
-    /// when processing an invalid payload. To provide this, we must track invalid chains.
-    ///
-    /// We only store the last known valid head upon encountering a bad block,
-    /// rather than tracking every subsequent invalid block.
-    ///
-    /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
-    // pub invalid_ancestors: HashMap<BlockHash, BlockHash>,
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
