@@ -234,9 +234,6 @@ impl Command {
                             beacon_client.get_block_by_hash(parent_beacon_hash).await?;
                         let target_slot = parent_beacon_block.message.slot + 1;
 
-                        // Get blobs from block's slot
-                        let mut block_blobs = beacon_client.get_blobs_by_slot(target_slot).await?;
-
                         // Get versioned hashes from transactions
                         let mut l2_blob_hashes = vec![];
                         for log in logs {
@@ -253,8 +250,8 @@ impl Command {
                             ))?);
                         }
 
-                        // Only keep L2 commitment's blobs
-                        block_blobs.retain(|blob| l2_blob_hashes.contains(&blob.versioned_hash()));
+                        // Get blobs from block's slot and only keep L2 commitment's blobs
+                        let block_blobs = beacon_client.get_blobs_by_slot(target_slot).await?.retain(|blob| l2_blob_hashes.contains(&blob.versioned_hash()));
 
                         for blob in block_blobs.into_iter() {
                             let blob_path =
