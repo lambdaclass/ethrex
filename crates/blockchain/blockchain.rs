@@ -173,7 +173,7 @@ impl Blockchain {
             let block_hash = block.hash();
             let block_number = block.header.number;
 
-            if let Err(e) = self.add_block(block) {
+            if let Err(e) = self.add_blocks_in_batch_inner(block, as_canonical) {
                 return Err((
                     e,
                     Some(BatchBlockProcessingFailure {
