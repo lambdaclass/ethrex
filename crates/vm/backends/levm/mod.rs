@@ -1,5 +1,6 @@
 pub(crate) mod db;
 
+use super::execution_result::ExecutionResult;
 use super::BlockExecutionResult;
 use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
@@ -203,7 +204,7 @@ impl LEVM {
         block_cache: CacheDB,
         // The EVM configuration to use.
         chain_config: &ChainConfig,
-    ) -> Result<ExecutionReport, EvmError> {
+    ) -> Result<ExecutionResult, EvmError> {
         let gas_price: U256 = calculate_gas_price(
             tx,
             block_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
@@ -238,7 +239,7 @@ impl LEVM {
             tx.to.clone(),
             env,
             tx.value,
-            tx.input.clone().into(),
+            tx.input.clone(),
             db,
             block_cache.clone(),
             tx.access_list
@@ -252,7 +253,9 @@ impl LEVM {
             }),
         )?;
 
-        vm.execute().map_err(VMError::into)
+        vm.execute()
+            .map(|value| value.into())
+            .map_err(VMError::into)
     }
 
     pub fn get_state_transitions(
