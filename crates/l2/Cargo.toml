@@ -16,9 +16,9 @@ ethereum-types.workspace = true
 ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
-ethrex-blockchain.workspace = true
+ethrex-blockchain = { workspace = true, features = ["l2"] }
 ethrex-storage.workspace = true
-ethrex-vm.workspace = true
+ethrex-vm = { workspace = true, features = ["l2"] }
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 hex.workspace = true
 bytes.workspace = true
@@ -30,7 +30,7 @@ thiserror.workspace = true
 directories = "5.0.1"
 toml = { version = "0.8.19", features = ["parse"] }
 
-zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
+zkvm_interface = { path = "./prover/zkvm/interface/", features = ["l2"] }
 
 # risc0
 risc0-zkvm = { version = "1.2.2" }

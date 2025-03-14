@@ -23,4 +23,4 @@ ecdsa-core = { git = "https://github.com/sp1-patches/signatures", package = "ecd
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0" }
 
 [features]
-l2 = ["ethrex-vm/l2", "zkvm_interface/l2"]
+l2 = ["ethrex-vm/l2", "zkvm_interface/l2", "ethrex-blockchain/l2"]
