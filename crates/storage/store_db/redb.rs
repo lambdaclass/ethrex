@@ -256,12 +256,20 @@ impl StoreEngine for RedBStore {
     fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError> {
         let write_txn = self.db.begin_write()?;
 
+        let mut transaction_table = write_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
+        let headers_table = write_txn.open_table(HEADERS_TABLE)?;
+        let block_bodies_table = write_txn.open_table(BLOCK_BODIES_TABLE)?;
+        let block_numbers_table = write_txn.open_table(BLOCK_NUMBERS_TABLE)?;
+        let canonical_block_hashes_table = if as_canonical {
+            Some(write_txn.open_table(CANONICAL_BLOCK_HASHES_TABLE)?)
+        } else {
+            None
+        };
+
         for block in blocks {
             let block_number = block.header.number;
             let block_hash = block.hash();
 
-            let mut transaction_table =
-                write_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 transaction_table.insert(
                     <H256 as Into<TransactionHashRLP>>::into(transaction.compute_hash()),
@@ -273,24 +281,21 @@ impl StoreEngine for RedBStore {
                 )?;
             }
 
-            write_txn.open_table(HEADERS_TABLE)?.insert(
+            headers_table.insert(
                 <H256 as Into<BlockHashRLP>>::into(block_hash),
                 <BlockHeader as Into<BlockHeaderRLP>>::into(block.header.clone()),
             )?;
 
-            write_txn.open_table(BLOCK_BODIES_TABLE)?.insert(
+            block_bodies_table.insert(
                 <H256 as Into<BlockHashRLP>>::into(block_hash),
                 <BlockBody as Into<BlockBodyRLP>>::into(block.body.clone()),
             )?;
 
-            write_txn
-                .open_table(BLOCK_NUMBERS_TABLE)?
+            block_numbers_table
                 .insert(<H256 as Into<BlockHashRLP>>::into(block_hash), block_number)?;
 
-            if as_canonical {
-                write_txn
-                    .open_table(CANONICAL_BLOCK_HASHES_TABLE)?
-                    .insert(block_number, <H256 as Into<BlockHashRLP>>::into(block_hash))?;
+            if let Some(table) = canonical_block_hashes_table.as_ref() {
+                table.insert(block_number, <H256 as Into<BlockHashRLP>>::into(block_hash))?;
             }
         }
 
