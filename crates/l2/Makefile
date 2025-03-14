@@ -1,4 +1,6 @@
-.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test init-devnet deploy-l1-devnet
+.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 \
+		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 \
+		restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test init-testnet deploy-l1-testnet
 
 .DEFAULT_GOAL := help
 
@@ -11,8 +13,8 @@ help: ## 📚 Show help for each of the Makefile recipes
 
 init: init-local-l1 deploy-l1 update-system-contracts init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
-## Same as init but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets
-init-devnet: init-local-l1 deploy-l1-devnet update-system-contracts  init-l2
+## Same as init but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
+init-testnet: init-local-l1 deploy-l1-testnet update-system-contracts  init-l2
 
 down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 
@@ -106,8 +108,8 @@ restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for
 deploy-l1: ## 📜 Deploys the L1 contracts
 	DEPLOYER_CONTRACTS_PATH=contracts CONFIG_FILE=config.toml cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- --deposit_rich
 
-## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets
-deploy-l1-devnet: ## 📜 Deploys the L1 contracts
+## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
+deploy-l1-testnet: ## 📜 Deploys the L1 contracts
 	DEPLOYER_CONTRACTS_PATH=contracts CONFIG_FILE=config.toml cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
 
 update-system-contracts:
