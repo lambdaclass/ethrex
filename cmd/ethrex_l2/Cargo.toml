@@ -46,6 +46,5 @@ default = ["exec"]
 
 # prover backends
 exec = ["ethrex-prover/exec"]
-pico = ["ethrex-prover/pico"]
 risc0 = ["ethrex-prover/risc0"]
 sp1 = ["ethrex-prover/sp1"]
