@@ -126,14 +126,14 @@ display-hive-alternatives:
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-run-hive: display-hive-alternatives $(if $(filter $(L1_CLIENT),ethrex), build-image) setup-hive ## 🧪 Run Hive testing suite
+run-hive: display-hive-alternatives build-image setup-hive ## 🧪 Run Hive testing suite
 	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
 
-run-hive-all: display-hive-alternatives $(if $(filter $(L1_CLIENT),ethrex), build-image) setup-hive ## 🧪 Run all Hive testing suites
+run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all Hive testing suites
 	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
 
-run-hive-debug: display-hive-alternatives $(if $(filter $(L1_CLIENT),ethrex), build-image) setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive &&  HIVE_LOGLEVEL=1 ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
+	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
