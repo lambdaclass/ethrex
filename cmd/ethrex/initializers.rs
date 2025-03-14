@@ -7,6 +7,8 @@ use crate::{
 use bytes::Bytes;
 use clap::ArgMatches;
 use ethrex_blockchain::Blockchain;
+#[cfg(feature = "based")]
+use ethrex_common::Public;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::node_id_from_signing_key,
@@ -129,6 +131,8 @@ pub fn init_rpc_api(
         get_gateway_http_client(matches),
         #[cfg(feature = "based")]
         get_gateway_auth_client(matches),
+        #[cfg(feature = "based")]
+        get_gateway_public_key(matches),
     )
     .into_future();
 
@@ -168,6 +172,15 @@ fn get_gateway_auth_client(matches: &clap::ArgMatches) -> EngineClient {
     let gateway_jwtsecret = read_jwtsecret_file(gateway_authrpc_jwtsecret);
 
     EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret)
+}
+
+#[cfg(feature = "based")]
+fn get_gateway_public_key(matches: &clap::ArgMatches) -> Public {
+    let gateway_pubkey = matches
+        .get_one::<String>("gateway.pubkey")
+        .expect("gateway.pubkey is required");
+
+    Public::from_str(gateway_pubkey).expect("Failed to parse gateway pubkey")
 }
 
 #[allow(clippy::too_many_arguments)]
