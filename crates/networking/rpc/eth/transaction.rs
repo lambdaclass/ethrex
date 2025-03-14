@@ -21,7 +21,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
 use ethrex_vm::{
-    backends::{revm::execution_result::ExecutionResult, Evm},
+    backends::{execution_result::ExecutionResult, Evm},
     SpecId,
 };
 use serde::Serialize;

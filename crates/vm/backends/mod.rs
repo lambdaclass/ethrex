@@ -1,3 +1,4 @@
+pub mod execution_result;
 pub mod levm;
 pub mod revm;
 
@@ -11,9 +12,9 @@ use ethrex_common::{Address, H256};
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
+use execution_result::ExecutionResult;
 use levm::LEVM;
 use revm::db::EvmState;
-use revm::execution_result::ExecutionResult;
 use revm::REVM;
 use std::sync::Arc;
 
@@ -290,9 +291,21 @@ impl Evm {
                 self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
             }
             Evm::LEVM {
-                store_wrapper: _,
-                block_cache: _,
-            } => Err(EvmError::Custom("Not implemented".to_string())),
+                store_wrapper,
+                block_cache,
+            } => {
+                store_wrapper.block_hash = header.parent_hash;
+                let store = store_wrapper.store.clone();
+                let chain_config = store.get_chain_config()?;
+
+                LEVM::simulate_tx_from_generic(
+                    tx,
+                    header,
+                    Arc::new(store_wrapper.clone()),
+                    block_cache.clone(),
+                    &chain_config,
+                )
+            }
         }
     }
 
@@ -315,7 +328,6 @@ impl Evm {
         match res {
             (
                 ExecutionResult::Success {
-                    reason: _,
                     gas_used,
                     gas_refunded: _,
                     logs: _,
