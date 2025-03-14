@@ -53,15 +53,6 @@ async fn main() {
     }
 
     let store = init_store(&data_dir, &network);
-    // (Hack) manually set header download checkpoint to newer block
-    store
-        .set_header_download_checkpoint(
-            <ethrex_common::H256 as std::str::FromStr>::from_str(
-                "0xf173fff98a090610ce3d8c4175ca7318d61624358c4970539c1ba15b514fc322",
-            )
-            .unwrap(),
-        )
-        .unwrap();
 
     let blockchain = init_blockchain(evm_engine, store.clone());
 
