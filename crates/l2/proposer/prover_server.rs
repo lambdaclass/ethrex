@@ -17,11 +17,8 @@ use ethrex_common::{
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
-use ethrex_vm::{
-    backends::revm::execution_db::{ExecutionDB, ToExecDB},
-    db::StoreWrapper,
-    EvmError,
-};
+use ethrex_vm::backends::revm::execution_db::ToExecDB;
+use ethrex_vm::{backends::revm::execution_db::ExecutionDB, db::StoreWrapper, EvmError};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -408,10 +405,7 @@ impl ProverServer {
         let block = Block::new(header, body);
 
         let parent_hash = block.header.parent_hash;
-        let store = StoreWrapper {
-            store: self.store.clone(),
-            block_hash: parent_hash,
-        };
+        let store = StoreWrapper::StoreDB(self.store.clone(), parent_hash);
         let db = store.to_exec_db(&block).map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self

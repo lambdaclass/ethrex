@@ -22,6 +22,7 @@ use ethrex_common::{
     Address, H160, H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_vm::db::StoreWrapper;
 use keccak_hash::keccak;
 use reqwest::Client;
 use secp256k1::SecretKey;
