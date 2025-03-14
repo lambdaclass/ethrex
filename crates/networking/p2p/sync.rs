@@ -174,7 +174,7 @@ impl SyncManager {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
                 current_head = last_header;
-                let last_header_num = store.get_block_header_by_hash(last_header)?.map(|head| head.number).unwrap_or_default();
+                let last_header_num = store.get_block_header_by_hash(last_header)?.map(|head| head.number).unwrap_or(666);
                 info!("Resuming block header download from block : {last_header_num}, hash: {last_header}");
             }
         }
