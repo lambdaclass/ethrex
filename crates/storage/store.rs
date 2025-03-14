@@ -1,5 +1,7 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+use crate::store_db::fjall::init;
+use crate::store_db::fjall::Fjall;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
@@ -42,6 +44,7 @@ pub enum EngineType {
     Libmdbx,
     #[cfg(feature = "redb")]
     RedB,
+    Fjall,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -88,6 +91,9 @@ impl Store {
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
+            },
+            EngineType::Fjall => Self {
+                engine: Arc::new(init("./fjall.db")),
             },
         };
         info!("Started store engine");
