@@ -618,6 +618,7 @@ fn handle_new_payload_v3(
     // performing a SnapSync; in that case, the node should reply with
     // "Syncing". For reference, see:
     // https://github.com/ethereum/go-ethereum/blob/e3853e910a53696c9e1199c85e86b8b6e3287476/eth/catalyst/api.go#L819
+    if *context.sync_mode.try_lock().unwrap() == SyncMode::Snap {
         return Ok(PayloadStatus::syncing());
     }
     // Ignore incoming
