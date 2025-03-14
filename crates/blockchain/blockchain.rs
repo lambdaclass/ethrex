@@ -20,10 +20,11 @@ use ethrex_common::types::{
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
+use std::collections::HashMap;
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::Store;
+use ethrex_storage::{DataToCommitAfterAccountUpdates, Store};
 use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
@@ -81,6 +82,7 @@ impl Blockchain {
         &self,
         block: &Block,
         execution_result: BlockExecutionResult,
+        as_canonical: bool,
     ) -> Result<(), ChainError> {
         // Assumes block is valid
         let BlockExecutionResult {
@@ -94,14 +96,20 @@ impl Blockchain {
 
         validate_gas_used(&receipts, &block.header)?;
 
+        let mut state_trie = self.storage.open_state_trie(block.header.state_root);
+
         // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = self
+        let DataToCommitAfterAccountUpdates {
+            storage_tries,
+            accounts_code,
+        } = self
             .storage
-            .apply_account_updates(block.header.parent_hash, &account_updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
+            .apply_account_updates_without_committing(&mut state_trie, &account_updates)?;
+
+        let root_hash = state_trie.hash_no_commit();
 
         // Check state root matches the one in block header
-        validate_state_root(&block.header, new_state_root)?;
+        validate_state_root(&block.header, root_hash)?;
 
         // Check receipts root matches the one in block header
         validate_receipts_root(&block.header, &receipts)?;
@@ -109,8 +117,16 @@ impl Blockchain {
         // Processes requests from receipts, computes the requests_hash and compares it against the header
         validate_requests_hash(&block.header, &chain_config, &requests)?;
 
-        store_block(&self.storage, block.clone())?;
-        store_receipts(&self.storage, receipts, block_hash)?;
+        let mut receipts_map = HashMap::new();
+        receipts_map.insert(block_hash, receipts);
+        self.storage.import_blocks(
+            &vec![block.clone()],
+            receipts_map,
+            vec![state_trie],
+            storage_tries,
+            accounts_code,
+            as_canonical,
+        )?;
 
         Ok(())
     }
@@ -120,7 +136,7 @@ impl Blockchain {
 
         let result = self
             .execute_block(block)
-            .and_then(|res| self.store_block(block, res));
+            .and_then(|res| self.store_block(block, res, true));
 
         let interval = Instant::now().duration_since(since).as_millis();
         if interval != 0 {
@@ -361,21 +377,6 @@ pub fn validate_requests_hash(
         ));
     }
 
-    Ok(())
-}
-
-/// Stores block and header in the database
-pub fn store_block(storage: &Store, block: Block) -> Result<(), ChainError> {
-    storage.add_block(block)?;
-    Ok(())
-}
-
-pub fn store_receipts(
-    storage: &Store,
-    receipts: Vec<Receipt>,
-    block_hash: BlockHash,
-) -> Result<(), ChainError> {
-    storage.add_receipts(block_hash, receipts)?;
     Ok(())
 }
 
