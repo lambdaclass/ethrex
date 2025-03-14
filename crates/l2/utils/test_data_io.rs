@@ -81,10 +81,7 @@ pub fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    let store = StoreWrapper {
-        store,
-        block_hash: parent_hash,
-    };
+    let store = StoreWrapper::StoreDB(store, parent_hash);
     let db = store.to_exec_db(&block)?;
 
     Ok(ProgramInput {

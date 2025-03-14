@@ -35,10 +35,7 @@ pub fn load_initial_state_levm(test: &EFTest) -> StoreWrapper {
 
     let block_hash = genesis.get_block().header.compute_block_hash();
 
-    StoreWrapper {
-        store: storage,
-        block_hash,
-    }
+    StoreWrapper::StoreDB(storage, block_hash)
 }
 
 pub fn spinner_update_text_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {

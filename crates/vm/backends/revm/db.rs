@@ -25,9 +25,9 @@ pub enum EvmState {
 
 impl EvmState {
     /// Get a reference to inner `Store` database
-    pub fn database(&self) -> Option<&Store> {
+    pub fn database(&self) -> Option<&StoreWrapper> {
         if let EvmState::Store(db) = self {
-            Some(&db.database.store)
+            Some(&db.database)
         } else {
             None
         }
@@ -36,7 +36,7 @@ impl EvmState {
     /// Gets the stored chain config
     pub fn chain_config(&self) -> Result<ChainConfig, EvmError> {
         match self {
-            EvmState::Store(db) => db.database.store.get_chain_config().map_err(EvmError::from),
+            EvmState::Store(db) => db.database.get_chain_config().map_err(EvmError::from),
             EvmState::Execution(db) => Ok(db.db.get_chain_config()),
         }
     }
@@ -46,7 +46,7 @@ impl EvmState {
 pub fn evm_state(store: Store, block_hash: BlockHash) -> EvmState {
     EvmState::Store(
         revm::db::State::builder()
-            .with_database(StoreWrapper { store, block_hash })
+            .with_database(StoreWrapper::StoreDB(store, block_hash))
             .with_bundle_update()
             .without_state_clear()
             .build(),
@@ -65,15 +65,17 @@ impl revm::Database for StoreWrapper {
     type Error = StoreError;
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
+        let block_hash = match self {
+            StoreWrapper::StoreDB(_, block_hash) => *block_hash,
+            StoreWrapper::ExecutionCache(_, block_hash) => *block_hash,
+        };
         let acc_info = match self
-            .store
-            .get_account_info_by_hash(self.block_hash, CoreAddress::from(address.0.as_ref()))?
+            .get_account_info_by_hash(block_hash, CoreAddress::from(address.0.as_ref()))?
         {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
         let code = self
-            .store
             .get_account_code(acc_info.code_hash)?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)));
 
@@ -86,17 +88,19 @@ impl revm::Database for StoreWrapper {
     }
 
     fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        self.store
-            .get_account_code(CoreH256::from(code_hash.as_ref()))?
+        self.get_account_code(CoreH256::from(code_hash.as_ref()))?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)))
             .ok_or_else(|| StoreError::Custom(format!("No code for hash {code_hash}")))
     }
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
+        let block_hash = match self {
+            StoreWrapper::StoreDB(_, block_hash) => *block_hash,
+            StoreWrapper::ExecutionCache(_, block_hash) => *block_hash,
+        };
         Ok(self
-            .store
             .get_storage_at_hash(
-                self.block_hash,
+                block_hash,
                 CoreAddress::from(address.0.as_ref()),
                 CoreH256::from(index.to_be_bytes()),
             )?
@@ -105,8 +109,7 @@ impl revm::Database for StoreWrapper {
     }
 
     fn block_hash(&mut self, number: u64) -> Result<RevmB256, Self::Error> {
-        self.store
-            .get_block_header(number)?
+        self.get_block_header(number)?
             .map(|header| RevmB256::from_slice(&header.compute_block_hash().0))
             .ok_or_else(|| StoreError::Custom(format!("Block {number} not found")))
     }
@@ -116,15 +119,17 @@ impl revm::DatabaseRef for StoreWrapper {
     type Error = StoreError;
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
+        let block_hash = match self {
+            StoreWrapper::StoreDB(_, block_hash) => *block_hash,
+            StoreWrapper::ExecutionCache(_, block_hash) => *block_hash,
+        };
         let acc_info = match self
-            .store
-            .get_account_info_by_hash(self.block_hash, CoreAddress::from(address.0.as_ref()))?
+            .get_account_info_by_hash(block_hash, CoreAddress::from(address.0.as_ref()))?
         {
             None => return Ok(None),
             Some(acc_info) => acc_info,
         };
         let code = self
-            .store
             .get_account_code(acc_info.code_hash)?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)));
 
@@ -137,17 +142,19 @@ impl revm::DatabaseRef for StoreWrapper {
     }
 
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        self.store
-            .get_account_code(CoreH256::from(code_hash.as_ref()))?
+        self.get_account_code(CoreH256::from(code_hash.as_ref()))?
             .map(|b| RevmBytecode::new_raw(RevmBytes(b)))
             .ok_or_else(|| StoreError::Custom(format!("No code for hash {code_hash}")))
     }
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
+        let block_hash = match self {
+            StoreWrapper::StoreDB(_, block_hash) => *block_hash,
+            StoreWrapper::ExecutionCache(_, block_hash) => *block_hash,
+        };
         Ok(self
-            .store
             .get_storage_at_hash(
-                self.block_hash,
+                block_hash,
                 CoreAddress::from(address.0.as_ref()),
                 CoreH256::from(index.to_be_bytes()),
             )?
@@ -156,8 +163,7 @@ impl revm::DatabaseRef for StoreWrapper {
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
-        self.store
-            .get_block_header(number)?
+        self.get_block_header(number)?
             .map(|header| RevmB256::from_slice(&header.compute_block_hash().0))
             .ok_or_else(|| StoreError::Custom(format!("Block {number} not found")))
     }
@@ -169,7 +175,7 @@ impl ToExecDB for StoreWrapper {
         // RpcDB.
 
         let parent_hash = block.header.parent_hash;
-        let chain_config = self.store.get_chain_config()?;
+        let chain_config = self.get_chain_config()?;
 
         // pre-execute and get all state changes
         let cache = ExecutionDB::pre_execute(
@@ -198,7 +204,6 @@ impl ToExecDB for StoreWrapper {
             // filter new accounts (accounts that didn't exist before) assuming our store is
             // correct (based on the success of the pre-execution).
             if store_wrapper
-                .store
                 .get_account_info_by_hash(parent_hash, address)
                 .is_ok_and(|account| account.is_some())
             {
@@ -211,10 +216,7 @@ impl ToExecDB for StoreWrapper {
             .clone()
             .map(|(address, _)| {
                 // return error if account is missing
-                let account = match store_wrapper
-                    .store
-                    .get_account_info_by_hash(parent_hash, address)
-                {
+                let account = match store_wrapper.get_account_info_by_hash(parent_hash, address) {
                     Ok(Some(some)) => Ok(some),
                     Err(err) => Err(ExecutionDBError::Store(err)),
                     Ok(None) => unreachable!(), // we are filtering out accounts that are not present
@@ -231,7 +233,6 @@ impl ToExecDB for StoreWrapper {
                 Ok((
                     hash,
                     store_wrapper
-                        .store
                         .get_account_code(hash)?
                         .ok_or(ExecutionDBError::NewMissingCode(hash))?,
                 ))
@@ -248,7 +249,6 @@ impl ToExecDB for StoreWrapper {
                         .map(|key| {
                             let key = CoreH256::from(key.to_be_bytes());
                             let value = store_wrapper
-                                .store
                                 .get_storage_at_hash(parent_hash, address, key)
                                 .map_err(ExecutionDBError::Store)?
                                 .ok_or(ExecutionDBError::NewMissingStorage(address, key))?;
@@ -267,11 +267,9 @@ impl ToExecDB for StoreWrapper {
 
         // get account proofs
         let state_trie = self
-            .store
             .state_trie(block.hash())?
             .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
         let parent_state_trie = self
-            .store
             .state_trie(parent_hash)?
             .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
         let hashed_addresses: Vec<_> = index
@@ -297,12 +295,12 @@ impl ToExecDB for StoreWrapper {
         let mut storage_proofs = HashMap::new();
         let mut final_storage_proofs = HashMap::new();
         for (address, storage_keys) in index {
-            let Some(parent_storage_trie) = self.store.storage_trie(parent_hash, address)? else {
+            let Some(parent_storage_trie) = self.storage_trie(parent_hash, address)? else {
                 // the storage of this account was empty or the account is newly created, either
                 // way the storage trie was initially empty so there aren't any proofs to add.
                 continue;
             };
-            let storage_trie = self.store.storage_trie(block.hash(), address)?.ok_or(
+            let storage_trie = self.storage_trie(block.hash(), address)?.ok_or(
                 ExecutionDBError::NewMissingStorageTrie(block.hash(), address),
             )?;
             let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
