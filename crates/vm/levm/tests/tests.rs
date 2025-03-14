@@ -6,6 +6,8 @@ use ethrex_common::{
     types::{Fork, TxKind},
     Address, H256, U256,
 };
+#[cfg(feature = "l2")]
+use ethrex_levm::precompiles::p_256_verify;
 use ethrex_levm::{
     account::Account,
     constants::*,
@@ -4725,4 +4727,47 @@ fn pairing_infinity() {
     let result = bls12_pairing_check(&calldata_bytes, 10000000, &mut consumed_gas);
 
     assert_eq!(result.unwrap(), zero);
+}
+
+#[cfg(feature = "l2")]
+use serde::Deserialize;
+
+#[cfg(feature = "l2")]
+use std::fs;
+
+#[cfg(feature = "l2")]
+#[derive(Debug, Deserialize)]
+struct P256TestCase {
+    input: String,
+    expected: String,
+    gas: u64,
+    name: String,
+}
+
+#[cfg(feature = "l2")]
+#[test]
+fn p_256_verify_test() {
+    // Taken from https://github.com/ulerdogan/go-ethereum/tree/ulerdogan-secp256r1.
+
+    let json_data = fs::read_to_string("./tests/p_256_verify.json").unwrap();
+
+    let tests: Vec<P256TestCase> = serde_json::from_str(&json_data).unwrap();
+
+    for test in tests {
+        let calldata = hex::decode(&test.input).unwrap();
+        let calldata = Bytes::from(calldata);
+        let mut consumed_gas = 0;
+        let result = p_256_verify(&calldata, 10000, &mut consumed_gas).unwrap();
+        let expected_result = Bytes::from(hex::decode(&test.expected).unwrap());
+        assert_eq!(
+            result, expected_result,
+            "Result assertion failed on test: {}.",
+            test.name
+        );
+        assert_eq!(
+            consumed_gas, test.gas,
+            "Gas assertion failed on test: {}.",
+            test.name
+        );
+    }
 }
