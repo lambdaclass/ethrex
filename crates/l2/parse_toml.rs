@@ -201,25 +201,8 @@ impl Server {
 
 #[derive(Deserialize, Debug)]
 struct Prover {
-    sp1_prover: String,
-    risc0_dev_mode: u64,
     client: Client,
     server: Server,
-}
-
-impl Prover {
-    pub fn to_env(&self) -> String {
-        let mut env = format!(
-            "
-SP1_PROVER={}
-RISC0_DEV_MODE={}
-",
-            self.sp1_prover, self.risc0_dev_mode,
-        );
-        env.push_str(&self.client.to_env());
-        env.push_str(&self.server.to_env());
-        env
-    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -242,7 +225,6 @@ impl L2Config {
         env_representation.push_str(&self.watcher.to_env());
         env_representation.push_str(&self.proposer.to_env());
         env_representation.push_str(&self.committer.to_env());
-        env_representation.push_str(&self.prover.to_env());
         env_representation
     }
 }
