@@ -41,23 +41,21 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         db,
     } = input;
     let mut state = EvmState::from(db.clone());
-    let chain_config = state
-        .chain_config()?;
+    let chain_config = state.chain_config()?;
 
     // Validate the block
     validate_block(&block, &parent_block_header, &chain_config)?;
 
     // Tries used for validating initial and final state root
-    let (mut state_trie, mut storage_tries) = db
-        .get_tries()?;
+    let (mut state_trie, mut storage_tries) = db.get_tries()?;
 
     // Validate the initial state
     let initial_state_hash = state_trie.hash_no_commit();
     if initial_state_hash != parent_block_header.state_root {
-        return Err("invalid initial state trie".to_string().into())
+        return Err("invalid initial state trie".to_string().into());
     }
     if !verify_db(&db, &state_trie, &storage_tries)? {
-        return Err("invalid database".to_string().into())
+        return Err("invalid database".to_string().into());
     };
 
     let result = REVM::execute_block(&block, &mut state)?;
