@@ -129,8 +129,8 @@ impl Trie {
     /// Returns keccak(RLP_NULL) if the trie is empty
     /// Also commits changes to the DB
     pub fn hash(&mut self) -> Result<H256, TrieError> {
-        if let Some(root) = &self.root {
-            self.state.commit(root.clone())?;
+        if let Some(ref root) = self.root {
+            self.state.commit(root)?;
         }
         Ok(self
             .root
