@@ -59,46 +59,41 @@ impl TrieState {
 
     /// Commits cache changes to DB and clears it
     /// Only writes nodes that follow the root's canonical trie
-    pub fn commit(&mut self, root: &NodeHash) -> Result<(), TrieError> {
+    pub fn commit(&mut self, root: NodeHash) -> Result<(), TrieError> {
         self.commit_node(root)?;
         self.cache.clear();
         Ok(())
     }
 
     // Writes a node and its children into the DB
-    fn commit_node(&mut self, node_hash: &NodeHash) -> Result<(), TrieError> {
+    fn commit_node(&mut self, node_hash: NodeHash) -> Result<(), TrieError> {
         let mut to_commit = vec![];
-        self.commit_node_tail_recursive(node_hash, &mut to_commit)?;
+        let mut stack = vec![node_hash];
 
-        self.db.put_batch(to_commit)?;
+        while let Some(current_hash) = stack.pop() {
+            let Some(node) = self.cache.remove(&current_hash) else {
+                continue;
+            };
 
-        Ok(())
-    }
-
-    // Writes a node and its children into the DB
-    fn commit_node_tail_recursive(
-        &mut self,
-        node_hash: &NodeHash,
-        acc: &mut Vec<(Vec<u8>, Vec<u8>)>,
-    ) -> Result<(), TrieError> {
-        let Some(node) = self.cache.remove(node_hash) else {
-            // If the node is not in the cache then it means it is already stored in the DB
-            return Ok(());
-        };
-        // Commit children (if any)
-        match &node {
-            Node::Branch(n) => {
-                for child in n.choices.iter() {
-                    if child.is_valid() {
-                        self.commit_node_tail_recursive(child, acc)?;
+            let encoded_node = node.encode_to_vec();
+            match node {
+                Node::Branch(n) => {
+                    for child in n.choices.into_iter() {
+                        if child.is_valid() {
+                            stack.push(child);
+                        }
                     }
                 }
+                Node::Extension(n) => {
+                    stack.push(n.child);
+                }
+                Node::Leaf(_) => {}
             }
-            Node::Extension(n) => self.commit_node_tail_recursive(&n.child, acc)?,
-            Node::Leaf(_) => {}
+
+            to_commit.push((current_hash.into(), encoded_node));
         }
-        // Commit self
-        acc.push((node_hash.into(), node.encode_to_vec()));
+
+        self.db.put_batch(to_commit)?;
 
         Ok(())
     }
