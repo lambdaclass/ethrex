@@ -379,6 +379,7 @@ pub fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256
     initial_state
         .database()
         .unwrap()
+        .clone()
         .apply_account_updates(block_hash, account_updates)
         .unwrap()
         .unwrap()
