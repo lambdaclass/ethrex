@@ -174,7 +174,10 @@ impl SyncManager {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
                 current_head = last_header;
-                let last_header_num = store.get_block_header_by_hash(last_header)?.map(|head| head.number).unwrap_or(666);
+                let last_header_num = store
+                    .get_block_header_by_hash(last_header)?
+                    .map(|head| head.number)
+                    .unwrap_or(666);
                 info!("Resuming block header download from block : {last_header_num}, hash: {last_header}");
             }
         }
@@ -230,7 +233,11 @@ impl SyncManager {
             // attach it to the end if it matches the parent_hash of the latest received header
             if let Some(ref block) = pending_block {
                 if block.header.parent_hash == last_block_header.compute_block_hash() {
-                    info!("Adding pending block: {} {}", block.header.number, block.hash());
+                    info!(
+                        "Adding pending block: {} {}",
+                        block.header.number,
+                        block.hash()
+                    );
                     block_hashes.push(block.hash());
                     block_headers.push(block.header.clone());
                 }
