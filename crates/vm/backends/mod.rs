@@ -10,6 +10,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, H256};
 use ethrex_levm::db::CacheDB;
+use ethrex_levm::errors::TxResult;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
@@ -314,39 +315,48 @@ impl Evm {
         header: &BlockHeader,
         spec_id: SpecId,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
-        let res = match self {
+        match self {
             Evm::REVM { state } => {
-                self::revm::helpers::create_access_list(tx, header, state, spec_id)
+                match self::revm::helpers::create_access_list(tx, header, state, spec_id)? {
+                    (
+                        ExecutionResult::Success {
+                            gas_used,
+                            gas_refunded: _,
+                            logs: _,
+                            output: _,
+                        },
+                        access_list,
+                    ) => Ok((gas_used, access_list, None)),
+                    (
+                        ExecutionResult::Revert {
+                            gas_used,
+                            output: _,
+                        },
+                        access_list,
+                    ) => Ok((
+                        gas_used,
+                        access_list,
+                        Some("Transaction Reverted".to_string()),
+                    )),
+                    (ExecutionResult::Halt { reason, gas_used }, access_list) => {
+                        Ok((gas_used, access_list, Some(reason)))
+                    }
+                }
             }
             Evm::LEVM {
-                store_wrapper: _,
-                block_cache: _,
-            } => Err(EvmError::Custom("Not implemented".to_string())),
-        }?;
-
-        match res {
-            (
-                ExecutionResult::Success {
-                    gas_used,
-                    gas_refunded: _,
-                    logs: _,
-                    output: _,
-                },
-                access_list,
-            ) => Ok((gas_used, access_list, None)),
-            (
-                ExecutionResult::Revert {
-                    gas_used,
-                    output: _,
-                },
-                access_list,
-            ) => Ok((
-                gas_used,
-                access_list,
-                Some("Transaction Reverted".to_string()),
-            )),
-            (ExecutionResult::Halt { reason, gas_used }, access_list) => {
-                Ok((gas_used, access_list, Some(reason)))
+                store_wrapper,
+                block_cache,
+            } => {
+                let (report, access_list) =
+                    LEVM::create_access_list(tx, header, store_wrapper, block_cache)?;
+                match report.result {
+                    TxResult::Revert(err) => Ok((
+                        report.gas_used,
+                        access_list,
+                        Some(format!("Transaction Reverted: {}", err)),
+                    )),
+                    TxResult::Success => Ok((report.gas_used, access_list, None)),
+                }
             }
         }
     }

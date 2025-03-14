@@ -9,7 +9,9 @@ use crate::db::StoreWrapper;
 use crate::execution_result::ExecutionResult;
 use crate::EvmError;
 use ethrex_common::types::requests::Requests;
-use ethrex_common::types::{AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE};
+use ethrex_common::types::{
+    AccessList, AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE,
+};
 use ethrex_common::{
     types::{
         code_hash, AccountInfo, Block, BlockHeader, ChainConfig, Receipt, Transaction, TxKind,
@@ -17,6 +19,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::utils::build_access_list;
 use ethrex_levm::{
     db::Database as LevmDatabase,
     errors::{ExecutionReport, TxResult, VMError},
@@ -478,6 +481,67 @@ impl LEVM {
             TxResult::Success => Some(report),
             _ => None,
         }
+    }
+
+    pub fn create_access_list(
+        tx: &GenericTransaction,
+        header: &BlockHeader,
+        store: &StoreWrapper,
+        block_cache: &mut CacheDB,
+    ) -> Result<(ExecutionReport, AccessList), VMError> {
+        let gas_price =
+            calculate_gas_price(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
+        let config = EVMConfig::new_from_chain_config(
+            &store
+                .store
+                .get_chain_config()
+                .map_err(|_| VMError::FatalError)?,
+            header,
+        );
+        let env = Environment {
+            origin: tx.from.0.into(),
+            refunded_gas: 0,
+            gas_limit: tx.gas.unwrap_or(u64::MAX), // Ensure tx doesn't fail due to gas limit
+            config,
+            block_number: header.number.into(),
+            coinbase: header.coinbase,
+            timestamp: header.timestamp.into(),
+            prev_randao: Some(header.prev_randao),
+            chain_id: tx.chain_id.unwrap_or_default().into(),
+            base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
+            gas_price,
+            block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
+            block_blob_gas_used: header.blob_gas_used.map(U256::from),
+            tx_blob_hashes: tx.blob_versioned_hashes.clone(),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
+            tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
+            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
+            tx_nonce: tx.nonce.unwrap_or_default(),
+            block_gas_limit: header.gas_limit,
+            transient_storage: HashMap::new(),
+            difficulty: header.difficulty,
+        };
+
+        let mut vm = VM::new(
+            tx.to.clone(),
+            env,
+            tx.value,
+            tx.input.clone(),
+            Arc::new(store.clone()),
+            block_cache.clone(),
+            tx.access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            tx.authorization_list.clone().map(|list| {
+                list.iter()
+                    .map(|list| Into::<AuthorizationTuple>::into(list.clone()))
+                    .collect()
+            }),
+        )?;
+        let report = vm.execute()?;
+        let access_list = build_access_list(&mut vm.accrued_substate);
+        Ok((report, access_list))
     }
 }
 
