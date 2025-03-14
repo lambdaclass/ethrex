@@ -211,7 +211,7 @@ impl LEVM {
         );
 
         let config = EVMConfig::new_from_chain_config(chain_config, block_header);
-        let env = Environment {
+        let mut env = Environment {
             origin: tx.from.0.into(),
             refunded_gas: 0,
             gas_limit: tx.gas.unwrap_or(u64::MAX), // Ensure tx doesn't fail due to gas limit
@@ -234,6 +234,8 @@ impl LEVM {
             transient_storage: HashMap::new(),
             difficulty: block_header.difficulty,
         };
+
+        adjust_disabled_base_fee(&mut env);
 
         let mut vm = VM::new(
             tx.to.clone(),
@@ -613,5 +615,20 @@ pub fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> U256 {
             tx.max_fee_per_gas.unwrap_or(0),
         )
         .into()
+    }
+}
+
+/// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
+/// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
+/// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
+fn adjust_disabled_base_fee(env: &mut Environment) {
+    if env.gas_price == U256::zero() {
+        env.base_fee_per_gas = U256::zero();
+    }
+    if env
+        .tx_max_fee_per_blob_gas
+        .is_some_and(|v| v == U256::zero())
+    {
+        env.block_excess_blob_gas = None;
     }
 }
