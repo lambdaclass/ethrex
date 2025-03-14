@@ -209,38 +209,47 @@ fn handle_forkchoice(
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash
     );
-    // Check if there is an ongoing sync before applying the forkchoice
-    // let fork_choice_res = match dbg!(context.sync_status()?) {
     let fork_choice_res = {
         let invalid_ancestors = {
             let lock = context.storage.invalid_ancestors.try_lock();
             match lock {
-                Ok(ref sync) => lock,
+                Ok(_) => lock.unwrap(),
                 Err(_) => return Err(RpcErr::Internal("Internal error".into())),
             }
         };
-        // Apply current fork choice
-        // SyncStatus::Inactive => {
-        // let invalid_ancestors = {
-        //     let lock = context.storage.invalid_ancestors.blocking_lock();
-        //     lock
-        // };
 
-        // Check if the block has already been invalidated
-        match invalid_ancestors
-            .unwrap()
-            .get(&fork_choice_state.head_block_hash)
-        {
-            Some(latest_valid_hash) => Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash)),
-            None => apply_fork_choice(
-                &context.storage,
-                fork_choice_state.head_block_hash,
-                fork_choice_state.safe_block_hash,
-                fork_choice_state.finalized_block_hash,
-            ),
+        // Check head block hash in invalid_ancestors
+        if let Some(latest_valid_hash) = invalid_ancestors.get(&fork_choice_state.head_block_hash) {
+            warn!(
+                "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
+                latest_valid_hash
+            );
+            Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
+        } else {
+            // Check parent block hash in invalid_ancestors (if head block exists)
+            let check_parent = context
+                .storage
+                .get_block_header_by_hash(fork_choice_state.head_block_hash)?
+                .and_then(|head_block| {
+                    warn!(
+                        "Checking parent for invalid ancestor {}",
+                        head_block.parent_hash
+                    );
+                    invalid_ancestors.get(&head_block.parent_hash).copied()
+                });
+
+            if let Some(latest_valid_hash) = check_parent {
+                Err(InvalidForkChoice::InvalidAncestor(latest_valid_hash))
+            } else {
+                // All checks passed, apply fork choice
+                apply_fork_choice(
+                    &context.storage,
+                    fork_choice_state.head_block_hash,
+                    fork_choice_state.safe_block_hash,
+                    fork_choice_state.finalized_block_hash,
+                )
+            }
         }
-        // } // // Restart sync if needed
-        // _ => Err(InvalidForkChoice::Syncing),
     };
 
     match fork_choice_res {
