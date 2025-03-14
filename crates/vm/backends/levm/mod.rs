@@ -8,7 +8,7 @@ use crate::constants::{
 use crate::db::StoreWrapper;
 use crate::EvmError;
 use ethrex_common::types::requests::Requests;
-use ethrex_common::types::Fork;
+use ethrex_common::types::{AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE};
 use ethrex_common::{
     types::{
         code_hash, AccountInfo, Block, BlockHeader, ChainConfig, Receipt, Transaction, TxKind,
@@ -24,6 +24,7 @@ use ethrex_levm::{
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 use revm_primitives::Bytes;
+use std::cmp::min;
 use std::{collections::HashMap, sync::Arc};
 
 // Export needed types
@@ -187,6 +188,68 @@ impl LEVM {
             block_cache.clone(),
             tx.access_list(),
             tx.authorization_list(),
+        )?;
+
+        vm.execute().map_err(VMError::into)
+    }
+    pub fn simulate_tx_from_generic(
+        // The transaction to execute.
+        tx: &GenericTransaction,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
+        db: Arc<dyn LevmDatabase>,
+        // A cache database for intermediate state changes during execution.
+        block_cache: CacheDB,
+        // The EVM configuration to use.
+        chain_config: &ChainConfig,
+    ) -> Result<ExecutionReport, EvmError> {
+        let gas_price: U256 = calculate_gas_price(
+            tx,
+            block_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+        );
+
+        let config = EVMConfig::new_from_chain_config(chain_config, block_header);
+        let env = Environment {
+            origin: tx.from.0.into(),
+            refunded_gas: 0,
+            gas_limit: tx.gas.unwrap_or(u64::MAX), // Ensure tx doesn't fail due to gas limit
+            config,
+            block_number: block_header.number.into(),
+            coinbase: block_header.coinbase,
+            timestamp: block_header.timestamp.into(),
+            prev_randao: Some(block_header.prev_randao),
+            chain_id: tx.chain_id.unwrap_or_default().into(),
+            base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
+            gas_price,
+            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+            tx_blob_hashes: tx.blob_versioned_hashes.clone(),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
+            tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
+            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
+            tx_nonce: tx.nonce.unwrap_or_default(),
+            block_gas_limit: block_header.gas_limit,
+            transient_storage: HashMap::new(),
+            difficulty: block_header.difficulty,
+        };
+
+        let mut vm = VM::new(
+            tx.to.clone(),
+            env,
+            tx.value,
+            tx.input.clone().into(),
+            db,
+            block_cache.clone(),
+            tx.access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            tx.authorization_list.clone().map(|list| {
+                list.iter()
+                    .map(|list| Into::<AuthorizationTuple>::into(list.clone()))
+                    .collect()
+            }),
         )?;
 
         vm.execute().map_err(VMError::into)
@@ -526,4 +589,20 @@ pub fn extract_all_requests_levm(
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
     Ok(vec![deposits, withdrawals, consolidation])
+}
+
+/// Calculating gas_price according to EIP-1559 rules
+/// See https://github.com/ethereum/go-ethereum/blob/7ee9a6e89f59cee21b5852f5f6ffa2bcfc05a25f/internal/ethapi/transaction_args.go#L430
+pub fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> U256 {
+    if tx.gas_price != 0 {
+        // Legacy gas field was specified, use it
+        tx.gas_price.into()
+    } else {
+        // Backfill the legacy gas price for EVM execution, (zero if max_fee_per_gas is zero)
+        min(
+            tx.max_priority_fee_per_gas.unwrap_or(0) + basefee,
+            tx.max_fee_per_gas.unwrap_or(0),
+        )
+        .into()
+    }
 }
