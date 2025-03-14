@@ -72,7 +72,7 @@ impl StoreWrapper {
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
         match self {
             StoreWrapper::StoreDB(store, _) => store.get_chain_config(),
-            StoreWrapper::ExecutionCache(_, _) => unimplemented!(),
+            StoreWrapper::ExecutionCache(db, _) => Ok(db.get_chain_config()),
         }
     }
 
