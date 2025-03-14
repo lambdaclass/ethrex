@@ -707,11 +707,10 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
     let add_block_to_invalid_ancestor = || {
-        // context
-        //     .storage
-        //     .invalid_ancestors
-        //     .blocking_lock()
-        //     .insert(block_hash, latest_valid_hash);
+        let lock = context.storage.invalid_ancestors.try_lock();
+        if let Ok(mut syncer) = lock {
+            syncer.insert(block_hash, latest_valid_hash);
+        };
     };
 
     match context.blockchain.add_block(block) {
