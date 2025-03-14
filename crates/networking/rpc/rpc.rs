@@ -82,7 +82,6 @@ enum RpcRequestWrapper {
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
-    sync_mode: SyncMode,
     storage: Store,
     pub blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
@@ -90,6 +89,7 @@ pub struct RpcApiContext {
     local_node_record: NodeRecord,
     active_filters: ActiveFilters,
     syncer: Arc<TokioMutex<SyncManager>>,
+    sync_mode: Arc<TokioMutex<SyncMode>>,
     #[cfg(feature = "based")]
     gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -179,7 +179,7 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(TokioMutex::new(syncer)),
-        sync_mode,
+        sync_mode: Arc::new(TokioMutex::new(sync_mode)),
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
