@@ -37,6 +37,9 @@ cfg-if = "1.0.0"
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 criterion = "0.5.1"
+cita_trie = "4.0.0"          # used for bench comparison
+hasher = "0.1.4"             # cita_trie needs this
+ethrex-trie = { path = "../../crates/storage/trie", default-features = false }
 
 [[bin]]
 name = "ethrex"

@@ -353,6 +353,18 @@ impl Trie {
         let db = InMemoryTrieDB::new(map);
         Trie::new(Box::new(db))
     }
+
+    /// Creates a new Trie based on a temporary InMemory DB
+    pub fn new_in_memory() -> Self {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use std::sync::Mutex;
+
+        let hmap: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        let map = Arc::new(Mutex::new(hmap));
+        let db = InMemoryTrieDB::new(map);
+        Trie::new(Box::new(db))
+    }
 }
 
 impl IntoIterator for Trie {
@@ -1056,7 +1068,7 @@ mod test {
 
     fn cita_trie() -> CitaTrie<CitaMemoryDB, HasherKeccak> {
         let memdb = Arc::new(CitaMemoryDB::new(true));
-        let hasher = Arc::new(HasherKeccak::new());
+        let hasher = Arc::new(tinyHasherKeccak::new());
 
         CitaTrie::new(Arc::clone(&memdb), Arc::clone(&hasher))
     }
