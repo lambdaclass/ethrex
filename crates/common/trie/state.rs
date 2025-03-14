@@ -51,8 +51,9 @@ impl TrieState {
         &mut self,
         root: &NodeHash,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, TrieError> {
-        let mut to_commit = vec![];
-        self.commit_node_tail_recursive(root, &mut to_commit)?;
+        // TODO: Maybe not clone
+        let mut to_commit = self.commit_node(root.clone())?;
+        // self.commit_node_tail_recursive(root, &mut to_commit)?;
         self.cache.clear();
         Ok(to_commit)
     }
@@ -66,7 +67,7 @@ impl TrieState {
     }
 
     // Writes a node and its children into the DB
-    fn commit_node(&mut self, node_hash: NodeHash) -> Result<(), TrieError> {
+    fn commit_node(&mut self, node_hash: NodeHash) -> Result<Vec<(Vec<u8>, Vec<u8>)>, TrieError> {
         let mut to_commit = vec![];
         let mut stack = vec![node_hash];
 
@@ -93,9 +94,9 @@ impl TrieState {
             to_commit.push((current_hash.into(), encoded_node));
         }
 
-        self.db.put_batch(to_commit)?;
+        // self.db.put_batch(to_commit)?;
 
-        Ok(())
+        return Ok(to_commit);
     }
 
     /// Writes a node directly to the DB bypassing the cache
