@@ -611,8 +611,13 @@ fn handle_new_payload_v3(
         return Ok(PayloadStatus::syncing());
     };
 
-    let sync_mode = context.sync_mode.try_lock().unwrap();
-    if *sync_mode == SyncMode::Snap {
+    // NOTE: According to Hive Test "engine-cancun/Invalid NewPayload,
+    // ParentHash, Syncing=False, EmptyTxs=False, DynFeeTxs=False",
+    // even when a node is syncing, it should be able to respond if a
+    // newPayload is valid. The exception being if the node is
+    // performing a SnapSync; in that case, the node should reply with
+    // "Syncing". For reference, see:
+    // https://github.com/ethereum/go-ethereum/blob/e3853e910a53696c9e1199c85e86b8b6e3287476/eth/catalyst/api.go#L819
         return Ok(PayloadStatus::syncing());
     }
     // Ignore incoming
