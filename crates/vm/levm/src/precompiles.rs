@@ -1796,10 +1796,7 @@ pub fn p_256_verify(
 #[cfg(feature = "l2")]
 /// Following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L86
 fn validate_p256_parameters(r: &[u8], s: &[u8], x: &[u8], y: &[u8]) -> Result<bool, VMError> {
-    let r = P256Uint::from_be_slice(r);
-    let s = P256Uint::from_be_slice(s);
-    let x = P256Uint::from_be_slice(x);
-    let y = P256Uint::from_be_slice(y);
+    let [r, s, x, y] = [r, s, x, y].map(P256Uint::from_be_slice);
 
     // Verify that the r and s values are in (0, n) (exclusive)
     if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N {
