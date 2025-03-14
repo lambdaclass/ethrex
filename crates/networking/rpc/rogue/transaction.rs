@@ -13,10 +13,8 @@ use ethrex_common::{
     },
     Address, U256,
 };
-use secp256k1::SecretKey;
 use serde::Deserialize;
 use serde_json::Value;
-use std::str::FromStr;
 
 const DELGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
 const EIP7702_DELEGATED_CODE_LEN: usize = 23;
@@ -27,24 +25,11 @@ const GAS_LIMIT_HARD_LIMIT: u64 = 100000;
 pub struct RogueSponsoredTx {
     #[serde(rename(deserialize = "authorizationList"))]
     pub authorization_list: Option<AuthorizationList>,
-    #[serde(deserialize_with = "deserialize_hex_bytes")]
+    #[serde(deserialize_with = "ethrex_common::serde_utils::bytes::deserialize")]
     pub data: Bytes,
     pub to: Address,
 }
 
-fn deserialize_hex_bytes<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    Ok(Bytes::from(
-        hex::decode(s.trim_start_matches("0x")).map_err(|err| {
-            serde::de::Error::custom(format!(
-                "error decoding hex data when deserializing bytes: {err}"
-            ))
-        })?,
-    ))
-}
 // This endpoint is inspired by the work of Ithaca in Odyssey
 // https://ithaca.xyz/updates/exp-0000
 // You can check the reference implementation here
