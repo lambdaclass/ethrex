@@ -598,15 +598,15 @@ fn handle_new_payload_v3(
     expected_blob_versioned_hashes: Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
     // Validate if it can be the new head and find the parent
-    let Ok(_) = find_parent_header(&block.header, &context.blockchain.storage) else {
-        // If the parent is not present, we store it as pending and we
-        // return syncing as a response.
-        context
-            .blockchain
-            .storage
-            .add_pending_block(block.clone())?;
-        return Ok(PayloadStatus::syncing());
-    };
+    // let Ok(_) = find_parent_header(&block.header, &context.blockchain.storage) else {
+    //     // If the parent is not present, we store it as pending and we
+    //     // return syncing as a response.
+    //     context
+    //         .blockchain
+    //         .storage
+    //         .add_pending_block(block.clone())?;
+    //     return Ok(PayloadStatus::syncing());
+    // };
 
     // Ignore incoming
     // Check sync status
