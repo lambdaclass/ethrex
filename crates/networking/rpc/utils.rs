@@ -131,7 +131,7 @@ impl From<RpcErr> for RpcErrorMetadata {
             },
             #[cfg(feature = "based")]
             RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
-                code: -38004, // TODO: This code was hand-picked, should be reviewed
+                code: -38003,
                 data: None,
                 message: format!("Invalid based message: {context}"),
             },
