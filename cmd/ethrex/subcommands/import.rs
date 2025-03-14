@@ -83,3 +83,11 @@ pub fn import_blocks_from_path_in_batch(
         blockchain.import_blocks_in_batch(&blocks[idx..], true);
     }
 }
+
+pub fn import_blocks_from_datadir(data_dir: String, evm: EvmEngine, network: &str, path: &str) {
+    let store = init_store(&data_dir, network);
+    let blockchain = init_blockchain(evm, store);
+    let blocks = get_import_blocks(path);
+
+    blockchain.import_blocks(&blocks);
+}
