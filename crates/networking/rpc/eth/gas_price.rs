@@ -69,7 +69,7 @@ mod tests {
     use ethrex_p2p::sync::SyncManager;
     use serde_json::json;
     use std::sync::Arc;
-    use tokio::sync::Mutex;
+    use tokio::sync::Mutex as TokioMutex;
 
     fn default_context() -> RpcApiContext {
         let storage = setup_store();
@@ -81,7 +81,8 @@ mod tests {
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
             active_filters: Default::default(),
-            syncer: Arc::new(Mutex::new(SyncManager::dummy())),
+            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            sync_mode: Arc::new(TokioMutex::new(ethrex_p2p::sync::SyncMode::Full)),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
