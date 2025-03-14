@@ -7,13 +7,6 @@ use crate::{
 use bytes::Bytes;
 use clap::ArgMatches;
 use ethrex_blockchain::Blockchain;
-cfg_if::cfg_if!(
-    if #[cfg(feature="l2")] {
-        use ethrex_common::Address;
-        use ethrex_l2::utils::config::read_env_file;
-        use secp256k1::SecretKey;
-    }
-);
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::node_id_from_signing_key,
@@ -39,6 +32,8 @@ use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
+#[cfg(feature = "l2")]
+use ::{ethrex_common::Address, ethrex_l2::utils::config::read_env_file, secp256k1::SecretKey};
 
 pub fn init_tracing(matches: &ArgMatches) {
     let log_level = matches
