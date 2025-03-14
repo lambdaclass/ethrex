@@ -57,7 +57,7 @@ async fn main() {
     store
         .set_header_download_checkpoint(
             <ethrex_common::H256 as std::str::FromStr>::from_str(
-                "0xa507cdfc63b39a1b59c0e7992fc39fa81fe68672557a0ee69c0be49045d35497",
+                "0xf173fff98a090610ce3d8c4175ca7318d61624358c4970539c1ba15b514fc322",
             )
             .unwrap(),
         )
