@@ -230,7 +230,7 @@ impl LEVM {
             tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
             tx_nonce: tx.nonce.unwrap_or_default(),
-            block_gas_limit: block_header.gas_limit,
+            block_gas_limit: u64::MAX, // disable block gas limit
             transient_storage: HashMap::new(),
             difficulty: block_header.difficulty,
         };
