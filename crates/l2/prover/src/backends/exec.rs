@@ -1,7 +1,7 @@
+use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::backends::revm::{db::EvmState, REVM};
-use ethrex_blockchain::{validate_block, validate_gas_used};
 use tracing::warn;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
