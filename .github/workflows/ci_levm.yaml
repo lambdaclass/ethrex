@@ -113,6 +113,9 @@ jobs:
           name: main-ef-test-data
           path: crates/vm/levm/test_result_main_short.txt
 
+      # This is for ensuring test from merge to Prague are passing.
+      # After adding the Legacy Test suite, not all are passing.
+      # This is a temporary solution until we fix the legacy tests.
       - name: Check EF-TESTS from London to Prague is 100%
         run: |
           cd crates/vm/levm
