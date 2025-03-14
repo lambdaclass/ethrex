@@ -218,7 +218,15 @@ impl Command {
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality
-                let mut current_block = eth_client.get_block_number().await? - U256::from(64);
+                let mut current_block = U256::zero();
+                while current_block < U256::from(64) {
+                    current_block = eth_client.get_block_number().await?;
+                    sleep(Duration::from_secs(12));
+                }
+                current_block = current_block
+                    .checked_sub(U256::from(64))
+                    .ok_or_eyre("Cannot get finalized block")?;
+
                 let event_signature = keccak("BlockCommitted(bytes32)");
 
                 loop {
@@ -249,9 +257,6 @@ impl Command {
                             beacon_client.get_block_by_hash(parent_beacon_hash).await?;
                         let target_slot = parent_beacon_block.message.slot + 1;
 
-                        // Get blobs from block's slot
-                        let mut block_blobs = beacon_client.get_blobs_by_slot(target_slot).await?;
-
                         // Get versioned hashes from transactions
                         let mut l2_blob_hashes = vec![];
                         for log in logs {
@@ -268,10 +273,13 @@ impl Command {
                             ))?);
                         }
 
-                        // Only keep L2 commitment's blobs
-                        block_blobs.retain(|blob| l2_blob_hashes.contains(&blob.versioned_hash()));
-
-                        for blob in block_blobs.into_iter() {
+                        // Get blobs from block's slot and only keep L2 commitment's blobs
+                        for blob in beacon_client
+                            .get_blobs_by_slot(target_slot)
+                            .await?
+                            .into_iter()
+                            .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
+                        {
                             let blob_path =
                                 data_dir.join(format!("{}-{}.blob", target_slot, blob.index));
                             std::fs::write(blob_path, blob.blob)?;

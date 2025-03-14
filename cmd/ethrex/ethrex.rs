@@ -81,18 +81,24 @@ async fn main() {
         } else {
             use ethrex::initializers::{init_network};
 
-            init_network(
-                &matches,
-                &network,
-                &data_dir,
-                local_p2p_node,
-                signer,
-                peer_table.clone(),
-                store.clone(),
-                tracker.clone(),
-                blockchain.clone(),
-            )
-            .await;
+            let p2p_enabled = matches.get_flag("p2p.enabled");
+
+            if p2p_enabled {
+                init_network(
+                    &matches,
+                    &network,
+                    &data_dir,
+                    local_p2p_node,
+                    signer,
+                    peer_table.clone(),
+                    store.clone(),
+                    tracker.clone(),
+                    blockchain.clone(),
+                )
+                .await;
+            } else {
+                info!("P2P is disabled");
+            }
         }
     }
 

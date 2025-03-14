@@ -427,6 +427,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          ref: gh-pages
 
       - name: Download ethrex flamegraph artifact
         uses: actions/download-artifact@v4
@@ -467,25 +469,25 @@ jobs:
       - name: Update static page locally with new data
         shell: bash
         run: |
-          cp -r flamegraph_levm.svg pages/
-          cp -r flamegraph_revm.svg pages/
-          cp -r flamegraph_ethrex.svg pages/
-          cp -r flamegraph_reth.svg pages/
+          cp -r flamegraph_levm.svg flamegraphs/
+          cp -r flamegraph_revm.svg flamegraphs/
+          cp -r flamegraph_ethrex.svg flamegraphs/
+          cp -r flamegraph_reth.svg flamegraphs/
 
           # ETHREX HTML
-          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" pages/index.html
-          sed -i "s/{{ETHREX_TIME}}/${{ needs.flamegraph-ethrex.outputs.time }}/g" pages/index.html
-          sed -i "s/{{RETH_TIME}}/${{ needs.flamegraph-reth.outputs.time }}/g" pages/index.html
+          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" templates/index.html
+          sed -i "s/{{ETHREX_TIME}}/${{ needs.flamegraph-ethrex.outputs.time }}/g" templates/index.html
+          sed -i "s/{{RETH_TIME}}/${{ needs.flamegraph-reth.outputs.time }}/g" templates/index.html
 
           # LEVM HTML
-          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" pages/levm.html
+          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" templates/levm.html
           time_levm=$(grep "time_levm" time_levm.txt | cut -d '=' -f2)
 
           minutes=$(bc -l <<< "scale=0; $time_levm / 60")
           seconds=$(bc -l <<< "scale=0; $time_levm % 60")
 
           time_levm_str="${minutes} minutes ${seconds} seconds"
-          sed -i "s/{{LEVM_TIME}}/${time_levm_str}/g" pages/levm.html
+          sed -i "s/{{LEVM_TIME}}/${time_levm_str}/g" templates/levm.html
 
           time_revm=$(grep "time_revm" time_revm.txt | cut -d '=' -f2)
 
@@ -493,12 +495,17 @@ jobs:
           seconds=$(bc -l <<< "scale=0; $time_revm % 60")
 
           time_revm_str="${minutes} minutes ${seconds} seconds"
-          sed -i "s/{{REVM_TIME}}/${time_revm_str}/g" pages/levm.html
+          sed -i "s/{{REVM_TIME}}/${time_revm_str}/g" templates/levm.html
+
+          rm flamegraphs/levm.html
+          rm flamegraphs/index.html
+
+          cp templates/levm.html flamegraphs/levm.html
+          cp templates/index.html flamegraphs/index.html
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./pages
+          publish_dir: ./flamegraphs
           destination_dir: flamegraphs
-          keep_files: true
