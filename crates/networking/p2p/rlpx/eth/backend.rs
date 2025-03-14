@@ -86,7 +86,8 @@ pub fn validate_status(
         chain_config,
         genesis_header,
     ) {
-        return Err(RLPxError::HandshakeError("Invalid Fork Id".to_string()));
+        tracing::warn!("Invalid ForkId");
+        //return Err(RLPxError::HandshakeError("Invalid Fork Id".to_string()));
     }
 
     Ok(())
