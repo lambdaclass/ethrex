@@ -215,14 +215,6 @@ impl Blockchain {
             return Err((ChainError::Custom("First block not found".into()), None));
         };
 
-        let Some(mut state_trie) = self
-            .storage
-            .state_trie(first_block_header.parent_hash)
-            .map_err(|e| (e.into(), None))?
-        else {
-            return Err((ChainError::ParentNotFound, None));
-        };
-
         let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
         let mut total_gas_used = 0;
         let chain_config: ChainConfig = self
@@ -274,8 +266,13 @@ impl Blockchain {
                 };
 
                 cache.removed = account_update.removed;
-                cache.code = account_update.code;
-                cache.info = account_update.info;
+                if let Some(code) = account_update.code {
+                    cache.code = Some(code);
+                };
+
+                if let Some(info) = account_update.info {
+                    cache.info = Some(info);
+                }
 
                 for (k, v) in account_update.added_storage.into_iter() {
                     cache.added_storage.insert(k, v);
@@ -315,6 +312,14 @@ impl Blockchain {
             all_receipts.get(&last_block.hash()).unwrap(),
         )
         .map_err(|e| (e, None))?;
+
+        let Some(mut state_trie) = self
+            .storage
+            .state_trie(first_block_header.parent_hash)
+            .map_err(|e| (e.into(), None))?
+        else {
+            return Err((ChainError::ParentNotFound, None));
+        };
 
         let storage_tries_to_commit = self
             .storage

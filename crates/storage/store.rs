@@ -334,6 +334,7 @@ impl Store {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
+                        //TODO push to vector to commit later!
                         self.add_account_code(info.code_hash, code.clone())?;
                     }
                 }
