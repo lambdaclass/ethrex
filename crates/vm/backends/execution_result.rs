@@ -100,13 +100,13 @@ impl From<LevmExecutionReport> for ExecutionResult {
     fn from(val: LevmExecutionReport) -> Self {
         match val.result {
             TxResult::Success => ExecutionResult::Success {
-                gas_used: val.gas_used,
+                gas_used: val.gas_used - val.gas_refunded,
                 gas_refunded: val.gas_refunded,
                 logs: val.logs,
                 output: val.output,
             },
             TxResult::Revert(_error) => ExecutionResult::Revert {
-                gas_used: val.gas_used,
+                gas_used: val.gas_used - val.gas_refunded,
                 output: val.output,
             },
         }
