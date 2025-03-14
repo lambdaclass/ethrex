@@ -12,6 +12,8 @@ pub enum StoreError {
     #[cfg(feature = "libmdbx")]
     #[error("Libmdbx error: {0}")]
     LibmdbxError(anyhow::Error),
+    #[error("tried to run genesis twice with different blocks")]
+    GenesisTwiceDifferentBlocks,
     #[cfg(feature = "redb")]
     #[error("Redb Storage error: {0}")]
     RedbStorageError(#[from] StorageError),

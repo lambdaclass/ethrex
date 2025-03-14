@@ -457,7 +457,7 @@ impl Store {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
-                panic!("tried to run genesis twice with different blocks");
+                return Err(StoreError::GenesisTwiceDifferentBlocks);
             }
         }
         // Store genesis accounts
@@ -1118,10 +1118,9 @@ mod tests {
         store
             .add_initial_state(genesis_kurtosis)
             .expect("second genesis with same block");
-        // panic::catch_unwind(move || {
-        let _ = store.add_initial_state(genesis_hive);
-        // })
-        // .expect_err("genesis with a different block should panic");
+        if store.add_initial_state(genesis_hive).is_ok() {
+            panic!("Genesis with a different block should return StoreError::GenesisTwiceDifferentBlock")
+        };
     }
 
     fn remove_test_dbs(path: &str) {
