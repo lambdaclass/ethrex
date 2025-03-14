@@ -303,4 +303,5 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         start: H256,
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError>;
+    fn __add_block(&self, block: Block) -> Result<(), StoreError>;
 }

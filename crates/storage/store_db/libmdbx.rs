@@ -1352,4 +1352,8 @@ mod tests {
             logs,
         }
     }
+
+    fn __add_block(&self, block: Block) -> Result<(), StoreError> {
+        todo!()
+    }
 }

@@ -869,6 +869,9 @@ impl StoreEngine for RedBStore {
             .take(MAX_SNAPSHOT_READS)
             .collect())
     }
+    fn __add_block(&self, block: Block) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl redb::Value for ChainDataIndex {

@@ -543,6 +543,10 @@ impl StoreEngine for Store {
     fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         Ok(self.inner().snap_state.storage_trie_rebuild_pending.clone())
     }
+
+    fn __add_block(&self, block: Block) -> Result<(), StoreError> {
+        todo!()
+    }
 }
 
 impl Debug for Store {
