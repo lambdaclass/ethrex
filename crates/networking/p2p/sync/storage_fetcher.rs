@@ -52,6 +52,7 @@ pub(crate) async fn storage_fetcher(
         // Fetch incoming requests
         let mut msg_buffer = vec![];
         if receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await != 0 {
+            info!("Received {} incoming storage requests, {} in queue",msg_buffer.iter().flatten().count(), pending_storage.len() +  msg_buffer.iter().flatten().count());
             for account_hashes_and_roots in msg_buffer {
                 if !account_hashes_and_roots.is_empty() {
                     pending_storage.extend(account_hashes_and_roots);
@@ -73,6 +74,8 @@ pub(crate) async fn storage_fetcher(
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
+            info!("Spawning storage tasks");
+            let instant = tokio::time::Instant::now();
             for _ in 0..MAX_PARALLEL_FETCHES {
                 let next_batch = pending_storage
                     .drain(..BATCH_SIZE.min(pending_storage.len()))
@@ -90,12 +93,14 @@ pub(crate) async fn storage_fetcher(
                     break;
                 }
             }
+            info!("Completed storage tasks in {} seconds", instant.elapsed().as_secs());
             // Add unfetched accounts to queue and handle stale signal
             for res in storage_tasks.join_all().await {
                 let (remaining, is_stale) = res?;
                 pending_storage.extend(remaining);
                 stale |= is_stale;
             }
+            info!("{} pending storages after fetch cycle", pending_storage.len())
         }
     }
     info!(
