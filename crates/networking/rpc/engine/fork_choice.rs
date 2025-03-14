@@ -1,3 +1,4 @@
+use crate::SyncStatus;
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
@@ -211,15 +212,25 @@ fn handle_forkchoice(
     // Check if there is an ongoing sync before applying the forkchoice
     // let fork_choice_res = match dbg!(context.sync_status()?) {
     let fork_choice_res = {
+        let invalid_ancestors = {
+            let lock = context.storage.invalid_ancestors.try_lock();
+            match lock {
+                Ok(ref sync) => lock,
+                Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+            }
+        };
         // Apply current fork choice
         // SyncStatus::Inactive => {
-        let invalid_ancestors = {
-            let lock = context.storage.invalid_ancestors.blocking_lock();
-            lock
-        };
+        // let invalid_ancestors = {
+        //     let lock = context.storage.invalid_ancestors.blocking_lock();
+        //     lock
+        // };
 
         // Check if the block has already been invalidated
-        match invalid_ancestors.get(&fork_choice_state.head_block_hash) {
+        match invalid_ancestors
+            .unwrap()
+            .get(&fork_choice_state.head_block_hash)
+        {
             Some(latest_valid_hash) => Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash)),
             None => apply_fork_choice(
                 &context.storage,
