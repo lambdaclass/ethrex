@@ -32,9 +32,34 @@ use lambdaworks_math::{
 };
 use libsecp256k1::{self, Message, RecoveryId, Signature};
 use num_bigint::BigUint;
+#[cfg(feature = "l2")]
+use p256::{
+    ecdsa::{signature::hazmat::PrehashVerifier, Signature as P256Signature, VerifyingKey},
+    elliptic_curve::{bigint::U256 as P256Uint, ff::PrimeField, Curve},
+    EncodedPoint, FieldElement as P256FieldElement, NistP256,
+};
+
+// Secp256r1 curve parameters
+// See https://neuromancer.sk/std/secg/secp256r1
+#[cfg(feature = "l2")]
+const P256_P: P256Uint = P256Uint::from_be_hex(P256FieldElement::MODULUS);
+#[cfg(feature = "l2")]
+const P256_N: P256Uint = NistP256::ORDER;
+#[cfg(feature = "l2")]
+const P256_A: P256FieldElement = P256FieldElement::from_u64(3).neg();
+#[cfg(feature = "l2")]
+const P256_B_UINT: P256Uint =
+    P256Uint::from_be_hex("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
+#[cfg(feature = "l2")]
+lazy_static::lazy_static! {
+    static ref P256_B: P256FieldElement = P256FieldElement::from_uint(P256_B_UINT).unwrap();
+}
+
 use sha3::Digest;
 use std::ops::Mul;
 
+#[cfg(feature = "l2")]
+use crate::gas_cost::P256VERIFY_COST;
 use crate::{
     call_frame::CallFrame,
     constants::VERSIONED_HASH_VERSION_KZG,
@@ -117,6 +142,12 @@ pub const BLS12_MAP_FP2_TO_G2_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x11,
 ]);
 
+#[cfg(feature = "l2")]
+pub const P256VERIFY_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x00,
+]);
+
 pub const PRECOMPILES: [H160; 10] = [
     ECRECOVER_ADDRESS,
     SHA2_256_ADDRESS,
@@ -139,6 +170,9 @@ pub const PRECOMPILES_POST_CANCUN: [H160; 7] = [
     BLS12_MAP_FP_TO_G1_ADDRESS,
     BLS12_MAP_FP2_TO_G2_ADDRESS,
 ];
+
+#[cfg(feature = "l2")]
+pub const RIP_PRECOMPILES: [H160; 1] = [P256VERIFY_ADDRESS];
 
 pub const BLAKE2F_ELEMENT_SIZE: usize = 8;
 
@@ -195,6 +229,11 @@ pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
     // https://eips.ethereum.org/EIPS/eip-2537
     if PRECOMPILES_POST_CANCUN.contains(callee_address) && fork < Fork::Prague {
         return false;
+    }
+
+    #[cfg(feature = "l2")]
+    if RIP_PRECOMPILES.contains(callee_address) {
+        return true;
     }
 
     PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
@@ -275,6 +314,10 @@ pub fn execute_precompile(
         address if address == BLS12_MAP_FP2_TO_G2_ADDRESS => {
             bls12_map_fp2_tp_g2(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
+        #[cfg(feature = "l2")]
+        address if address == P256VERIFY_ADDRESS => {
+            p_256_verify(&current_call_frame.calldata, gas_for_call, consumed_gas)?
+        }
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
 
@@ -298,8 +341,8 @@ fn increase_precompile_consumed_gas(
     Ok(())
 }
 
-/// When slice length is less than 128, the rest is filled with zeros. If slice length is
-/// more than 128 the excess bytes are discarded.
+/// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
+/// more than `target_len`, the excess bytes are discarded.
 fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
     let mut padded_calldata = calldata.to_vec();
     if padded_calldata.len() < target_len {
@@ -1677,4 +1720,104 @@ fn parse_scalar(scalar_raw_bytes: Option<&[u8]>) -> Result<Scalar, VMError> {
     }
     scalar_le.reverse();
     Ok(Scalar::from_raw(scalar_le))
+}
+
+#[cfg(feature = "l2")]
+/// Signature verification in the “secp256r1” elliptic curve
+/// If the verification succeeds, returns 1 in a 32-bit big-endian format.
+/// If the verification fails, returns an empty `Bytes` object.
+/// Implemented following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L1.
+pub fn p_256_verify(
+    calldata: &Bytes,
+    gas_for_call: u64,
+    consumed_gas: &mut u64,
+) -> Result<Bytes, VMError> {
+    let gas_cost = P256VERIFY_COST;
+    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    // If calldata does not reach the required length, we should fill the rest with zeros
+    let calldata = fill_with_zeros(calldata, 160);
+
+    // Parse parameters
+    let message_hash = calldata
+        .get(0..32)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let r = calldata
+        .get(32..64)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let s = calldata
+        .get(64..96)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let x = calldata
+        .get(96..128)
+        .ok_or(PrecompileError::ParsingInputError)?;
+    let y = calldata
+        .get(128..160)
+        .ok_or(PrecompileError::ParsingInputError)?;
+
+    if !validate_p256_parameters(r, s, x, y)? {
+        return Ok(Bytes::new());
+    }
+
+    // Build verifier
+    let Ok(verifier) = VerifyingKey::from_encoded_point(&EncodedPoint::from_affine_coordinates(
+        x.into(),
+        y.into(),
+        false,
+    )) else {
+        return Ok(Bytes::new());
+    };
+
+    // Build signature
+    let r: [u8; 32] = r.try_into().map_err(|_| InternalError::SlicingError)?;
+    let s: [u8; 32] = s.try_into().map_err(|_| InternalError::SlicingError)?;
+
+    let Ok(signature) = P256Signature::from_scalars(r, s) else {
+        return Ok(Bytes::new());
+    };
+
+    // Verify message signature
+    let success = verifier.verify_prehash(message_hash, &signature).is_ok();
+
+    // If the verification succeeds, returns 1 in a 32-bit big-endian format.
+    // If the verification fails, returns an empty `Bytes` object.
+    if success {
+        let mut result = [0; 32];
+        result[31] = 1;
+        Ok(Bytes::from(result.to_vec()))
+    } else {
+        Ok(Bytes::new())
+    }
+}
+
+#[cfg(feature = "l2")]
+/// Following https://github.com/ethereum/RIPs/blob/89474e2b9dbd066fac9446c8cd280651bda35849/RIPS/rip-7212.md?plain=1#L86
+fn validate_p256_parameters(r: &[u8], s: &[u8], x: &[u8], y: &[u8]) -> Result<bool, VMError> {
+    let [r, s, x, y] = [r, s, x, y].map(P256Uint::from_be_slice);
+
+    // Verify that the r and s values are in (0, n) (exclusive)
+    if r == P256Uint::ZERO || r >= P256_N || s == P256Uint::ZERO || s >= P256_N {
+        return Ok(false);
+    }
+
+    // Verify that both x and y are in [0, p) (inclusive 0, exclusive p)
+    if x >= P256_P || y >= P256_P {
+        return Ok(false);
+    }
+
+    // Verify that the point formed by (x, y) is on the curve
+    let x: Option<P256FieldElement> = P256FieldElement::from_uint(x).into();
+    let y: Option<P256FieldElement> = P256FieldElement::from_uint(y).into();
+
+    let (Some(x), Some(y)) = (x, y) else {
+        return Err(VMError::Internal(InternalError::SlicingError));
+    };
+
+    // Curve equation: `y² = x³ + ax + b`
+    let a_x = P256_A.multiply(&x);
+    if y.square() == x.pow_vartime(&[3u64]).add(&a_x).add(&P256_B) {
+        return Ok(true);
+    }
+
+    Ok(false)
 }
