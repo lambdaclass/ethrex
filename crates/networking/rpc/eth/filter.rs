@@ -457,7 +457,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -527,7 +527,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
 
         map_http_requests(&uninstall_filter_req, context)
@@ -562,7 +562,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {

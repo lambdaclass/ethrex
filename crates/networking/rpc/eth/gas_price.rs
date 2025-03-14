@@ -91,7 +91,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         }
     }
 

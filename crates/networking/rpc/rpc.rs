@@ -101,7 +101,7 @@ pub struct RpcApiContext {
     #[cfg(feature = "l2")]
     valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
-    proposer_pk: SecretKey,
+    sponsor_pk: SecretKey,
 }
 
 /// Describes the client's current sync status:
@@ -175,7 +175,7 @@ pub async fn start_api(
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
-    #[cfg(feature = "l2")] proposer_pk: SecretKey,
+    #[cfg(feature = "l2")] sponsor_pk: SecretKey,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -195,7 +195,7 @@ pub async fn start_api(
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
-        proposer_pk,
+        sponsor_pk,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -533,7 +533,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -629,7 +629,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -670,7 +670,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -742,7 +742,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         // Process request
         let result = map_http_requests(&request, context).await;

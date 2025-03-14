@@ -139,7 +139,7 @@ pub fn init_rpc_api(
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(matches),
         #[cfg(feature = "l2")]
-        get_proposer_pk(),
+        get_sponsor_pk(),
     )
     .into_future();
 
@@ -434,7 +434,7 @@ pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
 }
 
 #[cfg(feature = "l2")]
-pub fn get_proposer_pk() -> SecretKey {
+pub fn get_sponsor_pk() -> SecretKey {
     if let Err(e) = read_env_file() {
         panic!("Failed to read .env file: {e}");
     }

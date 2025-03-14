@@ -341,7 +341,7 @@ pub mod test_utils {
         #[cfg(feature = "l2")]
         let valid_delegation_addresses = Vec::new();
         #[cfg(feature = "l2")]
-        let proposer_pk = SecretKey::new(&mut rand::thread_rng());
+        let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
         start_api(
             http_addr,
             authrpc_addr,
@@ -358,7 +358,7 @@ pub mod test_utils {
             #[cfg(feature = "l2")]
             valid_delegation_addresses,
             #[cfg(feature = "l2")]
-            proposer_pk,
+            sponsor_pk,
         )
         .await;
     }
