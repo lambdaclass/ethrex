@@ -65,8 +65,6 @@ impl Blockchain {
     }
 
     pub fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
-        let since = Instant::now();
-
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -84,13 +82,6 @@ impl Blockchain {
             block.header.parent_hash,
         );
         let execution_result = vm.execute_block(block)?;
-
-        let interval = Instant::now().duration_since(since).as_millis();
-        if interval != 0 {
-            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
-        }
 
         Ok(execution_result)
     }
@@ -134,8 +125,20 @@ impl Blockchain {
     }
 
     pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        self.execute_block(block)
-            .and_then(|res| self.store_block(block, res))
+        let since = Instant::now();
+
+        let result = self
+            .execute_block(block)
+            .and_then(|res| self.store_block(block, res));
+
+        let interval = Instant::now().duration_since(since).as_millis();
+        if interval != 0 {
+            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+        }
+
+        result
     }
 
     /// Adds multiple blocks in a batch.
@@ -208,9 +211,8 @@ impl Blockchain {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
-        let first_block_header = match blocks.first() {
-            Some(block) => block.header.clone(),
-            None => return Err((ChainError::Custom("First block not found".into()), None)),
+        let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
+            return Err((ChainError::Custom("First block not found".into()), None));
         };
 
         let Some(mut state_trie) = self
