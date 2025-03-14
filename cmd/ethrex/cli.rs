@@ -100,23 +100,11 @@ pub fn cli() -> Command {
                 .help("If the datadir is the word `memory`, ethrex will use the InMemory Engine"),
         )
         .arg(
-            Arg::new("import")
-                .long("import")
-                .required(false)
-                .value_name("CHAIN_RLP_PATH"),
-        )
-        .arg(
             Arg::new("syncmode")
                 .long("syncmode")
                 .required(false)
                 .default_value("full")
                 .value_name("SYNC_MODE"),
-        )
-        .arg(
-            Arg::new("import_dir")
-                .long("import_dir")
-                .required(false)
-                .value_name("BLOCKS_DIR_PATH"),
         )
         .arg(
             Arg::new("metrics.port")

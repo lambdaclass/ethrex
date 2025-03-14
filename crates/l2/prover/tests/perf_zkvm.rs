@@ -7,7 +7,7 @@ use tracing::info;
 
 use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{db::StoreWrapper, execution_db::ToExecDB};
+use ethrex_vm::{backends::revm::execution_db::ToExecDB, db::StoreWrapper};
 use zkvm_interface::io::ProgramInput;
 
 #[tokio::test]
@@ -61,7 +61,7 @@ async fn test_performance_sp1_zkvm() {
 async fn setup() -> (ProgramInput, Block) {
     let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test_data"));
 
-    let genesis_file_path = path.join("genesis-load-test.json");
+    let genesis_file_path = path.join("genesis-l2-ci.json");
     // l2-loadtest.rlp has blocks with many txs.
     let chain_file_path = path.join("l2-loadtest.rlp");
 

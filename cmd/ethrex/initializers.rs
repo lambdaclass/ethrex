@@ -1,8 +1,7 @@
 use crate::{
     networks,
     utils::{
-        parse_socket_addr, read_block_file, read_chain_file, read_genesis_file,
-        read_jwtsecret_file, read_known_peers, sync_mode,
+        parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_known_peers, sync_mode,
     },
 };
 use bytes::Bytes;
@@ -87,39 +86,8 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
     store
 }
 
-pub fn init_blockchain(
-    matches: &ArgMatches,
-    evm_engine: EvmEngine,
-    store: Store,
-) -> Arc<Blockchain> {
-    let blockchain = Blockchain::new(evm_engine, store);
-
-    if let Some(chain_rlp_path) = matches.get_one::<String>("import") {
-        info!("Importing blocks from chain file: {}", chain_rlp_path);
-        let blocks = read_chain_file(chain_rlp_path);
-        blockchain.import_blocks(&blocks);
-    }
-    //TODO: remove --import --import_dir when we update hive fork
-    if let Some(blocks_path) = matches.get_one::<String>("import_dir") {
-        info!(
-            "Importing blocks from individual block files in directory: {}",
-            blocks_path
-        );
-        let mut blocks = vec![];
-        let dir_reader = fs::read_dir(blocks_path).expect("Failed to read blocks directory");
-        for file_res in dir_reader {
-            let file = file_res.expect("Failed to open file in directory");
-            let path = file.path();
-            let s = path
-                .to_str()
-                .expect("Path could not be converted into string");
-            blocks.push(read_block_file(s));
-        }
-
-        blockchain.import_blocks(&blocks);
-    }
-
-    Arc::new(blockchain)
+pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
+    Blockchain::new(evm_engine, store).into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -281,27 +249,17 @@ pub fn get_network(matches: &ArgMatches) -> String {
         .expect("network is required")
         .clone();
 
+    // Set preset genesis from known networks
     if network == "holesky" {
-        info!("Adding holesky preset bootnodes");
-        // Set holesky presets
         network = String::from(networks::HOLESKY_GENESIS_PATH);
     }
-
     if network == "sepolia" {
-        info!("Adding sepolia preset bootnodes");
-        // Set sepolia presets
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
     }
-
     if network == "mekong" {
-        info!("Adding mekong preset bootnodes");
-        // Set mekong presets
         network = String::from(networks::MEKONG_GENESIS_PATH);
     }
-
     if network == "ephemery" {
-        info!("Adding ephemery preset bootnodes");
-        // Set ephemery presets
         network = String::from(networks::EPHEMERY_GENESIS_PATH);
     }
 
@@ -316,27 +274,23 @@ pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec
         .map(Iterator::collect)
         .unwrap_or_default();
 
-    if network == "holesky" {
+    if network == networks::HOLESKY_GENESIS_PATH {
         info!("Adding holesky preset bootnodes");
-        // Set holesky presets
         bootnodes.extend(networks::HOLESKY_BOOTNODES.iter());
     }
 
-    if network == "sepolia" {
+    if network == networks::SEPOLIA_GENESIS_PATH {
         info!("Adding sepolia preset bootnodes");
-        // Set sepolia presets
         bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
     }
 
-    if network == "mekong" {
+    if network == networks::MEKONG_GENESIS_PATH {
         info!("Adding mekong preset bootnodes");
-        // Set mekong presets
         bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
-    if network == "ephemery" {
+    if network == networks::EPHEMERY_GENESIS_PATH {
         info!("Adding ephemery preset bootnodes");
-        // Set ephemery presets
         bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
     }
 

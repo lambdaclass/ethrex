@@ -1,0 +1,2 @@
+test_data/2000-blocks.rlp filter=lfs diff=lfs merge=lfs -text
+test_data/l2-1k-erc20.rlp filter=lfs diff=lfs merge=lfs -text

@@ -36,25 +36,56 @@ For more information about the Prover Server, the [Prover Docs](./prover.md) pro
 
 ## Configuration
 
-Configuration is done through environment variables. The easiest way to configure the Proposer is by creating a `.env` file and setting the variables there. Then, at start, it will read the file and set the variables.
+Configuration is done through environment variables. The easiest way to configure the Proposer is by creating a `config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
 
-The following environment variables are available to configure the Proposer:
+The following environment variables are available to configure the Proposer (consider looking at the provided [config_example.toml](../config_example.toml):
 
-- `ETH_RPC_URL`: URL of the L1 RPC.
-- `L1_WATCHER_BRIDGE_ADDRESS`: Address of the bridge contract on L1.
-- `L1_WATCHER_TOPICS`: Topics to filter the L1 events.
-- `L1_WATCHER_CHECK_INTERVAL_MS`: Interval in milliseconds to check for new events.
-- `L1_WATCHER_MAX_BLOCK_STEP`: Maximum number of blocks to look for when checking for new events.
-- `L1_WATCHER_L2_PROPOSER_PRIVATE_KEY`: Private key of the L2 proposer.
-- `ENGINE_API_RPC_URL`: URL of the EngineAPI.
-- `ENGINE_API_JWT_PATH`: Path to the JWT authentication file, required to connect to the EngineAPI.
-- `PROVER_SERVER_LISTEN_IP`: IP to listen for proof data requests.
-- `PROVER_SERVER_LISTEN_PORT`: Port to listen for proof data requests.
-- `PROVER_PROVER_SERVER_ENDPOINT`: Endpoint for the prover server.
-- `PROVER_ELF_PATH`: Path to the ELF file for the prover.
-- `PROPOSER_ON_CHAIN_PROPOSER_ADDRESS`: Address of the on-chain proposer.
-- `PROPOSER_L1_ADDRESS`: Address of the L1 proposer.
-- `PROPOSER_L1_PRIVATE_KEY`: Private key of the L1 proposer.
-- `PROPOSER_INTERVAL_MS`: Interval in milliseconds to produce new blocks for the proposer.
+<!-- NOTE: Mantain the sections in the same order as present in [config_example.toml](../config_example.toml). -->
 
-If you want to use a different configuration file, you can set the `ENV_FILE` environment variable to the path of the file.
+- Under the [deployer] section:
+    - `address`: L1 account which will deploy the common bridge contracts in L1.
+    - `private key`: Its private key.
+    - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
+    - `sp1_contract_verifier`: Address which will verify the `sp1` proofs.
+    - `sp1_deploy_verifier`: Whether to deploy the sp1 verifier
+    - `salt_is_zero`: Whether a 0 value salt will be used. Keep as true for deterministic `create2` operations.
+
+- Under the [eth] section:
+    - `rpc_url`: URL of the L1 RPC.
+
+- Under the [engine] section:
+    - `rpc_url`: URL of the EngineAPI.
+    - `jwt_path`: Path to the JWT authentication file, required to connect to the EngineAPI.
+
+- Under the [watcher] section:
+    - `bridge_address`: Address of the bridge contract on L1.
+    - `check_interval_ms`: Interval in milliseconds to check for new events.
+    - `max_block_step`: Maximum number of blocks to look for when checking for new events.
+    - `l2_proposer_private_key`: Private key of the L2 proposer.
+
+- Under the [proposer] section:
+    - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
+    - `coinbase address`: Address which will receive the execution fees.
+
+Under the [committer] section:
+    - `l1_address`: Address of the L1 committer.
+    - `l1_private_key`: Private key of the L1 committer.
+    - `on_chain_proposer_address`: Address of the on-chain committer.
+
+- Under the [prover] section:
+    - `sp1_prover`: Configure how the `sp1_prover` computes its proofs, `"local"` for real proofs and `"mock"` for fake proofs.
+    - `risc0_dev_mode`: Whether `risc0`'s dev mode is on.
+
+- Under the [prover.client] section:
+    - `prover_server_endpoint`: Endpoint for the prover server.
+    - `interval_ms`: Interval in milliseconds to prove new blocks (Currently unused).
+
+- Under the [prover.server] section:
+    - `listen_ip`: IP to listen for proof data requests.
+    - `listen_port`: Port to listen for proof data requests.
+    - `verifier_address`: Address of the account that sends verify transaction to L1.
+    - `verifier_private_key`: Private key for the account that sends verify transaction to L1.
+    - `dev_mode`: whether `dev_mode` is activated.
+
+
+If you want to use a different configuration file, you can set the `CONFIG_FILE` environment variable to the path of the file.

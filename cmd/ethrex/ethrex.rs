@@ -1,24 +1,17 @@
-use crate::{
+use ethrex::{
     initializers::{
         get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_rpc_api,
         init_store, init_tracing,
     },
     utils::{set_datadir, store_known_peers},
+    DEFAULT_DATADIR,
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, time::Duration};
-use subcommands::{import, removedb};
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
 mod cli;
-mod decode;
-mod initializers;
-mod networks;
-mod subcommands;
-mod utils;
-
-pub const DEFAULT_DATADIR: &str = "ethrex";
 
 #[tokio::main]
 async fn main() {
@@ -30,7 +23,7 @@ async fn main() {
         let data_dir = subcommand_matches
             .get_one::<String>("datadir")
             .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
-        removedb::remove_db(&data_dir);
+        ethrex::removedb::remove_db(&data_dir);
         return;
     }
 
@@ -48,13 +41,13 @@ async fn main() {
         .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
 
     if let Some(subcommand_matches) = matches.subcommand_matches("import") {
-        import::import_blocks_from_path(subcommand_matches, data_dir, evm_engine, &network);
+        ethrex::import::import_blocks_from_path(subcommand_matches, data_dir, evm_engine, &network);
         return;
     }
 
     let store = init_store(&data_dir, &network);
 
-    let blockchain = init_blockchain(&matches, evm_engine, store.clone());
+    let blockchain = init_blockchain(evm_engine, store.clone());
 
     let signer = get_signer(&data_dir);
 
@@ -82,11 +75,11 @@ async fn main() {
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "dev")] {
-            use crate::initializers::init_dev_network;
+            use ethrex::initializers::init_dev_network;
 
             init_dev_network(&matches, &store, tracker.clone());
         } else {
-            use crate::initializers::{init_network};
+            use ethrex::initializers::{init_network};
 
             init_network(
                 &matches,

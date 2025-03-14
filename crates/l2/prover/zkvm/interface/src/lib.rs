@@ -20,7 +20,7 @@ pub mod io {
         types::{Block, BlockHeader},
         H256,
     };
-    use ethrex_vm::execution_db::ExecutionDB;
+    use ethrex_vm::backends::revm::execution_db::ExecutionDB;
     use serde::{de::DeserializeOwned, Deserialize, Serialize};
     use serde_with::{serde_as, DeserializeAs, SerializeAs};
 
@@ -84,7 +84,7 @@ pub mod trie {
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
     use ethrex_storage::{hash_address, hash_key, AccountUpdate};
     use ethrex_trie::{Trie, TrieError};
-    use ethrex_vm::execution_db::ExecutionDB;
+    use ethrex_vm::backends::revm::execution_db::ExecutionDB;
     use thiserror::Error;
 
     #[derive(Debug, Error)]

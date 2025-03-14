@@ -1,7 +1,7 @@
 [package]
 name = "ethrex-vm"
-version.workspace = true
-edition.workspace = true
+version = "0.1.0"
+edition = "2021"
 
 [dependencies]
 ethrex-common.workspace = true
@@ -11,18 +11,18 @@ ethrex-trie.workspace = true
 ethrex-rlp.workspace = true
 
 revm = { version = "19.0.0", features = [
-  "serde",
-  "std",
-  "serde-json",
-  "optional_no_base_fee",
-  "optional_block_gas_limit",
+    "serde",
+    "std",
+    "serde-json",
+    "optional_no_base_fee",
+    "optional_block_gas_limit",
 ], default-features = false }
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
 revm-inspectors = { version = "0.15.0" }
 derive_more = { version = "1.0.0", features = ["full"] }
 revm-primitives = { version = "15.2.0", features = [
-  "std",
+    "std",
 ], default-features = false }
 bytes.workspace = true
 thiserror.workspace = true
@@ -41,9 +41,6 @@ path = "./vm.rs"
 
 [features]
 default = []
-l2 = []
+l2 = ["ethrex-levm/l2"]
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["revm/blst"]
-
-[profile.test]
-opt-level = 3
