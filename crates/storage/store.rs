@@ -491,6 +491,25 @@ impl Store {
         self.add_block_number(hash, number)
     }
 
+    pub fn import_blocks(
+        &self,
+        blocks: &[Block],
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+        state_tries: Vec<Trie>,
+        storage_tries: Vec<(H256, Trie)>,
+        bytecodes: Vec<(H256, Bytes)>,
+        as_canonical: bool,
+    ) -> Result<(), StoreError> {
+        self.engine.import_blocks(
+            blocks,
+            receipts,
+            state_tries,
+            storage_tries,
+            bytecodes,
+            as_canonical,
+        )
+    }
+
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
         info!("Setting initial sync status to false");
         self.update_sync_status(false)?;

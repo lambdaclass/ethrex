@@ -27,6 +27,7 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -104,6 +105,100 @@ impl StoreEngine for Store {
             .zip(block_headers)
             .map(|(hash, header)| (hash.into(), header.into()));
         self.write_batch::<Headers>(hashes_and_headers)
+    }
+
+    fn import_blocks(
+        &self,
+        blocks: &[Block],
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+        state_tries: Vec<Trie>,
+        storage_tries: Vec<(H256, Trie)>,
+        bytecodes: Vec<(H256, Bytes)>,
+        as_canonical: bool,
+    ) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        for block in blocks {
+            let number = block.header.number;
+            let hash = block.hash();
+
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                tx.upsert::<TransactionLocations>(
+                    transaction.compute_hash().into(),
+                    (number, hash, index as u64).into(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
+            tx.upsert::<Bodies>(
+                hash.into(),
+                BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            tx.upsert::<Headers>(
+                hash.into(),
+                BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            tx.upsert::<BlockNumbers>(hash.into(), number)
+                .map_err(StoreError::LibmdbxError)?;
+
+            if as_canonical {
+                tx.upsert::<CanonicalBlockHashes>(number, hash.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+
+            let receipts = receipts.get(&hash).unwrap();
+            let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
+            for (index, receipt) in receipts.clone().into_iter().enumerate() {
+                let key = (hash, index as u64).into();
+                let receipt_rlp = receipt.encode_to_vec();
+                let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                    continue;
+                };
+                for (k, v) in entries {
+                    cursor.upsert(k, v).map_err(StoreError::LibmdbxError)?;
+                }
+            }
+        }
+
+        for mut trie in state_tries {
+            let root = trie.root().cloned().unwrap();
+            let key_values = trie
+                .state_mut()
+                .get_nodes_to_commit_and_clear_cache(&root)
+                .unwrap();
+
+            for (k, v) in key_values {
+                tx.upsert::<StateTrieNodes>(k, v)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+
+        for (account_hash, mut trie) in storage_tries {
+            let root = trie.root().cloned().unwrap();
+            let key_values = trie
+                .state_mut()
+                .get_nodes_to_commit_and_clear_cache(&root)
+                .unwrap();
+
+            for (k, v) in key_values {
+                tx.upsert::<StorageTriesNodes>((account_hash.0, node_hash_to_fixed_size(k)), v)
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+
+        for (code_hash, code) in bytecodes {
+            tx.upsert::<AccountCodes>(code_hash.into(), code.into())
+                .map_err(StoreError::LibmdbxError)?;
+        }
+
+        tx.commit().map_err(StoreError::LibmdbxError)
     }
 
     fn get_block_header(
@@ -802,6 +897,22 @@ impl<T: RLPEncode + RLPDecode> IndexedChunk<T> {
         let decoded = T::decode(&value).map_err(StoreError::RLPDecode)?;
         Ok(Some(decoded))
     }
+}
+
+// In order to use NodeHash as key in a dupsort table we must encode it into a fixed size type
+pub fn node_hash_to_fixed_size(node_hash: Vec<u8>) -> [u8; 33] {
+    // keep original len so we can re-construct it later
+    let original_len = node_hash.len();
+    // original len will always be lower or equal to 32 bytes
+    debug_assert!(original_len <= 32);
+    // Pad the node_hash with zeros to make it fixed_size (in case of inline)
+    let mut node_hash = node_hash;
+    node_hash.resize(32, 0);
+    // Encode the node as [original_len, node_hash...]
+    std::array::from_fn(|i| match i {
+        0 => original_len as u8,
+        n => node_hash[n - 1],
+    })
 }
 
 table!(
