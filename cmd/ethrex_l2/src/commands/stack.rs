@@ -210,7 +210,7 @@ impl Command {
                 }
                 current_block
                     .checked_sub(U256::from(64))
-                    .ok_or_eyre("Cannot get finalized block");
+                    .ok_or_eyre("Cannot get finalized block")?;
 
                 let event_signature = keccak("BlockCommitted(bytes32)");
 
