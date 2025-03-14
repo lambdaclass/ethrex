@@ -174,6 +174,8 @@ impl SyncManager {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
                 current_head = last_header;
+                let last_header_num = store.get_block_header_by_hash(last_header)?.map(|head| head.number).unwrap_or_default();
+                info!("Resuming block header download from block : {last_header_num}, hash: {last_header}");
             }
         }
 
@@ -183,7 +185,7 @@ impl SyncManager {
         };
 
         loop {
-            debug!("Requesting Block Headers from {current_head}");
+            info!("Requesting Block Headers from {current_head}");
             let block_header_limit = match self.sync_mode {
                 SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
                 // In Full sync mode, request the same number of block bodies as headers,

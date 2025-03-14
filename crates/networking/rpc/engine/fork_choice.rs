@@ -217,9 +217,9 @@ fn handle_forkchoice(
                 match lock {
                     Ok(sync) => sync.invalid_ancestors.clone(),
                     Err(_) => {
-                        info!("Failed to aquire lock for invalid ancestors check"); 
+                        info!("Failed to aquire lock for invalid ancestors check");
                         return Err(RpcErr::Internal("Internal error".into()));
-                    },
+                    }
                 }
             };
 
