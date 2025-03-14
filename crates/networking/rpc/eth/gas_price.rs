@@ -67,6 +67,8 @@ mod tests {
     use bytes::Bytes;
     use ethrex_blockchain::Blockchain;
     use ethrex_p2p::sync::SyncManager;
+    #[cfg(feature = "l2")]
+    use secp256k1::{rand, SecretKey};
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -86,6 +88,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         }
     }
 

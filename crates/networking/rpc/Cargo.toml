@@ -44,4 +44,5 @@ hex-literal = "0.4.1"
 path = "./rpc.rs"
 
 [features]
-based = []
+based = ["l2"]
+l2 = []

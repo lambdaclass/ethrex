@@ -191,6 +191,23 @@ pub fn cli() -> Command {
                 .value_name("GATEWAY_JWTSECRET_PATH")
                 .action(ArgAction::Set),
             )
+            .arg(
+                Arg::new("sponsorable_addresses")
+                    .long("sponsorable_addresses")
+                    .value_name("SPONSORABLE_ADDRESSES_PATH")
+                    .action(ArgAction::Set)
+                    .required(false)
+                    .help("Path to a file containing addresses of contracts to wich rogue_SendTransaction should sponsor txs"),
+            )
+        } else if #[cfg(feature = "l2")]  {
+            cmd.arg(
+                Arg::new("sponsorable_addresses")
+                    .long("sponsorable_addresses")
+                    .value_name("SPONSORABLE_ADDRESSES_PATH")
+                    .action(ArgAction::Set)
+                    .required(false)
+                    .help("Path to a file containing addresses of contracts to wich rogue_SendTransaction should sponsor txs"),
+            )
         } else {
             cmd
         }
