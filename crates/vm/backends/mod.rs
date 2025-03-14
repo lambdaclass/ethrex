@@ -19,8 +19,15 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EvmEngine {
+    #[cfg(not(feature = "l2"))]
     #[default]
     REVM,
+    #[cfg(not(feature = "l2"))]
+    LEVM,
+    #[cfg(feature = "l2")]
+    REVM,
+    #[cfg(feature = "l2")]
+    #[default]
     LEVM,
 }
 
@@ -290,9 +297,12 @@ impl Evm {
                 self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
             }
             Evm::LEVM {
-                store_wrapper: _,
+                store_wrapper,
                 block_cache: _,
-            } => Err(EvmError::Custom("Not implemented".to_string())),
+            } => {
+                let mut state = evm_state(store_wrapper.store.clone(), store_wrapper.block_hash);
+                self::revm::helpers::simulate_tx_from_generic(tx, header, &mut state, spec_id)
+            }
         }
     }
 
@@ -307,9 +317,12 @@ impl Evm {
                 self::revm::helpers::create_access_list(tx, header, state, spec_id)
             }
             Evm::LEVM {
-                store_wrapper: _,
+                store_wrapper,
                 block_cache: _,
-            } => Err(EvmError::Custom("Not implemented".to_string())),
+            } => {
+                let mut state = evm_state(store_wrapper.store.clone(), store_wrapper.block_hash);
+                self::revm::helpers::create_access_list(tx, header, &mut state, spec_id)
+            }
         }?;
 
         match res {

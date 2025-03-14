@@ -109,7 +109,7 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 4
-EVM_BACKEND := revm
+EVM_BACKEND := levm
 SIM_PARALLELISM := 16
 
 L1_CLIENT       ?= ethrex
