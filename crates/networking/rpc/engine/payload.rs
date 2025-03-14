@@ -531,10 +531,16 @@ fn validate_ancestors(
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
     // Obtain the invalid ancestors from the syncer
-    let invalid_ancestors = context.storage.invalid_ancestors.blocking_lock();
+    let invalid_ancestors = {
+        let lock = context.storage.invalid_ancestors.try_lock();
+        match lock {
+            Ok(ref syncer) => lock,
+            Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+        }
+    };
 
     // Check if the block has already been invalidated
-    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
+    if let Some(latest_valid_hash) = invalid_ancestors.unwrap().get(&block.hash()) {
         return Ok(Some(PayloadStatus::invalid_with(
             *latest_valid_hash,
             "Header has been previously invalidated.".into(),
@@ -542,12 +548,12 @@ fn validate_ancestors(
     }
 
     // Check if the parent block has already been invalidated
-    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash) {
-        return Ok(Some(PayloadStatus::invalid_with(
-            *latest_valid_hash,
-            "Parent header has been previously invalidated.".into(),
-        )));
-    }
+    // if let Some(latest_valid_hash) = invalid_ancestors.unwrap().get(&block.header.parent_hash) {
+    //     return Ok(Some(PayloadStatus::invalid_with(
+    //         *latest_valid_hash,
+    //         "Parent header has been previously invalidated.".into(),
+    //     )));
+    // }
 
     Ok(None)
 }
@@ -698,11 +704,11 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
     let add_block_to_invalid_ancestor = || {
-        context
-            .storage
-            .invalid_ancestors
-            .blocking_lock()
-            .insert(block_hash, latest_valid_hash);
+        // context
+        //     .storage
+        //     .invalid_ancestors
+        //     .blocking_lock()
+        //     .insert(block_hash, latest_valid_hash);
     };
 
     match context.blockchain.add_block(block) {
