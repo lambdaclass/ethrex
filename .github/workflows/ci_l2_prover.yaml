@@ -17,18 +17,17 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        action:
-          - command: check
-            args: -p ethrex-prover
-          - command: clippy
-            args: -p ethrex-prover --all-targets --no-default-features
+        # backend: ["sp1", "risc0", "exec"] # TODO: fix Risc0 (https://github.com/lambdaclass/ethrex/issues/2145)
+        backend: ["sp1", "exec"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
-      - name: ${{ matrix.action.command }} Command
-        run: cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
+      - name: Check
+        run: cargo check -p ethrex-prover -F ${{ matrix.backend }}
+      - name: Clippy
+        run: cargo clippy -p ethrex-prover --all-targets -F ${{ matrix.backend }}
 
   test:
     # "Test" is a required check, don't change the name
