@@ -17,6 +17,7 @@ use secp256k1::SecretKey;
 use serde::Deserialize;
 use serde_json::Value;
 use std::str::FromStr;
+
 const DELGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
 const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 // This could be an environment variable set in the config.toml is the max amount of gas we are willing to sponsor
