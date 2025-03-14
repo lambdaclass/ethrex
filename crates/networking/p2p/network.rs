@@ -193,7 +193,14 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
                     && peer.supported_capabilities.contains(&Capability::Snap)
             })
             .count();
+        let snap_active_peers_ids: Vec<String> = peers
+        .iter()
+        .filter(|peer| -> bool {
+            peer.channels.as_ref().is_some()
+                && peer.supported_capabilities.contains(&Capability::Snap)
+        }).map(|peer| peer.node.node_id.to_string()).collect();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
+        info!("Snap Active Peer IDs: {snap_active_peers_ids:?}");
         interval.tick().await;
     }
 }
