@@ -42,39 +42,36 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     } = input;
     let mut state = EvmState::from(db.clone());
     let chain_config = state
-        .chain_config()
-        .expect("Failed to get chain config from state");
+        .chain_config()?;
 
     // Validate the block
-    validate_block(&block, &parent_block_header, &chain_config).expect("invalid block");
+    validate_block(&block, &parent_block_header, &chain_config)?;
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
-        .get_tries()
-        .expect("failed to build state and storage tries or state is not valid");
+        .get_tries()?;
 
     // Validate the initial state
     let initial_state_hash = state_trie.hash_no_commit();
     if initial_state_hash != parent_block_header.state_root {
-        panic!("invalid initial state trie");
+        return Err("invalid initial state trie".to_string().into())
     }
-    if !verify_db(&db, &state_trie, &storage_tries).expect("failed to validate database") {
-        panic!("invalid database")
+    if !verify_db(&db, &state_trie, &storage_tries)? {
+        return Err("invalid database".to_string().into())
     };
 
-    let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
+    let result = REVM::execute_block(&block, &mut state)?;
     let receipts = result.receipts;
     let account_updates = result.account_updates;
-    validate_gas_used(&receipts, &block.header).expect("invalid gas used");
+    validate_gas_used(&receipts, &block.header)?;
 
     // Update state trie
-    update_tries(&mut state_trie, &mut storage_tries, &account_updates)
-        .expect("failed to update state and storage tries");
+    update_tries(&mut state_trie, &mut storage_tries, &account_updates)?;
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
     if final_state_hash != block.header.state_root {
-        panic!("invalid final state trie");
+        return Err("invalid final state trie".to_string().into());
     }
 
     Ok(ProgramOutput {
