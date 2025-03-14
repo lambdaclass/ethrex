@@ -21,11 +21,12 @@ pub fn chain_file(file: File) -> Result<Vec<Block>, Error> {
     let mut chain_rlp_reader = BufReader::new(file);
     let mut buf = vec![];
     chain_rlp_reader.read_to_end(&mut buf)?;
+    let mut buf = buf.as_slice();
     let mut blocks = Vec::new();
     while !buf.is_empty() {
-        let (item, rest) = Block::decode_unfinished(&buf)?;
+        let (item, rest) = Block::decode_unfinished(buf)?;
         blocks.push(item);
-        buf = rest.to_vec();
+        buf = rest;
     }
     Ok(blocks)
 }

@@ -1,0 +1,39 @@
+name: criterion benchmark
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  # deployments permission to deploy GitHub pages website
+  deployments: write
+  # contents permission to update benchmark contents in gh-pages branch
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@1.85.0
+    - uses: actions/checkout@v4
+      with:
+        lfs: true
+    - name: Checkout LFS objects
+      run: git lfs checkout
+    - name: Install gnuplot
+      run: sudo apt-get install -y gnuplot
+    - name: Run benchmark
+      run: cd cmd/ethrex && cargo bench --bench criterion_benchmark -- --output-format bencher |sed 2d | tee output.txt
+    - name: Store benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        tool: 'cargo'
+        output-file-path: cmd/ethrex/output.txt
+        benchmark-data-dir-path: "."
+        # Access token to deploy GitHub Pages branch
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        # Push and deploy GitHub pages branch automatically
+        auto-push: true
+        alert-threshold: '130%'
+        comment-on-alert: true
