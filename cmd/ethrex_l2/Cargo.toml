@@ -42,9 +42,10 @@ name = "ethrex_l2"
 path = "./src/main.rs"
 
 [features]
-default = ["exec"]
+default = ["sp1"]
 
 # prover backends
-exec = ["ethrex-prover/exec"]
-risc0 = ["ethrex-prover/risc0"]
 sp1 = ["ethrex-prover/sp1"]
+
+# TODO: Can't use more than one backends because these features are mutually exclusive, so it breaks
+# when using --all-features, for example in our CI workflow.

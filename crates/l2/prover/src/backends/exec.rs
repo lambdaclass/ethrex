@@ -1,6 +1,10 @@
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
+use ethrex_vm::backends::revm::{db::EvmState, REVM};
 use tracing::warn;
-use zkvm_interface::io::ProgramInput;
+use zkvm_interface::{
+    io::{ProgramInput, ProgramOutput},
+    trie::{update_tries, verify_db},
+};
 
 pub struct ProveOutput(pub ProgramOutput);
 
