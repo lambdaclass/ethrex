@@ -1184,7 +1184,7 @@ transaction_index: {}"#,
         )?;
 
         if let Some(blob_versioned_hashes) = &self.blob_versioned_hashes {
-            write!(f, "\nblob_versioned_hashes: {:#?}", blob_versioned_hashes)?;
+            write!(f, "\nblob_versioned_hashes: {blob_versioned_hashes:#?}")?;
         }
 
         fmt::Result::Ok(())
