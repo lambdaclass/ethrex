@@ -220,7 +220,7 @@ impl LEVM {
             coinbase: block_header.coinbase,
             timestamp: block_header.timestamp.into(),
             prev_randao: Some(block_header.prev_randao),
-            chain_id: tx.chain_id.unwrap_or_default().into(),
+            chain_id: tx.chain_id.unwrap_or(chain_config.chain_id).into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             gas_price,
             block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
