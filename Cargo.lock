@@ -3575,7 +3575,6 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-l2",
- "ethrex-prover",
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-sdk",

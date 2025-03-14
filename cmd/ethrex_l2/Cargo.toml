@@ -8,7 +8,6 @@ ethrex-l2.workspace = true
 ethrex-sdk.workspace = true
 ethrex-common.workspace = true
 ethrex-blockchain = { workspace = true, features = ["l2"] }
-ethrex-prover.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-storage = { workspace = true, features = ["libmdbx"] }
@@ -40,12 +39,3 @@ sha2.workspace = true
 [[bin]]
 name = "ethrex_l2"
 path = "./src/main.rs"
-
-[features]
-default = ["sp1"]
-
-# prover backends
-sp1 = ["ethrex-prover/sp1"]
-
-# TODO: Can't use more than one backends because these features are mutually exclusive, so it breaks
-# when using --all-features, for example in our CI workflow.
