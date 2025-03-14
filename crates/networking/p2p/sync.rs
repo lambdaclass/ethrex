@@ -609,6 +609,8 @@ enum SyncError {
     #[error(transparent)]
     SendStorage(#[from] SendError<Vec<(H256, H256)>>),
     #[error(transparent)]
+    SendLargeStorage(#[from] SendError<Vec<(H256, H256, H256)>>),
+    #[error(transparent)]
     Trie(#[from] TrieError),
     #[error(transparent)]
     Rlp(#[from] RLPDecodeError),
