@@ -75,7 +75,6 @@ pub enum SyncMode {
 /// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct SyncManager {
-    // sync_mode: SyncMode,
     peers: PeerHandler,
     /// The last block number used as a pivot for snap-sync
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
@@ -107,7 +106,6 @@ impl SyncManager {
     pub fn dummy() -> Self {
         let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
-            // sync_mode: SyncMode::Full,
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
             trie_rebuilder: None,
@@ -334,9 +332,11 @@ impl SyncManager {
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
                 store.clear_snap_state()?;
-                // Next sync will be full-sync
-                let mut sync_mode = sync_mode.lock().await;
-                *sync_mode = SyncMode::Full;
+                {
+                    // Next sync will be full-sync
+                    let mut sync_mode = sync_mode.lock().await;
+                    *sync_mode = SyncMode::Full;
+                }
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
