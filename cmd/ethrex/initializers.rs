@@ -11,6 +11,7 @@ cfg_if::cfg_if!(
     if #[cfg(feature="l2")] {
         use ethrex_common::Address;
         use ethrex_l2::utils::config::read_env_file;
+        use secp256k1::SecretKey;
     }
 );
 use ethrex_p2p::{
@@ -433,9 +434,12 @@ pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
 }
 
 #[cfg(feature = "l2")]
-pub fn get_proposer_pk() -> String {
+pub fn get_proposer_pk() -> SecretKey {
     if let Err(e) = read_env_file() {
         panic!("Failed to read .env file: {e}");
     }
-    std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default()
+    std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY")
+        .unwrap_or_default()
+        .parse::<SecretKey>()
+        .expect("Failed to parse a secret key to sponsor transactions")
 }

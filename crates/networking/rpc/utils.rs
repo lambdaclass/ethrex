@@ -285,6 +285,8 @@ pub mod test_utils {
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
     use bytes::Bytes;
+    #[cfg(feature = "l2")]
+    use secp256k1::{rand, SecretKey};
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
@@ -339,7 +341,7 @@ pub mod test_utils {
         #[cfg(feature = "l2")]
         let valid_delegation_addresses = Vec::new();
         #[cfg(feature = "l2")]
-        let proposer_pk = String::new();
+        let proposer_pk = SecretKey::new(&mut rand::thread_rng());
         start_api(
             http_addr,
             authrpc_addr,

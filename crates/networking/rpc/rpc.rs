@@ -58,6 +58,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "l2")] {
         use rogue::transaction::RogueSponsoredTx;
         use ethrex_common::Address;
+        use secp256k1::SecretKey;
         mod rogue;
     }
 }
@@ -100,7 +101,7 @@ pub struct RpcApiContext {
     #[cfg(feature = "l2")]
     valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
-    proposer_pk: String,
+    proposer_pk: SecretKey,
 }
 
 /// Describes the client's current sync status:
@@ -174,7 +175,7 @@ pub async fn start_api(
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
-    #[cfg(feature = "l2")] proposer_pk: String,
+    #[cfg(feature = "l2")] proposer_pk: SecretKey,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -499,6 +500,8 @@ mod tests {
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
     use bytes::Bytes;
+    #[cfg(feature = "l2")]
+    use secp256k1::rand;
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -530,7 +533,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: String::new(),
+            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -626,7 +629,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: String::new(),
+            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -667,7 +670,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: String::new(),
+            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -739,7 +742,7 @@ mod tests {
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
-            proposer_pk: String::new(),
+            proposer_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         // Process request
         let result = map_http_requests(&request, context).await;

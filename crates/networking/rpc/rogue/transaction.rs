@@ -130,9 +130,7 @@ impl RpcHandler for RogueSponsoredTx {
                 ));
             }
         }
-        let sponsor_pk = SecretKey::from_str(context.proposer_pk.trim_start_matches("0x"))
-            .map_err(|_| RpcErr::InvalidRogueMessage("Rogue Rpc Method not enabled".to_string()))?;
-        let sponsor_address = get_address_from_secret_key(&sponsor_pk)
+        let sponsor_address = get_address_from_secret_key(&context.proposer_pk)
             .map_err(|_| RpcErr::InvalidRogueMessage("Rogue Rpc method not enabled".to_string()))?;
         let latest_block_number = context
             .storage
@@ -214,14 +212,14 @@ impl RpcHandler for RogueSponsoredTx {
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&sponsor_pk);
+                tx.sign_inplace(&context.proposer_pk);
             }
             SendRawTransactionRequest::EIP1559(ref mut tx) => {
                 tx.gas_limit = gas_limit;
                 tx.max_fee_per_gas = max_fee_per_gas;
                 tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
                 tx.nonce = nonce;
-                tx.sign_inplace(&sponsor_pk);
+                tx.sign_inplace(&context.proposer_pk);
             }
             _ => unreachable!("This should never happen, we are creating the tx"),
         }

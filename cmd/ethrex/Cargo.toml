@@ -30,6 +30,7 @@ local-ip-address = "0.6"
 tokio-util.workspace = true
 redb = { workspace = true, optional = true }
 lazy_static.workspace = true
+secp256k1 = { workspace = true, optional = true }
 
 cfg-if = "1.0.0"
 
@@ -52,7 +53,7 @@ metrics = ["ethrex-blockchain/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
-l2 = ["dep:ethrex-l2", "ethrex-vm/l2", "ethrex-rpc/l2"]
+l2 = ["dep:ethrex-l2", "ethrex-vm/l2", "ethrex-rpc/l2", "dep:secp256k1"]
 based = ["l2", "ethrex-rpc/based"]
 
 
