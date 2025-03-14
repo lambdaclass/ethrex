@@ -1,5 +1,5 @@
 use ethrex_common::{
-    types::{Block, BlockHash, BlockHeader, BlockNumber},
+    types::{BlockHash, BlockHeader, BlockNumber},
     H256,
 };
 use ethrex_storage::{error::StoreError, Store};
@@ -29,18 +29,18 @@ pub fn apply_fork_choice(
     }
 
     let finalized_res = if !finalized_hash.is_zero() {
-        store.get_block_by_hash(finalized_hash)?
+        store.get_block_header_by_hash(finalized_hash)?
     } else {
         None
     };
 
     let safe_res = if !safe_hash.is_zero() {
-        store.get_block_by_hash(safe_hash)?
+        store.get_block_header_by_hash(safe_hash)?
     } else {
         None
     };
 
-    let head_res = store.get_block_by_hash(head_hash)?;
+    let head_res = store.get_block_header_by_hash(head_hash)?;
 
     if !safe_hash.is_zero() {
         check_order(&safe_res, &head_res)?;
@@ -50,11 +50,9 @@ pub fn apply_fork_choice(
         check_order(&finalized_res, &safe_res)?;
     }
 
-    let Some(head_block) = head_res else {
+    let Some(head) = head_res else {
         return Err(InvalidForkChoice::Syncing);
     };
-
-    let head = head_block.header;
 
     let latest = store.get_latest_block_number()?;
 
@@ -77,8 +75,7 @@ pub fn apply_fork_choice(
     };
 
     // Check that finalized and safe blocks are part of the new canonical chain.
-    if let Some(ref finalized_block) = finalized_res {
-        let finalized = &finalized_block.header;
+    if let Some(ref finalized) = finalized_res {
         if !((is_canonical(store, finalized.number, finalized_hash)?
             && finalized.number <= link_block_number)
             || (finalized.number == head.number && finalized_hash == head_hash)
@@ -91,8 +88,7 @@ pub fn apply_fork_choice(
         };
     }
 
-    if let Some(ref safe_block) = safe_res {
-        let safe = &safe_block.header;
+    if let Some(ref safe) = safe_res {
         if !((is_canonical(store, safe.number, safe_hash)? && safe.number <= link_block_number)
             || (safe.number == head.number && safe_hash == head_hash)
             || new_canonical_blocks.contains(&(safe.number, safe_hash)))
@@ -119,10 +115,10 @@ pub fn apply_fork_choice(
     // Make head canonical and label all special blocks correctly.
     store.set_canonical_block(head.number, head_hash)?;
     if let Some(finalized) = finalized_res {
-        store.update_finalized_block_number(finalized.header.number)?;
+        store.update_finalized_block_number(finalized.number)?;
     }
     if let Some(safe) = safe_res {
-        store.update_safe_block_number(safe.header.number)?;
+        store.update_safe_block_number(safe.number)?;
     }
     store.update_latest_block_number(head.number)?;
     store.update_sync_status(true)?;
@@ -131,14 +127,17 @@ pub fn apply_fork_choice(
 }
 
 // Checks that block 1 is prior to block 2 and that if the second is present, the first one is too.
-fn check_order(block_1: &Option<Block>, block_2: &Option<Block>) -> Result<(), InvalidForkChoice> {
+fn check_order(
+    block_1: &Option<BlockHeader>,
+    block_2: &Option<BlockHeader>,
+) -> Result<(), InvalidForkChoice> {
     // We don't need to perform the check if the hashes are null
     match (block_1, block_2) {
         (None, Some(_)) => Err(InvalidForkChoice::ElementNotFound(
             error::ForkChoiceElement::Finalized,
         )),
         (Some(b1), Some(b2)) => {
-            if b1.header.number > b2.header.number {
+            if b1.number > b2.number {
                 Err(InvalidForkChoice::Unordered)
             } else {
                 Ok(())

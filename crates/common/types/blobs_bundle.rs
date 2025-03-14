@@ -63,6 +63,19 @@ pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
     Ok(buf)
 }
 
+pub fn bytes_from_blob(blob: Bytes) -> [u8; BYTES_PER_BLOB * 31 / 32] {
+    let mut buf = [0u8; BYTES_PER_BLOB * 31 / 32];
+    buf.copy_from_slice(
+        &blob
+            .chunks(32)
+            .map(|x| x[1..].to_vec())
+            .collect::<Vec<_>>()
+            .concat(),
+    );
+
+    buf
+}
+
 fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {
     use k256::sha2::Digest;
     let mut versioned_hash: [u8; 32] = k256::sha2::Sha256::digest(data).into();
