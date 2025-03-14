@@ -2,7 +2,6 @@ use std::fs::{self, metadata};
 
 use clap::ArgMatches;
 
-use ethrex_blockchain::STATE_TRIES_TO_KEEP;
 use ethrex_common::types::Block;
 use ethrex_vm::backends::EvmEngine;
 use tracing::info;
@@ -41,6 +40,8 @@ pub fn import_blocks_from_path(
     network: &str,
 ) {
     let remove_db = *matches.get_one::<bool>("removedb").unwrap_or(&false);
+    let should_batch = *matches.get_one::<bool>("batch").unwrap_or(&false);
+
     let path = matches
         .get_one::<String>("path")
         .expect("No path provided to import blocks");
@@ -53,34 +54,10 @@ pub fn import_blocks_from_path(
 
     let blocks = get_import_blocks(path);
 
-    blockchain.import_blocks(&blocks);
-}
-
-pub fn import_blocks_from_path_in_batch(
-    matches: &ArgMatches,
-    data_dir: String,
-    evm: EvmEngine,
-    network: &str,
-) {
-    let remove_db = *matches.get_one::<bool>("removedb").unwrap_or(&false);
-    let path = matches
-        .get_one::<String>("path")
-        .expect("No path provided to import blocks");
-    if remove_db {
-        removedb::remove_db(&data_dir);
-    }
-
-    let store = init_store(&data_dir, network);
-    let blockchain = init_blockchain(evm, store);
-
-    let blocks = get_import_blocks(path);
-
-    if blocks.len() <= STATE_TRIES_TO_KEEP {
-        blockchain.import_blocks_in_batch(&blocks, true);
+    if should_batch {
+        blockchain.import_blocks_in_batch(&blocks, false);
     } else {
-        let idx = blocks.len() - STATE_TRIES_TO_KEEP;
-        blockchain.import_blocks_in_batch(&blocks[..idx], false);
-        blockchain.import_blocks_in_batch(&blocks[idx..], true);
+        blockchain.import_blocks(&blocks);
     }
 }
 
