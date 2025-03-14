@@ -208,7 +208,7 @@ impl Command {
                     current_block = eth_client.get_block_number().await?;
                     sleep(Duration::from_secs(12));
                 }
-                current_block
+                current_block = current_block
                     .checked_sub(U256::from(64))
                     .ok_or_eyre("Cannot get finalized block")?;
 
@@ -259,7 +259,7 @@ impl Command {
                         }
 
                         // Get blobs from block's slot and only keep L2 commitment's blobs
-for blob in beacon_client
+                        for blob in beacon_client
                             .get_blobs_by_slot(target_slot)
                             .await?
                             .into_iter()
