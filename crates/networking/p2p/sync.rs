@@ -230,6 +230,7 @@ impl SyncManager {
             // attach it to the end if it matches the parent_hash of the latest received header
             if let Some(ref block) = pending_block {
                 if block.header.parent_hash == last_block_header.compute_block_hash() {
+                    info!("Adding pending block: {} {}", block.header.number, block.hash());
                     block_hashes.push(block.hash());
                     block_headers.push(block.header.clone());
                 }
