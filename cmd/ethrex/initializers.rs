@@ -183,13 +183,6 @@ pub async fn init_network(
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
 ) {
-    let p2p_enabled = matches.get_flag("p2p.enabled");
-
-    if !p2p_enabled {
-        info!("P2P is disabled");
-        return;
-    }
-
     let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
 
     if dev_mode {
