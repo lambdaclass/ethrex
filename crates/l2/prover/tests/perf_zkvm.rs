@@ -2,12 +2,11 @@
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Block;
-use std::path::Path;
-use tracing::info;
-
-use ethrex_prover_lib::prover::{Prover, Risc0Prover, Sp1Prover};
+use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{backends::revm::execution_db::ToExecDB, db::StoreWrapper};
+use std::path::Path;
+use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
 #[tokio::test]
@@ -16,46 +15,22 @@ async fn test_performance_zkvm() {
 
     let (input, block_to_prove) = setup().await;
 
-    let mut prover = Risc0Prover::new();
-
     let start = std::time::Instant::now();
 
-    let receipt = prover.prove(input).unwrap();
+    // this is only executing because these tests run as a CI job and should be fast
+    // TODO: create a test for actual proving
+    execute(input).unwrap();
 
-    let duration = start.elapsed();
+    let duration = start.elapsed().as_secs();
     info!(
-        "Number of EIP1559 transactions in the proven block: {}",
+        "Number of transactions in the proven block: {}",
         block_to_prove.body.transactions.len()
     );
-    info!("[SECONDS] Proving Took: {:?}", duration);
-    info!("[MINUTES] Proving Took: {}[m]", duration.as_secs() / 60);
-
-    prover.verify(&receipt).unwrap();
-
-    let _program_output = prover.get_commitment(&receipt).unwrap();
-}
-
-#[tokio::test]
-async fn test_performance_sp1_zkvm() {
-    tracing_subscriber::fmt::init();
-
-    let (input, block_to_prove) = setup().await;
-
-    let mut prover = Sp1Prover::new();
-
-    let start = std::time::Instant::now();
-
-    let output = prover.prove(input).unwrap();
-
-    let duration = start.elapsed();
     info!(
-        "Number of EIP1559 transactions in the proven block: {}",
-        block_to_prove.body.transactions.len()
+        "Execution took {secs}s or {mins}m",
+        secs = duration,
+        mins = duration / 60
     );
-    info!("[SECONDS] Proving Took: {:?}", duration);
-    info!("[MINUTES] Proving Took: {}[m]", duration.as_secs() / 60);
-
-    prover.verify(&output).unwrap();
 }
 
 async fn setup() -> (ProgramInput, Block) {

@@ -1,0 +1,23 @@
+[package]
+name = "zkvm-pico-program"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+pico-sdk = { git = "https://github.com/brevis-network/pico" }
+zkvm_interface = { path = "../" }
+
+ethrex-common = { path = "../../../../../common", default-features = false }
+ethrex-rlp = { path = "../../../../../common/rlp" }
+ethrex-vm = { path = "../../../../../vm", default-features = false }
+ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }
+
+# Temporarily pin version because 0.11.1 breaks compilation
+#alloy-rpc-types-engine = "=0.11.0"
+
+[patch.crates-io]
+# Pico has its own patch for secp256k1 but it doesn't compile: it has a git dependency for a branch that
+# doesn't exists, and another git dependency to an seemingly private repo. The SP1 patch worked well.
+secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", branch = "patch-secp256k1-v0.29.1" }

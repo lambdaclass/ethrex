@@ -1,5 +1,5 @@
 use crate::utils::prover::errors::SaveStateError;
-use crate::utils::prover::proving_systems::{ProverType, ProvingOutput};
+use crate::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use directories::ProjectDirs;
 use ethrex_storage::AccountUpdate;
 use serde::{Deserialize, Serialize};
@@ -38,21 +38,22 @@ fn create_datadir(dir_name: &str) -> Result<PathBuf, SaveStateError> {
     Ok(path_buf_data_dir)
 }
 
-/// Proposed structure
-/// 1/
-///     account_updates_1.json
-///     proof_risc0_1.json
-///     proof_sp1_1.json
-/// 2/
-///     account_updates_2.json
-///     proof_risc0_2.json
-///     proof_sp1_2.json
-/// All the files are saved at the path defined by [ProjectDirs::data_local_dir]
-/// and the [DEFAULT_DATADIR] when calling [create_datadir]
+// Proposed structure
+// 1/
+//     account_updates_1.json
+//     proof_risc0_1.json
+//     proof_sp1_1.json
+// 2/
+//     account_updates_2.json
+//     proof_risc0_2.json
+//     proof_sp1_2.json
+// All the files are saved at the path defined by [ProjectDirs::data_local_dir]
+// and the [DEFAULT_DATADIR] when calling [create_datadir]
+
 /// Enum used to differentiate between the possible types of data we can store per block.
 #[derive(Serialize, Deserialize, Debug)]
 pub enum StateType {
-    Proof(ProvingOutput),
+    Proof(ProofCalldata),
     AccountUpdates(Vec<AccountUpdate>),
 }
 
@@ -66,20 +67,8 @@ pub enum StateFileType {
 impl From<&StateType> for StateFileType {
     fn from(state_type: &StateType) -> Self {
         match state_type {
-            StateType::Proof(p) => match p {
-                ProvingOutput::RISC0(_) => StateFileType::Proof(ProverType::RISC0),
-                ProvingOutput::SP1(_) => StateFileType::Proof(ProverType::SP1),
-            },
+            StateType::Proof(proof) => StateFileType::Proof(proof.prover_type),
             StateType::AccountUpdates(_) => StateFileType::AccountUpdates,
-        }
-    }
-}
-
-impl From<&ProverType> for StateFileType {
-    fn from(prover_type: &ProverType) -> Self {
-        match prover_type {
-            ProverType::RISC0 => StateFileType::Proof(ProverType::RISC0),
-            ProverType::SP1 => StateFileType::Proof(ProverType::SP1),
         }
     }
 }
@@ -87,8 +76,10 @@ impl From<&ProverType> for StateFileType {
 #[inline(always)]
 fn get_proof_file_name_from_prover_type(prover_type: &ProverType, block_number: u64) -> String {
     match prover_type {
+        ProverType::Exec => format!("proof_exec_{block_number}.json"),
         ProverType::RISC0 => format!("proof_risc0_{block_number}.json"),
         ProverType::SP1 => format!("proof_sp1_{block_number}.json").to_owned(),
+        ProverType::Pico => format!("proof_pico_{block_number}.json").to_owned(),
     }
 }
 
@@ -237,7 +228,7 @@ pub fn read_state(
 
     let state = match state_file_type {
         StateFileType::Proof(_) => {
-            let state: ProvingOutput = serde_json::from_str(&buf)?;
+            let state: ProofCalldata = serde_json::from_str(&buf)?;
             StateType::Proof(state)
         }
         StateFileType::AccountUpdates => {
@@ -253,7 +244,7 @@ pub fn read_state(
 pub fn read_proof(
     block_number: u64,
     state_file_type: StateFileType,
-) -> Result<ProvingOutput, SaveStateError> {
+) -> Result<ProofCalldata, SaveStateError> {
     match read_state(block_number, state_file_type)? {
         StateType::Proof(p) => Ok(p),
         StateType::AccountUpdates(_) => Err(SaveStateError::Custom(
@@ -365,7 +356,7 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
     let mut has_all_proofs = true;
     for prover_type in ProverType::all() {
         let file_name_to_seek: OsString =
-            get_state_file_name(block_number, &StateFileType::from(prover_type)).into();
+            get_state_file_name(block_number, &StateFileType::Proof(prover_type)).into();
 
         // Check if the proof exists
         let proof_exists = std::fs::read_dir(&block_state_path)?
@@ -388,15 +379,9 @@ mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::backends::revm::execution_db::ExecutionDB;
-    use risc0_zkvm::sha::Digest;
-    use sp1_recursion_gnark_ffi::PlonkBn254Proof;
-    use sp1_sdk::{client::ProverClientBuilder, HashableKey, Prover, SP1Proof, SP1PublicValues};
 
     use super::*;
-    use crate::utils::{
-        prover::proving_systems::{Risc0Proof, Sp1Proof},
-        test_data_io,
-    };
+    use crate::utils::test_data_io;
     use std::fs::{self};
 
     #[test]
@@ -427,56 +412,21 @@ mod tests {
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
 
-        // Generic RISC0 Receipt
-        let risc0_proof = Risc0Proof {
-            receipt: Box::new(risc0_zkvm::Receipt::new(
-                risc0_zkvm::InnerReceipt::Fake(risc0_zkvm::FakeReceipt::new(
-                    risc0_zkvm::ReceiptClaim {
-                        pre: risc0_zkvm::MaybePruned::Pruned(Digest::default()),
-                        post: risc0_zkvm::MaybePruned::Pruned(Digest::default()),
-                        exit_code: risc0_zkvm::ExitCode::Halted(37 * 2),
-                        input: risc0_zkvm::MaybePruned::Value(None),
-                        output: risc0_zkvm::MaybePruned::Value(None),
-                    },
-                )),
-                vec![37u8; 32],
-            )),
-            prover_id: vec![5u32; 8],
+        let exec_calldata = ProofCalldata {
+            prover_type: ProverType::Exec,
+            calldata: Vec::new(),
         };
-
-        // The following is a dummy elf to get an SP1VerifyingKey
-        // It's not the best way, but didn't found an easier one.
-        // Else, an elf file has to be saved for this test.
-        let magic_bytes1: &[u8] = &[
-            0x7f, 0x45, 0x4c, 0x46, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ];
-        let magic_bytes2: &[u8] = &[
-            0x02, 0x00, 0xF3, 0x00, 0x01, 0x00, 0x00, 0x00, 0xD4, 0x8E, 0x21, 0x00, 0x34, 0x00,
-            0x00, 0x00,
-        ];
-        let magic_bytes3: &[u8] = &[
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x34, 0x00, 0x20, 0x00, 0x07, 0x00,
-            0x28, 0x00,
-        ];
-
-        let prover_client_builder = ProverClientBuilder::mock(&ProverClientBuilder {});
-        let prover = prover_client_builder.build();
-        let (_pk, vk) =
-            prover.setup(&[magic_bytes1, magic_bytes2, magic_bytes3, &[0; 256]].concat());
-
-        let sp1_proof = Sp1Proof {
-            proof: Box::new(sp1_sdk::SP1ProofWithPublicValues {
-                proof: SP1Proof::Plonk(PlonkBn254Proof {
-                    public_inputs: ["1".to_owned(), "2".to_owned()],
-                    encoded_proof: "d".repeat(4),
-                    raw_proof: "d".repeat(4),
-                    plonk_vkey_hash: [1; 32],
-                }),
-                public_values: SP1PublicValues::new(),
-                sp1_version: "dummy".to_owned(),
-            }),
-            vk,
+        let risc0_calldata = ProofCalldata {
+            prover_type: ProverType::RISC0,
+            calldata: Vec::new(),
+        };
+        let sp1_calldata = ProofCalldata {
+            prover_type: ProverType::SP1,
+            calldata: Vec::new(),
+        };
+        let pico_calldata = ProofCalldata {
+            prover_type: ProverType::Pico,
+            calldata: Vec::new(),
         };
 
         // Write all the account_updates and proofs for each block
@@ -491,11 +441,22 @@ mod tests {
                 &StateType::AccountUpdates(account_updates),
             )?;
 
-            let risc0_data = ProvingOutput::RISC0(risc0_proof.clone());
-            write_state(block.header.number, &StateType::Proof(risc0_data))?;
+            write_state(
+                block.header.number,
+                &StateType::Proof(pico_calldata.clone()),
+            )?;
 
-            let sp1_data = ProvingOutput::SP1(sp1_proof.clone());
-            write_state(block.header.number, &StateType::Proof(sp1_data))?;
+            write_state(
+                block.header.number,
+                &StateType::Proof(risc0_calldata.clone()),
+            )?;
+
+            write_state(block.header.number, &StateType::Proof(sp1_calldata.clone()))?;
+
+            write_state(
+                block.header.number,
+                &StateType::Proof(pico_calldata.clone()),
+            )?;
         }
 
         // Check if the latest block_number saved matches the latest block in the chain.rlp
@@ -560,24 +521,21 @@ mod tests {
             assert_eq!(og_au.code, r_au.code);
         }
 
+        // Read Exec Proof back
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Exec))?;
+        assert_eq!(read_proof_updates_blk2, exec_calldata);
+
         // Read RISC0 Proof back
         let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::RISC0))?;
-
-        if let ProvingOutput::RISC0(read_risc0_proof) = read_proof_updates_blk2 {
-            assert_eq!(
-                risc0_proof.receipt.journal.bytes,
-                read_risc0_proof.receipt.journal.bytes
-            );
-            assert_eq!(read_risc0_proof.prover_id, risc0_proof.prover_id);
-        }
+        assert_eq!(read_proof_updates_blk2, risc0_calldata);
 
         // Read SP1 Proof back
         let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::SP1))?;
+        assert_eq!(read_proof_updates_blk2, sp1_calldata);
 
-        if let ProvingOutput::SP1(read_sp1_proof) = read_proof_updates_blk2 {
-            assert_eq!(read_sp1_proof.proof.bytes(), sp1_proof.proof.bytes());
-            assert_eq!(read_sp1_proof.vk.bytes32(), sp1_proof.vk.bytes32());
-        }
+        // Read Pico Proof back
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Pico))?;
+        assert_eq!(read_proof_updates_blk2, pico_calldata);
 
         fs::remove_dir_all(default_datadir()?)?;
 
