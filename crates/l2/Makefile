@@ -148,7 +148,7 @@ init-prover: ## 🚀 Initializes the Prover
 	else \
 		GPU=",gpu"; \
 	fi; \
-	cargo run --release --features "build_$$T$$GPU" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
+	cargo run --release --features "build_$$T$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
