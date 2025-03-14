@@ -275,7 +275,8 @@ impl SyncManager {
                     // Too few blocks for a snap sync, switching to full sync
                     store.clear_snap_state()?;
                     let mut sync_mode = sync_mode.lock().await;
-                    *sync_mode = SyncMode::Full
+                    *sync_mode = SyncMode::Full;
+                    current_sync_mode = SyncMode::Full;
                 }
             }
 
@@ -340,6 +341,7 @@ impl SyncManager {
                 // Next sync will be full-sync
                 let mut sync_mode = sync_mode.lock().await;
                 *sync_mode = SyncMode::Full;
+                current_sync_mode = SyncMode::Full;
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
