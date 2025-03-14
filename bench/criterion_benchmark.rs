@@ -20,7 +20,7 @@ fn block_import() {
 
     let evm_engine = "revm".to_owned().try_into().unwrap();
 
-    let network = "../../test_data/genesis-l2.json";
+    let network = "../../test_data/genesis-l2-ci.json";
 
     import::import_blocks_from_datadir(
         data_dir.to_owned(),
