@@ -1,5 +1,7 @@
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
+use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::backends::revm::{db::EvmState, REVM};
+use ethrex_blockchain::{validate_block, validate_gas_used};
 use tracing::warn;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
@@ -28,7 +30,7 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
     let public_inputs = proof.0.encode();
     Ok(ProofCalldata {
         prover_type: ProverType::Exec,
-        calldata: proof.0.encode,
+        calldata: vec![Value::Bytes(public_inputs.into())],
     })
 }
 
@@ -75,8 +77,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         panic!("invalid final state trie");
     }
 
-    ProgramOutput {
+    Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
-    }
+    })
 }

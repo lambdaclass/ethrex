@@ -19,6 +19,7 @@ thiserror.workspace = true
 ethrex-common.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
+ethrex-blockchain.workspace = true
 
 # l2
 ethrex-l2.workspace = true
@@ -35,7 +36,6 @@ pico-sdk = { git = "https://github.com/brevis-network/pico", optional = true }
 
 [dev-dependencies]
 ethrex-storage.workspace = true
-ethrex-blockchain.workspace = true
 
 [lib]
 name = "ethrex_prover_lib"
