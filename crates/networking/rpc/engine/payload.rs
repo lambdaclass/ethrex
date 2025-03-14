@@ -597,11 +597,8 @@ fn handle_new_payload_v3(
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
-    // NOTE: This check will be used later, once we can distinguish
-    // between Full and Snap Syncing
-
     // Validate if it can be the new head and find the parent
-    let Ok(parent_header) = find_parent_header(&block.header, &context.blockchain.storage) else {
+    let Ok(_) = find_parent_header(&block.header, &context.blockchain.storage) else {
         // If the parent is not present, we store it as pending and we
         // return syncing as a response.
         context
@@ -611,16 +608,6 @@ fn handle_new_payload_v3(
         return Ok(PayloadStatus::syncing());
     };
 
-    // NOTE: According to Hive Test "engine-cancun/Invalid NewPayload,
-    // ParentHash, Syncing=False, EmptyTxs=False, DynFeeTxs=False",
-    // even when a node is syncing, it should be able to respond if a
-    // newPayload is valid. The exception being if the node is
-    // performing a SnapSync; in that case, the node should reply with
-    // "Syncing". For reference, see:
-    // https://github.com/ethereum/go-ethereum/blob/e3853e910a53696c9e1199c85e86b8b6e3287476/eth/catalyst/api.go#L819
-    if *context.sync_mode.try_lock().unwrap() == SyncMode::Snap {
-        return Ok(PayloadStatus::syncing());
-    }
     // Ignore incoming
     // Check sync status
     // match context.sync_status()? {
@@ -725,6 +712,16 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         };
     };
 
+    // NOTE: According to Hive Test "engine-cancun/Invalid NewPayload,
+    // ParentHash, Syncing=False, EmptyTxs=False, DynFeeTxs=False",
+    // even when a node is syncing, it should be able to respond if a
+    // newPayload is valid. The exception being if the node is
+    // performing a SnapSync; in that case, the node should reply with
+    // "Syncing". For reference, see:
+    // https://github.com/ethereum/go-ethereum/blob/e3853e910a53696c9e1199c85e86b8b6e3287476/eth/catalyst/api.go#L819
+    if *context.sync_mode.try_lock().unwrap() == SyncMode::Snap {
+        return Ok(PayloadStatus::syncing());
+    }
     match context.blockchain.add_block(block) {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state
