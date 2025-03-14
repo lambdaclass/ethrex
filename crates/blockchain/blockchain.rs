@@ -96,7 +96,7 @@ impl Blockchain {
 
         validate_gas_used(&receipts, &block.header)?;
 
-        let mut state_trie = self.storage.open_state_trie(block.header.state_root);
+        let mut state_trie = self.storage.state_trie(block.header.parent_hash)?.unwrap();
 
         // Apply the account updates over the last block's state and compute the new state root
         let DataToCommitAfterAccountUpdates {
