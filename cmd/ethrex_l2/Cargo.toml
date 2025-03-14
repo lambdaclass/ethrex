@@ -7,7 +7,7 @@ edition.workspace = true
 ethrex-l2.workspace = true
 ethrex-sdk.workspace = true
 ethrex-common.workspace = true
-ethrex-blockchain.workspace = true
+ethrex-blockchain = { workspace = true, features = ["l2"] }
 ethrex-prover.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
@@ -40,3 +40,12 @@ sha2.workspace = true
 [[bin]]
 name = "ethrex_l2"
 path = "./src/main.rs"
+
+[features]
+default = ["exec"]
+
+# prover backends
+exec = ["ethrex-prover/exec"]
+pico = ["ethrex-prover/pico"]
+risc0 = ["ethrex-prover/risc0"]
+sp1 = ["ethrex-prover/sp1"]
