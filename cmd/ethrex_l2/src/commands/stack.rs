@@ -259,14 +259,12 @@ impl Command {
                         }
 
                         // Get blobs from block's slot and only keep L2 commitment's blobs
-                        let block_blobs = beacon_client
+for blob in beacon_client
                             .get_blobs_by_slot(target_slot)
                             .await?
                             .into_iter()
                             .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
-                            .collect::<Vec<_>>();
-
-                        for blob in block_blobs.into_iter() {
+                        {
                             let blob_path =
                                 data_dir.join(format!("{}-{}.blob", target_slot, blob.index));
                             std::fs::write(blob_path, blob.blob)?;
