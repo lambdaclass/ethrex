@@ -170,7 +170,9 @@ impl RpcHandler for RogueSponsoredTx {
             ethrex_common::types::Transaction::EIP7702Transaction(tx) => {
                 GenericTransaction::from(tx)
             }
-            _ => unreachable!("This should never happen, we are creating the tx"),
+            _ => Err(RpcErr::InvalidRogueMessage(
+                "Error while creating transaction".to_string(),
+            )),
         };
         generic.gas = None;
 
@@ -206,7 +208,9 @@ impl RpcHandler for RogueSponsoredTx {
                 tx.nonce = nonce;
                 tx.sign_inplace(&context.sponsor_pk);
             }
-            _ => unreachable!("This should never happen, we are creating the tx"),
+            _ => Err(RpcErr::InvalidRogueMessage(
+                "Error while creating transaction".to_string(),
+            )),
         }
 
         tx.handle(context)
