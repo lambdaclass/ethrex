@@ -205,6 +205,15 @@ struct Prover {
     server: Server,
 }
 
+impl Prover {
+    pub fn to_env(&self) -> String {
+        let mut env = String::new();
+        env.push_str(&self.client.to_env());
+        env.push_str(&self.server.to_env());
+        env
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct L2Config {
     deployer: Deployer,
@@ -225,6 +234,7 @@ impl L2Config {
         env_representation.push_str(&self.watcher.to_env());
         env_representation.push_str(&self.proposer.to_env());
         env_representation.push_str(&self.committer.to_env());
+        env_representation.push_str(&self.prover.to_env());
         env_representation
     }
 }
