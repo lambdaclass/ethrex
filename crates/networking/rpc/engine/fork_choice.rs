@@ -297,7 +297,12 @@ fn handle_forkchoice(
                         // If we can't get hold of the syncer, then it means that there is an active sync in process
                         if let Ok(mut syncer) = context.syncer.try_lock() {
                             syncer
-                                .start_sync(current_head, sync_head, context.storage.clone())
+                                .start_sync(
+                                    current_head,
+                                    sync_head,
+                                    context.storage.clone(),
+                                    context.sync_mode,
+                                )
                                 .await
                         }
                     });

@@ -5,6 +5,7 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
@@ -609,6 +610,11 @@ fn handle_new_payload_v3(
             .add_pending_block(block.clone())?;
         return Ok(PayloadStatus::syncing());
     };
+
+    let sync_mode = context.sync_mode.try_lock().unwrap();
+    if *sync_mode == SyncMode::Snap {
+        return Ok(PayloadStatus::syncing());
+    }
     // Ignore incoming
     // Check sync status
     // match context.sync_status()? {
