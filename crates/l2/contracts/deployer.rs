@@ -1,9 +1,12 @@
 use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
+use ethrex_common::U256;
 use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
+use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::{
     errors::{CalldataEncodeError, EthClientError},
     eth_sender::Overrides,
@@ -12,6 +15,7 @@ use ethrex_rpc::clients::eth::{
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use spinoff::{spinner, spinners, Color, Spinner};
+use std::fs;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -129,6 +133,13 @@ If running locally, a reasonable value would be CONFIG_FILE=config.toml",
         &setup_result.eth_client,
     )
     .await?;
+    let args = std::env::args().collect::<Vec<String>>();
+
+    if let Some(arg) = args.get(1) {
+        if arg == "--deposit_rich" {
+            make_deposits(bridge_address, &setup_result.eth_client).await?;
+        }
+    }
 
     let env_lines = read_env_as_lines().map_err(DeployError::EnvFileError)?;
 
@@ -687,6 +698,75 @@ async fn wait_for_transaction_receipt(
 ) -> Result<(), EthClientError> {
     while eth_client.get_transaction_receipt(tx_hash).await?.is_none() {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    Ok(())
+}
+
+async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), DeployError> {
+    let genesis_l1_path = std::env::var("GENESIS_L1_PATH")
+        .unwrap_or("../../test_data/genesis-l1-dev.json".to_string());
+    let pks_path = std::env::var("PRIVATE_KEYS_PATH")
+        .unwrap_or("../../test_data/private_keys_l1.txt".to_string());
+    let genesis = read_genesis_file(&genesis_l1_path);
+    let pks = fs::read_to_string(&pks_path).map_err(|_| DeployError::FailedToGetStringFromPath)?;
+    let private_keys: Vec<String> = pks
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .collect();
+
+    for pk in private_keys.iter() {
+        let secret_key = pk
+            .strip_prefix("0x")
+            .unwrap_or(pk)
+            .parse::<SecretKey>()
+            .map_err(|_| {
+                DeployError::DecodingError("Error while parsing private key".to_string())
+            })?;
+        let address = get_address_from_secret_key(&secret_key)?;
+        let values = vec![Value::Address(address)];
+        let calldata = encode_calldata("deposit(address)", &values)?;
+        let Some(_) = genesis.alloc.get(&address) else {
+            println!(
+                "Skipping deposit for address {:?} as it is not in the genesis file",
+                address
+            );
+            continue;
+        };
+
+        let get_balance = eth_client.get_balance(address).await?;
+        let value_to_deposit = get_balance
+            .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
+            .unwrap_or(U256::zero());
+        let overrides = Overrides {
+            value: Some(value_to_deposit),
+            from: Some(address),
+            gas_limit: Some(21000 * 5),
+            ..Overrides::default()
+        };
+
+        let build = eth_client
+            .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides, 1)
+            .await?;
+
+        match eth_client
+            .send_eip1559_transaction(&build, &secret_key)
+            .await
+        {
+            Ok(hash) => {
+                println!(
+                    "Deposit transaction sent to L1 from {:?} with value {:?} and hash {:?}",
+                    address, value_to_deposit, hash
+                );
+            }
+            Err(e) => {
+                println!(
+                    "Failed to deposit to {:?} with value {:?}",
+                    address, value_to_deposit
+                );
+                return Err(DeployError::EthClientError(e));
+            }
+        }
     }
     Ok(())
 }
