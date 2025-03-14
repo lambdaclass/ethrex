@@ -203,7 +203,15 @@ impl Command {
                 let beacon_client = BeaconClient::new(l1_beacon_rpc);
 
                 // Keep delay for finality
-                let mut current_block = eth_client.get_block_number().await? - U256::from(64);
+                let mut current_block = U256::zero();
+                while current_block < U256::from(64) {
+                    current_block = eth_client.get_block_number().await?;
+                    sleep(Duration::from_secs(12));
+                }
+                current_block
+                    .checked_sub(U256::from(64))
+                    .ok_or_eyre("Cannot get finalized block");
+
                 let event_signature = keccak("BlockCommitted(bytes32)");
 
                 loop {
@@ -251,7 +259,12 @@ impl Command {
                         }
 
                         // Get blobs from block's slot and only keep L2 commitment's blobs
-                        let block_blobs = beacon_client.get_blobs_by_slot(target_slot).await?.retain(|blob| l2_blob_hashes.contains(&blob.versioned_hash()));
+                        let block_blobs = beacon_client
+                            .get_blobs_by_slot(target_slot)
+                            .await?
+                            .into_iter()
+                            .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
+                            .collect::<Vec<_>>();
 
                         for blob in block_blobs.into_iter() {
                             let blob_path =
