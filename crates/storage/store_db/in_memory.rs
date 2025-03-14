@@ -155,6 +155,46 @@ impl StoreEngine for Store {
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
         Ok(self.inner().block_numbers.get(&block_hash).copied())
     }
+    fn import_blocks(
+        &self,
+        blocks: &[Block],
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+        state_tries: Vec<Trie>,
+        storage_tries: Vec<(H256, Trie)>,
+        bytecodes: Vec<(H256, Bytes)>,
+        as_canonical: bool,
+    ) -> Result<(), StoreError> {
+        for block in blocks {
+            let header = block.header.clone();
+            let number = header.number;
+            let hash = header.compute_block_hash();
+            let locations = block
+                .body
+                .transactions
+                .iter()
+                .enumerate()
+                .map(|(i, tx)| (tx.compute_hash(), number, hash, i as u64));
+
+            self.add_transaction_locations(locations.collect())?;
+            self.add_block_body(hash, block.body.clone())?;
+            self.add_block_header(hash, header)?;
+            self.add_block_number(hash, number)?;
+            if as_canonical {
+                self.set_canonical_block(number, hash)?;
+            }
+            self.add_receipts(hash, receipts.get(&hash).unwrap().to_vec())?;
+        }
+
+        for (code_hash, code) in bytecodes {
+            self.add_account_code(code_hash, code)?;
+        }
+
+        // TODO store tries
+        for trie in state_tries {}
+        for trie in storage_tries {}
+
+        Ok(())
+    }
 
     fn add_transaction_location(
         &self,
