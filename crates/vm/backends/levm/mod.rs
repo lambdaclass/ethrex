@@ -449,7 +449,7 @@ pub fn generic_system_contract_levm(
         U256::zero(),
         calldata.into(),
         Arc::new(store_wrapper.clone()),
-        CacheDB::new(),
+        new_state.clone(),
         vec![],
         None,
     )
@@ -460,9 +460,7 @@ pub fn generic_system_contract_levm(
     report.new_state.remove(&system_address);
 
     match report.result {
-        TxResult::Success => {
-            new_state.extend(report.new_state.clone());
-        }
+        TxResult::Success => {}
         _ => {
             return Err(EvmError::Custom(
                 "ERROR in generic_system_contract_levm(). TX didn't succeed.".to_owned(),
@@ -471,6 +469,14 @@ pub fn generic_system_contract_levm(
     }
 
     // new_state is a CacheDB coming from outside the function
+    for (address, account) in report.new_state.iter_mut() {
+        if let Some(existing_account) = new_state.get(address) {
+            let mut existing_storage = existing_account.storage.clone();
+            existing_storage.extend(account.storage.clone());
+            account.storage = existing_storage;
+            account.info.balance = existing_account.info.balance;
+        }
+    }
     new_state.extend(report.new_state.clone());
 
     Ok(report)
