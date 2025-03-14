@@ -1,4 +1,3 @@
-use crate::SyncStatus;
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,

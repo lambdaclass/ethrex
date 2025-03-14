@@ -12,7 +12,6 @@ use std::{
 use tracing::error;
 
 use crate::RpcHandler;
-use crate::SyncMode;
 use crate::{
     types::block_identifier::{BlockIdentifier, BlockTag},
     utils::{parse_json_hex, RpcErr, RpcRequest},

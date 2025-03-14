@@ -1,5 +1,4 @@
 use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::find_parent_header;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
@@ -535,7 +534,7 @@ fn validate_ancestors(
     let invalid_ancestors = {
         let lock = context.storage.invalid_ancestors.try_lock();
         match lock {
-            Ok(ref syncer) => lock,
+            Ok(_) => lock,
             Err(_) => return Err(RpcErr::Internal("Internal error".into())),
         }
     };

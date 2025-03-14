@@ -16,7 +16,7 @@ use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
-use std::{array, collections::HashMap, sync::Arc};
+use std::{array, sync::Arc};
 use storage_healing::storage_healer;
 use tokio::{
     sync::{
@@ -90,12 +90,10 @@ pub struct SyncManager {
 impl SyncManager {
     pub fn new(
         peer_table: Arc<Mutex<KademliaTable>>,
-        sync_mode: SyncMode,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
     ) -> Self {
         Self {
-            // sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
             trie_rebuilder: None,
