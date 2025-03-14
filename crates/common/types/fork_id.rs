@@ -255,8 +255,7 @@ mod tests {
         let genesis: Genesis =
             serde_json::from_reader(genesis_reader).expect("Failed to read genesis file");
         let genesis_header = genesis.get_block().header;
-
-        // See https://github.com/ethereum/go-ethereum/blob/4d94bd83b20ce430e435f3107f29632c627cfb26/core/forkid/forkid_test.go#L98
+        // See https://github.com/ethereum/go-ethereum/blob/444a6d007a08bddcec0b68b60ab507ea8bc1d078/core/forkid/forkid_test.go#L100
         let test_cases: Vec<TestCase> = vec![
             TestCase {
                 head: 0,
@@ -299,15 +298,33 @@ mod tests {
                 time: 1707305664,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0x9b192ad0").unwrap(),
+                    fork_next: 1740434112,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1740434111,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x9b192ad0").unwrap(),
+                    fork_next: 1740434112,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1740434112,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xdfbd9bed").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,
             },
             TestCase {
                 head: 123,
-                time: 2707305664,
+                time: 2740434112,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x9b192ad0").unwrap(),
+                    fork_hash: H32::from_str("0xdfbd9bed").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -328,7 +345,7 @@ mod tests {
     #[test]
     fn sepolia_test_cases() {
         let (genesis, genesis_hash) = get_sepolia_genesis();
-        // See https://github.com/ethereum/go-ethereum/blob/4d94bd83b20ce430e435f3107f29632c627cfb26/core/forkid/forkid_test.go#L83
+        // See https://github.com/ethereum/go-ethereum/blob/444a6d007a08bddcec0b68b60ab507ea8bc1d078/core/forkid/forkid_test.go#L83
         let test_cases: Vec<TestCase> = vec![
             TestCase {
                 head: 0,
@@ -389,21 +406,38 @@ mod tests {
                 time: 1706655072,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+                    fork_next: 1741159776,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1741159775,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+                    fork_next: 1741159776,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 1735372,
+                time: 1741159776,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0xed88b5fd").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,
             },
             TestCase {
                 head: 1735372,
-                time: 2706655072,
+                time: 2741159776,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x88cf81d9").unwrap(),
+                    fork_hash: H32::from_str("0xed88b5fd").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,
             },
         ];
-
         assert_test_cases(test_cases, genesis.config, genesis_hash);
     }
 

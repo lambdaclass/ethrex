@@ -113,7 +113,7 @@ fn address_from_pub_key(public_key: PublicKey) -> H160 {
     let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
     let address = Address::from(address_bytes);
 
-    return address;
+    address
 }
 
 async fn transfer_from(
@@ -295,7 +295,7 @@ async fn claim_erc20_balances(
             }
         }
     }
-    return Ok(());
+    Ok(())
 }
 
 async fn erc20_load_test(

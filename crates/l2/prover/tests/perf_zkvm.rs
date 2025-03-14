@@ -36,7 +36,7 @@ async fn test_performance_zkvm() {
 async fn setup() -> (ProgramInput, Block) {
     let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test_data"));
 
-    let genesis_file_path = path.join("genesis-l2.json");
+    let genesis_file_path = path.join("genesis-l2-ci.json");
     // l2-loadtest.rlp has blocks with many txs.
     let chain_file_path = path.join("l2-loadtest.rlp");
 

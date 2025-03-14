@@ -16,9 +16,9 @@ ethereum-types.workspace = true
 ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
-ethrex-blockchain.workspace = true
+ethrex-blockchain = { workspace = true, features = ["l2"] }
 ethrex-storage.workspace = true
-ethrex-vm.workspace = true
+ethrex-vm = { workspace = true, features = ["l2"] }
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
 ethrex-sdk = { path = "./sdk" }
@@ -33,7 +33,7 @@ directories = "5.0.1"
 toml = { version = "0.8.19", features = ["parse"] }
 bincode = "1.3.3"
 
-zkvm_interface = { path = "./prover/zkvm/interface/", default-features = false }
+zkvm_interface = { path = "./prover/zkvm/interface/", features = ["l2"] }
 
 [dev-dependencies]
 rand = "0.8.5"
