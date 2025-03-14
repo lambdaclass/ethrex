@@ -11,7 +11,7 @@ pub async fn init_client(config: ProverClientConfig) {
 }
 
 #[cfg(not(any(feature = "pico", feature = "risc0", feature = "sp1")))]
-pub use backends::mock::*;
+pub use backends::exec::*;
 
 #[cfg(feature = "pico")]
 pub use backends::pico::*;

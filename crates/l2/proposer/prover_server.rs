@@ -39,7 +39,7 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verify(uint256,bytes,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -426,6 +426,13 @@ impl ProverServer {
         block_number: u64,
     ) -> Result<H256, ProverServerError> {
         // TODO change error
+        let exec_proof = read_proof(block_number, StateFileType::Proof(ProverType::Exec))?;
+        if exec_proof.prover_type != ProverType::Exec {
+            return Err(ProverServerError::Custom(
+                "Exec Proof isn't present".to_string(),
+            ));
+        }
+
         let risc0_proof = read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
         if risc0_proof.prover_type != ProverType::RISC0 {
             return Err(ProverServerError::Custom(
@@ -440,7 +447,7 @@ impl ProverServer {
             ));
         }
 
-        let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
+        let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::Pico))?;
         if pico_proof.prover_type != ProverType::Pico {
             return Err(ProverServerError::Custom(
                 "Pico Proof isn't present".to_string(),

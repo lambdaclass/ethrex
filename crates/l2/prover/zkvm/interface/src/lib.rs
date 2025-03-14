@@ -52,6 +52,16 @@ pub mod io {
         pub final_state_hash: H256,
     }
 
+    impl ProgramOutput {
+        pub fn encode(&self) -> Vec<u8> {
+            [
+                self.initial_state_hash.to_fixed_bytes(),
+                self.final_state_hash.to_fixed_bytes(),
+            ]
+            .concat()
+        }
+    }
+
     /// Used with [serde_with] to encode a fields into JSON before serializing its bytes. This is
     /// necessary because a [BlockHeader] isn't compatible with other encoding formats like bincode or RLP.
     pub struct SerdeJSON;

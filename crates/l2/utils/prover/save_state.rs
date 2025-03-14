@@ -76,6 +76,7 @@ impl From<&StateType> for StateFileType {
 #[inline(always)]
 fn get_proof_file_name_from_prover_type(prover_type: &ProverType, block_number: u64) -> String {
     match prover_type {
+        ProverType::Exec => format!("proof_exec_{block_number}.json"),
         ProverType::RISC0 => format!("proof_risc0_{block_number}.json"),
         ProverType::SP1 => format!("proof_sp1_{block_number}.json").to_owned(),
         ProverType::Pico => format!("proof_pico_{block_number}.json").to_owned(),
@@ -411,12 +412,16 @@ mod tests {
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
 
-        let sp1_calldata = ProofCalldata {
-            prover_type: ProverType::SP1,
+        let exec_calldata = ProofCalldata {
+            prover_type: ProverType::Exec,
             calldata: Vec::new(),
         };
         let risc0_calldata = ProofCalldata {
             prover_type: ProverType::RISC0,
+            calldata: Vec::new(),
+        };
+        let sp1_calldata = ProofCalldata {
+            prover_type: ProverType::SP1,
             calldata: Vec::new(),
         };
         let pico_calldata = ProofCalldata {
@@ -434,6 +439,11 @@ mod tests {
             write_state(
                 block.header.number,
                 &StateType::AccountUpdates(account_updates),
+            )?;
+
+            write_state(
+                block.header.number,
+                &StateType::Proof(pico_calldata.clone()),
             )?;
 
             write_state(
@@ -511,6 +521,10 @@ mod tests {
             assert_eq!(og_au.code, r_au.code);
         }
 
+        // Read Exec Proof back
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Exec))?;
+        assert_eq!(read_proof_updates_blk2, exec_calldata);
+
         // Read RISC0 Proof back
         let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::RISC0))?;
         assert_eq!(read_proof_updates_blk2, risc0_calldata);
@@ -518,6 +532,10 @@ mod tests {
         // Read SP1 Proof back
         let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::SP1))?;
         assert_eq!(read_proof_updates_blk2, sp1_calldata);
+
+        // Read Pico Proof back
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Pico))?;
+        assert_eq!(read_proof_updates_blk2, pico_calldata);
 
         fs::remove_dir_all(default_datadir()?)?;
 

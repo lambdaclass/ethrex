@@ -5,6 +5,7 @@ use std::fmt::Debug;
 /// Enum used to identify the different proving systems.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProverType {
+    Exec,
     RISC0,
     SP1,
     Pico,
@@ -13,7 +14,13 @@ pub enum ProverType {
 impl ProverType {
     /// Used to iterate through all the possible proving systems
     pub fn all() -> impl Iterator<Item = ProverType> {
-        [ProverType::RISC0, ProverType::SP1, ProverType::Pico].into_iter()
+        [
+            ProverType::Exec,
+            ProverType::RISC0,
+            ProverType::SP1,
+            ProverType::Pico,
+        ]
+        .into_iter()
     }
 }
 
