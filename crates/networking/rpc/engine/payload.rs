@@ -596,6 +596,9 @@ fn handle_new_payload_v3(
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
+    // NOTE: This check will be used later, once we can distinguish
+    // between Full and Snap Syncing
+
     // Validate if it can be the new head and find the parent
     let Ok(parent_header) = find_parent_header(&block.header, &context.blockchain.storage) else {
         // If the parent is not present, we store it as pending and we
