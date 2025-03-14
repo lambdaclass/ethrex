@@ -109,12 +109,7 @@ pub fn init_rpc_api(
         .expect("Node record could not be created from local node");
 
     // Create SyncManager
-    let syncer = SyncManager::new(
-        peer_table.clone(),
-        sync_mode(matches),
-        cancel_token,
-        blockchain.clone(),
-    );
+    let syncer = SyncManager::new(peer_table.clone(), cancel_token, blockchain.clone());
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(matches),
@@ -124,6 +119,7 @@ pub fn init_rpc_api(
         get_jwt_secret(matches),
         local_p2p_node,
         local_node_record,
+        sync_mode(matches),
         syncer,
         #[cfg(feature = "based")]
         get_gateway_http_client(matches),

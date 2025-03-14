@@ -37,7 +37,10 @@ use eth::{
     },
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
+use ethrex_p2p::{
+    sync::{SyncManager, SyncMode},
+    types::NodeRecord,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -80,12 +83,13 @@ enum RpcRequestWrapper {
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
     storage: Store,
-    blockchain: Arc<Blockchain>,
+    pub blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     active_filters: ActiveFilters,
     syncer: Arc<TokioMutex<SyncManager>>,
+    sync_mode: Arc<TokioMutex<SyncMode>>,
     #[cfg(feature = "based")]
     gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -159,6 +163,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
+    sync_mode: SyncMode,
     syncer: SyncManager,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
@@ -174,6 +179,7 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(TokioMutex::new(syncer)),
+        sync_mode: Arc::new(TokioMutex::new(sync_mode)),
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
@@ -496,6 +502,7 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            sync_mode: Arc::new(TokioMutex::new(ethrex_p2p::sync::SyncMode::Full)),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -588,6 +595,7 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            sync_mode: Arc::new(TokioMutex::new(ethrex_p2p::sync::SyncMode::Full)),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -625,6 +633,7 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            sync_mode: Arc::new(TokioMutex::new(ethrex_p2p::sync::SyncMode::Full)),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -693,6 +702,7 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            sync_mode: Arc::new(TokioMutex::new(ethrex_p2p::sync::SyncMode::Full)),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
