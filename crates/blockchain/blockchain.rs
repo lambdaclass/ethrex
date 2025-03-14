@@ -202,9 +202,8 @@ impl Blockchain {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
-        let first_block_header = match blocks.first() {
-            Some(block) => block.header.clone(),
-            None => return Err((ChainError::Custom("First block not found".into()), None)),
+        let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
+            return Err((ChainError::Custom("First block not found".into()), None));
         };
 
         let Some(mut state_trie) = self
