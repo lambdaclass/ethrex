@@ -193,7 +193,7 @@ impl SyncManager {
                 SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
                 // In Full sync mode, request the same number of block bodies as headers,
                 // since they are processed together at the same rate.
-                SyncMode::Full => MAX_BLOCK_BODIES_TO_REQUEST,
+                SyncMode::Full => 1024,
             } as u64;
 
             let Some(mut block_headers) = self
@@ -385,6 +385,7 @@ impl SyncManager {
         let max_tries = 10;
         let mut tries = 0;
 
+        let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
             if let Some(block_bodies) = self.peers.request_block_bodies(chunk.clone()).await {
@@ -437,6 +438,9 @@ impl SyncManager {
         }
 
         debug!("Starting to execute and validate blocks in batch");
+        let Some(first_block) = blocks.first().cloned() else {
+            return Err(SyncError::BodiesNotFound);
+        };
         let Some(last_block) = blocks.last().cloned() else {
             return Err(SyncError::BodiesNotFound);
         };
@@ -464,8 +468,27 @@ impl SyncManager {
             return Err(error.into());
         }
 
-        store.update_latest_block_number(last_block.header.number)?;
-        debug!("Executed & stored {} blocks", blocks_len);
+        let elapsed_secs: f64 = since.elapsed().as_millis() as f64 / 1000.0;
+
+        let blocks_per_second = if elapsed_secs > 0.0 {
+            blocks_len as f64 / elapsed_secs
+        } else {
+            0.0
+        };
+
+        info!(
+            "[SYNCING] Requested, stored, and executed {} blocks in {:.3} seconds.\n\
+            Started at block with hash {} (number {}).\n\
+            Finished at block with hash {} (number {}).\n\
+            Blocks per second: {:.3}",
+            blocks_len,
+            elapsed_secs,
+            first_block.hash(),
+            first_block.header.number,
+            last_block.hash(),
+            last_block.header.number,
+            blocks_per_second
+        );
 
         Ok(())
     }

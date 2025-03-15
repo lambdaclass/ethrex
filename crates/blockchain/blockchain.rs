@@ -292,6 +292,8 @@ impl Blockchain {
             };
         }
 
+        let execution_elapsed = interval.elapsed().as_millis();
+
         // We have executed all the blocks
         // Now we have to: apply account updates -> validate state root -> validate receipts -> store blocks, receipts, trie
 
@@ -337,12 +339,30 @@ impl Blockchain {
             )
             .map_err(|e| (e.into(), None))?;
 
-        let elapsed = interval.elapsed().as_millis();
-        if elapsed != 0 && total_gas_used != 0 {
+        let elapsed_total = interval.elapsed().as_millis();
+        let mut throughput_execution = 0.0;
+        let mut throughput = 0.0;
+
+        if elapsed_total != 0 && total_gas_used != 0 {
             let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (elapsed as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT RANGE OF {blocks_len}: {throughput} Gigagas/s TIME SPENT: {elapsed} msecs");
+            throughput = (as_gigas) / (elapsed_total as f64) * 1000_f64;
+            throughput_execution = (as_gigas) / (execution_elapsed as f64) * 1000_f64;
         }
+
+        tracing::info!(
+            "[METRICS] {} blocks performance:\n\
+        \tTotal time: {} seconds\n\
+        \tAverage block time: {:.3} seconds\n\
+        \tBlocks per second: {:.3}\n\
+        \tThroughput (with db writes): {} Gigagas/s\n\
+        \tThroughput (blocks execution): {} Gigagas/s",
+            blocks_len,
+            elapsed_total / 1000,
+            (elapsed_total as f64 / blocks_len as f64) / 1000_f64,
+            blocks_len as u128 / (elapsed_total / 1000),
+            throughput,
+            throughput_execution
+        );
 
         Ok(())
     }
