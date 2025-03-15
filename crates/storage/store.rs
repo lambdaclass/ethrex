@@ -417,16 +417,8 @@ impl Store {
         self.engine.get_receipt(block_number, index)
     }
 
-    pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        // TODO Maybe add both in a single tx?
-        // let header = block.header;
-        // let number = header.number;
-        // let hash = header.compute_block_hash();
-        // self.add_transaction_locations(&block.body.transactions, number, hash)?;
-        // self.add_block_body(hash, block.body)?;
-        // self.add_block_header(hash, header)?;
-        // self.add_block_number(hash, number)
-        self.engine.__add_block(block)
+    pub fn add_block(&self, block: Block, receipts: Vec<Receipt>) -> Result<(), StoreError> {
+        self.engine.__add_block(block, receipts)
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
@@ -460,7 +452,7 @@ impl Store {
             genesis_block_number, genesis_hash
         );
 
-        self.add_block(genesis_block)?;
+        self.add_block(genesis_block, vec![])?;
         self.update_earliest_block_number(genesis_block_number)?;
         self.update_latest_block_number(genesis_block_number)?;
         self.set_canonical_block(genesis_block_number, genesis_hash)?;

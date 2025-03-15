@@ -544,7 +544,7 @@ impl StoreEngine for Store {
         Ok(self.inner().snap_state.storage_trie_rebuild_pending.clone())
     }
 
-    fn __add_block(&self, block: Block) -> Result<(), StoreError> {
+    fn __add_block(&self, block: Block, receipts: Vec<Receipt>) -> Result<(), StoreError> {
         todo!()
     }
 }

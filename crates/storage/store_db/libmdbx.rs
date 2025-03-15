@@ -683,6 +683,79 @@ impl StoreEngine for Store {
             .take(MAX_SNAPSHOT_READS);
         Ok(iter.collect::<Vec<_>>())
     }
+
+    fn __add_block(&self, block: Block, receipts: Vec<Receipt>) -> Result<(), StoreError> {
+        let block_number = block.header.number;
+        let block_hash = block.header.compute_block_hash();
+        // PREPARE TXS FOR INSERTION
+        let transactions_and_locations_data = block
+            .body
+            .transactions
+            .iter()
+            .enumerate()
+            .map(|(index, tx)| {
+                (
+                    tx.compute_hash(),
+                    (block_number, block_hash, index as Index),
+                )
+            })
+            .collect::<Vec<_>>();
+        let body_data = (block.header.compute_block_hash(), block.body);
+        let header_data = (block.header.compute_block_hash(), block.header);
+
+        // PREPARE RECEIPTS FOR INSERTION
+        let mut receipts_data = Vec::with_capacity(receipts.len());
+        for (index, receipt) in receipts.into_iter().enumerate() {
+            let key = (block_hash, index as u64).into();
+            let receipt_rlp = receipt.encode_to_vec();
+            let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                continue;
+            };
+
+            receipts_data.append(&mut entries);
+        }
+        let tx = self.db.begin_readwrite().expect("Could not open db");
+
+        {
+            let mut cursor = tx.cursor::<TransactionLocations>().unwrap();
+
+            for (k, v) in transactions_and_locations_data {
+                // FIXME: RLP ENCODE BEFORE INSERTING
+                cursor.upsert(k.into(), v.into()).unwrap()
+            }
+        }
+
+        {
+            let mut cursor = tx.cursor::<Bodies>().unwrap();
+            let (k, v) = body_data;
+            // FIXME: RLP ENCODE BEFORE INSERTING
+            cursor.upsert(k.into(), v.into()).unwrap()
+        }
+
+        {
+            let mut cursor = tx.cursor::<Headers>().unwrap();
+            let (k, v) = header_data;
+            // FIXME: RLP ENCODE BEFORE INSERTING
+            cursor.upsert(k.into(), v.into()).unwrap()
+        }
+
+        tx.upsert::<ChainData>(
+            ChainDataIndex::LatestBlockNumber,
+            block_number.encode_to_vec(),
+        )
+        .unwrap();
+
+        {
+            let mut cursor = tx.cursor::<Receipts>().unwrap();
+            receipts_data
+                .into_iter()
+                .for_each(|(k, v)| cursor.upsert(k, v).unwrap());
+        }
+
+        tx.commit().unwrap();
+
+        Ok(())
+    }
 }
 
 impl Debug for Store {
@@ -1351,9 +1424,5 @@ mod tests {
             bloom: Bloom::default(),
             logs,
         }
-    }
-
-    fn __add_block(&self, block: Block) -> Result<(), StoreError> {
-        todo!()
     }
 }

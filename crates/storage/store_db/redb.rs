@@ -869,7 +869,7 @@ impl StoreEngine for RedBStore {
             .take(MAX_SNAPSHOT_READS)
             .collect())
     }
-    fn __add_block(&self, block: Block) -> Result<(), StoreError> {
+    fn __add_block(&self, block: Block, receipts: Vec<Receipt>) -> Result<(), StoreError> {
         todo!()
     }
 }
