@@ -368,7 +368,7 @@ impl Blockchain {
             blocks_len,
             elapsed_total / 1000,
             (elapsed_total as f64 / blocks_len as f64) / 1000_f64,
-            blocks_len as u128 / (elapsed_total / 1000),
+            blocks_len as f64 / (elapsed_total as f64 / 1000_f64),
             throughput,
             throughput_execution
         );

@@ -370,16 +370,16 @@ impl SyncManager {
         store: Store,
     ) -> Result<(), SyncError> {
         let mut current_chunk_idx = 0;
-        let chunks: Vec<Vec<BlockHash>> = block_hashes
+        let block_hashes_chunks: Vec<Vec<BlockHash>> = block_hashes
             .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        let mut chunk = match chunks.get(current_chunk_idx) {
+        let mut current_block_hashes_chunk = match block_hashes_chunks.get(current_chunk_idx) {
             Some(res) => res.clone(),
             None => return Ok(()),
         };
-        let mut headers_idx = 0;
+        let mut headers_iter = block_headers.into_iter();
         let mut blocks: Vec<Block> = vec![];
 
         let max_tries = 10;
@@ -388,10 +388,16 @@ impl SyncManager {
         let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
-            if let Some(block_bodies) = self.peers.request_block_bodies(chunk.clone()).await {
+            if let Some(block_bodies) = self
+                .peers
+                .request_block_bodies(current_block_hashes_chunk.clone())
+                .await
+            {
                 let block_bodies_len = block_bodies.len();
 
-                let first_block_hash = chunk.first().map_or(H256::default(), |a| *a);
+                let first_block_hash = current_block_hashes_chunk
+                    .first()
+                    .map_or(H256::default(), |a| *a);
                 let first_block_header_number = store
                     .get_block_header_by_hash(first_block_hash)?
                     .map_or(0, |h| h.number);
@@ -402,20 +408,18 @@ impl SyncManager {
                 );
 
                 // Push blocks
-                for ((_, body), header) in chunk
+                for (_, body) in current_block_hashes_chunk
                     .drain(..block_bodies_len)
-                    .zip(block_bodies.into_iter())
-                    .zip(block_headers[headers_idx..block_bodies_len].iter())
+                    .zip(block_bodies)
                 {
+                    let header = headers_iter.next().ok_or(SyncError::BodiesNotFound)?;
                     let block = Block::new(header.clone(), body);
                     blocks.push(block);
                 }
 
-                headers_idx += block_bodies_len;
-
-                if chunk.is_empty() {
+                if current_block_hashes_chunk.is_empty() {
                     current_chunk_idx += 1;
-                    chunk = match chunks.get(current_chunk_idx) {
+                    current_block_hashes_chunk = match block_hashes_chunks.get(current_chunk_idx) {
                         Some(res) => res.clone(),
                         None => break,
                     };
@@ -468,6 +472,7 @@ impl SyncManager {
             return Err(error.into());
         }
 
+        store.update_latest_block_number(last_block.header.number)?;
         let elapsed_secs: f64 = since.elapsed().as_millis() as f64 / 1000.0;
 
         let blocks_per_second = if elapsed_secs > 0.0 {
