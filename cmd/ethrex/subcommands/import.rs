@@ -57,7 +57,7 @@ pub fn import_blocks_from_path(
     if should_batch {
         blockchain.import_blocks_in_batch(&blocks, false);
     } else {
-        blockchain.import_blocks_in_batch(&blocks, false);
+        blockchain.import_blocks(&blocks);
     }
 }
 
