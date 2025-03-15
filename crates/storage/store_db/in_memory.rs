@@ -143,7 +143,15 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError> {
+    fn add_batch_of_blocks(
+        &self,
+        blocks: &[Block],
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+        state_tries: Vec<Trie>,
+        storage_tries: Vec<(H256, Trie)>,
+        bytecodes: Vec<(H256, Bytes)>,
+        as_canonical: bool,
+    ) -> Result<(), StoreError> {
         for block in blocks {
             let header = block.header.clone();
             let number = header.number;
@@ -162,7 +170,16 @@ impl StoreEngine for Store {
             if as_canonical {
                 self.set_canonical_block(number, hash)?;
             }
+            self.add_receipts(hash, receipts.get(&hash).unwrap().to_vec())?;
         }
+
+        for (code_hash, code) in bytecodes {
+            self.add_account_code(code_hash, code)?;
+        }
+
+        // TODO store tries
+        for trie in state_tries {}
+        for trie in storage_tries {}
 
         Ok(())
     }
@@ -224,7 +241,7 @@ impl StoreEngine for Store {
 
     fn add_batch_of_receipts(
         &self,
-        receipts: Vec<(BlockHash, Vec<Receipt>)>,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
         let mut store = self.inner();
         for (index, (block_hash, receipts)) in receipts.into_iter().enumerate() {

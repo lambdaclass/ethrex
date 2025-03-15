@@ -68,6 +68,10 @@ impl Trie {
         }
     }
 
+    pub fn root(&self) -> Option<&NodeHash> {
+        self.root.as_ref()
+    }
+
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         if let Some(root) = &self.root {

@@ -74,6 +74,11 @@ impl AccountUpdate {
     }
 }
 
+pub struct DataToCommitAfterAccountUpdates {
+    pub storage_tries: Vec<(H256, Trie)>,
+    pub bytecodes: Vec<(H256, Bytes)>,
+}
+
 impl Store {
     pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
@@ -360,11 +365,15 @@ impl Store {
     }
 
     /// Applies state transitions to the given trie and does not commit nor calculate root hash
+    /// Returns all the updated storage tries to be committed to the db
     pub fn apply_account_updates_to_trie(
         &self,
         account_updates: &[AccountUpdate],
         state_trie: &mut Trie,
-    ) -> Result<(), StoreError> {
+    ) -> Result<DataToCommitAfterAccountUpdates, StoreError> {
+        let mut new_storage_tries = vec![];
+        let mut new_bytecodes: Vec<(H256, Bytes)> = vec![];
+
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -381,9 +390,8 @@ impl Store {
                     account_state.nonce = info.nonce;
                     account_state.balance = info.balance;
                     account_state.code_hash = info.code_hash;
-                    // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.add_account_code(info.code_hash, code.clone())?;
+                        new_bytecodes.push((info.code_hash, code.clone()));
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -400,14 +408,17 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
-                    // TODO: don't commit to db here to batch all the writes in a single tx
-                    account_state.storage_root = storage_trie.hash()?;
+                    account_state.storage_root = storage_trie.hash_no_commit();
+                    new_storage_tries.push((H256::from_slice(&hashed_address), storage_trie));
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
 
-        Ok(())
+        Ok(DataToCommitAfterAccountUpdates {
+            storage_tries: new_storage_tries,
+            bytecodes: new_bytecodes,
+        })
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -463,7 +474,7 @@ impl Store {
 
     pub fn add_batch_of_receipts(
         &self,
-        batch: Vec<(BlockHash, Vec<Receipt>)>,
+        batch: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
         self.engine.add_batch_of_receipts(batch)
     }
@@ -490,9 +501,20 @@ impl Store {
     pub fn add_batch_of_blocks(
         &self,
         blocks: &[Block],
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+        state_tries: Vec<Trie>,
+        storage_tries: Vec<(H256, Trie)>,
+        bytecodes: Vec<(H256, Bytes)>,
         as_canonical: bool,
     ) -> Result<(), StoreError> {
-        self.engine.add_batch_of_blocks(blocks, as_canonical)
+        self.engine.add_batch_of_blocks(
+            blocks,
+            receipts,
+            state_tries,
+            storage_tries,
+            bytecodes,
+            as_canonical,
+        )
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {

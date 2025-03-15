@@ -4,7 +4,7 @@ use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
-use std::{fmt::Debug, panic::RefUnwindSafe};
+use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
@@ -16,7 +16,15 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// If `as_canonical` is true, each block is assumed to be part of the canonical chain,  
     /// and the canonical hash is set to the block number. This optimizes writes when  
     /// processing blocks in bulk.  
-    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError>;
+    fn add_batch_of_blocks(
+        &self,
+        blocks: &[Block],
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+        state_tries: Vec<Trie>,
+        storage_tries: Vec<(H256, Trie)>,
+        bytecodes: Vec<(H256, Bytes)>,
+        as_canonical: bool,
+    ) -> Result<(), StoreError>;
 
     /// Add block header
     fn add_block_header(
@@ -108,7 +116,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Adds a batch of receipts
     fn add_batch_of_receipts(
         &self,
-        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
+        blocks_receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError>;
 
     /// Obtain receipt for a canonical block represented by the block number.
