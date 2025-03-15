@@ -125,11 +125,20 @@ impl Blockchain {
     }
 
     pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        if let Err((e, _)) = self.add_blocks_in_batch(&vec![block.clone()], false, true) {
-            Err(e)
-        } else {
-            Ok(())
+        let since = Instant::now();
+
+        let result = self
+            .execute_block(block)
+            .and_then(|res| self.store_block(block, res));
+
+        let interval = Instant::now().duration_since(since).as_millis();
+        if interval != 0 {
+            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
         }
+
+        result
     }
 
     /// Adds multiple blocks in a batch.
