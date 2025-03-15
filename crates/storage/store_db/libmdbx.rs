@@ -125,6 +125,48 @@ impl StoreEngine for Store {
         self.write::<Bodies>(block_hash.into(), block_body.into())
     }
 
+    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        for block in blocks {
+            let number = block.header.number;
+            let hash = block.hash();
+
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                tx.upsert::<TransactionLocations>(
+                    transaction.compute_hash().into(),
+                    (number, hash, index as u64).into(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
+            tx.upsert::<Bodies>(
+                hash.into(),
+                BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            tx.upsert::<Headers>(
+                hash.into(),
+                BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            tx.upsert::<BlockNumbers>(hash.into(), number)
+                .map_err(StoreError::LibmdbxError)?;
+
+            if as_canonical {
+                tx.upsert::<CanonicalBlockHashes>(number, hash.into())
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+
+        tx.commit().map_err(StoreError::LibmdbxError)
+    }
+
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
             self.get_block_body_by_hash(hash)
@@ -452,6 +494,27 @@ impl StoreEngine for Store {
             };
 
             key_values.append(&mut entries);
+        }
+
+        self.write_batch::<Receipts>(key_values.into_iter())
+    }
+
+    fn add_batch_of_receipts(
+        &self,
+        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
+    ) -> std::result::Result<(), StoreError> {
+        let mut key_values = vec![];
+
+        for (block_hash, receipts) in blocks_receipts {
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                let key = (block_hash, index as u64).into();
+                let receipt_rlp = receipt.encode_to_vec();
+                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                    continue;
+                };
+
+                key_values.append(&mut entries);
+            }
         }
 
         self.write_batch::<Receipts>(key_values.into_iter())

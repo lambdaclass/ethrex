@@ -159,6 +159,9 @@ pub fn cli() -> Command {
                         .required(false)
                         .action(clap::ArgAction::SetTrue)
                 )
+                .arg(
+                    Arg::new("batch").long("batch").required(false).action(clap::ArgAction::SetTrue)
+                )
         );
 
     cfg_if::cfg_if! {

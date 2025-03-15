@@ -17,7 +17,7 @@ use revm::execution_result::ExecutionResult;
 use revm::REVM;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum EvmEngine {
     #[default]
     REVM,
@@ -86,6 +86,18 @@ impl Evm {
                     evm_state(state.database().unwrap().clone(), block.header.parent_hash);
                 REVM::execute_block(block, &mut state)
             }
+            Evm::LEVM { store_wrapper, .. } => {
+                LEVM::execute_block(block, store_wrapper.store.clone())
+            }
+        }
+    }
+
+    pub fn execute_block_without_clearing_state(
+        &mut self,
+        block: &Block,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        match self {
+            Evm::REVM { state } => REVM::execute_block(block, state),
             Evm::LEVM { store_wrapper, .. } => {
                 LEVM::execute_block(block, store_wrapper.store.clone())
             }

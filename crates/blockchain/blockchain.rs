@@ -28,6 +28,9 @@ use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
 
+/// The number of latest tries to store in the database (meaning that we would have the state for the last 128 blocks)
+pub const STATE_TRIES_TO_KEEP: usize = 128;
+
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
@@ -36,6 +39,11 @@ pub struct Blockchain {
     pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
+}
+
+pub struct BatchBlockProcessingFailure {
+    pub last_valid_hash: H256,
+    pub failed_block_hash: H256,
 }
 
 impl Blockchain {
@@ -109,8 +117,8 @@ impl Blockchain {
         // Processes requests from receipts, computes the requests_hash and compares it against the header
         validate_requests_hash(&block.header, &chain_config, &requests)?;
 
-        store_block(&self.storage, block.clone())?;
-        store_receipts(&self.storage, receipts, block_hash)?;
+        self.storage.add_block(block.clone())?;
+        self.storage.add_receipts(block_hash, receipts)?;
 
         Ok(())
     }
@@ -132,8 +140,177 @@ impl Blockchain {
         result
     }
 
+    /// Adds multiple blocks in a batch.
+    ///
+    /// If an error occurs, returns a tuple containing:
+    /// - The error type ([`ChainError`]).
+    /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
+    ///
+    /// `should_commit_intermediate_tries` determines whether the state tries for each block  
+    /// should be stored in the database (the last one is always stored).
+    ///
+    /// `as_canonical` determines whether the block number should be set as canonical for the block hash when committing to the db.
+    pub fn add_blocks_in_batch(
+        &self,
+        blocks: &[Block],
+        should_commit_intermediate_tries: bool,
+        as_canonical: bool,
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+        match self.evm_engine {
+            // LEVM does not support batch block processing as it does not persist the state between block executions
+            // Therefore, we must commit to the db after each block
+            EvmEngine::LEVM => {
+                let mut last_valid_hash = H256::default();
+                for block in blocks {
+                    let block_hash = block.hash();
+                    let block_number = block.header.number;
+
+                    if let Err(e) = self.add_block(block) {
+                        return Err((
+                            e,
+                            Some(BatchBlockProcessingFailure {
+                                last_valid_hash,
+                                failed_block_hash: block_hash,
+                            }),
+                        ));
+                    };
+
+                    if as_canonical {
+                        self.storage
+                            .set_canonical_block(block_number, block_hash)
+                            .map_err(|e| (e.into(), None))?;
+                    }
+
+                    last_valid_hash = block_hash;
+                }
+
+                Ok(())
+            }
+            EvmEngine::REVM => self.add_blocks_in_batch_inner(
+                blocks,
+                should_commit_intermediate_tries,
+                as_canonical,
+            ),
+        }
+    }
+
+    fn add_blocks_in_batch_inner(
+        &self,
+        blocks: &[Block],
+        should_commit_intermediate_tries: bool,
+        as_canonical: bool,
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+        let mut last_valid_hash = H256::default();
+
+        let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
+            return Err((ChainError::Custom("First block not found".into()), None));
+        };
+
+        let Some(mut state_trie) = self
+            .storage
+            .state_trie(first_block_header.parent_hash)
+            .map_err(|e| (e.into(), None))?
+        else {
+            return Err((ChainError::ParentNotFound, None));
+        };
+
+        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
+        let mut total_gas_used = 0;
+        let chain_config: ChainConfig = self
+            .storage
+            .get_chain_config()
+            .map_err(|e| (e.into(), None))?;
+
+        let mut vm = Evm::new(
+            self.evm_engine,
+            self.storage.clone(),
+            first_block_header.parent_hash,
+        );
+
+        let mut add_block = |block: &Block, i: usize| -> Result<(), ChainError> {
+            let is_first_block = i == 0;
+            let is_last_block = i == blocks.len() - 1;
+
+            let block_hash = block.header.compute_block_hash();
+
+            let parent_header = if is_first_block {
+                // for the first block, we need to query the store
+                let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+                    // If the parent is not present, we store it as pending.
+                    self.storage.add_pending_block(block.clone())?;
+                    return Err(ChainError::ParentNotFound);
+                };
+                parent_header
+            } else {
+                // for the subsequent ones, the parent is the previous block
+                blocks[i - 1].header.clone()
+            };
+
+            // Validate the block pre-execution
+            validate_block(block, &parent_header, &chain_config)?;
+
+            let BlockExecutionResult {
+                account_updates,
+                receipts,
+                requests,
+            } = vm.execute_block_without_clearing_state(block)?;
+
+            validate_gas_used(&receipts, &block.header)?;
+
+            self.storage
+                .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
+
+            if should_commit_intermediate_tries || is_last_block {
+                let root_hash = state_trie.hash_no_commit();
+                validate_state_root(&block.header, root_hash)?;
+                // commit to db after validating the root
+                state_trie.hash().map_err(StoreError::Trie)?;
+                validate_receipts_root(&block.header, &receipts)?;
+                validate_requests_hash(&block.header, &chain_config, &requests)?;
+            }
+
+            all_receipts.push((block_hash, receipts));
+            total_gas_used += block.header.gas_used;
+
+            last_valid_hash = block_hash;
+
+            Ok(())
+        };
+
+        let interval = Instant::now();
+
+        for (i, block) in blocks.iter().enumerate() {
+            if let Err(err) = add_block(block, i) {
+                return Err((
+                    err,
+                    Some(BatchBlockProcessingFailure {
+                        failed_block_hash: block.hash(),
+                        last_valid_hash,
+                    }),
+                ));
+            };
+        }
+
+        let blocks_len = blocks.len();
+        self.storage
+            .add_batch_of_blocks(blocks, as_canonical)
+            .map_err(|e| (e.into(), None))?;
+        self.storage
+            .add_batch_of_receipts(all_receipts)
+            .map_err(|e| (e.into(), None))?;
+
+        let elapsed = interval.elapsed().as_millis();
+        if elapsed != 0 && total_gas_used != 0 {
+            let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (elapsed as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT RANGE OF {blocks_len}: {throughput} Gigagas/s TIME SPENT: {elapsed} msecs");
+        }
+
+        Ok(())
+    }
+
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks(&self, blocks: &Vec<Block>) {
+    pub fn import_blocks(&self, blocks: &[Block]) {
         let size = blocks.len();
         for block in blocks {
             let hash = block.hash();
@@ -161,25 +338,60 @@ impl Blockchain {
                 .is_err()
             {
                 error!(
-                    "Fatal: added block {} but could not set it as canonical -- aborting block import",
-                    block.header.number
-                );
+                        "Fatal: added block {} but could not set it as canonical -- aborting block import",
+                        block.header.number
+                    );
                 break;
             };
         }
+
         if let Some(last_block) = blocks.last() {
-            let hash = last_block.hash();
-            match self.evm_engine {
-                EvmEngine::LEVM => {
-                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                    let _ = apply_fork_choice(&self.storage, hash, hash, hash);
-                }
-                EvmEngine::REVM => {
-                    apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
-                }
+            self.apply_fork_choice_after_import(last_block.hash());
+        }
+
+        info!("Added {size} blocks to blockchain");
+    }
+
+    //TODO: Forkchoice Update shouldn't be part of this function
+    pub fn import_blocks_in_batch(&self, blocks: &[Block], should_commit_intermediate_tries: bool) {
+        let size = blocks.len();
+        let last_block = blocks.last().unwrap().header.clone();
+        if let Err((err, _)) =
+            self.add_blocks_in_batch(blocks, should_commit_intermediate_tries, true)
+        {
+            warn!("Failed to add blocks: {:?}.", err);
+        };
+        if let Err(err) = self.storage.update_latest_block_number(last_block.number) {
+            error!("Fatal: added block {} but could not update the block number, err {:?} -- aborting block import", last_block.number, err);
+            return;
+        };
+
+        self.apply_fork_choice_after_import(last_block.compute_block_hash());
+
+        info!("Added {size} blocks to blockchain");
+    }
+
+    fn apply_fork_choice_after_import(&self, last_block_hash: H256) {
+        match self.evm_engine {
+            EvmEngine::LEVM => {
+                // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
+                let _ = apply_fork_choice(
+                    &self.storage,
+                    last_block_hash,
+                    last_block_hash,
+                    last_block_hash,
+                );
+            }
+            EvmEngine::REVM => {
+                apply_fork_choice(
+                    &self.storage,
+                    last_block_hash,
+                    last_block_hash,
+                    last_block_hash,
+                )
+                .unwrap();
             }
         }
-        info!("Added {size} blocks to blockchain");
     }
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
@@ -361,21 +573,6 @@ pub fn validate_requests_hash(
         ));
     }
 
-    Ok(())
-}
-
-/// Stores block and header in the database
-pub fn store_block(storage: &Store, block: Block) -> Result<(), ChainError> {
-    storage.add_block(block)?;
-    Ok(())
-}
-
-pub fn store_receipts(
-    storage: &Store,
-    receipts: Vec<Receipt>,
-    block_hash: BlockHash,
-) -> Result<(), ChainError> {
-    storage.add_receipts(block_hash, receipts)?;
     Ok(())
 }
 

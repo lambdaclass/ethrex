@@ -10,6 +10,14 @@ use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
+    /// Add a batch of blocks in a single transaction.
+    /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
+    ///
+    /// If `as_canonical` is true, each block is assumed to be part of the canonical chain,  
+    /// and the canonical hash is set to the block number. This optimizes writes when  
+    /// processing blocks in bulk.  
+    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError>;
+
     /// Add block header
     fn add_block_header(
         &self,
@@ -96,6 +104,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add receipt
     fn add_receipts(&self, block_hash: BlockHash, receipts: Vec<Receipt>)
         -> Result<(), StoreError>;
+
+    /// Adds a batch of receipts
+    fn add_batch_of_receipts(
+        &self,
+        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
+    ) -> Result<(), StoreError>;
 
     /// Obtain receipt for a canonical block represented by the block number.
     fn get_receipt(
