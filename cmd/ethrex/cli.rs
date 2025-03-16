@@ -87,7 +87,7 @@ pub struct Options {
     pub discovery_port: String,
     #[arg(long = "network", value_name = "GENESIS_FILE_PATH")]
     pub network: String,
-    #[arg(long = "bootnodes", value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1..)]
+    #[arg(long = "bootnodes", value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help_heading = "P2P options")]
     pub bootnodes: Vec<Node>,
     #[arg(
         long = "datadir",
@@ -97,7 +97,7 @@ pub struct Options {
         required = false,
     )]
     pub datadir: String,
-    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode)]
+    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help_heading = "P2P options")]
     pub syncmode: SyncMode,
     #[arg(long = "metrics.port", value_name = "PROMETHEUS_METRICS_PORT")]
     pub metrics_port: Option<String>,
