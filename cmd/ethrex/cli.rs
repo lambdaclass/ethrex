@@ -134,25 +134,25 @@ pub struct BasedOptions {
         default_value = "0.0.0.0",
         value_name = "GATEWAY_ADDRESS"
     )]
-    gateway_addr: String,
+    pub gateway_addr: String,
     #[arg(
         long = "gateway.eth_port",
         default_value = "8546",
         value_name = "GATEWAY_ETH_PORT"
     )]
-    gateway_eth_port: String,
+    pub gateway_eth_port: String,
     #[arg(
         long = "gateway.auth_port",
         default_value = "8553",
         value_name = "GATEWAY_AUTH_PORT"
     )]
-    gateway_auth_port: String,
+    pub gateway_auth_port: String,
     #[arg(
         long = "gateway.jwtsecret",
         default_value = "jwt.hex",
         value_name = "GATEWAY_JWTSECRET_PATH"
     )]
-    gateway_jwtsecret: String,
+    pub gateway_jwtsecret: String,
 }
 
 #[derive(ClapSubcommand)]
