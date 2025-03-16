@@ -7,19 +7,19 @@ use ethrex_prover_lib::prover::create_prover;
 
 #[derive(Args)]
 pub(crate) struct Command {
-    #[clap(
+    #[arg(
         short = 'g',
         long = "genesis",
         help = "Path to the file containing the genesis block."
     )]
     genesis: String,
-    #[clap(
+    #[arg(
         short = 'c',
         long = "chain",
         help = "Path to the file containing the test chain."
     )]
     chain: String,
-    #[clap(
+    #[arg(
         short = 'n',
         long = "block-number",
         help = "Number of the block in the test chain to prove."
