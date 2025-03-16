@@ -55,19 +55,35 @@ pub struct Options {
         value_name = "JWTSECRET_PATH"
     )]
     pub authrpc_jwtsecret: String,
-    #[arg(long = "p2p.enabled", default_value = if cfg!(feature = "l2") { "false" } else { "true" }, value_name = "P2P_ENABLED", action = ArgAction::SetTrue)]
+    #[arg(long = "p2p.enabled", default_value = if cfg!(feature = "l2") { "false" } else { "true" }, value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
     pub p2p_enabled: bool,
-    #[arg(long = "p2p.addr", default_value = "0.0.0.0", value_name = "ADDRESS")]
+    #[arg(
+        long = "p2p.addr",
+        default_value = "0.0.0.0",
+        value_name = "ADDRESS",
+        help_heading = "P2P options"
+    )]
     pub p2p_addr: String,
-    #[arg(long = "p2p.port", default_value = "30303", value_name = "PORT")]
+    #[arg(
+        long = "p2p.port",
+        default_value = "30303",
+        value_name = "PORT",
+        help_heading = "P2P options"
+    )]
     pub p2p_port: String,
     #[arg(
         long = "discovery.addr",
         default_value = "0.0.0.0",
-        value_name = "ADDRESS"
+        value_name = "ADDRESS",
+        help_heading = "P2P options"
     )]
     pub discovery_addr: String,
-    #[arg(long = "discovery.port", default_value = "30303", value_name = "PORT")]
+    #[arg(
+        long = "discovery.port",
+        default_value = "30303",
+        value_name = "PORT",
+        help_heading = "P2P options"
+    )]
     pub discovery_port: String,
     #[arg(long = "network", value_name = "GENESIS_FILE_PATH")]
     pub network: String,
