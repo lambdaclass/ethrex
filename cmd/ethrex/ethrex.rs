@@ -1,57 +1,43 @@
+use clap::Parser;
 use ethrex::{
+    cli::CLI,
     initializers::{
         get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_rpc_api,
         init_store, init_tracing,
     },
     utils::{set_datadir, store_known_peers},
-    DEFAULT_DATADIR,
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, time::Duration};
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
-mod cli;
-
 #[tokio::main]
-async fn main() {
-    let matches = cli::cli().get_matches();
+async fn main() -> eyre::Result<()> {
+    let CLI {
+        opts,
+        #[cfg(feature = "based")]
+        based_opts,
+        command,
+    } = CLI::parse();
 
-    init_tracing(&matches);
+    init_tracing(&opts);
 
-    if let Some(subcommand_matches) = matches.subcommand_matches("removedb") {
-        let data_dir = subcommand_matches
-            .get_one::<String>("datadir")
-            .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
-        ethrex::removedb::remove_db(&data_dir);
-        return;
+    if let Some(subcommand) = command {
+        return subcommand.run(&opts);
     }
 
-    let evm_engine = matches
-        .get_one::<String>("evm")
-        .unwrap_or(&"revm".to_string())
-        .clone()
-        .try_into()
-        .unwrap_or_else(|e| panic!("{}", e));
+    let data_dir = set_datadir(&opts.datadir);
 
-    let network = get_network(&matches);
-
-    let data_dir = matches
-        .get_one::<String>("datadir")
-        .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
-
-    if let Some(subcommand_matches) = matches.subcommand_matches("import") {
-        ethrex::import::import_blocks_from_path(subcommand_matches, data_dir, evm_engine, &network);
-        return;
-    }
+    let network = get_network(&opts);
 
     let store = init_store(&data_dir, &network);
 
-    let blockchain = init_blockchain(evm_engine, store.clone());
+    let blockchain = init_blockchain(opts.evm, store.clone());
 
     let signer = get_signer(&data_dir);
 
-    let local_p2p_node = get_local_p2p_node(&matches, &signer);
+    let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
     let peer_table = peer_table(signer.clone());
 
@@ -61,7 +47,9 @@ async fn main() {
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
     init_rpc_api(
-        &matches,
+        &opts,
+        #[cfg(feature = "based")]
+        &based_opts,
         &signer,
         peer_table.clone(),
         local_p2p_node,
@@ -71,21 +59,19 @@ async fn main() {
         tracker.clone(),
     );
 
-    init_metrics(&matches, tracker.clone());
+    init_metrics(&opts, tracker.clone());
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "dev")] {
             use ethrex::initializers::init_dev_network;
 
-            init_dev_network(&matches, &store, tracker.clone());
+            init_dev_network(&opts, &store, tracker.clone());
         } else {
-            use ethrex::initializers::{init_network};
+            use ethrex::initializers::init_network;
 
-            let p2p_enabled = matches.get_flag("p2p.enabled");
-
-            if p2p_enabled {
+            if opts.p2p_enabled {
                 init_network(
-                    &matches,
+                    &opts,
                     &network,
                     &data_dir,
                     local_p2p_node,
@@ -123,4 +109,6 @@ async fn main() {
             info!("Server shutting down!");
         }
     }
+
+    Ok(())
 }
