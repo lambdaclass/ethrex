@@ -1,5 +1,5 @@
 use crate::{
-    proposer::errors::L1WatcherError,
+    sequencer::errors::L1WatcherError,
     utils::{
         config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
         parse::hash_to_address,
@@ -46,10 +46,8 @@ impl L1Watcher {
     ) -> Result<Self, EthClientError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let l2_client = EthClient::new("http://localhost:1729");
-        let last_block_fetched =
-            EthClient::get_last_fetched_l1_block(&eth_client, watcher_config.bridge_address)
-                .await?
-                .into();
+
+        let last_block_fetched = U256::zero();
         Ok(Self {
             eth_client,
             l2_client,
@@ -123,6 +121,13 @@ impl L1Watcher {
     }
 
     pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
+        if self.last_block_fetched == U256::zero() {
+            self.last_block_fetched =
+                EthClient::get_last_fetched_l1_block(&self.eth_client, self.address)
+                    .await?
+                    .into();
+        }
+
         let current_block = self.eth_client.get_block_number().await?;
 
         debug!(
