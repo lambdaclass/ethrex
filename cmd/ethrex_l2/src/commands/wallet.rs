@@ -1,6 +1,6 @@
 use crate::config::EthrexL2Config;
 use bytes::Bytes;
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use ethereum_types::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::merkle_tree::merkle_proof;
@@ -16,9 +16,9 @@ const CLAIM_WITHDRAWAL_SIGNATURE: &str =
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    #[clap(about = "Get the balance of the wallet.")]
+    #[command(about = "Get the balance of the wallet.")]
     Balance {
-        #[clap(long = "token")]
+        #[arg(long = "token")]
         token_address: Option<Address>,
         #[arg(long = "l2", required = false)]
         l2: bool,
@@ -27,87 +27,84 @@ pub(crate) enum Command {
         #[arg(long = "wei", required = false, default_value_t = false)]
         wei: bool,
     },
-    #[clap(about = "Deposit funds into some wallet.")]
+    #[command(about = "Deposit funds into some wallet.")]
     Deposit {
-        // TODO: Parse ether instead.
-        #[clap(long = "amount", value_parser = U256::from_dec_str)]
+        #[arg(long = "amount", value_parser = U256::from_dec_str)]
         amount: U256,
-        #[clap(
+        #[arg(
             long = "token",
             help = "Specify the token address, the base token is used as default."
         )]
         token_address: Option<Address>,
-        #[clap(
+        #[arg(
             long = "to",
             help = "Specify the wallet in which you want to deposit your funds."
         )]
         to: Option<Address>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
-        #[clap(long, short = 'e', required = false)]
+        #[arg(long, short = 'e', required = false)]
         explorer_url: bool,
     },
-    #[clap(about = "Finalize a pending withdrawal.")]
+    #[command(about = "Finalize a pending withdrawal.")]
     ClaimWithdraw {
         l2_withdrawal_tx_hash: H256,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
-    #[clap(about = "Transfer funds to another wallet.")]
+    #[command(about = "Transfer funds to another wallet.")]
     Transfer {
-        // TODO: Parse ether instead.
-        #[clap(long = "amount", value_parser = U256::from_dec_str)]
+        #[arg(long = "amount", value_parser = U256::from_dec_str)]
         amount: U256,
-        #[clap(long = "token")]
+        #[arg(long = "token")]
         token_address: Option<Address>,
-        #[clap(long = "to")]
+        #[arg(long = "to")]
         to: Address,
-        #[clap(long = "nonce")]
+        #[arg(long = "nonce")]
         nonce: Option<u64>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
-        #[clap(
+        #[arg(
             long = "l1",
             required = false,
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
         )]
         l1: bool,
-        #[clap(long, short = 'e', required = false)]
+        #[arg(long, short = 'e', required = false)]
         explorer_url: bool,
     },
-    #[clap(about = "Withdraw funds from the wallet.")]
+    #[command(about = "Withdraw funds from the wallet.")]
     Withdraw {
-        // TODO: Parse ether instead.
-        #[clap(long = "amount", value_parser = U256::from_dec_str)]
+        #[arg(long = "amount", value_parser = U256::from_dec_str)]
         amount: U256,
-        #[clap(long = "to")]
+        #[arg(long = "to")]
         to: Option<Address>,
-        #[clap(long = "nonce")]
+        #[arg(long = "nonce")]
         nonce: Option<u64>,
-        #[clap(
+        #[arg(
             long = "token",
             help = "Specify the token address, the base token is used as default."
         )]
         token_address: Option<Address>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
-        #[clap(long, short = 'e', required = false)]
+        #[arg(long, short = 'e', required = false)]
         explorer_url: bool,
     },
-    #[clap(about = "Get the withdrawal merkle proof of a transaction.")]
+    #[command(about = "Get the withdrawal merkle proof of a transaction.")]
     WithdrawalProof {
-        #[clap(long = "hash")]
+        #[arg(long = "hash")]
         tx_hash: H256,
     },
-    #[clap(about = "Get the wallet address.")]
+    #[command(about = "Get the wallet address.")]
     Address,
-    #[clap(about = "Get the wallet private key.")]
+    #[command(about = "Get the wallet private key.")]
     PrivateKey,
-    #[clap(about = "Send a transaction")]
+    #[command(about = "Send a transaction")]
     Send {
-        #[clap(long = "to")]
+        #[arg(long = "to")]
         to: Address,
-        #[clap(
+        #[arg(
             long = "value",
             value_parser = U256::from_dec_str,
             default_value = "0",
@@ -115,40 +112,40 @@ pub(crate) enum Command {
             help = "Value to send in wei"
         )]
         value: U256,
-        #[clap(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
+        #[arg(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
         calldata: Bytes,
-        #[clap(
+        #[arg(
             long = "l1",
             required = false,
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
         )]
         l1: bool,
-        #[clap(long = "chain-id", required = false)]
+        #[arg(long = "chain-id", required = false)]
         chain_id: Option<u64>,
-        #[clap(long = "nonce", required = false)]
+        #[arg(long = "nonce", required = false)]
         nonce: Option<u64>,
-        #[clap(long = "gas-limit", required = false)]
+        #[arg(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
-        #[clap(long = "gas-price", required = false)]
+        #[arg(long = "gas-price", required = false)]
         max_fee_per_gas: Option<u64>,
-        #[clap(long = "priority-gas-price", required = false)]
+        #[arg(long = "priority-gas-price", required = false)]
         max_priority_fee_per_gas: Option<u64>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
-    #[clap(about = "Make a call to a contract")]
+    #[command(about = "Make a call to a contract")]
     Call {
-        #[clap(long = "to")]
+        #[arg(long = "to")]
         to: Address,
-        #[clap(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
+        #[arg(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
         calldata: Bytes,
-        #[clap(
+        #[arg(
             long = "l1",
             required = false,
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
         )]
         l1: bool,
-        #[clap(
+        #[arg(
             long = "value",
             value_parser = U256::from_dec_str,
             default_value = "0",
@@ -156,24 +153,24 @@ pub(crate) enum Command {
             help = "Value to send in wei"
         )]
         value: U256,
-        #[clap(long = "from", required = false)]
+        #[arg(long = "from", required = false)]
         from: Option<Address>,
-        #[clap(long = "gas-limit", required = false)]
+        #[arg(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
-        #[clap(long = "gas-price", required = false)]
+        #[arg(long = "gas-price", required = false)]
         max_fee_per_gas: Option<u64>,
     },
-    #[clap(about = "Deploy a contract")]
+    #[command(about = "Deploy a contract")]
     Deploy {
-        #[clap(long = "bytecode", value_parser = decode_hex)]
+        #[arg(long = "bytecode", value_parser = decode_hex)]
         bytecode: Bytes,
-        #[clap(
+        #[arg(
             long = "l1",
             required = false,
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
         )]
         l1: bool,
-        #[clap(
+        #[arg(
             long = "value",
             value_parser = U256::from_dec_str,
             default_value = "0",
@@ -181,20 +178,21 @@ pub(crate) enum Command {
             help = "Value to send in wei"
         )]
         value: U256,
-        #[clap(long = "chain-id", required = false)]
+        #[arg(long = "chain-id", required = false)]
         chain_id: Option<u64>,
-        #[clap(long = "nonce", required = false)]
+        #[arg(long = "nonce", required = false)]
         nonce: Option<u64>,
-        #[clap(long = "gas-limit", required = false)]
+        #[arg(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
-        #[clap(long = "gas-price", required = false)]
+        #[arg(long = "gas-price", required = false)]
         max_fee_per_gas: Option<u64>,
-        #[clap(long = "priority-gas-price", required = false)]
+        #[arg(long = "priority-gas-price", required = false)]
         max_priority_fee_per_gas: Option<u64>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
 }
+
 
 fn decode_hex(s: &str) -> Result<Bytes, FromHexError> {
     match s.strip_prefix("0x") {
