@@ -45,7 +45,7 @@ pub struct Options {
         help_heading = "RPC options"
     )]
     pub http_port: String,
-    #[arg(long = "log.level", default_value_t = Level::INFO, value_name = "LOG_LEVEL")]
+    #[arg(long = "log.level", default_value_t = Level::INFO, value_name = "LOG_LEVEL", help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
         long = "authrpc.addr",
@@ -98,7 +98,11 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
-    #[arg(long = "network", value_name = "GENESIS_FILE_PATH")]
+    #[arg(
+        long = "network",
+        value_name = "GENESIS_FILE_PATH",
+        help_heading = "Node options"
+    )]
     pub network: String,
     #[arg(long = "bootnodes", value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help_heading = "P2P options")]
     pub bootnodes: Vec<Node>,
@@ -108,16 +112,22 @@ pub struct Options {
         help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
         default_value = DEFAULT_DATADIR,
         required = false,
+        help_heading = "Node options"
     )]
     pub datadir: String,
     #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help_heading = "P2P options")]
     pub syncmode: SyncMode,
-    #[arg(long = "metrics.port", value_name = "PROMETHEUS_METRICS_PORT")]
+    #[arg(
+        long = "metrics.port",
+        value_name = "PROMETHEUS_METRICS_PORT",
+        help_heading = "Node options"
+    )]
     pub metrics_port: Option<String>,
     #[arg(
         long = "dev",
         help = "Used to create blocks without requiring a Consensus Client",
-        action = ArgAction::SetTrue
+        action = ArgAction::SetTrue,
+        help_heading = "Node options"
     )]
     pub dev: bool,
     #[arg(
@@ -125,7 +135,8 @@ pub struct Options {
         default_value = "revm",
         value_name = "EVM_BACKEND",
         help = "Has to be `levm` or `revm`",
-        value_parser = utils::parse_evm_engine
+        value_parser = utils::parse_evm_engine,
+        help_heading = "Node options"
     )]
     pub evm: EvmEngine,
 }
