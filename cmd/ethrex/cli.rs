@@ -132,25 +132,29 @@ pub struct BasedOptions {
     #[arg(
         long = "gateway.addr",
         default_value = "0.0.0.0",
-        value_name = "GATEWAY_ADDRESS"
+        value_name = "GATEWAY_ADDRESS",
+        help_heading = "Based options"
     )]
     pub gateway_addr: String,
     #[arg(
         long = "gateway.eth_port",
         default_value = "8546",
-        value_name = "GATEWAY_ETH_PORT"
+        value_name = "GATEWAY_ETH_PORT",
+        help_heading = "Based options"
     )]
     pub gateway_eth_port: String,
     #[arg(
         long = "gateway.auth_port",
         default_value = "8553",
-        value_name = "GATEWAY_AUTH_PORT"
+        value_name = "GATEWAY_AUTH_PORT",
+        help_heading = "Based options"
     )]
     pub gateway_auth_port: String,
     #[arg(
         long = "gateway.jwtsecret",
         default_value = "jwt.hex",
-        value_name = "GATEWAY_JWTSECRET_PATH"
+        value_name = "GATEWAY_JWTSECRET_PATH",
+        help_heading = "Based options"
     )]
     pub gateway_jwtsecret: String,
 }
