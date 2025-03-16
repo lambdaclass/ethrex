@@ -34,25 +34,38 @@ pub struct Options {
     #[arg(
         long = "http.addr",
         default_value = "localhost",
-        value_name = "ADDRESS"
+        value_name = "ADDRESS",
+        help_heading = "RPC options"
     )]
     pub http_addr: String,
-    #[arg(long = "http.port", default_value = "8545", value_name = "PORT")]
+    #[arg(
+        long = "http.port",
+        default_value = "8545",
+        value_name = "PORT",
+        help_heading = "RPC options"
+    )]
     pub http_port: String,
     #[arg(long = "log.level", default_value_t = Level::INFO, value_name = "LOG_LEVEL")]
     pub log_level: Level,
     #[arg(
         long = "authrpc.addr",
         default_value = "localhost",
-        value_name = "ADDRESS"
+        value_name = "ADDRESS",
+        help_heading = "RPC options"
     )]
     pub authrpc_addr: String,
-    #[arg(long = "authrpc.port", default_value = "8551", value_name = "PORT")]
+    #[arg(
+        long = "authrpc.port",
+        default_value = "8551",
+        value_name = "PORT",
+        help_heading = "RPC options"
+    )]
     pub authrpc_port: String,
     #[arg(
         long = "authrpc.jwtsecret",
         default_value = "jwt.hex",
-        value_name = "JWTSECRET_PATH"
+        value_name = "JWTSECRET_PATH",
+        help_heading = "RPC options"
     )]
     pub authrpc_jwtsecret: String,
     #[arg(long = "p2p.enabled", default_value = if cfg!(feature = "l2") { "false" } else { "true" }, value_name = "P2P_ENABLED", action = ArgAction::SetTrue, help_heading = "P2P options")]
