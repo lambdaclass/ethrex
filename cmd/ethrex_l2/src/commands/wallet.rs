@@ -193,7 +193,6 @@ pub(crate) enum Command {
     },
 }
 
-
 fn decode_hex(s: &str) -> Result<Bytes, FromHexError> {
     match s.strip_prefix("0x") {
         Some(s) => hex::decode(s).map(Into::into),
