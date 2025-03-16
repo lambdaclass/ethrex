@@ -13,7 +13,6 @@ pub(crate) enum Command {
         short_flag = 'l'
     )]
     LatestBlocks,
-    
     #[command(about = "Get the current block_number.", alias = "bl")]
     BlockNumber {
         #[arg(long = "l2", required = false)]
@@ -21,7 +20,6 @@ pub(crate) enum Command {
         #[arg(long = "l1", required = false)]
         l1: bool,
     },
-    
     #[command(about = "Get the transaction's info.", short_flag = 't')]
     Transaction {
         #[arg(long = "l2", required = false)]
@@ -31,7 +29,6 @@ pub(crate) enum Command {
         #[arg(short = 'h', required = true)]
         tx_hash: String,
     },
-    
     #[command(about = "Get the account's balance info.", short_flag = 'b')]
     Balance {
         #[arg(long = "l2", required = false)]
