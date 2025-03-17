@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742232435364,
+  "lastUpdate": 1742241295651,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -475,6 +475,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 224568254546,
             "range": "± 376027366",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "58443717c6f5dd2b1d434af1c1483ea814f9ef35",
+          "message": "refactor(levm): simplify fill_with_zeros (#2226)\n\nReviewing #2186 I noticed we had this helper that returned a `Result`\nfor a logically impossible situation (already covered by an `if` just\nabove it).\nI removed that `Result` and also simplified the logic by just calling\n`resize` in the appropriate case.",
+          "timestamp": "2025-03-17T18:56:32Z",
+          "tree_id": "8a20738b3cc89eaa2d1dcc8b091ef3315d63b739",
+          "url": "https://github.com/lambdaclass/ethrex/commit/58443717c6f5dd2b1d434af1c1483ea814f9ef35"
+        },
+        "date": 1742241293769,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 226462891870,
+            "range": "± 852500902",
             "unit": "ns/iter"
           }
         ]
