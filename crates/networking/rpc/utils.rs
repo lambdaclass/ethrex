@@ -164,7 +164,7 @@ pub enum RpcNamespace {
     Web3,
     Net,
     #[cfg(feature = "l2")]
-    L2,
+    EthrexL2,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -194,7 +194,7 @@ impl RpcRequest {
                 "web3" => Ok(RpcNamespace::Web3),
                 "net" => Ok(RpcNamespace::Net),
                 #[cfg(feature = "l2")]
-                "ethrex" => Ok(RpcNamespace::L2),
+                "ethrex" => Ok(RpcNamespace::EthrexL2),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {

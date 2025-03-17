@@ -298,7 +298,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
         #[cfg(feature = "l2")]
-        Ok(RpcNamespace::L2) => map_l2_requests(req, context),
+        Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
