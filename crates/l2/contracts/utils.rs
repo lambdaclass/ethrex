@@ -38,6 +38,7 @@ pub fn compile_contract(
                 .to_str()
                 .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
         )
+        .arg("--via-ir")
         .arg("-o")
         .arg(
             general_contracts_path
