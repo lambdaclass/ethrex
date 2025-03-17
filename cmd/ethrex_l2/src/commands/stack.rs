@@ -1,5 +1,5 @@
 use crate::{config::EthrexL2Config, utils::config::confirm};
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use ethrex_common::{Address, U256};
 use ethrex_rpc::{
     clients::{beacon::BeaconClient, eth::BlockByNumber},
@@ -20,7 +20,7 @@ pub const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    #[clap(
+    #[command(
         about = "Initializes the L2 network in the provided L1.",
         long_about = "Initializing an L2 involves deploying and setting up the contracts in the L1 and running an L2 node.",
         visible_alias = "i"
@@ -39,22 +39,22 @@ pub(crate) enum Command {
         )]
         start_prover: bool,
     },
-    #[clap(about = "Shutdown the stack.")]
+    #[command(about = "Shutdown the stack.")]
     Shutdown {
-        #[clap(long, help = "Shuts down the local L1 node.", default_value_t = true)]
+        #[arg(long, help = "Shuts down the local L1 node.", default_value_t = true)]
         l1: bool,
-        #[clap(long, help = "Shuts down the L2 node.", default_value_t = true)]
+        #[arg(long, help = "Shuts down the L2 node.", default_value_t = true)]
         l2: bool,
-        #[clap(short = 'y', long, help = "Forces the shutdown without confirmation.")]
+        #[arg(short = 'y', long, help = "Forces the shutdown without confirmation.")]
         force: bool,
     },
-    #[clap(about = "Starts the stack.")]
+    #[command(about = "Starts the stack.")]
     Start {
-        #[clap(long, help = "Starts a local L1 node.", required = false)]
+        #[arg(long, help = "Starts a local L1 node.", required = false)]
         l1: bool,
-        #[clap(long, help = "Starts the L2 node.", required = false)]
+        #[arg(long, help = "Starts the L2 node.", required = false)]
         l2: bool,
-        #[clap(short = 'y', long, help = "Forces the start without confirmation.")]
+        #[arg(short = 'y', long, help = "Forces the start without confirmation.")]
         force: bool,
         #[arg(
             long = "start-prover",
@@ -64,32 +64,32 @@ pub(crate) enum Command {
         )]
         start_prover: bool,
     },
-    #[clap(about = "Cleans up the stack. Prompts for confirmation.")]
+    #[command(about = "Cleans up the stack. Prompts for confirmation.")]
     Purge {
-        #[clap(short = 'y', long, help = "Forces the purge without confirmation.")]
+        #[arg(short = 'y', long, help = "Forces the purge without confirmation.")]
         force: bool,
     },
-    #[clap(
+    #[command(
         about = "Re-initializes the stack. Prompts for confirmation.",
         long_about = "Re-initializing a stack means to shutdown, cleanup, and initialize the stack again. It uses the `shutdown` and `cleanup` commands under the hood."
     )]
     Restart {
-        #[clap(short = 'y', long, help = "Forces the restart without confirmation.")]
+        #[arg(short = 'y', long, help = "Forces the restart without confirmation.")]
         force: bool,
     },
-    #[clap(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
+    #[command(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
     BlobsSaver {
-        #[clap(
+        #[arg(
             short = 'c',
             long = "contract",
             help = "The contract address to listen to."
         )]
         contract_address: Address,
-        #[clap(short = 'd', long, help = "The directory to save the blobs.")]
+        #[arg(short = 'd', long, help = "The directory to save the blobs.")]
         data_dir: PathBuf,
-        #[clap(short = 'e', long)]
+        #[arg(short = 'e', long)]
         l1_eth_rpc: Url,
-        #[clap(short = 'b', long)]
+        #[arg(short = 'b', long)]
         l1_beacon_rpc: Url,
     },
 }
