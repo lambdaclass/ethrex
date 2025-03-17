@@ -489,7 +489,7 @@ impl LEVM {
         store: &StoreWrapper,
         chain_config: &ChainConfig,
         block_cache: &mut CacheDB,
-    ) -> Result<(ExecutionReport, AccessList), VMError> {
+    ) -> Result<(ExecutionResult, AccessList), VMError> {
         let gas_price =
             calculate_gas_price(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
         let config = EVMConfig::new_from_chain_config(
@@ -527,7 +527,7 @@ impl LEVM {
 
         let mut vm = VM::new(
             tx.to.clone(),
-            env,
+            env.clone(),
             tx.value,
             tx.input.clone(),
             Arc::new(store.clone()),
@@ -542,9 +542,26 @@ impl LEVM {
                     .collect()
             }),
         )?;
-        let report = vm.execute()?;
+        vm.execute()?;
         let access_list = build_access_list(&mut vm.accrued_substate);
-        Ok((report, access_list))
+
+        let mut vm = VM::new(
+            tx.to.clone(),
+            env,
+            tx.value,
+            tx.input.clone(),
+            Arc::new(store.clone()),
+            block_cache.clone(),
+            access_list.clone(),
+            tx.authorization_list.clone().map(|list| {
+                list.iter()
+                    .map(|list| Into::<AuthorizationTuple>::into(list.clone()))
+                    .collect()
+            }),
+        )?;
+        let report = vm.execute()?;
+
+        Ok((report.into(), access_list))
     }
 }
 
