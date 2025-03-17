@@ -116,7 +116,9 @@ impl StoreWrapper {
     ) -> Result<Option<BlockHeader>, StoreError> {
         match self {
             StoreWrapper::Store(store, _) => store.get_block_header_by_hash(block_hash),
-            StoreWrapper::Execution(_, _) => unimplemented!(),
+            StoreWrapper::Execution(_, _) => Err(StoreError::Custom(
+                "Should not be used with an execution db".to_string(),
+            )),
         }
     }
 
@@ -138,7 +140,9 @@ impl StoreWrapper {
     pub fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         match self {
             StoreWrapper::Store(store, _) => store.get_block_header(block_number),
-            StoreWrapper::Execution(_, _) => unimplemented!(),
+            StoreWrapper::Execution(_, _) => Err(StoreError::Custom(
+                "Should not be used with an execution db".to_string(),
+            )),
         }
     }
 
@@ -159,7 +163,9 @@ impl StoreWrapper {
     ) -> Result<Option<Trie>, StoreError> {
         match self {
             StoreWrapper::Store(store, _) => store.storage_trie(block_hash, address),
-            StoreWrapper::Execution(_, _) => unimplemented!(),
+            StoreWrapper::Execution(_, _) => Err(StoreError::Custom(
+                "Should not be used with an execution db".to_string(),
+            )),
         }
     }
 
@@ -172,7 +178,9 @@ impl StoreWrapper {
             StoreWrapper::Store(store, _) => {
                 store.apply_account_updates(block_hash, account_updates)
             }
-            StoreWrapper::Execution(_, _) => unimplemented!(),
+            StoreWrapper::Execution(_, _) => Err(StoreError::Custom(
+                "Should not be used with an execution db".to_string(),
+            )),
         }
     }
 }
