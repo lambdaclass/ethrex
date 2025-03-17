@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742241372115,
+  "lastUpdate": 1742242538330,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -535,6 +535,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 223547007715,
             "range": "± 625519400",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "104ef77ae137b6ee14de6945c6c49d223e735ba6",
+          "message": "feat(l2): pico prover (#1922)\n\n**Motivation**\n\nAdds [Pico](https://pico-docs.brevis.network/) as a prover backend. \n\nAlso does a major refactor to remove the need to have multiple zkvm\ndependencies compiling at the same time, this is because Pico doesn't\ncompile while also having Risc0 as dependency; the linker fails with a\n\"duplicated symbols\" error.\n\nAlso removes zkvm dependencies from crates that don't need them by\ndecoupling return types. This is because Pico compiles with nightly only\nand we want to minimize the number of crates that depend on it (now only\n`ethrex-prover` and `zkvm_interface` does)\n\n**Description**\n\n- adds pico as prover backend\n- decouples zkvm dependencies from other L2 crates by doing a major\nrefactor of provers\n- makes it so you can compile the prover client with only one backend at\na time\n- makes the prover client return the proof calldata to send to the L1\nbridge contract instead of the proofs using each custom type of every\nzkvm\n\n---------\n\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-03-17T19:18:17Z",
+          "tree_id": "0f62ae1a5aeb11269b1501121a2e71fcefa29667",
+          "url": "https://github.com/lambdaclass/ethrex/commit/104ef77ae137b6ee14de6945c6c49d223e735ba6"
+        },
+        "date": 1742242535817,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 227682387813,
+            "range": "± 938087967",
             "unit": "ns/iter"
           }
         ]
