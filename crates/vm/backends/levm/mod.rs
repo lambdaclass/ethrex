@@ -507,10 +507,6 @@ pub fn extract_all_requests_levm(
         }
     }
 
-    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
-        "deposit_contract_address config is missing".to_string(),
-    ))?;
-
     let withdrawals_data: Vec<u8> =
         match LEVM::read_withdrawal_requests(header, store_wrapper, cache) {
             Some(report) => {
