@@ -1,8 +1,8 @@
-pub mod execution_result;
 pub mod levm;
 pub mod revm;
 
 use self::revm::db::evm_state;
+use crate::execution_result::ExecutionResult;
 use crate::{db::StoreWrapper, errors::EvmError, spec_id, SpecId};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
@@ -12,7 +12,6 @@ use ethrex_common::{Address, H256};
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use execution_result::ExecutionResult;
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;

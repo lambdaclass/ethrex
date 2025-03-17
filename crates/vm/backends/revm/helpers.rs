@@ -10,7 +10,7 @@ use revm::{
 // Rename imported types for clarity
 use revm_primitives::{AccessList as RevmAccessList, SpecId};
 
-use crate::{backends::execution_result::ExecutionResult, EvmError};
+use crate::{execution_result::ExecutionResult, EvmError};
 
 use super::{
     access_list_inspector, block_env, db::EvmState, run_without_commit, tx_env_from_generic,

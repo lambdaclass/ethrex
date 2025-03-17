@@ -1,12 +1,12 @@
 pub(crate) mod db;
 
-use super::execution_result::ExecutionResult;
 use super::BlockExecutionResult;
 use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::db::StoreWrapper;
+use crate::execution_result::ExecutionResult;
 use crate::EvmError;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE};
