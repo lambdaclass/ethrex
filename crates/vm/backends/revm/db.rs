@@ -49,7 +49,7 @@ impl EvmState {
 pub fn evm_state(store: Store, block_hash: BlockHash) -> EvmState {
     EvmState::Store(
         revm::db::State::builder()
-            .with_database(StoreWrapper::StoreDB(store, block_hash))
+            .with_database(StoreWrapper::Store(store, block_hash))
             .with_bundle_update()
             .without_state_clear()
             .build(),
@@ -69,8 +69,8 @@ impl revm::Database for StoreWrapper {
 
     fn basic(&mut self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
         let block_hash = match self {
-            StoreWrapper::StoreDB(_, block_hash) => *block_hash,
-            StoreWrapper::ExecutionCache(_, block_hash) => *block_hash,
+            StoreWrapper::Store(_, block_hash) => *block_hash,
+            StoreWrapper::Execution(_, block_hash) => *block_hash,
         };
         let acc_info = match self
             .get_account_info_by_hash(block_hash, CoreAddress::from(address.0.as_ref()))?
@@ -98,8 +98,8 @@ impl revm::Database for StoreWrapper {
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
         let block_hash = match self {
-            StoreWrapper::StoreDB(_, block_hash) => *block_hash,
-            StoreWrapper::ExecutionCache(_, block_hash) => *block_hash,
+            StoreWrapper::Store(_, block_hash) => *block_hash,
+            StoreWrapper::Execution(_, block_hash) => *block_hash,
         };
         Ok(self
             .get_storage_at_hash(
@@ -123,8 +123,8 @@ impl revm::DatabaseRef for StoreWrapper {
 
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
         let block_hash = match self {
-            StoreWrapper::StoreDB(_, block_hash) => *block_hash,
-            StoreWrapper::ExecutionCache(_, block_hash) => *block_hash,
+            StoreWrapper::Store(_, block_hash) => *block_hash,
+            StoreWrapper::Execution(_, block_hash) => *block_hash,
         };
         let acc_info = match self
             .get_account_info_by_hash(block_hash, CoreAddress::from(address.0.as_ref()))?
@@ -152,8 +152,8 @@ impl revm::DatabaseRef for StoreWrapper {
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
         let block_hash = match self {
-            StoreWrapper::StoreDB(_, block_hash) => *block_hash,
-            StoreWrapper::ExecutionCache(_, block_hash) => *block_hash,
+            StoreWrapper::Store(_, block_hash) => *block_hash,
+            StoreWrapper::Execution(_, block_hash) => *block_hash,
         };
         Ok(self
             .get_storage_at_hash(

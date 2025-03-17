@@ -199,8 +199,8 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         let block_hash = match store_wrapper {
-            StoreWrapper::StoreDB(_, block_hash) => *block_hash,
-            StoreWrapper::ExecutionCache(_, block_hash) => *block_hash,
+            StoreWrapper::Store(_, block_hash) => *block_hash,
+            StoreWrapper::Execution(_, block_hash) => *block_hash,
         };
         for (new_state_account_address, new_state_account) in new_state {
             let initial_account_state = store_wrapper
@@ -265,7 +265,7 @@ impl LEVM {
             };
 
             let fork = match store_wrapper {
-                StoreWrapper::StoreDB(store, block_hash) => {
+                StoreWrapper::Store(store, block_hash) => {
                     let block_header = store
                         .get_block_header_by_hash(*block_hash)?
                         .ok_or(StoreError::MissingStore)?;
@@ -273,7 +273,7 @@ impl LEVM {
                     // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
                     ef_tests.unwrap_or(fork_from_config)
                 }
-                StoreWrapper::ExecutionCache(_, _) => Fork::default(),
+                StoreWrapper::Execution(_, _) => Fork::default(),
             };
 
             if let Some(old_info) =

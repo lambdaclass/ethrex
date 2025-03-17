@@ -90,7 +90,7 @@ async fn setup() -> (ProgramInput, Block) {
         .unwrap()
         .unwrap();
 
-    let store = StoreWrapper::StoreDB(store.clone(), block_to_prove.header.parent_hash);
+    let store = StoreWrapper::Store(store.clone(), block_to_prove.header.parent_hash);
     let db = store.to_exec_db(block_to_prove).unwrap();
 
     let input = ProgramInput {

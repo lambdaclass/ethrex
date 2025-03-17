@@ -12,7 +12,7 @@ use crate::db::StoreWrapper;
 impl LevmDatabase for StoreWrapper {
     fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
         match self {
-            StoreWrapper::StoreDB(store, block_hash) => {
+            StoreWrapper::Store(store, block_hash) => {
                 let acc_info = store
                     .get_account_info_by_hash(*block_hash, address)
                     .unwrap_or(None)
@@ -29,7 +29,7 @@ impl LevmDatabase for StoreWrapper {
                     bytecode: acc_code,
                 }
             }
-            StoreWrapper::ExecutionCache(db, _) => {
+            StoreWrapper::Execution(db, _) => {
                 let acc_info = db.accounts.get(&address).cloned().unwrap_or_default();
                 let acc_code = db
                     .code
@@ -47,24 +47,24 @@ impl LevmDatabase for StoreWrapper {
 
     fn account_exists(&self, address: CoreAddress) -> bool {
         match self {
-            StoreWrapper::StoreDB(store, block_hash) => {
+            StoreWrapper::Store(store, block_hash) => {
                 let acc_info = store
                     .get_account_info_by_hash(*block_hash, address)
                     .unwrap();
 
                 acc_info.is_some()
             }
-            StoreWrapper::ExecutionCache(db, _) => db.accounts.contains_key(&address), // maybe this should change
+            StoreWrapper::Execution(db, _) => db.accounts.contains_key(&address), // TODO
         }
     }
 
     fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
         match self {
-            StoreWrapper::StoreDB(store, block_hash) => store
+            StoreWrapper::Store(store, block_hash) => store
                 .get_storage_at_hash(*block_hash, address, key)
                 .unwrap()
                 .unwrap_or_default(),
-            StoreWrapper::ExecutionCache(db, _) => db
+            StoreWrapper::Execution(db, _) => db
                 .storage
                 .get(&address)
                 .and_then(|storage| storage.get(&key).cloned())
@@ -74,12 +74,12 @@ impl LevmDatabase for StoreWrapper {
 
     fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
         match self {
-            StoreWrapper::StoreDB(store, _) => {
+            StoreWrapper::Store(store, _) => {
                 let block_header = store.get_block_header(block_number).unwrap();
 
                 block_header.map(|header| CoreH256::from(header.compute_block_hash().0))
             }
-            StoreWrapper::ExecutionCache(db, _) => db.block_hashes.get(&block_number).cloned(),
+            StoreWrapper::Execution(db, _) => db.block_hashes.get(&block_number).cloned(),
         }
     }
 }
@@ -87,8 +87,8 @@ impl LevmDatabase for StoreWrapper {
 impl StoreWrapper {
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
         match self {
-            StoreWrapper::StoreDB(store, _) => store.get_chain_config(),
-            StoreWrapper::ExecutionCache(db, _) => Ok(db.get_chain_config()),
+            StoreWrapper::Store(store, _) => store.get_chain_config(),
+            StoreWrapper::Execution(db, _) => Ok(db.get_chain_config()),
         }
     }
 
@@ -98,15 +98,15 @@ impl StoreWrapper {
         address: CoreAddress,
     ) -> Result<Option<AccountInfo>, StoreError> {
         match self {
-            StoreWrapper::StoreDB(store, _) => store.get_account_info_by_hash(block_hash, address),
-            StoreWrapper::ExecutionCache(db, _) => Ok(db.accounts.get(&address).cloned()),
+            StoreWrapper::Store(store, _) => store.get_account_info_by_hash(block_hash, address),
+            StoreWrapper::Execution(db, _) => Ok(db.accounts.get(&address).cloned()),
         }
     }
 
     pub fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<Bytes>, StoreError> {
         match self {
-            StoreWrapper::StoreDB(store, _) => store.get_account_code(code_hash),
-            StoreWrapper::ExecutionCache(db, _) => Ok(db.code.get(&code_hash).cloned()),
+            StoreWrapper::Store(store, _) => store.get_account_code(code_hash),
+            StoreWrapper::Execution(db, _) => Ok(db.code.get(&code_hash).cloned()),
         }
     }
 
@@ -115,8 +115,8 @@ impl StoreWrapper {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
         match self {
-            StoreWrapper::StoreDB(store, _) => store.get_block_header_by_hash(block_hash),
-            StoreWrapper::ExecutionCache(_, _) => unimplemented!(),
+            StoreWrapper::Store(store, _) => store.get_block_header_by_hash(block_hash),
+            StoreWrapper::Execution(_, _) => unimplemented!(),
         }
     }
 
@@ -127,8 +127,8 @@ impl StoreWrapper {
         key: CoreH256,
     ) -> Result<Option<CoreU256>, StoreError> {
         match self {
-            StoreWrapper::StoreDB(store, _) => store.get_storage_at_hash(block_hash, address, key),
-            StoreWrapper::ExecutionCache(db, _) => Ok(db
+            StoreWrapper::Store(store, _) => store.get_storage_at_hash(block_hash, address, key),
+            StoreWrapper::Execution(db, _) => Ok(db
                 .storage
                 .get(&address)
                 .and_then(|storage| storage.get(&key).cloned())),
@@ -137,15 +137,15 @@ impl StoreWrapper {
 
     pub fn get_block_header(&self, block_number: u64) -> Result<Option<BlockHeader>, StoreError> {
         match self {
-            StoreWrapper::StoreDB(store, _) => store.get_block_header(block_number),
-            StoreWrapper::ExecutionCache(_, _) => unimplemented!(),
+            StoreWrapper::Store(store, _) => store.get_block_header(block_number),
+            StoreWrapper::Execution(_, _) => unimplemented!(),
         }
     }
 
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         match self {
-            StoreWrapper::StoreDB(store, _) => store.state_trie(block_hash),
-            StoreWrapper::ExecutionCache(db, _) => db
+            StoreWrapper::Store(store, _) => store.state_trie(block_hash),
+            StoreWrapper::Execution(db, _) => db
                 .get_tries()
                 .map_err(|e| StoreError::CursorError(e.to_string()))
                 .map(|(state_trie, _)| Some(state_trie)),
@@ -158,8 +158,8 @@ impl StoreWrapper {
         address: CoreAddress,
     ) -> Result<Option<Trie>, StoreError> {
         match self {
-            StoreWrapper::StoreDB(store, _) => store.storage_trie(block_hash, address),
-            StoreWrapper::ExecutionCache(_, _) => unimplemented!(),
+            StoreWrapper::Store(store, _) => store.storage_trie(block_hash, address),
+            StoreWrapper::Execution(_, _) => unimplemented!(),
         }
     }
 
@@ -169,10 +169,10 @@ impl StoreWrapper {
         account_updates: &[AccountUpdate],
     ) -> Result<Option<CoreH256>, StoreError> {
         match self {
-            StoreWrapper::StoreDB(store, _) => {
+            StoreWrapper::Store(store, _) => {
                 store.apply_account_updates(block_hash, account_updates)
             }
-            StoreWrapper::ExecutionCache(_, _) => unimplemented!(),
+            StoreWrapper::Execution(_, _) => unimplemented!(),
         }
     }
 }

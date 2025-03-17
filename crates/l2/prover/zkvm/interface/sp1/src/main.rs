@@ -15,7 +15,6 @@ pub fn main() {
         parent_block_header,
         db,
     } = sp1_zkvm::io::read::<ProgramInput>();
-    // let mut state = EvmState::from(db.clone());
     let store_wrapper = StoreWrapper::ExecutionCache(db.clone(), parent_block_header.parent_hash);
     let chain_config = store_wrapper
         .get_chain_config()

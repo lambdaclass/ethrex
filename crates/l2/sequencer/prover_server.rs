@@ -401,7 +401,7 @@ impl ProverServer {
         let block = Block::new(header, body);
 
         let parent_hash = block.header.parent_hash;
-        let store = StoreWrapper::StoreDB(self.store.clone(), parent_hash);
+        let store = StoreWrapper::Store(self.store.clone(), parent_hash);
         let db = store.to_exec_db(&block).map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self

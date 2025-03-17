@@ -4,7 +4,8 @@ use ethrex_storage::Store;
 use crate::backends::exec_db::ExecutionDB;
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum StoreWrapper {
-    StoreDB(Store, BlockHash),
-    ExecutionCache(ExecutionDB, BlockHash),
+    Store(Store, BlockHash),
+    Execution(ExecutionDB, BlockHash),
 }
