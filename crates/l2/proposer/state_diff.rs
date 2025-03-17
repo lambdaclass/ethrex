@@ -302,11 +302,7 @@ impl AccountStateDiff {
 
         if let Some(bytecode) = &self.bytecode {
             let r_type: u8 = AccountStateDiffType::Bytecode.into();
-            let bytecode_len: u16 = self
-                .storage
-                .len()
-                .try_into()
-                .map_err(StateDiffError::from)?;
+            let bytecode_len: u16 = bytecode.len().try_into().map_err(StateDiffError::from)?;
             r#type += r_type;
             encoded.extend(bytecode_len.to_be_bytes());
             encoded.extend(bytecode);
