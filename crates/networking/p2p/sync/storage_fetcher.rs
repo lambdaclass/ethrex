@@ -15,7 +15,10 @@ use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,
-    sync::{BATCH_SIZE, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES},
+    sync::{
+        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, BATCH_SIZE, MAX_CHANNEL_MESSAGES,
+        MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES,
+    },
 };
 
 use super::SyncError;
@@ -240,13 +243,19 @@ pub(crate) async fn large_storage_fetcher(
         pending_storage.len()
     );
     if !pending_storage.is_empty() {
-        storage_healer_sender
-            .send(
-                pending_storage
-                    .into_iter()
-                    .map(|(hash, _, _)| hash)
-                    .collect(),
-            )
+        // Send incomplete storages to the rebuilder and healer
+        // As these are large storages we should rebuild the partial tries instead of delegating them fully to the healer
+        let account_hashes: Vec<H256> = pending_storage
+            .into_iter()
+            .map(|(hash, _, _)| hash)
+            .collect();
+        let account_hashes_and_roots: Vec<(H256, H256)> = account_hashes
+            .iter()
+            .map(|hash| (*hash, REBUILDER_INCOMPLETE_STORAGE_ROOT))
+            .collect();
+        storage_healer_sender.send(account_hashes).await?;
+        storage_trie_rebuilder_sender
+            .send(account_hashes_and_roots)
             .await?;
     }
     Ok(())
