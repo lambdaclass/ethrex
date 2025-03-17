@@ -189,9 +189,13 @@ impl StoreEngine for Store {
             self.add_account_code(code_hash, code)?;
         }
 
-        // TODO store tries
-        for trie in state_tries {}
-        for trie in storage_tries {}
+        for mut trie in state_tries {
+            trie.commit()?;
+        }
+
+        for (_, mut trie) in storage_tries {
+            trie.commit()?;
+        }
 
         Ok(())
     }
