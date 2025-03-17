@@ -35,6 +35,7 @@ pub struct Options {
         long = "http.addr",
         default_value = "localhost",
         value_name = "ADDRESS",
+        help = "Listening address for the http rpc server.",
         help_heading = "RPC options"
     )]
     pub http_addr: String,
@@ -42,15 +43,17 @@ pub struct Options {
         long = "http.port",
         default_value = "8545",
         value_name = "PORT",
+        help = "Listening port for the http rpc server.",
         help_heading = "RPC options"
     )]
     pub http_port: String,
-    #[arg(long = "log.level", default_value_t = Level::INFO, value_name = "LOG_LEVEL", help_heading = "Node options")]
+    #[arg(long = "log.level", default_value_t = Level::INFO, value_name = "LOG_LEVEL", help = "The verbosity level used for logs.", long_help = "Possible values: info, debug, trace, warn, error",help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
         long = "authrpc.addr",
         default_value = "localhost",
         value_name = "ADDRESS",
+        help = "Listening address for the authenticated rpc server.",
         help_heading = "RPC options"
     )]
     pub authrpc_addr: String,
@@ -58,6 +61,7 @@ pub struct Options {
         long = "authrpc.port",
         default_value = "8551",
         value_name = "PORT",
+        help = "Listening port for the authenticated rpc server.",
         help_heading = "RPC options"
     )]
     pub authrpc_port: String,
@@ -65,6 +69,7 @@ pub struct Options {
         long = "authrpc.jwtsecret",
         default_value = "jwt.hex",
         value_name = "JWTSECRET_PATH",
+        help = "Receives the jwt secret used for authenticated rpc requests.",
         help_heading = "RPC options"
     )]
     pub authrpc_jwtsecret: String,
@@ -88,6 +93,7 @@ pub struct Options {
         long = "discovery.addr",
         default_value = "0.0.0.0",
         value_name = "ADDRESS",
+        help = "UDP address for P2P discovery.",
         help_heading = "P2P options"
     )]
     pub discovery_addr: String,
@@ -95,27 +101,31 @@ pub struct Options {
         long = "discovery.port",
         default_value = "30303",
         value_name = "PORT",
+        help = "UDP port for P2P discovery.",
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
     #[arg(
         long = "network",
         value_name = "GENESIS_FILE_PATH",
+        help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include Holesky, Sepolia and Mekong.",
         help_heading = "Node options"
     )]
     pub network: Option<String>,
-    #[arg(long = "bootnodes", value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help_heading = "P2P options")]
+    #[arg(long = "bootnodes", value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
     pub bootnodes: Vec<Node>,
     #[arg(
         long = "datadir",
         value_name = "DATABASE_DIRECTORY",
         help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
         default_value = DEFAULT_DATADIR,
-        required = false,
+        help = "Receives the name of the directory where the Database is located.",
+        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
         help_heading = "Node options"
     )]
     pub datadir: String,
-    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help_heading = "P2P options")]
+    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
     pub syncmode: SyncMode,
     #[arg(
         long = "metrics.port",
@@ -125,8 +135,9 @@ pub struct Options {
     pub metrics_port: Option<String>,
     #[arg(
         long = "dev",
-        help = "Used to create blocks without requiring a Consensus Client",
         action = ArgAction::SetTrue,
+        help = "Used to create blocks without requiring a Consensus Client",
+        long_help = "If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.",
         help_heading = "Node options"
     )]
     pub dev: bool,
