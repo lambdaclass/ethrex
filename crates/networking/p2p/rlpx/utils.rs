@@ -71,7 +71,7 @@ pub(crate) fn log_peer_debug(node: &Node, text: &str) {
 }
 
 pub(crate) fn log_peer_error(node: &Node, text: &str) {
-    warn!("[{0}]: {1}", node, text)
+    debug!("[{0}]: {1}", node, text)
 }
 pub(crate) fn log_peer_warn(node: &Node, text: &str) {
     debug!("[{0}]: {1}", node, text)
