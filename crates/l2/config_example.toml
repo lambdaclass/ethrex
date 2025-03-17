@@ -55,3 +55,4 @@ listen_port = 3900
 verifier_address = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425"
 verifier_private_key = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
 dev_mode = true
+dev_interval_ms = 5000
