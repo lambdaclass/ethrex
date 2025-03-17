@@ -700,7 +700,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
     // https://github.com/ethereum/go-ethereum/blob/e3853e910a53696c9e1199c85e86b8b6e3287476/eth/catalyst/api.go#L819
     if *context
         .sync_mode
-        .try_lock()
+        .try_read()
         .map_err(|err| RpcErr::Internal(format!("Internal error {}", err)))?
         == SyncMode::Snap
     {

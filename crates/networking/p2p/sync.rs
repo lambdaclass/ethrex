@@ -21,7 +21,7 @@ use storage_healing::storage_healer;
 use tokio::{
     sync::{
         mpsc::{self, error::SendError},
-        Mutex,
+        Mutex, RwLock,
     },
     time::{Duration, Instant},
 };
@@ -130,7 +130,7 @@ impl SyncManager {
         current_head: H256,
         sync_head: H256,
         store: Store,
-        sync_mode: Arc<Mutex<SyncMode>>,
+        sync_mode: Arc<RwLock<SyncMode>>,
     ) {
         info!("Syncing from current head {current_head} to sync_head {sync_head}");
         let start_time = Instant::now();
@@ -157,7 +157,7 @@ impl SyncManager {
         mut current_head: H256,
         sync_head: H256,
         store: Store,
-        sync_mode: Arc<Mutex<SyncMode>>,
+        sync_mode: Arc<RwLock<SyncMode>>,
     ) -> Result<(), SyncError> {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
@@ -166,7 +166,7 @@ impl SyncManager {
         // Check if we have some blocks downloaded from a previous sync attempt
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
-        if matches!(*sync_mode.lock().await, SyncMode::Snap) {
+        if matches!(*sync_mode.read().await, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
                 current_head = last_header;
@@ -183,7 +183,7 @@ impl SyncManager {
 
         loop {
             debug!("Requesting Block Headers from {search_head}");
-            let block_header_limit = match *sync_mode.lock().await {
+            let block_header_limit = match *sync_mode.read().await {
                 SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
                 // In Full sync mode, request the same number of block bodies as headers,
                 // since they are processed together at the same rate.
@@ -256,20 +256,20 @@ impl SyncManager {
                 );
                 search_head = last_block_hash;
                 current_head = last_block_hash;
-                if *sync_mode.lock().await == SyncMode::Snap {
+                if *sync_mode.read().await == SyncMode::Snap {
                     store.set_header_download_checkpoint(current_head)?;
                 }
             }
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
-            if *sync_mode.lock().await == SyncMode::Snap {
+            if *sync_mode.read().await == SyncMode::Snap {
                 let latest_block_number = store.get_latest_block_number()?;
                 if last_block_header.number.saturating_sub(latest_block_number)
                     < MIN_FULL_BLOCKS as u64
                 {
                     // Too few blocks for a snap sync, switching to full sync
                     store.clear_snap_state()?;
-                    let mut sync_mode = sync_mode.lock().await;
+                    let mut sync_mode = sync_mode.write().await;
                     *sync_mode = SyncMode::Full;
                 }
             }
@@ -281,7 +281,7 @@ impl SyncManager {
             all_block_hashes.extend_from_slice(&block_hashes[..]);
             store.add_block_headers(block_hashes.clone(), block_headers)?;
 
-            if *sync_mode.lock().await == SyncMode::Full {
+            if *sync_mode.read().await == SyncMode::Full {
                 self.download_and_run_blocks(&mut block_hashes, sync_head, store.clone())
                     .await?;
             }
@@ -290,7 +290,7 @@ impl SyncManager {
                 break;
             };
         }
-        match *sync_mode.lock().await {
+        match *sync_mode.read().await {
             SyncMode::Snap => {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
                 // - Fetch each block's body and its receipt via eth p2p requests
@@ -334,7 +334,7 @@ impl SyncManager {
                 store.clear_snap_state()?;
                 {
                     // Next sync will be full-sync
-                    let mut sync_mode = sync_mode.lock().await;
+                    let mut sync_mode = sync_mode.write().await;
                     *sync_mode = SyncMode::Full;
                 }
             }
