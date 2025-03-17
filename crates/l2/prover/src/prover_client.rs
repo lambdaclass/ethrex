@@ -1,6 +1,6 @@
 use crate::prover::create_prover;
 use ethrex_l2::{
-    proposer::prover_server::ProofData,
+    sequencer::prover_server::ProofData,
     utils::{
         config::prover_client::ProverClientConfig,
         prover::proving_systems::{ProverType, ProvingOutput},

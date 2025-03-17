@@ -529,7 +529,7 @@ pub fn extract_all_requests_levm(
             None => Default::default(),
         };
 
-    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
