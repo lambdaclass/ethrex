@@ -395,7 +395,9 @@ impl SyncManager {
                         store
                             .invalid_ancestors
                             .lock()
-                            .await
+                            .map_err(|err| {
+                                SyncError::Store(StoreError::InvalidAncestorsError(err.to_string()))
+                            })?
                             .insert(hash, last_valid_hash);
 
                         // TODO(#2127): Just marking the failing ancestor and the sync head is enough
@@ -404,7 +406,9 @@ impl SyncManager {
                         store
                             .invalid_ancestors
                             .lock()
-                            .await
+                            .map_err(|err| {
+                                SyncError::Store(StoreError::InvalidAncestorsError(err.to_string()))
+                            })?
                             .insert(sync_head, last_valid_hash);
 
                         return Err(error.into());

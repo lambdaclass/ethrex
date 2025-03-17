@@ -14,6 +14,8 @@ pub enum StoreError {
     LibmdbxError(anyhow::Error),
     #[error("tried to run genesis twice with different blocks")]
     GenesisTwiceDifferentBlocks,
+    #[error("failed to obtain invalid_ancestors")]
+    InvalidAncestorsError(String),
     #[cfg(feature = "redb")]
     #[error("Redb Storage error: {0}")]
     RedbStorageError(#[from] StorageError),
