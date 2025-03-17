@@ -273,7 +273,7 @@ impl LEVM {
                     // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
                     ef_tests.unwrap_or(fork_from_config)
                 }
-                StoreWrapper::Execution(_, _) => Fork::default(),
+                StoreWrapper::Execution(_, _) => Fork::default(), // ExecutionDB is not used for ef tests,
             };
 
             if let Some(old_info) =
