@@ -19,6 +19,7 @@ thiserror.workspace = true
 ethrex-common.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
+ethrex-blockchain.workspace = true
 
 # l2
 ethrex-l2.workspace = true
@@ -35,7 +36,6 @@ pico-sdk = { git = "https://github.com/brevis-network/pico", optional = true }
 
 [dev-dependencies]
 ethrex-storage.workspace = true
-ethrex-blockchain.workspace = true
 
 [lib]
 name = "ethrex_prover_lib"
@@ -46,6 +46,8 @@ name = "ethrex_prover"
 path = "src/main.rs"
 
 [features]
+# prover backends
+exec = []
 pico = ["zkvm_interface/pico", "dep:pico-sdk"]
 risc0 = [
   "zkvm_interface/risc0",
@@ -53,12 +55,13 @@ risc0 = [
   "dep:risc0-ethereum-contracts",
 ]
 sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
+
 gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
 l2 = [
   "ethrex-vm/l2",
   "zkvm_interface/l2",
   "ethrex-blockchain/l2",
-] # the prover can work with both l1 or l2 blocks
+] # the prover can work with either l1 or l2 blocks
 
 [lints.clippy]
 unwrap_used = "deny"

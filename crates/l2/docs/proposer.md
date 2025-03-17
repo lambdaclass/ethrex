@@ -72,10 +72,6 @@ Under the [committer] section:
     - `l1_private_key`: Private key of the L1 committer.
     - `on_chain_proposer_address`: Address of the on-chain committer.
 
-- Under the [prover] section:
-    - `sp1_prover`: Configure how the `sp1_prover` computes its proofs, `"local"` for real proofs and `"mock"` for fake proofs.
-    - `risc0_dev_mode`: Whether `risc0`'s dev mode is on.
-
 - Under the [prover.client] section:
     - `prover_server_endpoint`: Endpoint for the prover server.
     - `interval_ms`: Interval in milliseconds to prove new blocks (Currently unused).

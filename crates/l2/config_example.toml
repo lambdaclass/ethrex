@@ -42,15 +42,6 @@ interval_ms = 1000
 # 1 Gwei
 arbitrary_base_blob_gas_price = 1000000000
 
-[prover]
-# mock means fake proofs
-# local means real proofs
-sp1_prover = "mock"
-# https://dev.risczero.com/api/generating-proofs/dev-mode
-# 1/true means fake proofs
-# The risc0_dev_mode = 1 should only be used with *_contract_verifier = "0xAA"
-risc0_dev_mode = 1
-
 [prover.client]
 prover_server_endpoint = "localhost:3900"
 interval_ms = 5000

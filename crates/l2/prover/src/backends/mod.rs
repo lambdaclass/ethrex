@@ -1,5 +1,5 @@
-#[cfg(not(any(feature = "pico", feature = "risc0", feature = "sp1")))]
-pub mod mock;
+#[cfg(feature = "exec")]
+pub mod exec;
 
 #[cfg(feature = "pico")]
 pub mod pico;
