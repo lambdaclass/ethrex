@@ -15,7 +15,7 @@ pub fn main() {
         parent_block_header,
         db,
     } = sp1_zkvm::io::read::<ProgramInput>();
-    let store_wrapper = StoreWrapper::ExecutionCache(db.clone(), parent_block_header.parent_hash);
+    let store_wrapper = StoreWrapper::Execution(db.clone(), parent_block_header.parent_hash);
     let chain_config = store_wrapper
         .get_chain_config()
         .expect("Failed to get chain config from state");
