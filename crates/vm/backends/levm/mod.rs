@@ -264,14 +264,18 @@ impl LEVM {
                 added_storage,
             };
 
-            let block_header = store_wrapper
-                .get_block_header_by_hash(block_hash)?
-                .ok_or(StoreError::MissingStore)?;
-            let fork_from_config = store_wrapper
-                .get_chain_config()?
-                .fork(block_header.timestamp);
-            // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
-            let fork = ef_tests.unwrap_or(fork_from_config);
+            let fork = match store_wrapper {
+                StoreWrapper::StoreDB(store, block_hash) => {
+                    let block_header = store
+                        .get_block_header_by_hash(*block_hash)?
+                        .ok_or(StoreError::MissingStore)?;
+                    let fork_from_config = store.get_chain_config()?.fork(block_header.timestamp);
+                    // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
+                    ef_tests.unwrap_or(fork_from_config)
+                }
+                StoreWrapper::ExecutionCache(_, _) => Fork::default(),
+            };
+
             if let Some(old_info) =
                 store_wrapper.get_account_info_by_hash(block_hash, account_update.address)?
             {
