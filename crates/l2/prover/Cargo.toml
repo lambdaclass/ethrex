@@ -51,6 +51,7 @@ build_sp1 = ["zkvm_interface/build_sp1"]
 l2 = [
   "ethrex-vm/l2",
   "zkvm_interface/l2",
+  "ethrex-blockchain/l2",
 ] # the prover can work with both l1 or l2 blocks
 gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
 

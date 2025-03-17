@@ -262,6 +262,7 @@ impl Blockchain {
         debug!("Building payload");
         let mut context = PayloadBuildContext::new(payload, self.evm_engine, &self.storage)?;
 
+        #[cfg(not(feature = "l2"))]
         self.apply_system_operations(&mut context)?;
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
