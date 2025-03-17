@@ -347,8 +347,13 @@ impl Evm {
                 store_wrapper,
                 block_cache,
             } => {
-                let (report, access_list) =
-                    LEVM::create_access_list(tx, header, store_wrapper, block_cache)?;
+                let (report, access_list) = LEVM::create_access_list(
+                    tx,
+                    header,
+                    store_wrapper,
+                    &store_wrapper.store.get_chain_config()?,
+                    block_cache,
+                )?;
                 match report.result {
                     TxResult::Revert(err) => Ok((
                         report.gas_used,

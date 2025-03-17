@@ -487,6 +487,7 @@ impl LEVM {
         tx: &GenericTransaction,
         header: &BlockHeader,
         store: &StoreWrapper,
+        chain_config: &ChainConfig,
         block_cache: &mut CacheDB,
     ) -> Result<(ExecutionReport, AccessList), VMError> {
         let gas_price =
@@ -498,16 +499,16 @@ impl LEVM {
                 .map_err(|_| VMError::FatalError)?,
             header,
         );
-        let env = Environment {
+        let mut env = Environment {
             origin: tx.from.0.into(),
             refunded_gas: 0,
-            gas_limit: tx.gas.unwrap_or(u64::MAX), // Ensure tx doesn't fail due to gas limit
+            gas_limit: tx.gas.unwrap_or(header.gas_limit), // Ensure tx doesn't fail due to gas limit
             config,
             block_number: header.number.into(),
             coinbase: header.coinbase,
             timestamp: header.timestamp.into(),
             prev_randao: Some(header.prev_randao),
-            chain_id: tx.chain_id.unwrap_or_default().into(),
+            chain_id: tx.chain_id.unwrap_or(chain_config.chain_id).into(),
             base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
             gas_price,
             block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
@@ -521,6 +522,8 @@ impl LEVM {
             transient_storage: HashMap::new(),
             difficulty: header.difficulty,
         };
+
+        adjust_disabled_base_fee(&mut env);
 
         let mut vm = VM::new(
             tx.to.clone(),

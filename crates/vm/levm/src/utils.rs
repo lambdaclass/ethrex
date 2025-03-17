@@ -741,7 +741,7 @@ pub fn eip7702_get_code(
 
 pub fn build_access_list(substate: &mut Substate) -> AccessList {
     let mut added = HashSet::new();
-    let mut access_list: AccessList = substate
+    let access_list: AccessList = substate
         .touched_storage_slots
         .iter()
         .map(|(k, v)| {
@@ -749,12 +749,6 @@ pub fn build_access_list(substate: &mut Substate) -> AccessList {
             (*k, v.iter().cloned().collect::<Vec<H256>>())
         })
         .collect();
-    access_list.extend(
-        substate
-            .touched_accounts
-            .iter()
-            .filter(|x| !added.contains(x))
-            .map(|x| (*x, Vec::new())),
-    );
+
     access_list
 }
