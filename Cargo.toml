@@ -1,26 +1,26 @@
 [workspace]
 members = [
-    "cmd/ef_tests/blockchain",
-    "cmd/ef_tests/state",
-    "cmd/ethrex",
-    "cmd/ethrex_l2",
-    "cmd/hive_report",
-    "cmd/loc",
-    "crates/blockchain",
-    "crates/blockchain/dev",
-    "crates/common",
-    "crates/common/rlp",
-    "crates/common/trie",
-    "crates/l2/",
-    "crates/l2/contracts",
-    "crates/l2/prover",
-    "crates/l2/sdk",
-    "crates/networking/p2p",
-    "crates/networking/rpc",
-    "crates/storage",
-    "crates/vm",
-    "crates/vm/levm",
-    "crates/vm/levm/bench/revm_comparison",
+  "cmd/ef_tests/blockchain",
+  "cmd/ef_tests/state",
+  "cmd/ethrex",
+  "cmd/ethrex_l2",
+  "cmd/hive_report",
+  "cmd/loc",
+  "crates/blockchain",
+  "crates/blockchain/dev",
+  "crates/common",
+  "crates/common/rlp",
+  "crates/common/trie",
+  "crates/l2/",
+  "crates/l2/contracts",
+  "crates/l2/prover",
+  "crates/l2/sdk",
+  "crates/networking/p2p",
+  "crates/networking/rpc",
+  "crates/storage",
+  "crates/vm",
+  "crates/vm/levm",
+  "crates/vm/levm/bench/revm_comparison",
 ]
 resolver = "2"
 
@@ -73,9 +73,9 @@ redb = "2.2.0"
 snap = "1.1.1"
 k256 = { version = "0.13.3", features = ["ecdh"] }
 secp256k1 = { version = "0.29.1", default-features = false, features = [
-    "global-context",
-    "recovery",
-    "rand",
+  "global-context",
+  "recovery",
+  "rand",
 ] }
 keccak-hash = "0.11.0"
 axum = "0.8.1"

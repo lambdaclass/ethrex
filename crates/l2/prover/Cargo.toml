@@ -19,22 +19,23 @@ thiserror.workspace = true
 ethrex-common.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
+ethrex-blockchain.workspace = true
 
 # l2
 ethrex-l2.workspace = true
+ethrex-sdk.workspace = true
 
 zkvm_interface = { path = "./zkvm/interface", default-features = false }
 
-# risc0
-risc0-zkvm = { version = "1.2.2" }
+risc0-zkvm = { version = "1.2.2", optional = true }
+risc0-ethereum-contracts = { version = "1.3.1", optional = true }
 
-# sp1
-sp1-sdk = "4.1.1"
-sp1-recursion-gnark-ffi = "4.1.1"
+sp1-sdk = { version = "4.1.1", optional = true }
+sp1-recursion-gnark-ffi = { version = "4.1.1", optional = true }
+pico-sdk = { git = "https://github.com/brevis-network/pico", optional = true }
 
 [dev-dependencies]
 ethrex-storage.workspace = true
-ethrex-blockchain.workspace = true
 
 [lib]
 name = "ethrex_prover_lib"
@@ -45,15 +46,22 @@ name = "ethrex_prover"
 path = "src/main.rs"
 
 [features]
-default = []
-build_risc0 = ["zkvm_interface/build_risc0"]
-build_sp1 = ["zkvm_interface/build_sp1"]
+# prover backends
+exec = []
+pico = ["zkvm_interface/pico", "dep:pico-sdk"]
+risc0 = [
+  "zkvm_interface/risc0",
+  "dep:risc0-zkvm",
+  "dep:risc0-ethereum-contracts",
+]
+sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
+
+gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
 l2 = [
   "ethrex-vm/l2",
   "zkvm_interface/l2",
   "ethrex-blockchain/l2",
-] # the prover can work with both l1 or l2 blocks
-gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
+] # the prover can work with either l1 or l2 blocks
 
 [lints.clippy]
 unwrap_used = "deny"

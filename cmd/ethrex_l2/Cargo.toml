@@ -7,8 +7,7 @@ edition.workspace = true
 ethrex-l2.workspace = true
 ethrex-sdk.workspace = true
 ethrex-common.workspace = true
-ethrex-blockchain.workspace = true
-ethrex-prover.workspace = true
+ethrex-blockchain = { workspace = true, features = ["l2"] }
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-storage = { workspace = true, features = ["libmdbx"] }
