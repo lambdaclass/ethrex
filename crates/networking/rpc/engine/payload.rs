@@ -531,13 +531,11 @@ fn validate_ancestors(
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
     // Obtain the invalid ancestors from the syncer
-    let invalid_ancestors = {
-        let lock = context.storage.invalid_ancestors.try_lock();
-        match lock {
-            Ok(_) => lock.unwrap(),
-            Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-        }
-    };
+    let invalid_ancestors = context
+        .storage
+        .invalid_ancestors
+        .try_lock()
+        .map_err(|_| RpcErr::Internal("Internal error".into()))?;
 
     // Check if the block has already been invalidated
     if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {

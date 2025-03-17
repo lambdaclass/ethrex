@@ -209,13 +209,11 @@ fn handle_forkchoice(
         fork_choice_state.finalized_block_hash
     );
     let fork_choice_res = {
-        let invalid_ancestors = {
-            let lock = context.storage.invalid_ancestors.try_lock();
-            match lock {
-                Ok(_) => lock.unwrap(),
-                Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-            }
-        };
+        let invalid_ancestors = context
+            .storage
+            .invalid_ancestors
+            .try_lock()
+            .map_err(|_| RpcErr::Internal("Internal error".into()))?;
 
         // Check head block hash in invalid_ancestors
         if let Some(latest_valid_hash) = invalid_ancestors.get(&fork_choice_state.head_block_hash) {
