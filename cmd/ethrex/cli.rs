@@ -32,6 +32,53 @@ pub struct CLI {
 #[derive(ClapParser)]
 pub struct Options {
     #[arg(
+        long = "network",
+        value_name = "GENESIS_FILE_PATH",
+        help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and mekong.",
+        help_heading = "Node options"
+    )]
+    pub network: Option<String>,
+    #[arg(long = "bootnodes", value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
+    pub bootnodes: Vec<Node>,
+    #[arg(
+        long = "datadir",
+        value_name = "DATABASE_DIRECTORY",
+        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
+        default_value = DEFAULT_DATADIR,
+        help = "Receives the name of the directory where the Database is located.",
+        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
+        help_heading = "Node options"
+    )]
+    pub datadir: String,
+    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
+    pub syncmode: SyncMode,
+    #[arg(
+        long = "metrics.port",
+        value_name = "PROMETHEUS_METRICS_PORT",
+        help_heading = "Node options"
+    )]
+    pub metrics_port: Option<String>,
+    #[arg(
+        long = "dev",
+        action = ArgAction::SetTrue,
+        help = "Used to create blocks without requiring a Consensus Client",
+        long_help = "If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.",
+        help_heading = "Node options"
+    )]
+    pub dev: bool,
+    #[arg(
+        long = "evm",
+        default_value = "revm",
+        value_name = "EVM_BACKEND",
+        help = "Has to be `levm` or `revm`",
+        value_parser = utils::parse_evm_engine,
+        help_heading = "Node options"
+    )]
+    pub evm: EvmEngine,
+    #[arg(long = "log.level", default_value_t = Level::INFO, value_name = "LOG_LEVEL", help = "The verbosity level used for logs.", long_help = "Possible values: info, debug, trace, warn, error",help_heading = "Node options")]
+    pub log_level: Level,
+    #[arg(
         long = "http.addr",
         default_value = "localhost",
         value_name = "ADDRESS",
@@ -47,8 +94,6 @@ pub struct Options {
         help_heading = "RPC options"
     )]
     pub http_port: String,
-    #[arg(long = "log.level", default_value_t = Level::INFO, value_name = "LOG_LEVEL", help = "The verbosity level used for logs.", long_help = "Possible values: info, debug, trace, warn, error",help_heading = "Node options")]
-    pub log_level: Level,
     #[arg(
         long = "authrpc.addr",
         default_value = "localhost",
@@ -105,51 +150,6 @@ pub struct Options {
         help_heading = "P2P options"
     )]
     pub discovery_port: String,
-    #[arg(
-        long = "network",
-        value_name = "GENESIS_FILE_PATH",
-        help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and mekong.",
-        help_heading = "Node options"
-    )]
-    pub network: Option<String>,
-    #[arg(long = "bootnodes", value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
-    pub bootnodes: Vec<Node>,
-    #[arg(
-        long = "datadir",
-        value_name = "DATABASE_DIRECTORY",
-        help = "If the datadir is the word `memory`, ethrex will use the InMemory Engine",
-        default_value = DEFAULT_DATADIR,
-        help = "Receives the name of the directory where the Database is located.",
-        long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
-        help_heading = "Node options"
-    )]
-    pub datadir: String,
-    #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
-    pub syncmode: SyncMode,
-    #[arg(
-        long = "metrics.port",
-        value_name = "PROMETHEUS_METRICS_PORT",
-        help_heading = "Node options"
-    )]
-    pub metrics_port: Option<String>,
-    #[arg(
-        long = "dev",
-        action = ArgAction::SetTrue,
-        help = "Used to create blocks without requiring a Consensus Client",
-        long_help = "If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.",
-        help_heading = "Node options"
-    )]
-    pub dev: bool,
-    #[arg(
-        long = "evm",
-        default_value = "revm",
-        value_name = "EVM_BACKEND",
-        help = "Has to be `levm` or `revm`",
-        value_parser = utils::parse_evm_engine,
-        help_heading = "Node options"
-    )]
-    pub evm: EvmEngine,
 }
 
 impl Default for Options {
