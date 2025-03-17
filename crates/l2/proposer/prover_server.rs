@@ -1,4 +1,5 @@
 use crate::proposer::errors::{ProverServerError, SigIntError};
+use crate::utils::prover::proving_systems::{Risc0Proof, Sp1Proof};
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -12,7 +13,7 @@ use crate::utils::{
 };
 use ethrex_common::{
     types::{Block, BlockHeader},
-    Address, H256, U256,
+    Address, H160, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
@@ -39,7 +40,12 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 const VERIFY_FUNCTION_SIGNATURE: &str = "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes)";
-const VERIFIER_CONTRACTS: [&str] = ["R0VERIFIER()", "SP1VERIFIER()"];
+const VERIFIER_CONTRACTS: [&str; 2] = ["R0VERIFIER()", "SP1VERIFIER()"];
+const DEV_MODE_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0xAA,
+]);
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
     pub block: Block,
@@ -56,6 +62,7 @@ struct ProverServer {
     on_chain_proposer_address: Address,
     verifier_address: Address,
     verifier_private_key: SecretKey,
+    needed_proof_types: Vec<ProverType>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -137,6 +144,39 @@ impl ProverServer {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
+        let verifier_contracts = EthClient::get_verifier_contracts(
+            &eth_client,
+            &VERIFIER_CONTRACTS,
+            on_chain_proposer_address,
+        )
+        .await?;
+
+        let mut sp1_verifier_address = Address::zero();
+
+        let mut needed_proof_types = vec![];
+        for key in VERIFIER_CONTRACTS {
+            let val = verifier_contracts.get(key);
+
+            if let Some(addr) = val {
+                if *addr == DEV_MODE_ADDRESS {
+                    continue;
+                } else {
+                    match key {
+                        "R0VERIFIER()" => {
+                            warn!("RISC0 not in devmode");
+                            needed_proof_types.push(ProverType::RISC0);
+                        }
+                        "SP1VERIFIER()" => {
+                            warn!("SP1 not in devmode");
+                            sp1_verifier_address = *addr;
+                            needed_proof_types.push(ProverType::SP1);
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+
         Ok(Self {
             ip: config.listen_ip,
             port: config.listen_port,
@@ -145,6 +185,7 @@ impl ProverServer {
             on_chain_proposer_address,
             verifier_address: config.verifier_address,
             verifier_private_key: config.verifier_private_key,
+            needed_proof_types,
         })
     }
 
@@ -257,29 +298,22 @@ impl ProverServer {
 
         let mut tx_submitted = false;
 
-        let verifier_contracts = EthClient::get_verifier_contracts(
-            &self.eth_client,
-            &VERIFIER_CONTRACTS,
-            self.on_chain_proposer_address,
-        )
-        .await?;
-
-        // check the addres of each verifier_contract
-
         // If we have all the proofs send a transaction to verify them on chain
-        let send_tx = match block_number_has_all_proofs(block_to_verify) {
-            Ok(has_all_proofs) => has_all_proofs,
-            Err(e) => {
-                if let SaveStateError::IOError(ref error) = e {
-                    if error.kind() != std::io::ErrorKind::NotFound {
+        let send_tx =
+            match block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types) {
+                Ok(has_all_proofs) => has_all_proofs,
+                Err(e) => {
+                    if let SaveStateError::IOError(ref error) = e {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            return Err(e.into());
+                        }
+                    } else {
                         return Err(e.into());
                     }
-                } else {
-                    return Err(e.into());
+                    false
                 }
-                false
-            }
-        };
+            };
+
         if send_tx {
             self.handle_proof_submission(block_to_verify).await?;
             // Remove the Proofs for that block_number
@@ -440,29 +474,41 @@ impl ProverServer {
         &self,
         block_number: u64,
     ) -> Result<H256, ProverServerError> {
-        // TODO change error
-        let risc0_proving_output =
-            read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
-        let risc0_contract_data = match risc0_proving_output {
-            ProvingOutput::RISC0(risc0_proof) => risc0_proof.contract_data()?,
-            _ => {
-                return Err(ProverServerError::Custom(
-                    "RISC0 Proof isn't present".to_string(),
-                ))
+        let risc0_contract_data = {
+            if self.needed_proof_types.contains(&ProverType::RISC0) {
+                let risc0_proving_output =
+                    read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
+                match risc0_proving_output {
+                    ProvingOutput::RISC0(risc0_proof) => risc0_proof.contract_data()?,
+                    _ => {
+                        return Err(ProverServerError::Custom(
+                            "RISC0 Proof isn't present".to_string(),
+                        ))
+                    }
+                }
+            } else {
+                Risc0Proof::empty_contract_data()
             }
         };
 
-        let sp1_proving_output = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
-        let sp1_contract_data = match sp1_proving_output {
-            ProvingOutput::SP1(sp1_proof) => sp1_proof.contract_data()?,
-            _ => {
-                return Err(ProverServerError::Custom(
-                    "SP1 Proof isn't present".to_string(),
-                ))
+        let sp1_contract_data = {
+            if self.needed_proof_types.contains(&ProverType::SP1) {
+                let sp1_proving_output =
+                    read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
+                match sp1_proving_output {
+                    ProvingOutput::SP1(sp1_proof) => sp1_proof.contract_data()?,
+                    _ => {
+                        return Err(ProverServerError::Custom(
+                            "SP1 Proof isn't present".to_string(),
+                        ))
+                    }
+                }
+            } else {
+                Sp1Proof::empty_contract_data()
             }
         };
 
-        debug!("Sending proof for {block_number}");
+        debug!("Sending proof for block number: {block_number}");
 
         let calldata_values = vec![
             Value::Uint(U256::from(block_number)),

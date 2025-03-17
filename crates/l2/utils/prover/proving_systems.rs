@@ -1,4 +1,5 @@
 use crate::proposer::errors::ProverServerError;
+use ethrex_common::H256;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -10,13 +11,6 @@ use sp1_sdk::{ExecutionReport as SP1ExecutionReport, HashableKey, SP1PublicValue
 pub enum ProverType {
     RISC0,
     SP1,
-}
-
-/// Used to iterate through all the possible proving systems
-impl ProverType {
-    pub fn all() -> &'static [ProverType] {
-        &[ProverType::RISC0, ProverType::SP1]
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -89,6 +83,14 @@ impl Risc0Proof {
             journal_digest,
         })
     }
+
+    pub fn empty_contract_data() -> Risc0ContractData {
+        Risc0ContractData {
+            block_proof: H256::zero().as_bytes().to_vec(),
+            image_id: H256::zero().as_bytes().to_vec(),
+            journal_digest: H256::zero().as_bytes().to_vec(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -106,6 +108,7 @@ impl Debug for Sp1Proof {
     }
 }
 
+#[derive(Debug)]
 pub struct Sp1ContractData {
     pub public_values: Vec<u8>,
     pub vk: Vec<u8>,
@@ -140,6 +143,14 @@ impl Sp1Proof {
             vk: vk_bytes,
             proof_bytes: self.proof.bytes(),
         })
+    }
+
+    pub fn empty_contract_data() -> Sp1ContractData {
+        Sp1ContractData {
+            public_values: H256::zero().as_bytes().to_vec(),
+            vk: H256::zero().as_bytes().to_vec(),
+            proof_bytes: H256::zero().as_bytes().to_vec(),
+        }
     }
 }
 
