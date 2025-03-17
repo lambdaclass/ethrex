@@ -10,3 +10,7 @@
 #### 2025-02-28
 
 * Don't recompute transaction senders when building blocks [#2097](https://github.com/lambdaclass/ethrex/pull/2097)
+
+#### 2025-03-17
+
+* Store block in a single transaction [#2236](https://github.com/lambdaclass/ethrex/pull/2236)
