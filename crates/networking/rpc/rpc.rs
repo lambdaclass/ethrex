@@ -83,7 +83,7 @@ enum RpcRequestWrapper {
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
     storage: Store,
-    pub blockchain: Arc<Blockchain>,
+    blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
