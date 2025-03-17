@@ -39,6 +39,11 @@ pub struct Store {
     /// rather than tracking every subsequent invalid block.
     ///
     /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
+    /// TODO: Placing the invalid_ancestors in the Store struct is
+    /// only temporary. In the future, invalid_ancestors will be
+    /// stored in the DB. This is done to prevent re-computing invalid
+    /// nodes in case the node goes down. For more information see:
+    /// https://github.com/lambdaclass/ethrex/issues/2136
     pub invalid_ancestors: Arc<Mutex<HashMap<BlockHash, BlockHash>>>,
 }
 
