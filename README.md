@@ -275,27 +275,102 @@ For more information about the different cli arguments check out the next sectio
 
 ### CLI Commands
 
-ethrex supports the following command line arguments:
-- `--network <FILE>`: Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`. Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currenlty supported include Holesky, Sepolia and Mekong.
-- `--datadir <DIRECTORY>`: Receives the name of the directory where the Database is located.
-  - If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
-- `--import <FILE>`: Receives an rlp encoded `Chain` object (aka a list of `Block`s). You can look at the example chain file at `test_data/chain.rlp`.
-- `--http.addr <ADDRESS>`: Listening address for the http rpc server. Default value: localhost.
-- `--http.port <PORT>`: Listening port for the http rpc server. Default value: 8545.
-- `--authrpc.addr <ADDRESS>`: Listening address for the authenticated rpc server. Default value: localhost.
-- `--authrpc.port <PORT>`: Listening port for the authenticated rpc server. Default value: 8551.
-- `--authrpc.jwtsecret <FILE>`: Receives the jwt secret used for authenticated rpc requests. Default value: jwt.hex.
-- `--p2p.addr <ADDRESS>`: Default value: 0.0.0.0.
-- `--p2p.port <PORT>`: Default value: 30303.
-- `--discovery.addr <ADDRESS>`: UDP address for P2P discovery. Default value: 0.0.0.0.
-- `--discovery.port <PORT>`: UDP port for P2P discovery. Default value: 30303.
-- `--bootnodes <BOOTNODE_LIST>`: Comma separated enode URLs for P2P discovery bootstrap.
-- `--log.level <LOG_LEVEL>`: The verbosity level used for logs. Default value: info. possible values: info, debug, trace, warn, error
-- `--syncmode <SYNC_MODE>`: The way in which the node will sync its state. Can be either "full" or "snap" with "full" as default value.
-- `--dev`: Used to create blocks without requiring a Consensus Client. Default value: false.
-  - If set it will be considered as `true`.
-  - The Binary has to be built with the `dev` feature enabled.
-- `--evm <EVM_BACKEND>`: Has to be `levm` or `revm`. Default value: `revm`.
+```
+> cargo run --release --bin ethrex -- --help
+
+Usage: ethrex [OPTIONS] [COMMAND]
+
+Commands:
+  removedb  Remove the database
+  import    Import blocks to the database
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+RPC options:
+      --http.addr <ADDRESS>
+          Listening address for the http rpc server.
+
+          [default: localhost]
+
+      --http.port <PORT>
+          Listening port for the http rpc server.
+
+          [default: 8545]
+
+      --authrpc.addr <ADDRESS>
+          Listening address for the authenticated rpc server.
+
+          [default: localhost]
+
+      --authrpc.port <PORT>
+          Listening port for the authenticated rpc server.
+
+          [default: 8551]
+
+      --authrpc.jwtsecret <JWTSECRET_PATH>
+          Receives the jwt secret used for authenticated rpc requests.
+
+          [default: jwt.hex]
+
+Node options:
+      --log.level <LOG_LEVEL>
+          Possible values: info, debug, trace, warn, error
+
+          [default: INFO]
+
+      --network <GENESIS_FILE_PATH>
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include Holesky, Sepolia and Mekong.
+
+      --datadir <DATABASE_DIRECTORY>
+          If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
+
+          [default: ethrex]
+
+      --metrics.port <PROMETHEUS_METRICS_PORT>
+
+
+      --dev
+          If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
+
+      --evm <EVM_BACKEND>
+          Has to be `levm` or `revm`
+
+          [default: revm]
+
+P2P options:
+      --p2p.enabled
+
+
+      --p2p.addr <ADDRESS>
+          [default: 0.0.0.0]
+
+      --p2p.port <PORT>
+          [default: 30303]
+
+      --discovery.addr <ADDRESS>
+          UDP address for P2P discovery.
+
+          [default: 0.0.0.0]
+
+      --discovery.port <PORT>
+          UDP port for P2P discovery.
+
+          [default: 30303]
+
+      --bootnodes <BOOTNODE_LIST>...
+          Comma separated enode URLs for P2P discovery bootstrap.
+
+      --syncmode <SYNC_MODE>
+          Can be either "full" or "snap" with "full" as default value.
+
+          [default: full]
+```
 
 # ethrex L2
 
