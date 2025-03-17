@@ -692,7 +692,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
     };
 
     // NOTE: According to Hive Test "engine-cancun/Invalid NewPayload,
-    // ParentHash, Syncing=False, EmptyTxs=False, DynFeeTxs=False",
+    // ParentHash, Syncing=True, EmptyTxs=False, DynFeeTxs=False",
     // even when a node is syncing, it should be able to respond if a
     // newPayload is valid. The exception being if the node is
     // performing a SnapSync; in that case, the node should reply with
