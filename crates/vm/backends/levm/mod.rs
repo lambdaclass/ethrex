@@ -542,9 +542,11 @@ impl LEVM {
                     .collect()
             }),
         )?;
+
         vm.execute()?;
         let access_list = build_access_list(&mut vm.accrued_substate);
 
+        // Execute the tx again, now with the created access list.
         let mut vm = VM::new(
             tx.to.clone(),
             env,
