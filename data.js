@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742225081106,
+  "lastUpdate": 1742227630850,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -355,6 +355,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 225391645830,
             "range": "± 1168069964",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "35d3462d07ec1e0f224280c3a4dd81097e5de66e",
+          "message": "feat(l1): enforce deposit contract address (#2118)\n\n**Motivation**\n\nTo avoid issues mixing the `DepositContractAddress` across different\nnetworks.\n\n**Description**\n\n- Enforce setting `deposit_contract_address` from the genesis files.\n- Remove the `MAINNET_DEPOSIT_CONTRACT_ADDRESS` constant.\n- Update unit tests to use a mock address.\n- Update the `network_params` files to include the\n`deposit_contract_address`.\n- Add the correct `deposit_contract_address` for Holesky.\n\nCloses #2082",
+          "timestamp": "2025-03-17T15:08:43Z",
+          "tree_id": "879e0564990ee0e55493f7a7dac4b069d21a3cd8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/35d3462d07ec1e0f224280c3a4dd81097e5de66e"
+        },
+        "date": 1742227628303,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 225727773861,
+            "range": "± 535842569",
             "unit": "ns/iter"
           }
         ]
