@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1741985650279,
+  "lastUpdate": 1742225081106,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -325,6 +325,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 227042419601,
             "range": "± 1019661927",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "156438142+fborello-lambda@users.noreply.github.com",
+            "name": "Federico Borello",
+            "username": "fborello-lambda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9f0148fba23984175609aee1eb4acdb54b09e390",
+          "message": "feat(levm): pectra-devnet6 eftests (#1877)\n\n**Motivation**\n\nThe latest test for pectra has been released. [Pectra Devnet 6\n](https://github.com/ethereum/execution-spec-tests/releases/tag/pectra-devnet-6%40v1.0.0)\n\n**Description**\n\n- Download latest tests\n- Add eip7702 latest changes: https://github.com/ethereum/EIPs/pull/9248\n- Add a new CI rule for EF Tests to be 100% from London to Prague forks\n- Fix tests from `set_code_txs_2` and `refunds` belonging to EIP 7702\nand EIP 7623\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Tomás Paradelo <tomas.paradelo@lambdaclass.com>",
+          "timestamp": "2025-03-17T14:25:36Z",
+          "tree_id": "c2996d7b99e333fabd413e652fa751a2f65d0af0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9f0148fba23984175609aee1eb4acdb54b09e390"
+        },
+        "date": 1742225078844,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 225391645830,
+            "range": "± 1168069964",
             "unit": "ns/iter"
           }
         ]
