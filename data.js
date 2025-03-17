@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742241295651,
+  "lastUpdate": 1742241372115,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -505,6 +505,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 226462891870,
             "range": "± 852500902",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eb0629cb88e754da18dbc279f3b545f6ac0cf047",
+          "message": "docs(core): remove milestones and cleanup readme (#2248)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-03-17T18:58:20Z",
+          "tree_id": "bdabf9ad88f96c6f410801f6f64b6c70edba2df2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/eb0629cb88e754da18dbc279f3b545f6ac0cf047"
+        },
+        "date": 1742241370039,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 223547007715,
+            "range": "± 625519400",
             "unit": "ns/iter"
           }
         ]
