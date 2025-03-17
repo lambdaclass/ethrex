@@ -48,7 +48,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
-use tracing::info;
+use tracing::{info, warn};
 use types::transaction::SendRawTransactionRequest;
 use utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -254,7 +254,8 @@ pub async fn handle_authrpc_request(
 ) -> Json<Value> {
     let req: RpcRequest = match serde_json::from_str(&body) {
         Ok(req) => req,
-        Err(_) => {
+        Err(err) => {
+            warn!("RPC ERROR HANDLE AUTHRPC REQ: {err:?}");
             return Json(rpc_response(
                 RpcRequestId::String("".to_string()),
                 Err(RpcErr::BadParams("Invalid request body".to_string())),
