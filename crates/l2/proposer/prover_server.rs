@@ -456,15 +456,18 @@ impl ProverServer {
 
         debug!("Sending proof for {block_number}");
 
-        let calldata = encode_calldata(
-            VERIFY_FUNCTION_SIGNATURE,
-            &[
-                risc0_proof.calldata.as_slice(),
-                sp1_proof.calldata.as_slice(),
-                pico_proof.calldata.as_slice(),
-            ]
-            .concat(),
-        )?;
+        let calldata_values = [
+            &[Value::Uint(U256::from(block_number))],
+            exec_proof.calldata.as_slice(),
+            risc0_proof.calldata.as_slice(),
+            sp1_proof.calldata.as_slice(),
+            pico_proof.calldata.as_slice(),
+        ]
+        .concat();
+
+        warn!("calldata value len: {}", calldata_values.len());
+
+        let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
         let verify_tx = self
             .eth_client
@@ -518,6 +521,8 @@ impl ProverServer {
             let calldata_values = vec![
                 // blockNumber
                 Value::Uint(U256::from(last_verified_block + 1)),
+                // execPublicInputs
+                Value::Bytes(vec![].into()),
                 // risc0BlockProof
                 Value::Bytes(vec![].into()),
                 // risc0ImageId
