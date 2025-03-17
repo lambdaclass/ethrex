@@ -1,7 +1,7 @@
 use ethrex_common::types::BlockHash;
 use ethrex_storage::Store;
 
-use crate::backends::revm::execution_db::ExecutionDB;
+use crate::backends::exec_db::ExecutionDB;
 
 #[derive(Clone)]
 pub enum StoreWrapper {

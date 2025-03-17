@@ -387,7 +387,7 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
 mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
-    use ethrex_vm::backends::revm::execution_db::ExecutionDB;
+    use ethrex_vm::backends::exec_db::ExecutionDB;
     use risc0_zkvm::sha::Digest;
     use sp1_recursion_gnark_ffi::PlonkBn254Proof;
     use sp1_sdk::{client::ProverClientBuilder, HashableKey, Prover, SP1Proof, SP1PublicValues};
