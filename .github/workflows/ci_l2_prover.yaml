@@ -24,6 +24,10 @@ jobs:
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
+      - name: RISC-V SP1 toolchain install
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 4.1.0
       - name: Check
         run: cargo check -p ethrex-prover -F ${{ matrix.backend }}
       - name: Clippy
