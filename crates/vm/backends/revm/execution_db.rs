@@ -10,7 +10,7 @@ use revm::{
 };
 use revm_primitives::SpecId;
 
-use crate::{backends::exec_db::ExecutionDB, block_env, errors::ExecutionDBError, tx_env};
+use crate::{block_env, db::ExecutionDB, errors::ExecutionDBError, tx_env};
 
 impl ExecutionDB {
     /// Execute a block and cache all state changes, returns the cache

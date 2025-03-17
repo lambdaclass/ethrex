@@ -12,8 +12,9 @@ use revm::primitives::{
 };
 
 use crate::{
-    backends::exec_db::ExecutionDB, db::StoreWrapper, errors::ExecutionDBError, spec_id,
-    ChainConfig, EvmError,
+    db::{ExecutionDB, StoreWrapper},
+    errors::ExecutionDBError,
+    spec_id, ChainConfig, EvmError,
 };
 
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
