@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742227630850,
+  "lastUpdate": 1742230946922,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -385,6 +385,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 225727773861,
             "range": "± 535842569",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "76d3ee9afa428b5cf8869b00f8a2f4b7d5c119ca",
+          "message": "feat(l1): remove deprecated mekong testnet (#2243)\n\n**Motivation**\n\nMekong testnet has been [officially\ndeprecated](https://blog.ethereum.org/en/2025/03/06/mekong-devnet)\n\n**Description**\n\nRemove `mekong` as a preset network option and remove associated data\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-03-17T16:01:55Z",
+          "tree_id": "61102444d122a2c8c6e8fdd5c9b40242be72c332",
+          "url": "https://github.com/lambdaclass/ethrex/commit/76d3ee9afa428b5cf8869b00f8a2f4b7d5c119ca"
+        },
+        "date": 1742230945110,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 234091245744,
+            "range": "± 2223166116",
             "unit": "ns/iter"
           }
         ]
