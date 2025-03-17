@@ -535,7 +535,7 @@ fn validate_ancestors(
         .storage
         .invalid_ancestors
         .try_lock()
-        .map_err(|_| RpcErr::Internal("Internal error".into()))?;
+        .map_err(|err| RpcErr::Internal(format!("Internal error {}", err)))?;
 
     // Check if the block has already been invalidated
     if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
@@ -701,7 +701,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
     if *context
         .sync_mode
         .try_lock()
-        .map_err(|_| RpcErr::Internal("Internal error".into()))?
+        .map_err(|err| RpcErr::Internal(format!("Internal error {}", err)))?
         == SyncMode::Snap
     {
         return Ok(PayloadStatus::syncing());

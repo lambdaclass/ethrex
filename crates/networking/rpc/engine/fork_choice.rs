@@ -213,7 +213,7 @@ fn handle_forkchoice(
             .storage
             .invalid_ancestors
             .try_lock()
-            .map_err(|_| RpcErr::Internal("Internal error".into()))?;
+            .map_err(|err| RpcErr::Internal(format!("Internal error {}", err)))?;
 
         // Check head block hash in invalid_ancestors
         if let Some(latest_valid_hash) = invalid_ancestors.get(&fork_choice_state.head_block_hash) {
