@@ -1,6 +1,7 @@
 pub(crate) mod db;
 
 use super::BlockExecutionResult;
+use crate::backends::revm::execution_db::ExecutionDB;
 use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
@@ -24,6 +25,7 @@ use ethrex_levm::{
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 use revm_primitives::Bytes;
+use std::ops::Deref;
 use std::{collections::HashMap, sync::Arc};
 
 // Export needed types
@@ -37,25 +39,22 @@ pub use ethrex_levm::db::CacheDB;
 pub struct LEVM;
 
 impl LEVM {
-    pub fn execute_block(block: &Block, store: Store) -> Result<BlockExecutionResult, EvmError> {
-        let store_wrapper = StoreWrapper {
-            store: store.clone(),
-            block_hash: block.header.parent_hash,
-        };
-
+    pub fn execute_block(
+        block: &Block,
+        db: Arc<dyn LevmDatabase>,
+    ) -> Result<BlockExecutionResult, EvmError> {
         let mut block_cache: CacheDB = HashMap::new();
-        let block_header = &block.header;
-        let config = store.get_chain_config()?;
+        let config = db.get_chain_config();
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 let fork = config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    Self::beacon_root_contract_call(block_header, &store, &mut block_cache)?;
+                    Self::beacon_root_contract_call(block_header, &db, &mut block_cache)?;
                 }
 
                 if fork >= Fork::Prague {
                     //eip 2935: stores parent block hash in system contract
-                    Self::process_block_hash_history(block_header, &store, &mut block_cache)?;
+                    Self::process_block_hash_history(block_header, &db, &mut block_cache)?;
                 }
             }
         }
@@ -120,8 +119,7 @@ impl LEVM {
             }
         }
 
-        let requests =
-            extract_all_requests_levm(&receipts, &store, &block.header, &mut block_cache)?;
+        let requests = extract_all_requests_levm(&receipts, &db, &block.header, &mut block_cache)?;
 
         account_updates.extend(Self::get_state_transitions(
             None,

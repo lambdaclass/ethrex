@@ -1,5 +1,5 @@
 use crate::account::{Account, AccountInfo, StorageSlot};
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{types::ChainConfig, Address, H256, U256};
 use std::collections::HashMap;
 
 pub mod cache;
@@ -10,6 +10,7 @@ pub trait Database {
     fn get_storage_slot(&self, address: Address, key: H256) -> U256;
     fn get_block_hash(&self, block_number: u64) -> Option<H256>;
     fn account_exists(&self, address: Address) -> bool;
+    fn get_chain_config(&self) -> ChainConfig;
 }
 
 #[derive(Debug, Default)]
@@ -76,5 +77,9 @@ impl Database for Db {
 
     fn get_block_hash(&self, block_number: u64) -> Option<H256> {
         self.block_hashes.get(&block_number).cloned()
+    }
+
+    fn get_chain_config(&self) -> ChainConfig {
+        ChainConfig::default()
     }
 }

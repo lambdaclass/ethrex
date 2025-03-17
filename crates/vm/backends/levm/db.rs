@@ -47,6 +47,10 @@ impl LevmDatabase for StoreWrapper {
 
         a.map(|a| CoreH256::from(a.compute_block_hash().0))
     }
+
+    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+        self.store.get_chain_config().unwrap()
+    }
 }
 
 impl LevmDatabase for ExecutionDB {
@@ -75,5 +79,9 @@ impl LevmDatabase for ExecutionDB {
             return CoreU256::default();
         };
         *storage.get(&key).unwrap_or(&CoreU256::default())
+    }
+
+    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+        self.chain_config
     }
 }
