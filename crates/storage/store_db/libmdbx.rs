@@ -173,8 +173,10 @@ impl StoreEngine for Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
-        let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt.encode_to_vec()) else {
+        // let key: Rlp<(BlockHash, Index)> = (block_hash, index).into();
+        let Some(entries) =
+            IndexedChunk::from::<Receipts>(block_hash.to_fixed_bytes(), &receipt.encode_to_vec())
+        else {
             return Err(StoreError::Custom("Invalid size".to_string()));
         };
         self.write_batch::<Receipts>(entries.into_iter())
@@ -188,7 +190,7 @@ impl StoreEngine for Store {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
             let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
             let mut cursor = txn.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            let key = (hash, index).into();
+            let key = hash.to_fixed_bytes();
             IndexedChunk::read_from_db(&mut cursor, key)
         } else {
             Ok(None)
@@ -445,7 +447,7 @@ impl StoreEngine for Store {
         let mut key_values = vec![];
 
         for (index, receipt) in receipts.clone().into_iter().enumerate() {
-            let key = (block_hash, index as u64).into();
+            let key = block_hash.to_fixed_bytes();
             let receipt_rlp = receipt.encode_to_vec();
             let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
                 continue;
@@ -460,7 +462,7 @@ impl StoreEngine for Store {
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
         let mut receipt_index = 0;
-        let mut key = (*block_hash, 0).into();
+        let mut key = block_hash.to_fixed_bytes();
         let txn = self.db.begin_read().map_err(|_| StoreError::ReadError)?;
         let mut cursor = txn
             .cursor::<Receipts>()
@@ -474,7 +476,7 @@ impl StoreEngine for Store {
         while let Some(receipt) = IndexedChunk::read_from_db(&mut cursor, key)? {
             receipts.push(receipt);
             receipt_index += 1;
-            key = (*block_hash, receipt_index).into();
+            key = block_hash.to_fixed_bytes();
         }
 
         Ok(receipts)
@@ -695,20 +697,27 @@ impl StoreEngine for Store {
             .enumerate()
             .map(|(index, tx)| {
                 (
-                    tx.compute_hash(),
-                    (block_number, block_hash, index as Index),
+                    Rlp::from(tx.compute_hash()),
+                    Rlp::from((block_number, block_hash, index as Index)),
                 )
             })
             .collect::<Vec<_>>();
-        let body_data = (block.header.compute_block_hash(), block.body);
-        let header_data = (block.header.compute_block_hash(), block.header);
+        let block_hash = block.header.compute_block_hash();
+        let body_data = (
+            block_hash.clone().to_fixed_bytes(),
+            Rlp::<BlockBody>::from(block.body),
+        );
+        let header_data = (
+            block_hash.clone().to_fixed_bytes(),
+            Rlp::<BlockHeader>::from(block.header),
+        );
 
         // PREPARE RECEIPTS FOR INSERTION
         let mut receipts_data = Vec::with_capacity(receipts.len());
         for (index, receipt) in receipts.into_iter().enumerate() {
-            let key = (block_hash, index as u64).into();
+            let key = block_hash.as_fixed_bytes();
             let receipt_rlp = receipt.encode_to_vec();
-            let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+            let Some(mut entries) = IndexedChunk::from::<Receipts>(*key, &receipt_rlp) else {
                 continue;
             };
 
@@ -720,23 +729,20 @@ impl StoreEngine for Store {
             let mut cursor = tx.cursor::<TransactionLocations>().unwrap();
 
             for (k, v) in transactions_and_locations_data {
-                // FIXME: RLP ENCODE BEFORE INSERTING
-                cursor.upsert(k.into(), v.into()).unwrap()
+                cursor.upsert(k, v).unwrap()
             }
         }
 
         {
             let mut cursor = tx.cursor::<Bodies>().unwrap();
             let (k, v) = body_data;
-            // FIXME: RLP ENCODE BEFORE INSERTING
-            cursor.upsert(k.into(), v.into()).unwrap()
+            cursor.upsert(k, v).unwrap()
         }
 
         {
             let mut cursor = tx.cursor::<Headers>().unwrap();
             let (k, v) = header_data;
-            // FIXME: RLP ENCODE BEFORE INSERTING
-            cursor.upsert(k.into(), v.into()).unwrap()
+            cursor.upsert(k, v).unwrap()
         }
 
         tx.upsert::<ChainData>(
@@ -882,18 +888,20 @@ table!(
     ( CanonicalBlockHashes ) BlockNumber => BlockHashRLP
 );
 
+pub type DataBaseHash = [u8; 32];
+
 table!(
     /// Block hash to number table.
-    ( BlockNumbers ) BlockHashRLP => BlockNumber
+    ( BlockNumbers ) DataBaseHash => BlockNumber
 );
 
 table!(
     /// Block headers table.
-    ( Headers ) BlockHashRLP => BlockHeaderRLP
+    ( Headers ) DataBaseHash => BlockHeaderRLP
 );
 table!(
     /// Block bodies table.
-    ( Bodies ) BlockHashRLP => BlockBodyRLP
+    ( Bodies ) DataBaseHash => BlockBodyRLP
 );
 table!(
     /// Account codes table.
@@ -902,7 +910,7 @@ table!(
 
 dupsort!(
     /// Receipts table.
-    ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
+    ( Receipts ) DataBaseHash[Index] => IndexedChunk<Receipt>
 );
 
 dupsort!(
