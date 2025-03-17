@@ -10,10 +10,10 @@ use std::collections::BTreeMap;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
-use tokio::sync::mpsc::Receiver;
+use tokio::{sync::mpsc::Receiver, time::Instant};
 use tracing::{debug, info};
 
-use crate::{peer_handler::PeerHandler, sync::node_missing_children};
+use crate::{peer_handler::PeerHandler, sync::{node_missing_children, SHOW_PROGRESS_INTERVAL_DURATION}};
 
 use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
 
@@ -32,13 +32,17 @@ pub(crate) async fn storage_healer(
         .unwrap_or_default()
         .into_iter()
         .collect();
+    let mut time_since_info = Instant::now();
     info!("Spawned Storage Healer, backlog: {} storage paths", pending_paths.iter().flat_map(|(_, a)| a).count());
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
     while incoming || !pending_paths.is_empty() {
-        info!("Storage Healer queue: {} paths", pending_paths.iter().flat_map(|(_, a)| a).count());
+        if time_since_info.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
+            info!("Storage Healer queue: {} paths", pending_paths.iter().flat_map(|(_, a)| a).count());
+            time_since_info = Instant::now();
+        }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
