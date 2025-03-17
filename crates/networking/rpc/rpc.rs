@@ -56,7 +56,7 @@ use utils::{
 };
 cfg_if::cfg_if! {
     if #[cfg(feature = "l2")] {
-        use l2::transaction::EthrexSponsoredTx;
+        use l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
         mod l2;
@@ -458,7 +458,7 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
 #[cfg(feature = "l2")]
 pub fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "ethrex_sendTransaction" => EthrexSponsoredTx::call(req, context),
+        "ethrex_sendTransaction" => SponsoredTx::call(req, context),
         unknown_ethrex_l2_method => {
             Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
         }

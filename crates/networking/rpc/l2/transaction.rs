@@ -22,7 +22,7 @@ const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 const GAS_LIMIT_HARD_LIMIT: u64 = 100000;
 
 #[derive(Deserialize, Debug)]
-pub struct EthrexSponsoredTx {
+pub struct SponsoredTx {
     #[serde(rename(deserialize = "authorizationList"))]
     pub authorization_list: Option<AuthorizationList>,
     #[serde(deserialize_with = "ethrex_common::serde_utils::bytes::deserialize")]
@@ -34,7 +34,7 @@ pub struct EthrexSponsoredTx {
 // https://ithaca.xyz/updates/exp-0000
 // You can check the reference implementation here
 // https://github.com/ithacaxyz/odyssey/blob/main/crates/wallet/src/lib.rs
-impl RpcHandler for EthrexSponsoredTx {
+impl RpcHandler for SponsoredTx {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
