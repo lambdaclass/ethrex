@@ -218,7 +218,8 @@ impl PeerHandler {
         start: H256,
         limit: H256,
     ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+        for i in 0..REQUEST_RETRY_ATTEMPTS {
+            info!("Requesting Account Ranges, attempt: {i}");
             let request_id = rand::random();
             let request = RLPxMessage::GetAccountRange(GetAccountRange {
                 id: request_id,
