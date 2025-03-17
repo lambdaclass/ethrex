@@ -31,7 +31,7 @@ fn block_import() {
     }
     .run(&ethrex::cli::Options {
         datadir: data_dir.to_owned(),
-        network: network.to_owned(),
+        network: Some(network.to_owned()),
         evm: evm_engine,
         ..Default::default()
     })

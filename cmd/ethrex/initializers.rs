@@ -212,19 +212,22 @@ pub fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
 }
 
 pub fn get_network(opts: &Options) -> String {
-    let mut network = opts.network.clone();
+    let mut network = opts
+        .network
+        .clone()
+        .expect("--network is required and it was not provided");
 
     // Set preset genesis from known networks
-    if opts.network == "holesky" {
+    if network == "holesky" {
         network = String::from(networks::HOLESKY_GENESIS_PATH);
     }
-    if opts.network == "sepolia" {
+    if network == "sepolia" {
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
     }
-    if opts.network == "mekong" {
+    if network == "mekong" {
         network = String::from(networks::MEKONG_GENESIS_PATH);
     }
-    if opts.network == "ephemery" {
+    if network == "ephemery" {
         network = String::from(networks::EPHEMERY_GENESIS_PATH);
     }
 

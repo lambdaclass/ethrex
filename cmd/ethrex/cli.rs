@@ -103,7 +103,7 @@ pub struct Options {
         value_name = "GENESIS_FILE_PATH",
         help_heading = "Node options"
     )]
-    pub network: String,
+    pub network: Option<String>,
     #[arg(long = "bootnodes", value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help_heading = "P2P options")]
     pub bootnodes: Vec<Node>,
     #[arg(
@@ -242,7 +242,12 @@ impl Subcommand {
                     .run(opts)?;
                 }
 
-                let store = init_store(&opts.datadir, &opts.network);
+                let network = opts
+                    .network
+                    .as_ref()
+                    .expect("--network is required and it was not provided");
+
+                let store = init_store(&opts.datadir, network);
 
                 let blockchain = init_blockchain(opts.evm, store);
 
