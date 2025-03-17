@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742232349515,
+  "lastUpdate": 1742232435364,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -445,6 +445,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 228869982757,
             "range": "± 840452460",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a07f74ffd7086e94c0cf8da04e5fd9eed6bb2450",
+          "message": "ci(l1): refine posting daily reports to slack. (#2170)\n\n**Motivation**\nRemove posting of some reports to L1 channel.",
+          "timestamp": "2025-03-17T16:29:02Z",
+          "tree_id": "76478a9c0cfb8097bb8a9481b087d3c5ff6f558b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a07f74ffd7086e94c0cf8da04e5fd9eed6bb2450"
+        },
+        "date": 1742232433382,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 224568254546,
+            "range": "± 376027366",
             "unit": "ns/iter"
           }
         ]
