@@ -92,9 +92,9 @@ async fn main() -> eyre::Result<()> {
         if #[cfg(all(feature = "l2", not(feature = "dev")))] {
             use std::future::IntoFuture;
 
-            let l2_proposer = ethrex_l2::start_proposer(store, blockchain).into_future();
+            let l2_sequencer = ethrex_l2::start_l2(store, blockchain).into_future();
 
-            tracker.spawn(l2_proposer);
+            tracker.spawn(l2_sequencer);
         }
     }
 
