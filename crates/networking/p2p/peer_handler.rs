@@ -218,7 +218,7 @@ impl PeerHandler {
         start: H256,
         limit: H256,
     ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
-        for i in 0..REQUEST_RETRY_ATTEMPTS {
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetAccountRange(GetAccountRange {
                 id: request_id,
@@ -399,6 +399,7 @@ impl PeerHandler {
                     } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
                         .is_err()
                     {
+                        tracing::warn!("Storage Range failed verification");
                         continue;
                     }
 
