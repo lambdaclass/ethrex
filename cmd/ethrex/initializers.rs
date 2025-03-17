@@ -433,8 +433,9 @@ pub fn get_sponsor_pk() -> SecretKey {
     if let Err(e) = read_env_file() {
         panic!("Failed to read .env file: {e}");
     }
-    std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY")
-        .unwrap_or_default()
+    let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();
+    pk.strip_prefix("0x")
+        .unwrap_or(&pk)
         .parse::<SecretKey>()
         .expect("Failed to parse a secret key to sponsor transactions")
 }
