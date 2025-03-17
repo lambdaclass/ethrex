@@ -58,7 +58,7 @@ const SNAP_STATE_TABLE: TableDefinition<SnapStateIndex, Vec<u8>> =
 const STATE_SNAPSHOT_TABLE: TableDefinition<AccountHashRLP, AccountStateRLP> =
     TableDefinition::new("StateSnapshot");
 const STORAGE_SNAPSHOT_TABLE: MultimapTableDefinition<AccountHashRLP, ([u8; 32], [u8; 32])> =
-    MultimapTableDefinition::new("TransactionLocations");
+    MultimapTableDefinition::new("StorageSnapshotTable");
 
 #[derive(Debug)]
 pub struct RedBStore {

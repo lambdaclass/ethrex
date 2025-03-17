@@ -8,10 +8,10 @@ use crate::store_db::redb::RedBStore;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::{
-    code_hash, AccountInfo, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Genesis, GenesisAccount, Index, Receipt, Transaction, EMPTY_TRIE_HASH,
+    code_hash, payload::PayloadBundle, AccountInfo, AccountState, Block, BlockBody, BlockHash,
+    BlockHeader, BlockNumber, ChainConfig, Genesis, GenesisAccount, Index, Receipt, Transaction,
+    EMPTY_TRIE_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
@@ -1052,7 +1052,7 @@ mod tests {
     use ethereum_types::{H256, U256};
     use ethrex_common::{
         types::{Transaction, TxType, EMPTY_KECCACK_HASH},
-        Bloom,
+        Bloom, H160,
     };
     use ethrex_rlp::decode::RLPDecode;
     use std::{fs, panic, str::FromStr};
@@ -1344,6 +1344,8 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(58750000000000000000000),
             terminal_total_difficulty_passed: true,
+            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+                .unwrap(),
             ..Default::default()
         }
     }
