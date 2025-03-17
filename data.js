@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742230946922,
+  "lastUpdate": 1742232349515,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -415,6 +415,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 234091245744,
             "range": "± 2223166116",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "39c8e480507d5a5e6f5d12c61e41eba3f1036462",
+          "message": "fix(l2): small fixes and refactors (#2241)\n\n**Motivation**\n\nThis PR makes a few fixes and changes to ethrex l2:\n\n- Moves the block building logic to a separate file/task called\n`block_producer`, more in line with our current vocabulary.\n- Fixes an issue where the prover server in dev mode would wait using\n`thread::sleep` instead of `tokio::time::sleep`, sometimes hanging the\nruntime.\n- Adds a `dev_interval_ms` config option to the prover server to\nconfigure, in dev mode, how often it sends (empty) proofs to the L1.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-03-17T16:26:33Z",
+          "tree_id": "181c54b5ba2d5abaf5d00444fad8294bb43290a8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/39c8e480507d5a5e6f5d12c61e41eba3f1036462"
+        },
+        "date": 1742232347655,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 228869982757,
+            "range": "± 840452460",
             "unit": "ns/iter"
           }
         ]
