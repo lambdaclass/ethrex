@@ -106,6 +106,8 @@ pub(crate) enum Command {
         blobs_dir: PathBuf,
         #[clap(short = 's', long, help = "The path to the store.")]
         store_path: PathBuf,
+        #[clap(short = 'c', long, help = "Address of the L2 proposer coinbase")]
+        coinbase: Address,
     },
 }
 
@@ -295,6 +297,7 @@ impl Command {
                 genesis,
                 blobs_dir,
                 store_path,
+                coinbase,
             } => {
                 let store = Store::new_from_genesis(
                     store_path.to_str().expect("Invalid store path"),
@@ -330,6 +333,7 @@ impl Command {
                         .unwrap();
 
                     let new_block = BlockHeader {
+                        coinbase,
                         number: last_number + 1,
                         parent_hash: last_hash,
                         state_root: new_trie.hash().expect("Error committing state"),
