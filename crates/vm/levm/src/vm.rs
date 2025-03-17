@@ -233,9 +233,15 @@ impl VM {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
-                let bytecode = get_account_no_push_cache(&cache, db.clone(), address_to)
-                    .info
-                    .bytecode;
+                let mut substate = Substate {
+                    selfdestruct_set: HashSet::new(),
+                    touched_accounts: default_touched_accounts,
+                    touched_storage_slots: default_touched_storage_slots,
+                    created_accounts: HashSet::new(),
+                };
+
+                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytecode) =
+                    eip7702_get_code(&mut cache, db.clone(), &mut substate, address_to)?;
 
                 // CALL tx
                 let initial_call_frame = CallFrame::new(
@@ -251,13 +257,6 @@ impl VM {
                     0,
                     false,
                 );
-
-                let substate = Substate {
-                    selfdestruct_set: HashSet::new(),
-                    touched_accounts: default_touched_accounts,
-                    touched_storage_slots: default_touched_storage_slots,
-                    created_accounts: HashSet::new(),
-                };
 
                 Ok(Self {
                     call_frames: vec![initial_call_frame],

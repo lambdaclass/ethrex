@@ -69,7 +69,7 @@ async fn setup() -> (ProgramInput, Block) {
         store: store.clone(),
         block_hash: block_to_prove.header.parent_hash,
     };
-    let db = store.to_exec_db(&block_to_prove).unwrap();
+    let db = store.to_exec_db(block_to_prove).unwrap();
 
     let input = ProgramInput {
         block: block_to_prove.clone(),
