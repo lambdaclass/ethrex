@@ -29,7 +29,7 @@ pub enum RpcErr {
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
     #[cfg(feature = "l2")]
-    InvalidRogueMessage(String),
+    InvalidEthrexL2Message(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -130,10 +130,10 @@ impl From<RpcErr> for RpcErrorMetadata {
                 message: format!("Unknown payload: {context}"),
             },
             #[cfg(feature = "l2")]
-            RpcErr::InvalidRogueMessage(reason) => RpcErrorMetadata {
+            RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
                 code: -39000,
                 data: None,
-                message: format!("Invalid rogue message: {reason}",),
+                message: format!("Invalid Ethex L2 message: {reason}",),
             },
         }
     }
@@ -164,7 +164,7 @@ pub enum RpcNamespace {
     Web3,
     Net,
     #[cfg(feature = "l2")]
-    Rogue,
+    L2,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -194,7 +194,7 @@ impl RpcRequest {
                 "web3" => Ok(RpcNamespace::Web3),
                 "net" => Ok(RpcNamespace::Net),
                 #[cfg(feature = "l2")]
-                "rogue" => Ok(RpcNamespace::Rogue),
+                "ethrex" => Ok(RpcNamespace::L2),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {

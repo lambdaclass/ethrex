@@ -22,7 +22,7 @@ const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 const GAS_LIMIT_HARD_LIMIT: u64 = 100000;
 
 #[derive(Deserialize, Debug)]
-pub struct RogueSponsoredTx {
+pub struct EthrexSponsoredTx {
     #[serde(rename(deserialize = "authorizationList"))]
     pub authorization_list: Option<AuthorizationList>,
     #[serde(deserialize_with = "ethrex_common::serde_utils::bytes::deserialize")]
@@ -34,7 +34,7 @@ pub struct RogueSponsoredTx {
 // https://ithaca.xyz/updates/exp-0000
 // You can check the reference implementation here
 // https://github.com/ithacaxyz/odyssey/blob/main/crates/wallet/src/lib.rs
-impl RpcHandler for RogueSponsoredTx {
+impl RpcHandler for EthrexSponsoredTx {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
@@ -49,14 +49,14 @@ impl RpcHandler for RogueSponsoredTx {
         serde_json::from_value(
             params
                 .first()
-                .ok_or(RpcErr::InvalidRogueMessage(
-                    "Failed to parse request into rogue_SendTransaction".to_string(),
+                .ok_or(RpcErr::InvalidEthrexL2Message(
+                    "Failed to parse request into ethrex_SendTransaction".to_string(),
                 ))?
                 .clone(),
         )
         .map_err(|e| {
-            RpcErr::InvalidRogueMessage(format!(
-                "Failed to parse request into rogue_SendTransaction: {e}"
+            RpcErr::InvalidEthrexL2Message(format!(
+                "Failed to parse request into ethrex_SendTransaction: {e}"
             ))
         })
     }
@@ -64,7 +64,7 @@ impl RpcHandler for RogueSponsoredTx {
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // Dont allow create txs
         if self.to.is_zero() {
-            return Err(RpcErr::InvalidRogueMessage(
+            return Err(RpcErr::InvalidEthrexL2Message(
                 "Invalid Create transactions are not supported".to_string(),
             ));
         }
@@ -72,7 +72,7 @@ impl RpcHandler for RogueSponsoredTx {
         if let Some(auth_list) = &self.authorization_list {
             for tuple in auth_list {
                 if !context.valid_delegation_addresses.contains(&tuple.address) {
-                    return Err(RpcErr::InvalidRogueMessage(
+                    return Err(RpcErr::InvalidEthrexL2Message(
                         "Invalid tx trying to delegate to an address that isn't sponsored"
                             .to_string(),
                     ));
@@ -98,25 +98,26 @@ impl RpcHandler for RogueSponsoredTx {
 
             let prefix: Vec<u8> = code.iter().take(3).copied().collect();
             if code.len() != EIP7702_DELEGATED_CODE_LEN || prefix != DELGATION_PREFIX {
-                return Err(RpcErr::InvalidRogueMessage(
+                return Err(RpcErr::InvalidEthrexL2Message(
                     "Invalid tx trying to call non delegated account".to_string(),
                 ));
             }
             let address = Address::from_slice(&code[3..]);
             if address.is_zero() {
-                return Err(RpcErr::InvalidRogueMessage(
+                return Err(RpcErr::InvalidEthrexL2Message(
                     "Invalid tx trying to call non delegated account".to_string(),
                 ));
             }
             if !context.valid_delegation_addresses.contains(&address) {
-                return Err(RpcErr::InvalidRogueMessage(
+                return Err(RpcErr::InvalidEthrexL2Message(
                     "Invalid tx trying to call delegated address not in sponsored addresses"
                         .to_string(),
                 ));
             }
         }
-        let sponsor_address = get_address_from_secret_key(&context.sponsor_pk)
-            .map_err(|_| RpcErr::InvalidRogueMessage("Rogue Rpc method not enabled".to_string()))?;
+        let sponsor_address = get_address_from_secret_key(&context.sponsor_pk).map_err(|_| {
+            RpcErr::InvalidEthrexL2Message("Ethrex L2 Rpc method not enabled".to_string())
+        })?;
         let latest_block_number = context
             .storage
             .get_latest_block_number()
@@ -127,7 +128,7 @@ impl RpcHandler for RogueSponsoredTx {
             .storage
             .get_nonce_by_account_address(latest_block_number, sponsor_address)
             .map_err(RpcErr::from)?
-            .ok_or(RpcErr::InvalidRogueMessage("Invalid nonce".to_string()))?;
+            .ok_or(RpcErr::InvalidEthrexL2Message("Invalid nonce".to_string()))?;
         let max_priority_fee_per_gas = estimate_gas_tip(&context.storage)
             .map_err(RpcErr::from)?
             .unwrap_or_default();
@@ -170,9 +171,11 @@ impl RpcHandler for RogueSponsoredTx {
             ethrex_common::types::Transaction::EIP7702Transaction(tx) => {
                 GenericTransaction::from(tx)
             }
-            _ => return Err(RpcErr::InvalidRogueMessage(
-                "Error while creating transaction".to_string(),
-            )),
+            _ => {
+                return Err(RpcErr::InvalidEthrexL2Message(
+                    "Error while creating transaction".to_string(),
+                ))
+            }
         };
         generic.gas = None;
 
@@ -191,7 +194,9 @@ impl RpcHandler for RogueSponsoredTx {
         )
         .unwrap();
         if gas_limit == 0 || gas_limit > GAS_LIMIT_HARD_LIMIT {
-            return Err(RpcErr::InvalidRogueMessage("tx too expensive".to_string()));
+            return Err(RpcErr::InvalidEthrexL2Message(
+                "tx too expensive".to_string(),
+            ));
         }
         match tx {
             SendRawTransactionRequest::EIP7702(ref mut tx) => {
@@ -208,9 +213,11 @@ impl RpcHandler for RogueSponsoredTx {
                 tx.nonce = nonce;
                 tx.sign_inplace(&context.sponsor_pk);
             }
-            _ => return Err(RpcErr::InvalidRogueMessage(
-                "Error while creating transaction".to_string(),
-            )),
+            _ => {
+                return Err(RpcErr::InvalidEthrexL2Message(
+                    "Error while creating transaction".to_string(),
+                ))
+            }
         }
 
         tx.handle(context)

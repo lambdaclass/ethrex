@@ -189,7 +189,7 @@ pub fn cli() -> Command {
                     .value_name("SPONSORABLE_ADDRESSES_PATH")
                     .action(ArgAction::Set)
                     .required(false)
-                    .help("Path to a file containing addresses of contracts to wich rogue_SendTransaction should sponsor txs"),
+                    .help("Path to a file containing addresses of contracts to wich ethrex_SendTransaction should sponsor txs"),
             )
         } else if #[cfg(feature = "l2")]  {
             cmd.arg(
@@ -198,7 +198,7 @@ pub fn cli() -> Command {
                     .value_name("SPONSORABLE_ADDRESSES_PATH")
                     .action(ArgAction::Set)
                     .required(false)
-                    .help("Path to a file containing addresses of contracts to wich rogue_SendTransaction should sponsor txs"),
+                    .help("Path to a file containing addresses of contracts to wich ethrex_SendTransaction should sponsor txs"),
             )
         } else {
             cmd

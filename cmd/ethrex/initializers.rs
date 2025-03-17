@@ -412,7 +412,7 @@ pub fn get_http_socket_addr(matches: &ArgMatches) -> SocketAddr {
 #[cfg(feature = "l2")]
 pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
     let Some(path) = matches.get_one::<String>("valid_addresses") else {
-        warn!("No valid addresses provided, rogue_SendTransaction will always fail");
+        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
         return Vec::new();
     };
     let addresses: Vec<Address> = fs::read_to_string(path)
@@ -423,7 +423,7 @@ pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
         .filter_map(Result::ok)
         .collect();
     if addresses.is_empty() {
-        warn!("No valid addresses provided, rogue_SendTransaction will always fail");
+        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
     }
     addresses
 }

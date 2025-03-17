@@ -56,10 +56,10 @@ use utils::{
 };
 cfg_if::cfg_if! {
     if #[cfg(feature = "l2")] {
-        use rogue::transaction::RogueSponsoredTx;
+        use l2::transaction::EthrexSponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
-        mod rogue;
+        mod l2;
     }
 }
 mod admin;
@@ -298,7 +298,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
         #[cfg(feature = "l2")]
-        Ok(RpcNamespace::Rogue) => map_rogue_requests(req, context),
+        Ok(RpcNamespace::L2) => map_l2_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
@@ -456,10 +456,12 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
 }
 
 #[cfg(feature = "l2")]
-pub fn map_rogue_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "rogue_sendTransaction" => RogueSponsoredTx::call(req, context),
-        unknown_rogue_method => Err(RpcErr::MethodNotFound(unknown_rogue_method.to_owned())),
+        "ethrex_sendTransaction" => EthrexSponsoredTx::call(req, context),
+        unknown_ethrex_l2_method => {
+            Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
+        }
     }
 }
 
