@@ -378,7 +378,12 @@ pub async fn map_engine_requests(
                 }
             }
         }
-        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context),
+        "engine_newPayloadV4" => {
+            info!("New Payload V4 Request");
+            let res = NewPayloadV4Request::call(req, context);
+            info!("New Payload V4 response: {res:?}");
+            res
+        },
         "engine_newPayloadV3" => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "based")] {
