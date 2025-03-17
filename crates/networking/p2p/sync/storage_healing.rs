@@ -32,13 +32,13 @@ pub(crate) async fn storage_healer(
         .unwrap_or_default()
         .into_iter()
         .collect();
-    info!("Spawned Storage Healer, backlog: {} storage paths", pending_paths.len());
+    info!("Spawned Storage Healer, backlog: {} storage paths", pending_paths.iter().flat_map(|(_, a)| a).count());
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
     while incoming || !pending_paths.is_empty() {
-        info!("Storage Healer queue: {} paths", pending_paths.len());
+        info!("Storage Healer queue: {} paths", pending_paths.iter().flat_map(|(_, a)| a).count());
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
