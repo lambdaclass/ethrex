@@ -398,9 +398,10 @@ impl SyncManager {
                 let first_block_hash = current_block_hashes_chunk
                     .first()
                     .map_or(H256::default(), |a| *a);
-                let first_block_header_number = store
-                    .get_block_header_by_hash(first_block_hash)?
-                    .map_or(0, |h| h.number);
+                let first_block_header_number = block_headers
+                    .iter()
+                    .find(|h| h.compute_block_hash() == first_block_hash)
+                    .map_or(0, |e| e.number);
 
                 debug!(
                     "Received {} Block Bodies, starting from block hash {:?} with number: {}",
@@ -441,7 +442,11 @@ impl SyncManager {
             }
         }
 
-        debug!("Starting to execute and validate blocks in batch");
+        let blocks_len = blocks.len();
+        debug!(
+            "Starting to execute and validate {} blocks in batch",
+            blocks_len
+        );
         let Some(first_block) = blocks.first().cloned() else {
             return Err(SyncError::BodiesNotFound);
         };
@@ -450,8 +455,6 @@ impl SyncManager {
         };
         *current_head = last_block.hash();
         *search_head = last_block.hash();
-
-        let blocks_len = blocks.len();
 
         if let Err((error, failure)) = self.add_blocks(blocks, store.clone()) {
             warn!("Failed to add block during FullSync: {error}");
