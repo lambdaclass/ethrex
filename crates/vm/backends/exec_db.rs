@@ -2,11 +2,14 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, ChainConfig},
-    Address, H256, U256,
+    types::{AccountInfo, Block, ChainConfig},
+    Address, H160, H256, U256,
 };
-use ethrex_trie::NodeRLP;
+use ethrex_storage::{AccountUpdate, Store};
+use ethrex_trie::{NodeRLP, Trie, TrieError};
 use serde::{Deserialize, Serialize};
+
+use crate::{db::StoreWrapper, errors::ExecutionDBError};
 
 /// In-memory EVM database for single execution data.
 ///
@@ -33,4 +36,43 @@ pub struct ExecutionDB {
     ///
     /// Root node is stored separately from the rest as the first tuple member.
     pub storage_proofs: HashMap<Address, (Option<NodeRLP>, Vec<NodeRLP>)>,
+}
+
+impl ExecutionDB {
+    /// Gets the Vec<[AccountUpdate]>/StateTransitions obtained after executing a block.
+    pub fn get_account_updates(
+        block: &Block,
+        store: &Store,
+    ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
+        // TODO: perform validation to exit early
+
+        // let mut state = evm_state(store.clone(), block.header.parent_hash);
+        let store_wrapper = StoreWrapper::StoreDB(store.clone(), block.header.parent_hash);
+
+        let result = crate::backends::levm::LEVM::execute_block(block, store_wrapper)
+            .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
+        Ok(result.account_updates)
+    }
+
+    pub fn get_chain_config(&self) -> ChainConfig {
+        self.chain_config
+    }
+
+    /// Recreates the state trie and storage tries from the encoded nodes.
+    pub fn get_tries(&self) -> Result<(Trie, HashMap<H160, Trie>), ExecutionDBError> {
+        let (state_trie_root, state_trie_nodes) = &self.state_proofs;
+        let state_trie = Trie::from_nodes(state_trie_root.as_ref(), state_trie_nodes)?;
+
+        let storage_trie = self
+            .storage_proofs
+            .iter()
+            .map(|(address, nodes)| {
+                let (storage_trie_root, storage_trie_nodes) = nodes;
+                let trie = Trie::from_nodes(storage_trie_root.as_ref(), storage_trie_nodes)?;
+                Ok((*address, trie))
+            })
+            .collect::<Result<_, TrieError>>()?;
+
+        Ok((state_trie, storage_trie))
+    }
 }

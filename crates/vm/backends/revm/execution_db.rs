@@ -1,12 +1,4 @@
-use std::collections::HashMap;
-
-use ethereum_types::H160;
-use ethrex_common::{
-    types::{Block, ChainConfig},
-    Address, H256,
-};
-use ethrex_storage::{AccountUpdate, Store};
-use ethrex_trie::{Trie, TrieError};
+use ethrex_common::{types::Block, Address, H256};
 use revm::{
     db::CacheDB,
     inspectors::TracerEip3155,
@@ -18,50 +10,9 @@ use revm::{
 };
 use revm_primitives::SpecId;
 
-use super::db::evm_state;
-use crate::{
-    backends::{self, exec_db::ExecutionDB},
-    block_env,
-    errors::ExecutionDBError,
-    tx_env,
-};
+use crate::{backends::exec_db::ExecutionDB, block_env, errors::ExecutionDBError, tx_env};
 
 impl ExecutionDB {
-    /// Gets the Vec<[AccountUpdate]>/StateTransitions obtained after executing a block.
-    pub fn get_account_updates(
-        block: &Block,
-        store: &Store,
-    ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
-        // TODO: perform validation to exit early
-
-        let mut state = evm_state(store.clone(), block.header.parent_hash);
-
-        let result = backends::revm::REVM::execute_block(block, &mut state).map_err(Box::new)?;
-        Ok(result.account_updates)
-    }
-
-    pub fn get_chain_config(&self) -> ChainConfig {
-        self.chain_config
-    }
-
-    /// Recreates the state trie and storage tries from the encoded nodes.
-    pub fn get_tries(&self) -> Result<(Trie, HashMap<H160, Trie>), ExecutionDBError> {
-        let (state_trie_root, state_trie_nodes) = &self.state_proofs;
-        let state_trie = Trie::from_nodes(state_trie_root.as_ref(), state_trie_nodes)?;
-
-        let storage_trie = self
-            .storage_proofs
-            .iter()
-            .map(|(address, nodes)| {
-                let (storage_trie_root, storage_trie_nodes) = nodes;
-                let trie = Trie::from_nodes(storage_trie_root.as_ref(), storage_trie_nodes)?;
-                Ok((*address, trie))
-            })
-            .collect::<Result<_, TrieError>>()?;
-
-        Ok((state_trie, storage_trie))
-    }
-
     /// Execute a block and cache all state changes, returns the cache
     pub fn pre_execute<ExtDB: DatabaseRef>(
         block: &Block,
