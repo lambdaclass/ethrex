@@ -17,6 +17,7 @@
     "shanghaiTime": 0,
     "cancunTime": 0,
     "pragueTime": 1718232101,
+    "depositContractAddress": "0x4242424242424242424242424242424242424242",
     "blobSchedule": {
       "cancun": {
         "target": 2,

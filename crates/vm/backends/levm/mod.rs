@@ -452,7 +452,7 @@ pub fn generic_system_contract_levm(
         U256::zero(),
         calldata.into(),
         store_wrapper,
-        CacheDB::new(),
+        new_state.clone(),
         vec![],
         None,
     )
@@ -463,9 +463,7 @@ pub fn generic_system_contract_levm(
     report.new_state.remove(&system_address);
 
     match report.result {
-        TxResult::Success => {
-            new_state.extend(report.new_state.clone());
-        }
+        TxResult::Success => {}
         _ => {
             return Err(EvmError::Custom(
                 "ERROR in generic_system_contract_levm(). TX didn't succeed.".to_owned(),
@@ -474,6 +472,14 @@ pub fn generic_system_contract_levm(
     }
 
     // new_state is a CacheDB coming from outside the function
+    for (address, account) in report.new_state.iter_mut() {
+        if let Some(existing_account) = new_state.get(address) {
+            let mut existing_storage = existing_account.storage.clone();
+            existing_storage.extend(account.storage.clone());
+            account.storage = existing_storage;
+            account.info.balance = existing_account.info.balance;
+        }
+    }
     new_state.extend(report.new_state.clone());
 
     Ok(report)
@@ -500,10 +506,6 @@ pub fn extract_all_requests_levm(
         }
     }
 
-    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
-        "deposit_contract_address config is missing".to_string(),
-    ))?;
-
     let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, store, cache) {
         Some(report) => {
             // the cache is updated inside the generic_system_call
@@ -521,7 +523,7 @@ pub fn extract_all_requests_levm(
             None => Default::default(),
         };
 
-    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 

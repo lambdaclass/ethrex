@@ -758,11 +758,7 @@ pub fn extract_all_requests(
         }
     }
 
-    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
-        "deposit_contract_address config is missing".to_string(),
-    ))?;
-
-    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
     let withdrawals_data = REVM::read_withdrawal_requests(header, state);
     let consolidation_data = REVM::dequeue_consolidation_requests(header, state);
 
