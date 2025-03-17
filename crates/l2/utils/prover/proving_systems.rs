@@ -1,4 +1,4 @@
-use crate::proposer::errors::ProverServerError;
+use crate::sequencer::errors::ProverServerError;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 

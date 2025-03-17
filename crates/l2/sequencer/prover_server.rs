@@ -1,4 +1,4 @@
-use crate::proposer::errors::{ProverServerError, SigIntError};
+use crate::sequencer::errors::{ProverServerError, SigIntError};
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -29,7 +29,6 @@ use std::{
     io::{BufReader, BufWriter, Write},
     net::{IpAddr, Shutdown, TcpListener, TcpStream},
     sync::mpsc::{self, Receiver},
-    thread,
     time::Duration,
 };
 use tokio::{
@@ -56,6 +55,7 @@ struct ProverServer {
     on_chain_proposer_address: Address,
     verifier_address: Address,
     verifier_private_key: SecretKey,
+    dev_interval_ms: u64,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -122,7 +122,7 @@ pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
     let proposer_config = CommitterConfig::from_env()?;
     let mut prover_server =
         ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
-            .await?;
+            .await;
     prover_server.run(&server_config).await;
     Ok(())
 }
@@ -133,11 +133,11 @@ impl ProverServer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
-    ) -> Result<Self, ConfigError> {
+    ) -> Self {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
-        Ok(Self {
+        Self {
             ip: config.listen_ip,
             port: config.listen_port,
             store,
@@ -145,7 +145,8 @@ impl ProverServer {
             on_chain_proposer_address,
             verifier_address: config.verifier_address,
             verifier_private_key: config.verifier_private_key,
-        })
+            dev_interval_ms: config.dev_interval_ms,
+        }
     }
 
     pub async fn run(&mut self, server_config: &ProverServerConfig) {
@@ -246,12 +247,6 @@ impl ProverServer {
         let last_verified_block =
             EthClient::get_last_verified_block(&self.eth_client, self.on_chain_proposer_address)
                 .await?;
-
-        let last_verified_block = if last_verified_block == u64::MAX {
-            0
-        } else {
-            last_verified_block
-        };
 
         let block_to_verify = last_verified_block + 1;
 
@@ -496,7 +491,7 @@ impl ProverServer {
 
     pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
         loop {
-            thread::sleep(Duration::from_millis(200));
+            tokio::time::sleep(Duration::from_millis(self.dev_interval_ms)).await;
 
             let last_committed_block = EthClient::get_last_committed_block(
                 &self.eth_client,

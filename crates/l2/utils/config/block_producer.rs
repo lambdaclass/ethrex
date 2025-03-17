@@ -4,12 +4,12 @@ use serde::Deserialize;
 use super::errors::ConfigError;
 
 #[derive(Deserialize)]
-pub struct ProposerConfig {
+pub struct BlockProducerConfig {
     pub interval_ms: u64,
     pub coinbase_address: Address,
 }
 
-impl ProposerConfig {
+impl BlockProducerConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         envy::prefixed("PROPOSER_")
             .from_env::<Self>()

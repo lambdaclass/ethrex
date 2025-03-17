@@ -3,90 +3,34 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::utils::config::{errors::ConfigError, proposer::ProposerConfig, read_env_file};
-use errors::ProposerError;
-use ethereum_types::Address;
 use ethrex_blockchain::{
     fork_choice::apply_fork_choice,
     payload::{create_payload, BuildPayloadArgs},
     validate_block, Blockchain,
 };
+use ethrex_common::Address;
 use ethrex_storage::Store;
 use ethrex_vm::backends::BlockExecutionResult;
-use execution_cache::ExecutionCache;
 use keccak_hash::H256;
-use tokio::task::JoinSet;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
-pub mod l1_committer;
-pub mod l1_watcher;
-#[cfg(feature = "metrics")]
-pub mod metrics;
-pub mod prover_server;
-pub mod state_diff;
+use crate::utils::config::{block_producer::BlockProducerConfig, errors::ConfigError};
 
-pub mod execution_cache;
+use super::{errors::BlockProducerError, execution_cache::ExecutionCache};
 
-pub mod errors;
-
-pub struct Proposer {
+pub struct BlockProducer {
     interval_ms: u64,
     coinbase_address: Address,
 }
 
-pub async fn start_proposer(store: Store, blockchain: Arc<Blockchain>) {
-    info!("Starting Proposer");
-
-    if let Err(e) = read_env_file() {
-        error!("Failed to read .env file: {e}");
-        return;
-    }
-
-    let execution_cache = Arc::new(ExecutionCache::default());
-
-    let mut task_set = JoinSet::new();
-    task_set.spawn(l1_watcher::start_l1_watcher(
-        store.clone(),
-        blockchain.clone(),
-    ));
-    task_set.spawn(l1_committer::start_l1_committer(
-        store.clone(),
-        execution_cache.clone(),
-    ));
-    task_set.spawn(prover_server::start_prover_server(store.clone()));
-    task_set.spawn(start_proposer_server(
-        store.clone(),
-        blockchain,
-        execution_cache,
-    ));
-    #[cfg(feature = "metrics")]
-    task_set.spawn(metrics::start_metrics_gatherer());
-
-    while let Some(res) = task_set.join_next().await {
-        match res {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => {
-                error!("Error starting Proposer: {err}");
-                task_set.abort_all();
-                break;
-            }
-            Err(err) => {
-                error!("JoinSet error: {err}");
-                task_set.abort_all();
-                break;
-            }
-        };
-    }
-}
-
-async fn start_proposer_server(
+pub async fn start_block_producer(
     store: Store,
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
 ) -> Result<(), ConfigError> {
-    let proposer_config = ProposerConfig::from_env()?;
-    let proposer = Proposer::new_from_config(proposer_config).map_err(ConfigError::from)?;
+    let proposer_config = BlockProducerConfig::from_env()?;
+    let proposer = BlockProducer::new_from_config(proposer_config).map_err(ConfigError::from)?;
 
     proposer
         .run(store.clone(), blockchain, execution_cache)
@@ -94,9 +38,9 @@ async fn start_proposer_server(
     Ok(())
 }
 
-impl Proposer {
-    pub fn new_from_config(config: ProposerConfig) -> Result<Self, ProposerError> {
-        let ProposerConfig {
+impl BlockProducer {
+    pub fn new_from_config(config: BlockProducerConfig) -> Result<Self, BlockProducerError> {
+        let BlockProducerConfig {
             interval_ms,
             coinbase_address,
         } = config;
@@ -128,13 +72,13 @@ impl Proposer {
         store: Store,
         blockchain: Arc<Blockchain>,
         execution_cache: Arc<ExecutionCache>,
-    ) -> Result<(), ProposerError> {
+    ) -> Result<(), BlockProducerError> {
         let version = 3;
         let head_header = {
             let current_block_number = store.get_latest_block_number()?;
             store
                 .get_block_header(current_block_number)?
-                .ok_or(ProposerError::StorageDataIsNone)?
+                .ok_or(BlockProducerError::StorageDataIsNone)?
         };
         let head_hash = head_header.compute_block_hash();
         let head_beacon_block_root = H256::zero();
