@@ -534,13 +534,13 @@ fn validate_ancestors(
     let invalid_ancestors = {
         let lock = context.storage.invalid_ancestors.try_lock();
         match lock {
-            Ok(_) => lock,
+            Ok(_) => lock.unwrap(),
             Err(_) => return Err(RpcErr::Internal("Internal error".into())),
         }
     };
 
     // Check if the block has already been invalidated
-    if let Some(latest_valid_hash) = invalid_ancestors.unwrap().get(&block.hash()) {
+    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
         return Ok(Some(PayloadStatus::invalid_with(
             *latest_valid_hash,
             "Header has been previously invalidated.".into(),
@@ -548,12 +548,12 @@ fn validate_ancestors(
     }
 
     // Check if the parent block has already been invalidated
-    // if let Some(latest_valid_hash) = invalid_ancestors.unwrap().get(&block.header.parent_hash) {
-    //     return Ok(Some(PayloadStatus::invalid_with(
-    //         *latest_valid_hash,
-    //         "Parent header has been previously invalidated.".into(),
-    //     )));
-    // }
+    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash) {
+        return Ok(Some(PayloadStatus::invalid_with(
+            *latest_valid_hash,
+            "Parent header has been previously invalidated.".into(),
+        )));
+    }
 
     Ok(None)
 }
