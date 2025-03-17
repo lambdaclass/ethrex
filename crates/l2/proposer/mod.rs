@@ -172,7 +172,7 @@ impl Proposer {
             requests: Vec::new(),
         };
 
-        blockchain.store_block(&block, execution_result.clone())?;
+        blockchain.store_block(&block, execution_result.clone(), false)?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 

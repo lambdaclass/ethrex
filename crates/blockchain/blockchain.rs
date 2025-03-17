@@ -131,12 +131,12 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+    pub fn add_block(&self, block: &Block, as_canonical: bool) -> Result<(), ChainError> {
         let since = Instant::now();
 
         let result = self
             .execute_block(block)
-            .and_then(|res| self.store_block(block, res, true));
+            .and_then(|res| self.store_block(block, res, as_canonical));
 
         let interval = Instant::now().duration_since(since).as_millis();
         if interval != 0 {
@@ -157,7 +157,7 @@ impl Blockchain {
                 "Adding block {} with hash {:#x}.",
                 block.header.number, hash
             );
-            if let Err(error) = self.add_block(block) {
+            if let Err(error) = self.add_block(block, true) {
                 warn!(
                     "Failed to add block {} with hash {:#x}: {}.",
                     block.header.number, hash, error

@@ -328,7 +328,7 @@ impl SyncManager {
                     let block = store
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
-                    self.blockchain.add_block(&block)?;
+                    self.blockchain.add_block(&block, false)?;
                     store.set_canonical_block(block.header.number, *hash)?;
                     store.update_latest_block_number(block.header.number)?;
                 }
@@ -390,7 +390,7 @@ impl SyncManager {
                         .ok_or(SyncError::CorruptDB)?;
                     let number = header.number;
                     let block = Block::new(header, body);
-                    if let Err(error) = self.blockchain.add_block(&block) {
+                    if let Err(error) = self.blockchain.add_block(&block, true) {
                         warn!("Failed to add block during FullSync: {error}");
                         self.invalid_ancestors.insert(hash, last_valid_hash);
 

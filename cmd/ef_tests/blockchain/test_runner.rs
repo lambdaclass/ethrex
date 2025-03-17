@@ -33,7 +33,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block);
+        let chain_result = blockchain.add_block(block, false);
         match chain_result {
             Err(error) => {
                 assert!(
