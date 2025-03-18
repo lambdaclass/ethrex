@@ -1,5 +1,5 @@
 use crate::{
-    proposer::{
+    sequencer::{
         errors::CommitterError,
         state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },

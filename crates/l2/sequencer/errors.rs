@@ -70,28 +70,28 @@ pub enum SigIntError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ProposerError {
-    #[error("Proposer failed because of an EngineClient error: {0}")]
+pub enum BlockProducerError {
+    #[error("Block Producer failed because of an EngineClient error: {0}")]
     EngineClientError(#[from] EngineClientError),
-    #[error("Proposer failed because of a ChainError error: {0}")]
+    #[error("Block Producer failed because of a ChainError error: {0}")]
     ChainError(#[from] ChainError),
-    #[error("Proposer failed because of a EvmError error: {0}")]
+    #[error("Block Producer failed because of a EvmError error: {0}")]
     EvmError(#[from] EvmError),
-    #[error("Proposer failed because of a InvalidForkChoice error: {0}")]
+    #[error("Block Producer failed because of a InvalidForkChoice error: {0}")]
     InvalidForkChoice(#[from] InvalidForkChoice),
-    #[error("Proposer failed to produce block: {0}")]
+    #[error("Block Producer failed to produce block: {0}")]
     FailedToProduceBlock(String),
-    #[error("Proposer failed to prepare PayloadAttributes timestamp: {0}")]
+    #[error("Block Producer failed to prepare PayloadAttributes timestamp: {0}")]
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
-    #[error("Proposer failed because of a store error: {0}")]
+    #[error("Block Producer failed because of a store error: {0}")]
     StoreError(#[from] StoreError),
-    #[error("Proposer failed retrieve block from storaga, data is None.")]
+    #[error("Block Producer failed retrieve block from storaga, data is None.")]
     StorageDataIsNone,
-    #[error("Proposer failed to read jwt_secret: {0}")]
+    #[error("Block Producer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
-    #[error("Proposer failed to decode jwt_secret: {0}")]
+    #[error("Block Producer failed to decode jwt_secret: {0}")]
     FailedToDecodeJWT(#[from] hex::FromHexError),
-    #[error("Proposer failed because of an execution cache error")]
+    #[error("Block Producer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
 }
 

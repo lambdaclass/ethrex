@@ -10,11 +10,10 @@ use revm::{
 // Rename imported types for clarity
 use revm_primitives::{AccessList as RevmAccessList, SpecId};
 
-use crate::EvmError;
+use crate::{execution_result::ExecutionResult, EvmError};
 
 use super::{
-    access_list_inspector, block_env, db::EvmState, execution_result::ExecutionResult,
-    run_without_commit, tx_env_from_generic,
+    access_list_inspector, block_env, db::EvmState, run_without_commit, tx_env_from_generic,
 };
 
 // Executes a single GenericTransaction, doesn't commit the result or perform state transitions
