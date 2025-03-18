@@ -160,56 +160,45 @@ pub fn cli() -> Command {
                         .action(clap::ArgAction::SetTrue)
                 )
         );
-
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "based")] {
-            cmd.arg(
-                Arg::new("gateway.addr")
-                    .long("gateway.addr")
-                    .default_value("0.0.0.0")
-                    .value_name("GATEWAY_ADDRESS")
-                    .action(ArgAction::Set),
-            )
-            .arg(
-                Arg::new("gateway.eth_port")
-                    .long("gateway.eth_port")
-                    .default_value("8546")
-                    .value_name("GATEWAY_ETH_PORT")
-                    .action(ArgAction::Set),
-            )
-            .arg(
-                Arg::new("gateway.auth_port")
-                    .long("gateway.auth_port")
-                    .default_value("8553")
-                    .value_name("GATEWAY_AUTH_PORT")
-                    .action(ArgAction::Set),
-            )
-            .arg(
-                Arg::new("gateway.jwtsecret")
+    #[cfg(feature = "based")]
+    let cmd = cmd
+        .arg(
+            Arg::new("gateway.addr")
+                .long("gateway.addr")
+                .default_value("0.0.0.0")
+                .value_name("GATEWAY_ADDRESS")
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new("gateway.eth_port")
+                .long("gateway.eth_port")
+                .default_value("8546")
+                .value_name("GATEWAY_ETH_PORT")
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new("gateway.auth_port")
+                .long("gateway.auth_port")
+                .default_value("8553")
+                .value_name("GATEWAY_AUTH_PORT")
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new("gateway.jwtsecret")
                 .long("gateway.jwtsecret")
                 .default_value("jwt.hex")
                 .value_name("GATEWAY_JWTSECRET_PATH")
                 .action(ArgAction::Set),
-            )
-            .arg(
-                Arg::new("sponsorable_addresses")
-                    .long("sponsorable_addresses")
-                    .value_name("SPONSORABLE_ADDRESSES_PATH")
-                    .action(ArgAction::Set)
-                    .required(false)
-                    .help("Path to a file containing addresses of contracts to wich ethrex_SendTransaction should sponsor txs"),
-            )
-        } else if #[cfg(feature = "l2")]  {
-            cmd.arg(
-                Arg::new("sponsorable_addresses")
-                    .long("sponsorable_addresses")
-                    .value_name("SPONSORABLE_ADDRESSES_PATH")
-                    .action(ArgAction::Set)
-                    .required(false)
-                    .help("Path to a file containing addresses of contracts to wich ethrex_SendTransaction should sponsor txs"),
-            )
-        } else {
-            cmd
-        }
-    }
+        );
+    #[cfg(feature="l2")]
+    let cmd = cmd.arg(
+        Arg::new("sponsorable_addresses")
+            .long("sponsorable_addresses")
+            .value_name("SPONSORABLE_ADDRESSES_PATH")
+            .action(ArgAction::Set)
+            .required(false)
+            .help("Path to a file containing addresses of contracts to wich ethrex_SendTransaction should sponsor txs"),
+    );
+
+    cmd
 }
