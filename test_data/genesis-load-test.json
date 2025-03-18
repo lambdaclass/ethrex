@@ -15,7 +15,8 @@
     "istanbulBlock": 0,
     "berlinBlock": 0,
     "londonBlock": 0,
-    "terminalTotalDifficulty": "0x0",
+    "terminalTotalDifficulty": 0,
+    "terminalTotalDifficultyPassed": true,
     "mergeNetsplitBlock": 0,
     "shanghaiTime": 0,
     "cancunTime": 0,
@@ -559,7 +560,7 @@
   "number": "0x0",
   "gasUsed": "0x0",
   "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-  "baseFeePerGas": 1,
+  "baseFeePerGas": "0x1",
   "excessBlobGas": "0x0",
-  "blobGasUsed": 0
+  "blobGasUsed": "0x0"
 }

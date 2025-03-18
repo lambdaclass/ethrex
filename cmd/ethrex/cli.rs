@@ -50,6 +50,14 @@ pub fn cli() -> Command {
                 .action(ArgAction::Set),
         )
         .arg(
+            Arg::new("p2p.enabled")
+                .long("p2p.enabled")
+                .required(false)
+                .default_value(if cfg!(feature = "l2") { "false" } else { "true" })
+                .value_name("P2P_ENABLED")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("p2p.addr")
                 .long("p2p.addr")
                 .default_value("0.0.0.0")
