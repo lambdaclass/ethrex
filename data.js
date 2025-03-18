@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742242538330,
+  "lastUpdate": 1742310923033,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -565,6 +565,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 227682387813,
             "range": "± 938087967",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1c3cb981e7770e532330133292d13a5fc657ce61",
+          "message": "feat(levm): implement simulate_tx (#2232)\n\n**Motivation**\n\nTo implement the remaining RPC endpoints.\n\n**Description**\n\n- Implements `simulate_tx_from_generic` for LEVM.\n- If `gas_price` is not specified, sets `env.base_fee_per_gas =\nU256::zero()` to avoid base fee checks.\n- Moves `ExecutionResult` to `vm/backends` to be used by both REVM and\nLEVM.\n\nWith this PR, only the `rpc/eth_createAccessList` tests are failing.\n\nCloses #2182",
+          "timestamp": "2025-03-18T14:17:30Z",
+          "tree_id": "56ae1dbf03a0cfff8919bf8bfd6c98bf6b0104aa",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1c3cb981e7770e532330133292d13a5fc657ce61"
+        },
+        "date": 1742310920611,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 231242084441,
+            "range": "± 1377277024",
             "unit": "ns/iter"
           }
         ]
