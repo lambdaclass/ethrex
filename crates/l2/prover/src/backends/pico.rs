@@ -94,19 +94,3 @@ pub fn to_calldata(output: ProveOutput) -> Result<ProofCalldata, Box<dyn std::er
         calldata,
     })
 }
-
-pub fn empty_calldata() -> ProofCalldata {
-    let proof = vec![H256::zero().as_bytes(); 8]
-        .map(|integer| Value::Int(U256::from_big_endian(integer)))
-        .collect();
-
-    let calldata = vec![
-        Value::Bytes(H256::zero().as_bytes().to_vec()),
-        Value::FixedArray(proof),
-    ];
-
-    Ok(ProofCalldata {
-        prover_type: ProverType::Pico,
-        calldata,
-    })
-}

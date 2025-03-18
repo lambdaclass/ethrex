@@ -34,13 +34,6 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
     })
 }
 
-pub fn empty_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
-    Ok(ProofCalldata {
-        prover_type: ProverType::Exec,
-        calldata: vec![Value::Bytes(H256::zero().to_bytes().to_vec())],
-    })
-}
-
 fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
     let ProgramInput {
         block,

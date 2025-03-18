@@ -359,7 +359,7 @@ pub fn block_number_has_all_needed_proofs(
     let mut has_all_proofs = true;
     for prover_type in needed_proof_types {
         let file_name_to_seek: OsString =
-            get_state_file_name(block_number, &StateFileType::Proof(prover_type)).into();
+            get_state_file_name(block_number, &StateFileType::Proof(*prover_type)).into();
 
         // Check if the proof exists
         let proof_exists = std::fs::read_dir(&block_state_path)?
@@ -446,7 +446,7 @@ mod tests {
 
             write_state(
                 block.header.number,
-                &StateType::Proof(pico_calldata.clone()),
+                &StateType::Proof(exec_calldata.clone()),
             )?;
 
             write_state(

@@ -71,16 +71,3 @@ pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error
         calldata,
     })
 }
-
-pub fn empty_calldata() -> ProofCalldata {
-    let calldata = vec![
-        Value::Bytes(H256::zero().as_bytes().to_vec()),
-        Value::FixedBytes(H256::zero().as_bytes().to_vec()),
-        Value::FixedBytes(H256::zero().as_bytes().to_vec()),
-    ];
-
-    Ok(ProofCalldata {
-        prover_type: ProverType::RISC0,
-        calldata,
-    })
-}

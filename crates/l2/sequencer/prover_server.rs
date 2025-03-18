@@ -1,5 +1,4 @@
 use crate::sequencer::errors::{ProverServerError, SigIntError};
-use crate::utils::prover::proving_systems::{Risc0Proof, Sp1Proof};
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -38,7 +37,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-const VERIFIER_CONTRACTS: [&str; 2] = ["R0VERIFIER()", "SP1VERIFIER()"];
+const VERIFIER_CONTRACTS: [&str; 3] = ["R0VERIFIER()", "SP1VERIFIER()", "PICOVERIFIER()"];
 const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0xAA,
@@ -129,7 +128,7 @@ pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
     let proposer_config = CommitterConfig::from_env()?;
     let mut prover_server =
         ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
-            .await;
+            .await?;
     prover_server.run(&server_config).await;
     Ok(())
 }
@@ -140,7 +139,7 @@ impl ProverServer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
-    ) -> Result<Self, ProverServerError> {
+    ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
@@ -165,6 +164,9 @@ impl ProverServer {
                         }
                         "SP1VERIFIER()" => {
                             needed_proof_types.push(ProverType::SP1);
+                        }
+                        "PICOVERIFIER" => {
+                            needed_proof_types.push(ProverType::Pico);
                         }
                         _ => unreachable!(),
                     }
@@ -458,7 +460,11 @@ impl ProverServer {
         &self,
         block_number: u64,
     ) -> Result<H256, ProverServerError> {
-        // TODO change error
+        // TODO: change error
+        // TODO: If the proof is not needed, a default calldata is used,
+        // the structure has to match the one defined in the OnChainProposer.sol contract.
+        // It may cause some issues, but the ethrex_prover_lib cannot be imported,
+        // this approach is straightforward for now.
         let exec_proof = {
             if self.needed_proof_types.contains(&ProverType::Exec) {
                 let exec_proof = read_proof(block_number, StateFileType::Proof(ProverType::Exec))?;
@@ -469,8 +475,7 @@ impl ProverServer {
                 };
                 exec_proof.calldata
             } else {
-                todo!()
-                //empty_calldata()
+                vec![Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into())]
             }
         };
 
@@ -485,8 +490,11 @@ impl ProverServer {
                 }
                 risc0_proof.calldata
             } else {
-                todo!()
-                //empty_calldata()
+                vec![
+                    Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                ]
             }
         };
 
@@ -500,8 +508,11 @@ impl ProverServer {
                 }
                 sp1_proof.calldata
             } else {
-                todo!()
-                //empty_calldata()
+                vec![
+                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                ]
             }
         };
 
@@ -515,8 +526,15 @@ impl ProverServer {
                 }
                 pico_proof.calldata
             } else {
-                todo!()
-                //empty_calldata()
+                let proof = vec![U256::zero(); 8]
+                    .into_iter()
+                    .map(|i| Value::Int(i))
+                    .collect();
+
+                vec![
+                    Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::FixedArray(proof),
+                ]
             }
         };
 
