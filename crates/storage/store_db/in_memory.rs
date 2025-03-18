@@ -143,7 +143,7 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn add_batch_of_blocks(
+    fn add_blocks_with_state_and_receipts(
         &self,
         blocks: &[Block],
         receipts: HashMap<BlockHash, Vec<Receipt>>,

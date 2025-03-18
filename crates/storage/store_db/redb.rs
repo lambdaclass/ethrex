@@ -253,7 +253,7 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn add_batch_of_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    fn add_blocks_with_state_and_receipts(&self, blocks: &[Block]) -> Result<(), StoreError> {
         todo!();
     }
 

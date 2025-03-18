@@ -18,12 +18,13 @@ use ethrex_common::types::{
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
 
-use ethrex_common::{Address, H256};
+use ethrex_common::{Address, H160, H256};
 use mempool::Mempool;
+use std::collections::HashMap;
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::{AccountUpdate, DataToCommitAfterAccountUpdates, Store};
 use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
@@ -115,24 +116,41 @@ impl Blockchain {
     pub fn store_block(
         &self,
         block: &Block,
-        receipts: Vec<Receipt>,
-        account_updates: Vec<AccountUpdate>,
+        execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
-        let block_hash = block.header.compute_block_hash();
-
         // Apply the account updates over the last block's state and compute the new state root
-        let new_state_root = self
+        let Some(mut state_trie) = self
             .storage
-            .apply_account_updates(block.header.parent_hash, &account_updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
+            .state_trie(block.header.parent_hash)
+            .map_err(ChainError::StoreError)?
+        else {
+            return Err(ChainError::ParentStateNotFound);
+        };
 
+        let DataToCommitAfterAccountUpdates {
+            storage_tries,
+            accounts_code,
+        } = self
+            .storage
+            .apply_account_updates_without_committing(
+                &execution_result.account_updates,
+                &mut state_trie,
+            )
+            .map_err(ChainError::StoreError)?;
+
+        let new_state_root = state_trie.hash_no_commit();
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
-        self.storage.add_block(block.clone())?;
-        self.storage.add_receipts(block_hash, receipts)?;
-
-        Ok(())
+        self.storage
+            .add_single_block_with_state_and_receipts(
+                block.clone(),
+                execution_result.receipts,
+                state_trie,
+                storage_tries,
+                accounts_code,
+            )
+            .map_err(ChainError::StoreError)
     }
 
     pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
@@ -140,7 +158,7 @@ impl Blockchain {
 
         let result = self
             .execute_block(block)
-            .and_then(|res| self.store_block(block, res.receipts, res.account_updates));
+            .and_then(|res| self.store_block(block, res));
 
         let interval = Instant::now().duration_since(since).as_millis();
         if interval != 0 {
@@ -177,6 +195,10 @@ impl Blockchain {
             return Err((ChainError::ParentNotFound, None));
         };
 
+        let chain_config: ChainConfig = self
+            .storage
+            .get_chain_config()
+            .map_err(|e| (e.into(), None))?;
         let mut vm = Evm::new(
             self.evm_engine,
             self.storage.clone(),
@@ -184,12 +206,10 @@ impl Blockchain {
         );
 
         let blocks_len = blocks.len();
-        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
+        let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
+        let mut all_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
         let mut total_gas_used = 0;
-        let chain_config: ChainConfig = self
-            .storage
-            .get_chain_config()
-            .map_err(|e| (e.into(), None))?;
+        let mut transactions_count = 0;
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
@@ -227,21 +247,31 @@ impl Blockchain {
                 }
             };
 
-            self.storage
-                .apply_account_updates_to_trie(&account_updates, &mut state_trie)
-                .map_err(|err| {
-                    (
-                        err.into(),
-                        Some(BatchBlockProcessingFailure {
-                            failed_block_hash: block.hash(),
-                            last_valid_hash,
-                        }),
-                    )
-                })?;
+            // Merge account updates
+            for account_update in account_updates {
+                let Some(cache) = all_account_updates.get_mut(&account_update.address) else {
+                    all_account_updates.insert(account_update.address, account_update);
+                    continue;
+                };
+
+                cache.removed = account_update.removed;
+                if let Some(code) = account_update.code {
+                    cache.code = Some(code);
+                };
+
+                if let Some(info) = account_update.info {
+                    cache.info = Some(info);
+                }
+
+                for (k, v) in account_update.added_storage.into_iter() {
+                    cache.added_storage.insert(k, v);
+                }
+            }
 
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
-            all_receipts.push((block.hash(), receipts));
+            transactions_count += block.body.transactions.len();
+            all_receipts.insert(block.hash(), receipts);
         }
 
         let Some(last_block) = blocks.last() else {
@@ -250,25 +280,48 @@ impl Blockchain {
 
         // Validate state root and store blocks
         let root_hash = state_trie.hash_no_commit();
+        let DataToCommitAfterAccountUpdates {
+            storage_tries,
+            accounts_code,
+        } = self
+            .storage
+            .apply_account_updates_without_committing(
+                &all_account_updates.into_values().collect::<Vec<_>>(),
+                &mut state_trie,
+            )
+            .map_err(|e| (e.into(), None))?;
+
         validate_state_root(&last_block.header, root_hash).map_err(|err| (err, None))?;
-        // commit to db after validating the root
-        state_trie
-            .hash()
-            .map_err(|e| (ChainError::StoreError(e.into()), None))?;
 
         self.storage
-            .add_batch_of_blocks(blocks)
-            .map_err(|e| (e.into(), None))?;
-        self.storage
-            .add_batch_of_receipts(all_receipts)
+            .add_blocks_with_state_and_receipts(
+                blocks,
+                all_receipts,
+                vec![state_trie],
+                storage_tries,
+                accounts_code,
+            )
             .map_err(|e| (e.into(), None))?;
 
-        let elapsed = interval.elapsed().as_millis();
-        if elapsed != 0 && total_gas_used != 0 {
+        let elapsed_total = interval.elapsed().as_millis();
+        let mut throughput = 0.0;
+        if elapsed_total != 0 && total_gas_used != 0 {
             let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (elapsed as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT RANGE OF {blocks_len}: {throughput} Gigagas/s TIME SPENT: {elapsed} msecs");
+            throughput = (as_gigas) / (elapsed_total as f64) * 1000_f64;
         }
+
+        info!(
+            "[METRICS] {} blocks performance:\n
+            Total time: {} seconds\n
+            Blocks per second: {:.3}\n
+            Total transactions {}\n
+            Throughput: {} Gigagas/s\n",
+            blocks_len,
+            elapsed_total / 1000,
+            blocks_len as f64 / (elapsed_total as f64 / 1000_f64),
+            transactions_count,
+            throughput,
+        );
 
         Ok(())
     }
@@ -322,7 +375,7 @@ impl Blockchain {
         let last_block = blocks.last().unwrap().header.clone();
         if let Err((err, _)) = self.add_blocks_in_batch(blocks) {
             warn!("Failed to add blocks: {:?}.", err);
-        };
+        }
         if let Err(err) = self.storage.update_latest_block_number(last_block.number) {
             error!("Fatal: added block {} but could not update the block number, err {:?} -- aborting block import", last_block.number, err);
             return;

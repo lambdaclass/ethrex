@@ -365,7 +365,7 @@ impl Store {
     }
 
     /// Applies state transitions to the given trie and does not commit nor calculate root hash
-    pub fn apply_account_updates_to_trie(
+    pub fn apply_account_updates_without_committing(
         &self,
         account_updates: &[AccountUpdate],
         state_trie: &mut Trie,
@@ -481,7 +481,6 @@ impl Store {
     }
 
     pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        // TODO Maybe add both in a single tx?
         let header = block.header;
         let number = header.number;
         let hash = header.compute_block_hash();
@@ -491,7 +490,33 @@ impl Store {
         self.add_block_number(hash, number)
     }
 
-    pub fn add_batch_of_blocks(
+    /// Stores a block along with their associated receipts, state tries,
+    /// storage tries, and account code. This function is typically called after
+    /// executing a block to persist the data to the storage engine in a single transaction.
+    pub fn add_single_block_with_state_and_receipts(
+        &self,
+        block: Block,
+        receipts: Vec<Receipt>,
+        state_trie: Trie,
+        storage_tries: Vec<(H256, Trie)>,
+        accounts_code: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError> {
+        let mut receipts_map = HashMap::new();
+        receipts_map.insert(block.hash(), receipts);
+
+        self.engine.add_blocks_with_state_and_receipts(
+            &[block],
+            receipts_map,
+            vec![state_trie],
+            storage_tries,
+            accounts_code,
+        )
+    }
+
+    /// Stores a batch of blocks along with their associated receipts, state tries,
+    /// storage tries, and account code. This function is typically called after
+    /// executing a block to persist the data to the storage engine in a single transaction.
+    pub fn add_blocks_with_state_and_receipts(
         &self,
         blocks: &[Block],
         receipts: HashMap<BlockHash, Vec<Receipt>>,
@@ -499,8 +524,13 @@ impl Store {
         storage_tries: Vec<(H256, Trie)>,
         accounts_code: Vec<(H256, Bytes)>,
     ) -> Result<(), StoreError> {
-        self.engine
-            .add_batch_of_blocks(blocks, receipts, state_tries, storage_tries, accounts_code)
+        self.engine.add_blocks_with_state_and_receipts(
+            blocks,
+            receipts,
+            state_tries,
+            storage_tries,
+            accounts_code,
+        )
     }
 
     pub fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {

@@ -12,7 +12,7 @@ use ethrex_trie::{Nibbles, Trie};
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
-    fn add_batch_of_blocks(
+    fn add_blocks_with_state_and_receipts(
         &self,
         blocks: &[Block],
         receipts: HashMap<BlockHash, Vec<Receipt>>,
