@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742318440155,
+  "lastUpdate": 1742326818143,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -625,6 +625,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 228403691215,
             "range": "± 1044381859",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8c363aad60f4af75c1756cac6ad42368475b9a56",
+          "message": "ci(l1,l2): always compare with main (#2253)\n\n**Motivation**\n\nThis is useful to always compare changes with main, regardless of the\nbranch.",
+          "timestamp": "2025-03-18T18:44:46Z",
+          "tree_id": "af8acb1009ed004fadaf3f475b70ea1a6e3f29dd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8c363aad60f4af75c1756cac6ad42368475b9a56"
+        },
+        "date": 1742326816205,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 228981095719,
+            "range": "± 1067523608",
             "unit": "ns/iter"
           }
         ]
