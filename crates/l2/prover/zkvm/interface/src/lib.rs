@@ -60,6 +60,8 @@ pub mod io {
             [
                 self.initial_state_hash.to_fixed_bytes(),
                 self.final_state_hash.to_fixed_bytes(),
+                #[cfg(feature = "l2")]
+                self.deposit_logs_hash.to_fixed_bytes()
             ]
             .concat()
         }

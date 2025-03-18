@@ -219,8 +219,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: block not committed"
         );
 
-        // Check committed desposits were validated
-
         // TODO: unify public inputs in single parameter
 
         if (PICOVERIFIER != DEV_MODE) {
