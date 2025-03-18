@@ -10,8 +10,8 @@ use crate::{
 use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
-    GetBlockByNumberError, GetBlockNumberError, GetGasPriceError, GetLogsError, GetNonceError,
-    GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
+    GetBlockByNumberError, GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError,
+    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethrex_common::{
@@ -628,6 +628,40 @@ impl EthClient {
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 Err(GetBalanceError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn get_code(
+        &self,
+        address: Address,
+        block: BlockByNumber,
+    ) -> Result<Bytes, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_getCode".to_string(),
+            params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => hex::decode(
+                &serde_json::from_value::<String>(result.result)
+                    .map(|hex_str| {
+                        hex_str
+                            .strip_prefix("0x")
+                            .map(ToString::to_string)
+                            .unwrap_or(hex_str)
+                    })
+                    .map_err(GetCodeError::SerdeJSONError)
+                    .map_err(EthClientError::from)?,
+            )
+            .map(Into::into)
+            .map_err(GetCodeError::NotHexError)
+            .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetCodeError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }
