@@ -31,10 +31,8 @@ use trie_rebuild::TrieRebuilder;
 
 use crate::{
     kademlia::KademliaTable,
-    peer_handler::{
-        BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST,
-        MAX_BLOCK_HEADERS_TO_REQUEST,
-    },
+    peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
+    rlpx::eth::blocks::BLOCK_HEADER_LIMIT,
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -187,7 +185,7 @@ impl SyncManager {
 
         loop {
             debug!("Requesting Block Headers from {search_head}");
-            let block_header_limit = MAX_BLOCK_HEADERS_TO_REQUEST as u64;
+            let block_header_limit = BLOCK_HEADER_LIMIT;
 
             let Some(mut block_headers) = self
                 .peers
