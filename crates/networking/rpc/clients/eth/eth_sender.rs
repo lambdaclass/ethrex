@@ -44,9 +44,11 @@ impl EthClient {
             value: overrides.value.unwrap_or_default(),
             from: overrides.from.unwrap_or_default(),
             gas: overrides.gas_limit,
-            gas_price: overrides
-                .max_fee_per_gas
-                .unwrap_or(self.get_gas_price().await?.as_u64()),
+            gas_price: if let Some(gas_price) = overrides.max_fee_per_gas {
+                gas_price
+            } else {
+                self.get_gas_price().await?.as_u64()
+            },
             ..Default::default()
         };
 
