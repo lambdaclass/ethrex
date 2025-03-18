@@ -76,6 +76,7 @@ async fn test_block_2() {
     let erc20_symbol_signature = hex::decode(ERC20_SYMBOL_SIGNATURE).unwrap();
     let erc20_name_signature = hex::decode(ERC20_NAME_SIGNATURE).unwrap();
     let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
+    let erc20_decimals_signature = hex::decode(ERC20_DECIMALS_SIGNATURE).unwrap();
 
     // Nonce of RICH_ADDRESS should be 3 at block 2
     let nonce = client
@@ -138,6 +139,26 @@ async fn test_block_2() {
     )
     .expect("Invalid response: not utf8");
     assert_eq!(ERC20_NAME, token_name);
+
+    // Token decimals should be 18 at block 2
+    let token_decimals = client
+        .call(
+            erc20_address,
+            erc20_decimals_signature.into(),
+            Overrides {
+                from: Some(erc20_rich_address1),
+                block: Some(2.into()),
+                max_fee_per_gas: Some(10000000),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("Error calling contract: decimals()(uint8)");
+    // The result is a hexstring with a leading 0x, so we need to skip the first 2 characters.
+    // The next 64 characters (32 bytes) are left padded uint8.
+    let token_decimals = hex::decode(token_decimals.get(64..).expect("Invalid length"))
+        .expect("Invalid response: not hex")[0];
+    assert_eq!(ERC20_DECIMALS, token_decimals);
 
     // Token balance of ERC20_RICH_ADDRESS1 should be 1e39 at block 2
     let token_balance = client
@@ -244,6 +265,7 @@ async fn test_latest_block() {
     let erc20_rich_address2 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS2).unwrap());
     let erc20_symbol_signature = hex::decode(ERC20_SYMBOL_SIGNATURE).unwrap();
     let erc20_name_signature = hex::decode(ERC20_NAME_SIGNATURE).unwrap();
+    let erc20_decimals_signature = hex::decode(ERC20_DECIMALS_SIGNATURE).unwrap();
     let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
 
     // Balance of RICH_ADDRESS should be
@@ -316,6 +338,25 @@ async fn test_latest_block() {
     )
     .expect("Invalid response: not utf8");
     assert_eq!(ERC20_NAME, token_name);
+
+    // Token decimals should be 18 at latest block
+    let token_decimals = client
+        .call(
+            erc20_address,
+            erc20_decimals_signature.into(),
+            Overrides {
+                from: Some(erc20_rich_address1),
+                max_fee_per_gas: Some(10000000),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("Error calling contract: decimals()(uint8)");
+    // The result is a hexstring with a leading 0x, so we need to skip the first 2 characters.
+    // The next 64 characters (32 bytes) are left padded uint8.
+    let token_decimals = hex::decode(token_decimals.get(64..).expect("Invalid length"))
+        .expect("Invalid response: not hex")[0];
+    assert_eq!(ERC20_DECIMALS, token_decimals);
 
     // Token balance of ERC20_RICH_ADDRESS1 should be 1e39 at latest block
     let token_balance = client
