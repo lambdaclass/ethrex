@@ -90,7 +90,7 @@ impl Blockchain {
         } = execution_result;
         let chain_config = self.storage.get_chain_config()?;
 
-        let block_hash = block.header.compute_block_hash();
+        // let block_hash = block.header.compute_block_hash();
 
         validate_gas_used(&receipts, &block.header)?;
 
@@ -109,8 +109,8 @@ impl Blockchain {
         // Processes requests from receipts, computes the requests_hash and compares it against the header
         validate_requests_hash(&block.header, &chain_config, &requests)?;
 
-        store_block(&self.storage, block.clone())?;
-        store_receipts(&self.storage, receipts, block_hash)?;
+        store_block(&self.storage, block.clone(), receipts)?;
+        // store_receipts(&self.storage, receipts, block_hash)?;
 
         Ok(())
     }
@@ -365,8 +365,12 @@ pub fn validate_requests_hash(
 }
 
 /// Stores block and header in the database
-pub fn store_block(storage: &Store, block: Block) -> Result<(), ChainError> {
-    storage.add_block(block)?;
+pub fn store_block(
+    storage: &Store,
+    block: Block,
+    receipts: Vec<Receipt>,
+) -> Result<(), ChainError> {
+    storage.add_block(block, receipts)?;
     Ok(())
 }
 
