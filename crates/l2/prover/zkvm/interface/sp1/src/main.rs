@@ -1,7 +1,8 @@
 #![no_main]
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::{backends::revm::db::EvmState, backends::revm::REVM};
+// use ethrex_vm::{backends::revm::db::EvmState, backends::revm::REVM};
+use ethrex_vm::backends::levm::LEVM;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -15,10 +16,11 @@ pub fn main() {
         parent_block_header,
         db,
     } = sp1_zkvm::io::read::<ProgramInput>();
-    let mut state = EvmState::from(db.clone());
-    let chain_config = state
-        .chain_config()
-        .expect("Failed to get chain config from state");
+    // let mut state = EvmState::from(db.clone());
+    // let chain_config = state
+    //     .chain_config()
+    //     .expect("Failed to get chain config from state");
+    let chain_config = db.get_chain_config();
 
     // Validate the block
     validate_block(&block, &parent_block_header, &chain_config).expect("invalid block");
@@ -37,7 +39,8 @@ pub fn main() {
         panic!("invalid database")
     };
 
-    let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
+    // let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
+    let result = LEVM::execute_block(&block, db).expect("failed to execute block");
     let receipts = result.receipts;
     let account_updates = result.account_updates;
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");

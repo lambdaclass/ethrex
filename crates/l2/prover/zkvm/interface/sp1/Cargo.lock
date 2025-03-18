@@ -2044,18 +2044,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "p256"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b"
-dependencies = [
- "ecdsa",
- "elliptic-curve",
- "primeorder",
- "sha2 0.10.8",
-]
-
-[[package]]
 name = "p3-baby-bear"
 version = "0.2.0-succinct"
 source = "registry+https://github.com/rust-lang/crates.io-index"
