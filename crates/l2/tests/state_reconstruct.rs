@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethrex_common::{Address, H256, U256};
 use ethrex_rpc::{
@@ -156,8 +158,10 @@ async fn test_block_2() {
         .expect("Error calling contract: decimals()(uint8)");
     // The result is a hexstring with a leading 0x, so we need to skip the first 2 characters.
     // The next 64 characters (32 bytes) are left padded uint8.
-    let token_decimals = hex::decode(token_decimals.get(64..).expect("Invalid length"))
-        .expect("Invalid response: not hex")[0];
+    let token_decimals = *hex::decode(token_decimals.get(64..).expect("Invalid length"))
+        .expect("Invalid response: not hex")
+        .first()
+        .expect("Invalid length");
     assert_eq!(ERC20_DECIMALS, token_decimals);
 
     // Token balance of ERC20_RICH_ADDRESS1 should be 1e39 at block 2
@@ -354,8 +358,10 @@ async fn test_latest_block() {
         .expect("Error calling contract: decimals()(uint8)");
     // The result is a hexstring with a leading 0x, so we need to skip the first 2 characters.
     // The next 64 characters (32 bytes) are left padded uint8.
-    let token_decimals = hex::decode(token_decimals.get(64..).expect("Invalid length"))
-        .expect("Invalid response: not hex")[0];
+    let token_decimals = *hex::decode(token_decimals.get(64..).expect("Invalid length"))
+        .expect("Invalid response: not hex")
+        .first()
+        .expect("Invalid length");
     assert_eq!(ERC20_DECIMALS, token_decimals);
 
     // Token balance of ERC20_RICH_ADDRESS1 should be 1e39 at latest block
