@@ -16,6 +16,9 @@ additional_services:
 network_params:
   electra_fork_epoch: 1
 
+  # The address of the staking contract address on the Eth1 chain
+  deposit_contract_address: "0x4242424242424242424242424242424242424242"
+
 assertoor_params:
   run_stability_check: false
   run_block_proposal_check: false

@@ -9,7 +9,9 @@ struct Deployer {
     private_key: String,
     risc0_contract_verifier: String,
     sp1_contract_verifier: String,
+    pico_contract_verifier: String,
     sp1_deploy_verifier: bool,
+    pico_deploy_verifier: bool,
     salt_is_zero: bool,
 }
 
@@ -22,14 +24,18 @@ impl Deployer {
 {prefix}_PRIVATE_KEY={}
 {prefix}_RISC0_CONTRACT_VERIFIER={}
 {prefix}_SP1_CONTRACT_VERIFIER={}
+{prefix}_PICO_CONTRACT_VERIFIER={}
 {prefix}_SP1_DEPLOY_VERIFIER={}
+{prefix}_PICO_DEPLOY_VERIFIER={}
 {prefix}_SALT_IS_ZERO={}
 ",
             self.address,
             self.private_key,
             self.risc0_contract_verifier,
             self.sp1_contract_verifier,
+            self.pico_contract_verifier,
             self.sp1_deploy_verifier,
+            self.pico_deploy_verifier,
             self.salt_is_zero
         )
     }
@@ -171,6 +177,7 @@ struct Server {
     verifier_address: String,
     verifier_private_key: String,
     dev_mode: bool,
+    dev_interval_ms: u64,
 }
 
 impl Server {
@@ -183,33 +190,27 @@ impl Server {
 {prefix}_VERIFIER_ADDRESS={}
 {prefix}_VERIFIER_PRIVATE_KEY={}
 {prefix}_DEV_MODE={}
+{prefix}_DEV_INTERVAL_MS={}
 ",
             self.listen_ip,
             self.listen_port,
             self.verifier_address,
             self.verifier_private_key,
-            self.dev_mode
+            self.dev_mode,
+            self.dev_interval_ms
         )
     }
 }
 
 #[derive(Deserialize, Debug)]
 struct Prover {
-    sp1_prover: String,
-    risc0_dev_mode: u64,
     client: Client,
     server: Server,
 }
 
 impl Prover {
     pub fn to_env(&self) -> String {
-        let mut env = format!(
-            "
-SP1_PROVER={}
-RISC0_DEV_MODE={}
-",
-            self.sp1_prover, self.risc0_dev_mode,
-        );
+        let mut env = String::new();
         env.push_str(&self.client.to_env());
         env.push_str(&self.server.to_env());
         env
