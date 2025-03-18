@@ -386,6 +386,7 @@ impl PeerHandler {
                 let mut should_continue = false;
                 // Validate each storage range
                 while !slots.is_empty() {
+                    info!("[ID: {identifier}] Slots: {}", slots.len());
                     let (hashed_keys, values): (Vec<_>, Vec<_>) = slots
                         .remove(0)
                         .into_iter()
