@@ -31,6 +31,9 @@ impl<'a> Default for Risc0Prover<'a> {
 /// Structure that wraps all the needed components for the SP1 proving system
 pub struct Sp1Prover<'a> {
     elf: &'a [u8],
+    client: sp1_sdk::EnvProver,
+    pk: sp1_sdk::SP1ProvingKey,
+    vk: sp1_sdk::SP1VerifyingKey,
 }
 
 impl<'a> Default for Sp1Prover<'a> {
@@ -88,6 +91,9 @@ impl<'a> Prover for Risc0Prover<'a> {
             .write(&input)?
             .build()?;
 
+        // CHECK: Here we are creating a new Prover from RISC0
+        // each time we use the prove() function, this pattern
+        // was causing some issues with SP1.
         // Generate the Receipt
         let prover = default_prover();
 
@@ -141,8 +147,14 @@ impl<'a> Prover for Risc0Prover<'a> {
 
 impl<'a> Sp1Prover<'a> {
     pub fn new() -> Self {
+        // Generate the ProverClient
+        let client = ProverClient::from_env();
+        let (pk, vk) = client.setup(ZKVM_SP1_PROGRAM_ELF);
         Self {
             elf: ZKVM_SP1_PROGRAM_ELF,
+            client,
+            pk,
+            vk,
         }
     }
 }
@@ -152,15 +164,11 @@ impl<'a> Prover for Sp1Prover<'a> {
         let mut stdin = SP1Stdin::new();
         stdin.write(&input);
 
-        // Generate the ProverClient
-        let client = ProverClient::from_env();
-        let (pk, vk) = client.setup(self.elf);
-
         // Proof information by proving the specified ELF binary.
         // This struct contains the receipt along with statistics about execution of the guest
-        let proof = client.prove(&pk, &stdin).groth16().run()?;
+        let proof = self.client.prove(&self.pk, &stdin).groth16().run()?;
         // Wrap Proof and vk
-        let sp1_proof = Sp1Proof::new(proof, vk);
+        let sp1_proof = Sp1Proof::new(proof, self.vk.clone());
         info!("Successfully generated SP1Proof.");
         Ok(ProvingOutput::SP1(sp1_proof))
     }

@@ -151,8 +151,6 @@ impl ProverServer {
         )
         .await?;
 
-        let mut sp1_verifier_address = Address::zero();
-
         let mut needed_proof_types = vec![];
         for key in VERIFIER_CONTRACTS {
             let val = verifier_contracts.get(key);
@@ -163,12 +161,9 @@ impl ProverServer {
                 } else {
                     match key {
                         "R0VERIFIER()" => {
-                            warn!("RISC0 not in devmode");
                             needed_proof_types.push(ProverType::RISC0);
                         }
                         "SP1VERIFIER()" => {
-                            warn!("SP1 not in devmode");
-                            sp1_verifier_address = *addr;
                             needed_proof_types.push(ProverType::SP1);
                         }
                         _ => unreachable!(),
