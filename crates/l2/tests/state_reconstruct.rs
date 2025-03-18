@@ -23,12 +23,6 @@ async fn test_block_0() {
     let client = EthClient::new(ETH_RPC_URL);
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
-    let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
-    let erc20_rich_address1 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS1).unwrap());
-    let erc20_rich_address2 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS2).unwrap());
-    let erc20_symbol_signature = hex::decode(ERC20_SYMBOL_SIGNATURE).unwrap();
-    let erc20_name_signature = hex::decode(ERC20_NAME_SIGNATURE).unwrap();
-    let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
 
     // Balance of RICH_ADDRESS should be 0 at block 0
     let balance = client
@@ -44,11 +38,6 @@ async fn test_block_1() {
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
     let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
-    let erc20_rich_address1 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS1).unwrap());
-    let erc20_rich_address2 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS2).unwrap());
-    let erc20_symbol_signature = hex::decode(ERC20_SYMBOL_SIGNATURE).unwrap();
-    let erc20_name_signature = hex::decode(ERC20_NAME_SIGNATURE).unwrap();
-    let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
 
     // Balance of RICH_ADDRESS should be
     // 4722366482869645213696 (0x1000000000000000000) at block 1
@@ -211,12 +200,9 @@ async fn test_block_2() {
 async fn test_block_3() {
     let client = EthClient::new(ETH_RPC_URL);
 
-    let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
     let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
     let erc20_rich_address1 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS1).unwrap());
     let erc20_rich_address2 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS2).unwrap());
-    let erc20_symbol_signature = hex::decode(ERC20_SYMBOL_SIGNATURE).unwrap();
-    let erc20_name_signature = hex::decode(ERC20_NAME_SIGNATURE).unwrap();
     let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
 
     // Token balance of ERC20_RICH_ADDRESS2 should be 1.22e20 at block 3
