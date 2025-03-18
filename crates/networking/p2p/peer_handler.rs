@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::{Duration, Instant}};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -322,6 +322,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
+        identifier: char,
         state_root: H256,
         mut storage_roots: Vec<H256>,
         account_hashes: Vec<H256>,
@@ -337,8 +338,19 @@ impl PeerHandler {
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
+            let find_peer = Instant::now();
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
+            info!(
+                "[ID: {identifier}] Find Peer in {} ms",
+                find_peer.elapsed().as_millis()
+            );
+            let lock_peer = Instant::now();
             let mut receiver = peer.receiver.lock().await;
+            info!(
+                "[ID: {identifier}] Lock peer in {} micros",
+                lock_peer.elapsed().as_micros()
+            );
+            let send_req_await_res = Instant::now();
             peer.sender.send(request).await.ok()?;
             if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
@@ -358,6 +370,11 @@ impl PeerHandler {
             .ok()
             .flatten()
             {
+                info!(
+                    "[ID: {identifier}] Send req and await res in {} ms",
+                    send_req_await_res.elapsed().as_millis()
+                );
+                let validate_response = Instant::now();
                 // Check we got a reasonable amount of storage ranges
                 if slots.len() > storage_roots.len() || slots.is_empty() {
                     return None;
@@ -384,6 +401,8 @@ impl PeerHandler {
                         .collect::<Vec<_>>();
                     let storage_root = storage_roots.remove(0);
 
+                    let call_verify_range = Instant::now();
+
                     // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
                     if slots.is_empty() && !proof.is_empty() {
                         let Ok(sc) = verify_range(
@@ -402,10 +421,18 @@ impl PeerHandler {
                         tracing::warn!("Storage Range failed verification");
                         continue;
                     }
+                    info!(
+                        "[ID: {identifier}] Call verify_range in {} ms",
+                        call_verify_range.elapsed().as_millis()
+                    );
 
                     storage_keys.push(hashed_keys);
                     storage_values.push(values);
                 }
+                info!(
+                    "[ID: {identifier}] Validate response in {} ms",
+                    validate_response.elapsed().as_millis()
+                );
                 return Some((storage_keys, storage_values, should_continue));
             }
         }

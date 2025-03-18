@@ -8,6 +8,8 @@
 //! This method is called while fetching a storage batch and can stall the fetching of other smaller storages.
 //! Large storage handling could be moved to its own separate queue process so that it runs parallel to regular storage fetching
 
+use std::time::Instant;
+
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -99,7 +101,7 @@ pub(crate) async fn storage_fetcher(
                     break;
                 }
             }
-            info!("Completed storage tasks in {} seconds", instant.elapsed().as_secs());
+            info!("Completed storage tasks in {} miliseconds", instant.elapsed().as_millis());
             // Add unfetched accounts to queue and handle stale signal
             for res in storage_tasks.join_all().await {
                 let (remaining, is_stale) = res?;
@@ -133,19 +135,27 @@ async fn fetch_storage_batch(
     large_storage_sender: Sender<Vec<(H256, H256, H256)>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
+    let identifier: char = rand::random(); 
     // A list of all completely fetched storages to send to the rebuilder
     let mut complete_storages = vec![];
-    debug!(
-        "Requesting storage ranges for addresses {}..{}",
+    info!(
+        "[ID: {identifier}] Requesting storage ranges for addresses {}..{}",
         batch.first().unwrap().0,
         batch.last().unwrap().0
     );
+    let full = Instant::now();
+    let req = Instant::now();
     let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
     if let Some((mut keys, mut values, incomplete)) = peers
-        .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
+        .request_storage_ranges(identifier, state_root, batch_roots, batch_hahses, H256::zero())
         .await
     {
-        debug!("Received {} storage ranges", keys.len(),);
+        info!(
+            "[ID: {identifier}] Received {} storage ranges in {} ms",
+            keys.len(),
+            req.elapsed().as_millis()
+        );
+        //debug!("Received {} storage ranges", keys.len(),);
         // Handle incomplete ranges
         if incomplete {
             // An incomplete range cannot be empty
@@ -166,6 +176,7 @@ async fn fetch_storage_batch(
             }
             // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
         }
+        let write_to_snapshot = Instant::now();
         // Store the storage ranges & rebuild the storage trie for each account
         for (keys, values) in keys.into_iter().zip(values.into_iter()) {
             let (account_hash, expected_root) = batch.remove(0);
@@ -173,10 +184,23 @@ async fn fetch_storage_batch(
             store.write_snapshot_storage_batch(account_hash, keys, values)?;
             complete_storages.push((account_hash, expected_root));
         }
+        info!(
+            "[ID: {identifier}] Write storage ranges to snapshot in  {} ms",
+            write_to_snapshot.elapsed().as_millis()
+        );
         // Send complete storages to the rebuilder
+        let send_to_rebuilder = Instant::now();
         storage_trie_rebuilder_sender
             .send(complete_storages)
             .await?;
+        info!(
+            "[ID: {identifier}] Send storages to rebuilder in  {} ms",
+            send_to_rebuilder.elapsed().as_millis()
+        );
+        info!(
+            "[ID: {identifier}] Full storage fetcher time elapsed {} ms",
+            full.elapsed().as_millis()
+        );
         // Return remaining code hashes in the batch if we couldn't fetch all of them
         return Ok((batch, false));
     }
