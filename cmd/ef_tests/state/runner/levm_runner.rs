@@ -309,9 +309,15 @@ pub fn ensure_post_state(
                 // Execution result was successful and no exception was expected.
                 None => {
                     let store_wrapper = utils::load_initial_state_levm(test);
+                    let block_header = store_wrapper
+                        .store
+                        .get_block_header_by_hash(store_wrapper.block_hash)
+                        .unwrap()
+                        .unwrap();
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                         Some(*fork),
-                        &store_wrapper,
+                        Arc::new(store_wrapper.clone()),
+                        &block_header,
                         &execution_report.new_state,
                     )
                     .map_err(|_| {
