@@ -24,3 +24,4 @@ tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch
 
 [features]
 l2 = ["ethrex-vm/l2", "zkvm_interface/l2", "ethrex-blockchain/l2"]
+levm-l2 = ["ethrex-vm/levm-l2"]

@@ -1,8 +1,10 @@
 #![no_main]
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-// use ethrex_vm::{backends::revm::db::EvmState, backends::revm::REVM};
+#[cfg(feature = "levm-l2")]
 use ethrex_vm::backends::levm::LEVM;
+#[cfg(not(feature = "levm-l2"))]
+use ethrex_vm::{backends::revm::db::EvmState, backends::revm::REVM};
 use std::sync::Arc;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
@@ -17,10 +19,8 @@ pub fn main() {
         parent_block_header,
         db,
     } = sp1_zkvm::io::read::<ProgramInput>();
-    // let mut state = EvmState::from(db.clone());
-    // let chain_config = state
-    //     .chain_config()
-    //     .expect("Failed to get chain config from state");
+    #[cfg(not(feature = "levm-l2"))]
+    let mut state = EvmState::from(db.clone());
     let chain_config = db.get_chain_config();
 
     // Validate the block
@@ -40,7 +40,9 @@ pub fn main() {
         panic!("invalid database")
     };
 
-    // let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
+    #[cfg(not(feature = "levm-l2"))]
+    let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
+    #[cfg(feature = "levm-l2")]
     let result = LEVM::execute_block(&block, Arc::new(db)).expect("failed to execute block");
     let receipts = result.receipts;
     let account_updates = result.account_updates;
