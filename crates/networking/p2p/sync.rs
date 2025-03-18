@@ -187,12 +187,7 @@ impl SyncManager {
 
         loop {
             debug!("Requesting Block Headers from {search_head}");
-            let block_header_limit = match self.sync_mode {
-                SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
-                // In Full sync mode, request the same number of block bodies as headers,
-                // since they are processed together at the same rate.
-                SyncMode::Full => MAX_BLOCK_BODIES_TO_REQUEST,
-            } as u64;
+            let block_header_limit = MAX_BLOCK_HEADERS_TO_REQUEST as u64;
 
             let Some(mut block_headers) = self
                 .peers
