@@ -311,16 +311,8 @@ impl Blockchain {
         }
 
         info!(
-            "[METRICS] {} blocks performance:\n
-            Total time: {} seconds\n
-            Blocks per second: {:.3}\n
-            Total transactions {}\n
-            Throughput: {} Gigagas/s\n",
-            blocks_len,
-            elapsed_total / 1000,
-            blocks_len as f64 / (elapsed_total as f64 / 1000_f64),
-            transactions_count,
-            throughput,
+            "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Throughput: {} Gigagas/s",
+            blocks_len, transactions_count, throughput
         );
 
         Ok(())
