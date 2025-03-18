@@ -109,11 +109,15 @@ impl Command {
                 account,
             } => {
                 if !l1 || l2 {
-                    let account_balance = rollup_client.get_balance(account).await?;
+                    let account_balance = rollup_client
+                        .get_balance(account, BlockByNumber::Latest)
+                        .await?;
                     println!("{}", balance_in_wei(wei, account_balance));
                 }
                 if l1 {
-                    let account_balance = eth_client.get_balance(account).await?;
+                    let account_balance = eth_client
+                        .get_balance(account, BlockByNumber::Latest)
+                        .await?;
                     println!("{}", balance_in_wei(wei, account_balance));
                 }
             }

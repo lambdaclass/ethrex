@@ -54,11 +54,29 @@ pub enum WrappedTransaction {
     L2(PrivilegedL2Transaction),
 }
 
+#[derive(Debug, Clone)]
 pub enum BlockByNumber {
     Number(u64),
     Latest,
     Earliest,
     Pending,
+}
+
+impl From<BlockByNumber> for Value {
+    fn from(value: BlockByNumber) -> Self {
+        match value {
+            BlockByNumber::Number(n) => json!(format!("{:#x}", n)),
+            BlockByNumber::Latest => json!("latest"),
+            BlockByNumber::Earliest => json!("earliest"),
+            BlockByNumber::Pending => json!("pending"),
+        }
+    }
+}
+
+impl From<u64> for BlockByNumber {
+    fn from(value: u64) -> Self {
+        BlockByNumber::Number(value)
+    }
 }
 
 // 0x08c379a0 == Error(String)
@@ -445,12 +463,16 @@ impl EthClient {
         }
     }
 
-    pub async fn get_nonce(&self, address: Address) -> Result<u64, EthClientError> {
+    pub async fn get_nonce(
+        &self,
+        address: Address,
+        block: BlockByNumber,
+    ) -> Result<u64, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getTransactionCount".to_string(),
-            params: Some(vec![json!(format!("{address:#x}")), json!("latest")]),
+            params: Some(vec![json!(format!("{address:#x}")), block.into()]),
         };
 
         match self.send_request(request).await {
@@ -516,18 +538,12 @@ impl EthClient {
         &self,
         block: BlockByNumber,
     ) -> Result<RpcBlock, EthClientError> {
-        let r = match block {
-            BlockByNumber::Number(n) => format!("{n:#x}"),
-            BlockByNumber::Latest => "latest".to_owned(),
-            BlockByNumber::Earliest => "earliest".to_owned(),
-            BlockByNumber::Pending => "pending".to_owned(),
-        };
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getBlockByNumber".to_string(),
             // With false it just returns the hash of the transactions.
-            params: Some(vec![json!(r), json!(false)]),
+            params: Some(vec![block.into(), json!(false)]),
         };
 
         match self.send_request(request).await {
@@ -595,12 +611,16 @@ impl EthClient {
         }
     }
 
-    pub async fn get_balance(&self, address: Address) -> Result<U256, EthClientError> {
+    pub async fn get_balance(
+        &self,
+        address: Address,
+        block: BlockByNumber,
+    ) -> Result<U256, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getBalance".to_string(),
-            params: Some(vec![json!(format!("{:#x}", address)), json!("latest")]),
+            params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
         };
 
         match self.send_request(request).await {
@@ -986,7 +1006,7 @@ impl EthClient {
         if let Some(nonce) = overrides.nonce {
             return Ok(nonce);
         }
-        self.get_nonce(address).await
+        self.get_nonce(address, BlockByNumber::Latest).await
     }
 
     pub async fn get_last_committed_block(

@@ -7,7 +7,7 @@ use ethrex_common::H160;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::{
     clients::{
-        eth::{eth_sender::Overrides, EthClient},
+        eth::{eth_sender::Overrides, BlockByNumber, EthClient},
         EthClientError,
     },
     types::receipt::RpcReceipt,
@@ -20,10 +20,6 @@ use std::{
     fs::File,
     io::{self, BufRead},
     path::Path,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -137,7 +133,10 @@ async fn transfer_from(
     let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
 
     let address = Address::from(address_bytes);
-    let nonce = client.get_nonce(address).await.unwrap();
+    let nonce = client
+        .get_nonce(address, BlockByNumber::Latest)
+        .await
+        .unwrap();
 
     let mut retries = 0;
 
@@ -310,7 +309,10 @@ async fn erc20_load_test(
         .map(|pk| (pk.clone(), pk.public_key(secp256k1::SECP256K1)))
         .collect_vec();
     for (sk, pk) in accounts {
-        let nonce = client.get_nonce(address_from_pub_key(pk)).await.unwrap();
+        let nonce = client
+            .get_nonce(address_from_pub_key(pk), BlockByNumber::Latest)
+            .await
+            .unwrap();
         for i in 0..tx_amount {
             let send_calldata = calldata::encode_calldata(
                 "transfer(address,uint256)",

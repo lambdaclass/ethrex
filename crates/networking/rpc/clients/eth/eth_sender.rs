@@ -14,6 +14,8 @@ use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde_json::json;
 
+use super::BlockByNumber;
+
 #[derive(Default, Clone, Debug)]
 pub struct Overrides {
     pub from: Option<Address>,
@@ -26,6 +28,7 @@ pub struct Overrides {
     pub max_priority_fee_per_gas: Option<u64>,
     pub access_list: Vec<(Address, Vec<H256>)>,
     pub gas_price_per_blob: Option<U256>,
+    pub block: Option<BlockByNumber>,
 }
 
 impl EthClient {
@@ -61,7 +64,10 @@ impl EthClient {
                     "value": format!("{:#x}", tx.value),
                     "from": format!("{:#x}", tx.from),
                 }),
-                json!("latest"),
+                overrides
+                    .block
+                    .map(Into::into)
+                    .unwrap_or(serde_json::Value::String("latest".to_string())),
             ]),
         };
 
@@ -92,7 +98,7 @@ impl EthClient {
             .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
             .await?;
 
-        let nonce = self.get_nonce(deployer).await?;
+        let nonce = self.get_nonce(deployer, BlockByNumber::Latest).await?;
         let mut encode = vec![];
         (deployer, nonce).encode(&mut encode);
 

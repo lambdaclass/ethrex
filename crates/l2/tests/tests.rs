@@ -52,24 +52,34 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Checking initial balances on L1 and L2");
     let l1_rich_wallet_address = l1_rich_wallet_address();
 
-    let l1_initial_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
-    let mut l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
+    let l1_initial_balance = eth_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    let mut l2_initial_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
     println!("Waiting for L2 to update for initial deposit");
     let mut retries = 0;
     while retries < 30 && l2_initial_balance.is_zero() {
         std::thread::sleep(std::time::Duration::from_secs(2));
         println!("[{retries}/30] Waiting for L2 balance to update");
-        l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
+        l2_initial_balance = proposer_client
+            .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+            .await?;
         retries += 1;
     }
     assert_ne!(retries, 30, "L2 balance is zero");
-    let common_bridge_initial_balance = eth_client.get_balance(common_bridge_address()).await?;
+    let common_bridge_initial_balance = eth_client
+        .get_balance(common_bridge_address(), BlockByNumber::Latest)
+        .await?;
 
     println!("L1 initial balance: {l1_initial_balance}");
     println!("L2 initial balance: {l2_initial_balance}");
     println!("Common Bridge initial balance: {common_bridge_initial_balance}");
 
-    let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
+    let recoverable_fees_vault_balance = proposer_client
+        .get_balance(fees_vault(), BlockByNumber::Latest)
+        .await?;
     println!(
         "Recoverable Fees Balance: {}",
         recoverable_fees_vault_balance
@@ -93,7 +103,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let _deposit_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5).await?;
 
-    let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
+    let recoverable_fees_vault_balance = proposer_client
+        .get_balance(fees_vault(), BlockByNumber::Latest)
+        .await?;
     println!(
         "Recoverable Fees Balance: {}",
         recoverable_fees_vault_balance
@@ -103,8 +115,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Checking balances on L1 and L2 after deposit");
 
-    let l1_after_deposit_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
-    let mut l2_after_deposit_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
+    let l1_after_deposit_balance = eth_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    let mut l2_after_deposit_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
 
     println!("Waiting for L2 balance to update");
 
@@ -114,13 +130,17 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     while retries < 30 && l2_after_deposit_balance < l2_initial_balance + deposit_value {
         std::thread::sleep(std::time::Duration::from_secs(2));
         println!("[{retries}/30] Waiting for L2 balance to update after deposit");
-        l2_after_deposit_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
+        l2_after_deposit_balance = proposer_client
+            .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+            .await?;
         retries += 1;
     }
 
     assert_ne!(retries, 30, "L2 balance did not update after deposit");
 
-    let common_bridge_locked_balance = eth_client.get_balance(common_bridge_address()).await?;
+    let common_bridge_locked_balance = eth_client
+        .get_balance(common_bridge_address(), BlockByNumber::Latest)
+        .await?;
     // Check that the deposit amount is the amount locked by the CommonBridge
     assert_eq!(
         common_bridge_locked_balance,
@@ -144,8 +164,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         (l1_initial_balance - deposit_value).abs_diff(l1_after_deposit_balance)
     );
 
-    let first_deposit_recoverable_fees_vault_balance =
-        proposer_client.get_balance(fees_vault()).await?;
+    let first_deposit_recoverable_fees_vault_balance = proposer_client
+        .get_balance(fees_vault(), BlockByNumber::Latest)
+        .await?;
     println!(
         "Recoverable Fees Balance: {}, This amount is given because of the L2 Privileged Transaction, a deposit shouldn't give a tip to the coinbase address if the gas sent as tip doesn't come from the L1.",
         first_deposit_recoverable_fees_vault_balance
@@ -155,8 +176,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Transferring funds on L2");
 
     let (random_account_address, _random_account_private_key) = random_account();
-    let l2_random_account_initial_balance =
-        proposer_client.get_balance(random_account_address).await?;
+    let l2_random_account_initial_balance = proposer_client
+        .get_balance(random_account_address, BlockByNumber::Latest)
+        .await?;
     assert!(l2_random_account_initial_balance.is_zero());
     let transfer_value = U256::from(10000000000u128);
     let transfer_tx = ethrex_l2_sdk::transfer(
@@ -170,7 +192,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let transfer_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 30).await?;
 
-    let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
+    let recoverable_fees_vault_balance = proposer_client
+        .get_balance(fees_vault(), BlockByNumber::Latest)
+        .await?;
     println!(
         "Recoverable Fees Balance: {}",
         recoverable_fees_vault_balance
@@ -180,9 +204,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Checking balances on L2 after transfer");
 
-    let l2_balance_after_transfer = proposer_client.get_balance(l1_rich_wallet_address).await?;
-    let l2_random_account_balance_after_transfer =
-        proposer_client.get_balance(random_account_address).await?;
+    let l2_balance_after_transfer = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    let l2_random_account_balance_after_transfer = proposer_client
+        .get_balance(random_account_address, BlockByNumber::Latest)
+        .await?;
 
     println!("L2 balance after transfer: {l2_balance_after_transfer}");
     println!("Random account balance after transfer: {l2_random_account_balance_after_transfer}");
@@ -219,8 +246,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Checking balances on L1 and L2 after withdrawal");
 
-    let l1_after_withdrawal_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
-    let l2_after_withdrawal_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
+    let l1_after_withdrawal_balance = eth_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    let l2_after_withdrawal_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
 
     println!("L1 balance after withdrawal: {l1_after_withdrawal_balance}");
     println!("L2 balance after withdrawal: {l2_after_withdrawal_balance}");
@@ -280,14 +311,22 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Checking balances on L1 and L2 after claim");
 
-    let l1_after_claim_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
-    let l2_after_claim_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
+    let l1_after_claim_balance = eth_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    let l2_after_claim_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
 
     println!("L1 balance after claim: {l1_after_claim_balance}");
     println!("L2 balance after claim: {l2_after_claim_balance}");
 
-    let common_bridge_locked_balance = eth_client.get_balance(common_bridge_address()).await?;
-    let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
+    let common_bridge_locked_balance = eth_client
+        .get_balance(common_bridge_address(), BlockByNumber::Latest)
+        .await?;
+    let recoverable_fees_vault_balance = proposer_client
+        .get_balance(fees_vault(), BlockByNumber::Latest)
+        .await?;
     println!(
         "Recoverable Fees Balance: {}",
         recoverable_fees_vault_balance
