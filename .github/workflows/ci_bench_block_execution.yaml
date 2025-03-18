@@ -78,7 +78,7 @@ jobs:
         run: |
           sudo swapoff -a
           BINS="main,head"
-          hyperfine --setup "./bin/ethrex-main removedb" -w 1 -N -r 1 --show-output --export-markdown "bench_pr_comparison.md" \
+          hyperfine --setup "./bin/ethrex-main removedb" -w 1 -N -r 2 --show-output --export-markdown "bench_pr_comparison.md" \
           -L bin "$BINS" -n "{bin}" \
           "./bin/ethrex-{bin} --network test_data/genesis-l2-ci.json import ./test_data/l2-1k-erc20.rlp --removedb"
           echo -e "## Benchmark Block Execution Results Comparison Against Main\n\n$(cat bench_pr_comparison.md)" > bench_pr_comparison.md
