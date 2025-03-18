@@ -465,20 +465,6 @@ impl ProverServer {
         // the structure has to match the one defined in the OnChainProposer.sol contract.
         // It may cause some issues, but the ethrex_prover_lib cannot be imported,
         // this approach is straightforward for now.
-        let exec_proof = {
-            if self.needed_proof_types.contains(&ProverType::Exec) {
-                let exec_proof = read_proof(block_number, StateFileType::Proof(ProverType::Exec))?;
-                if exec_proof.prover_type != ProverType::Exec {
-                    return Err(ProverServerError::Custom(
-                        "Exec Proof isn't present".to_string(),
-                    ));
-                };
-                exec_proof.calldata
-            } else {
-                vec![Value::Bytes(vec![].into())]
-            }
-        };
-
         let risc0_proof = {
             if self.needed_proof_types.contains(&ProverType::RISC0) {
                 let risc0_proof =
@@ -538,7 +524,6 @@ impl ProverServer {
 
         let calldata_values = [
             &[Value::Uint(U256::from(block_number))],
-            exec_proof.as_slice(),
             risc0_proof.as_slice(),
             sp1_proof.as_slice(),
             pico_proof.as_slice(),
@@ -601,8 +586,6 @@ impl ProverServer {
             let calldata_values = vec![
                 // blockNumber
                 Value::Uint(U256::from(last_verified_block + 1)),
-                // execPublicInputs
-                Value::Bytes(vec![].into()),
                 // risc0BlockProof
                 Value::Bytes(vec![].into()),
                 // risc0ImageId
