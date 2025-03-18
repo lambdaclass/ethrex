@@ -9,7 +9,7 @@ jobs:
     if: contains(github.event.pull_request.labels.*.name, 'performance')
     strategy:
       matrix:
-        branch: [main, head]
+        branch: [main, HEAD]
     name: Build ethrex for ${{ matrix.branch }}
     runs-on: ubuntu-22.04
     steps:
@@ -28,7 +28,7 @@ jobs:
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request[matrix.branch].sha }}
+          ref: ${{ matrix.branch }
 
       - name: Fetch Rust cache
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
@@ -50,7 +50,7 @@ jobs:
       - name: Checkout PR
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.HEAD_ref }}
           lfs: true
 
       - name: Checkout LFS objects
@@ -70,14 +70,14 @@ jobs:
       - name: Fetch HEAD binary
         uses: actions/cache/restore@v3
         with:
-          path: bin/ethrex-head
-          key: binary-${{ github.event.pull_request.head.sha }}
+          path: bin/ethrex-HEAD
+          key: binary-${{ github.event.pull_request.HEAD.sha }}
 
       - name: Benchmark against main
         id: run-benchmarks
         run: |
           sudo swapoff -a
-          BINS="main,head"
+          BINS="main,HEAD"
           hyperfine --setup "./bin/ethrex-main removedb" -w 1 -N -r 2 --show-output --export-markdown "bench_pr_comparison.md" \
           -L bin "$BINS" -n "{bin}" \
           "./bin/ethrex-{bin} --network test_data/genesis-l2-ci.json import ./test_data/l2-1k-erc20.rlp --removedb"
