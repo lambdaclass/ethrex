@@ -6,7 +6,9 @@ mod storage_healing;
 mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
+use ethrex_blockchain::{
+    error::ChainError, BatchBlockProcessingFailure, Blockchain, STATE_TRIES_TO_KEEP,
+};
 use ethrex_common::{
     types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
@@ -449,7 +451,7 @@ impl SyncManager {
             .mark_chain_as_canonical(&blocks)
             .map_err(SyncError::Store)?;
 
-        if let Err((error, failure)) = self.blockchain.add_blocks_in_batch(&blocks) {
+        if let Err((error, failure)) = self.add_blocks(&blocks, store.clone()) {
             warn!("Failed to add block during FullSync: {error}");
             if let Some(BatchBlockProcessingFailure {
                 failed_block_hash,
@@ -488,6 +490,40 @@ impl SyncManager {
         );
 
         Ok(())
+    }
+
+    fn add_blocks(
+        &self,
+        blocks: &[Block],
+        store: Store,
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+        let last_block = blocks.last().unwrap().clone();
+        let latest_block_number = store
+            .get_latest_block_number()
+            .map_err(|e| (e.into(), None))?;
+
+        // If the difference between the last block's number and the latest block number is within
+        // STATE_TRIES_TO_KEEP, process the blocks sequentially so that the state of all blocks is stored.
+        if last_block.header.number.saturating_sub(latest_block_number)
+            <= STATE_TRIES_TO_KEEP as u64
+        {
+            let mut last_valid_hash = H256::default();
+            for block in blocks {
+                self.blockchain.add_block(block).map_err(|e| {
+                    (
+                        e,
+                        Some(BatchBlockProcessingFailure {
+                            last_valid_hash,
+                            failed_block_hash: block.hash(),
+                        }),
+                    )
+                })?;
+                last_valid_hash = block.hash();
+            }
+            Ok(())
+        } else {
+            self.blockchain.add_blocks_in_batch(&blocks)
+        }
     }
 }
 
