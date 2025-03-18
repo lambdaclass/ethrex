@@ -41,6 +41,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
+use tracing::info;
 
 use super::{eth::transactions::NewPooledTransactionHashes, utils::log_peer_warn};
 
@@ -288,14 +289,21 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         // Send transactions transaction hashes from mempool at connection start
         self.send_new_pooled_tx_hashes().await?;
         // Start listening for messages,
+        let peer = self.node.node_id.to_string();
+        let mut idle_start = Instant::now();
         loop {
             tokio::select! {
                 // Expect a message from the remote peer
                 Some(message) = self.receive() => {
                     match message {
                         Ok(message) => {
+                            info!("[Connection {peer}] Idle period {} ms", idle_start.elapsed().as_millis());
                             log_peer_debug(&self.node, &format!("Received message {}", message));
+                            let handling_message = Instant::now();
+                            let msg_str = message.to_string();
                             self.handle_message(message, sender.clone()).await?;
+                            info!("[Connection {peer}] Handling message {} in {} ms", msg_str, handling_message.elapsed().as_millis());
+                            idle_start = Instant::now();
                         },
                         Err(e) => {
                             log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
@@ -305,8 +313,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 }
                 // Expect a message from the backend
                 Some(message) = receiver.recv() => {
+                    info!("[Connection {peer}] Idle period {} ms", idle_start.elapsed().as_millis());
                     log_peer_debug(&self.node, &format!("Sending message {}", message));
+                    let sending_msg = Instant::now();
                     self.send(message).await?;
+                    info!("[Connection {peer}] Sending Message in {} ms", sending_msg.elapsed().as_millis());
+                    idle_start = Instant::now();
                 }
                 // This is not ideal, but using the receiver without
                 // this function call, causes the loop to take ownwership
@@ -317,12 +329,24 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 // the function below will yield immediately but the select will not match and
                 // ignore the returned value.
                 Some(broadcasted_msg) = Self::maybe_wait_for_broadcaster(&mut broadcaster_receive) => {
-                    self.handle_broadcast(broadcasted_msg?).await?
+                    info!("[Connection {peer}] Idle period {} ms", idle_start.elapsed().as_millis());
+                    let broadcast = Instant::now();
+                    self.handle_broadcast(broadcasted_msg?).await?;
+                    info!("[Connection {peer}] Broadcasting in {} ms", broadcast.elapsed().as_millis());
+                    idle_start = Instant::now();
+
                 }
                 // Allow an interruption to check periodic tasks
-                _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => (), // noop
+                _ = sleep(PERIODIC_TASKS_CHECK_INTERVAL) => {
+                    info!("[Connection {peer}] Sleeping for 5 seconds (counted as idle time)")
+                }, // noop
             }
+            let check = Instant::now();
             self.check_periodic_tasks().await?;
+            info!(
+                "[Connection {peer}] Checking periodic tasks in {} ms (counted as idle time)",
+                check.elapsed().as_millis()
+            )
         }
     }
 
