@@ -56,7 +56,6 @@ impl ExecutionDB {
     ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
         // TODO: perform validation to exit early
 
-        // let mut state = evm_state(store.clone(), block.header.parent_hash);
         let store_wrapper = StoreWrapper::Store(store.clone(), block.header.parent_hash);
 
         let result = crate::backends::levm::LEVM::execute_block(block, store_wrapper)
