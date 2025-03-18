@@ -12,6 +12,8 @@ use ethrex_storage::AccountUpdate;
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(feature = "levm-l2"))]
+use crate::backends::revm::db::evm_state;
 use crate::errors::ExecutionDBError;
 
 #[derive(Clone)]
@@ -56,11 +58,21 @@ impl ExecutionDB {
     ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
         // TODO: perform validation to exit early
 
-        let store_wrapper = StoreWrapper::Store(store.clone(), block.header.parent_hash);
+        #[cfg(feature = "levm-l2")]
+        {
+            let store_wrapper = StoreWrapper::Store(store.clone(), block.header.parent_hash);
 
-        let result = crate::backends::levm::LEVM::execute_block(block, store_wrapper)
-            .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
-        Ok(result.account_updates)
+            let result = crate::backends::levm::LEVM::execute_block(block, store_wrapper)
+                .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
+            Ok(result.account_updates)
+        }
+        #[cfg(not(feature = "levm-l2"))]
+        {
+            let mut state = evm_state(store.clone(), block.header.parent_hash);
+            let result = crate::backends::revm::REVM::execute_block(block, &mut state)
+                .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
+            Ok(result.account_updates)
+        }
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
