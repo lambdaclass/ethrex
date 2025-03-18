@@ -492,7 +492,7 @@ impl Store {
     }
 
     pub fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        Ok(())
+        self.engine.mark_chain_as_canonical(blocks)
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {

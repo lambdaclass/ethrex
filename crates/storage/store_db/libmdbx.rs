@@ -162,6 +162,14 @@ impl StoreEngine for Store {
         tx.commit().map_err(StoreError::LibmdbxError)
     }
 
+    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        let key_values = blocks
+            .iter()
+            .map(|e| (e.header.number.into(), e.hash().into()));
+
+        self.write_batch::<CanonicalBlockHashes>(key_values)
+    }
+
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
             self.get_block_body_by_hash(hash)

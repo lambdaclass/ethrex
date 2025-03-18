@@ -164,6 +164,16 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        for block in blocks {
+            self.inner()
+                .canonical_hashes
+                .insert(block.header.number, block.hash());
+        }
+
+        Ok(())
+    }
+
     fn add_block_number(
         &self,
         block_hash: BlockHash,

@@ -300,6 +300,14 @@ impl StoreEngine for RedBStore {
         Ok(())
     }
 
+    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        let key_values = blocks
+            .iter()
+            .map(|e| (e.header.number, <H256 as Into<BlockHashRLP>>::into(hash)));
+
+        self.write_batch(CANONICAL_BLOCK_HASHES_TABLE, key_values)
+    }
+
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
             self.get_block_body_by_hash(hash)

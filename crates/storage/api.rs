@@ -14,6 +14,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     fn add_batch_of_blocks(&self, blocks: &[Block]) -> Result<(), StoreError>;
 
+    /// Sets the blocks as part of the canonical chain
+    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError>;
+
     /// Add block header
     fn add_block_header(
         &self,
