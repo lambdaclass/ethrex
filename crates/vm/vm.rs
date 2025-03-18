@@ -2,6 +2,7 @@ pub mod backends;
 mod constants;
 pub mod db;
 pub mod errors;
+pub mod execution_result;
 
 use crate::backends::revm::*;
 

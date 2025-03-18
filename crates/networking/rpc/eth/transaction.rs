@@ -20,10 +20,7 @@ use ethrex_common::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{
-    backends::{revm::execution_result::ExecutionResult, Evm},
-    SpecId,
-};
+use ethrex_vm::{backends::Evm, execution_result::ExecutionResult, SpecId};
 use serde::Serialize;
 
 use serde_json::Value;
