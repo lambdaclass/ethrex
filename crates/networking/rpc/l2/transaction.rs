@@ -178,6 +178,8 @@ impl RpcHandler for SponsoredTx {
             }
         };
         generic.gas = None;
+        generic.nonce = Some(nonce);
+        generic.from = sponsor_address;
 
         let estimate_gas_request = EstimateGasRequest {
             transaction: generic,
