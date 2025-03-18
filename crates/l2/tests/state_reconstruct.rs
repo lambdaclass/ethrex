@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use ethrex_common::{Address, H256, U256};
-use ethrex_rpc::{clients::Overrides, EthClient};
+use ethrex_rpc::{
+    clients::{eth::BlockByNumber, Overrides},
+    EthClient,
+};
 
 const ETH_RPC_URL: &str = "http://localhost:1729";
 const RICH_ADDRESS: &str = "f39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
@@ -16,7 +19,27 @@ const ERC20_DECIMALS: u8 = 18;
 const ERC20_BALANCE_SIGNATURE: &str = "70a08231";
 
 #[tokio::test]
-async fn state_reconstruct_test() {
+async fn test_block_0() {
+    let client = EthClient::new(ETH_RPC_URL);
+
+    let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
+    let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
+    let erc20_rich_address1 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS1).unwrap());
+    let erc20_rich_address2 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS2).unwrap());
+    let erc20_symbol_signature = hex::decode(ERC20_SYMBOL_SIGNATURE).unwrap();
+    let erc20_name_signature = hex::decode(ERC20_NAME_SIGNATURE).unwrap();
+    let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
+
+    // Balance of RICH_ADDRESS should be 0 at block 0
+    let balance = client
+        .get_balance(rich_address, 0.into())
+        .await
+        .expect("Error getting balance");
+    assert_eq!(balance, U256::zero());
+}
+
+#[tokio::test]
+async fn test_block_1() {
     let client = EthClient::new(ETH_RPC_URL);
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
@@ -28,9 +51,9 @@ async fn state_reconstruct_test() {
     let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
 
     // Balance of RICH_ADDRESS should be
-    // 4722366482869645213696 (0x1000000000000000000)
+    // 4722366482869645213696 (0x1000000000000000000) at block 1
     let balance = client
-        .get_balance(rich_address, 2.into())
+        .get_balance(rich_address, 1.into())
         .await
         .expect("Error getting balance");
     assert_eq!(
@@ -38,27 +61,56 @@ async fn state_reconstruct_test() {
         U256::from_dec_str("4722366482869645213696").unwrap()
     );
 
-    // Nonce of RICH_ADDRESS should be 3
+    // Nonce of RICH_ADDRESS should be 0 at block 1
+    let nonce = client
+        .get_nonce(rich_address, 1.into())
+        .await
+        .expect("Error getting nonce");
+    assert_eq!(nonce, 0);
+
+    // Bytecode of ERC20_ADDRESS should be null at block 1
+    let bytecode = client
+        .get_code(erc20_address, 1.into())
+        .await
+        .expect("Error getting code");
+    assert!(bytecode.is_empty());
+}
+
+#[tokio::test]
+async fn test_block_2() {
+    let client = EthClient::new(ETH_RPC_URL);
+
+    let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
+    let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
+    let erc20_rich_address1 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS1).unwrap());
+    let erc20_rich_address2 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS2).unwrap());
+    let erc20_symbol_signature = hex::decode(ERC20_SYMBOL_SIGNATURE).unwrap();
+    let erc20_name_signature = hex::decode(ERC20_NAME_SIGNATURE).unwrap();
+    let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
+
+    // Nonce of RICH_ADDRESS should be 3 at block 2
     let nonce = client
         .get_nonce(rich_address, 2.into())
         .await
         .expect("Error getting nonce");
     assert_eq!(nonce, 3);
 
-    // Bytecode of ERC20_ADDRESS should be the following ERC20 contract
+    // Bytecode of ERC20_ADDRESS should be the following ERC20 contract at block 2
     let bytecode = client
         .get_code(erc20_address, 2.into())
         .await
         .expect("Error getting code");
     assert_eq!(bytecode, erc20_bytecode());
 
-    // Token symbol should be ERC20_SYMBOL
+    // Token symbol should be ERC20_SYMBOL at block 2
     let token_symbol = client
         .call(
             erc20_address,
             erc20_symbol_signature.into(),
             Overrides {
                 from: Some(erc20_rich_address1),
+                block: Some(2.into()),
+                max_fee_per_gas: Some(10000000),
                 ..Default::default()
             },
         )
@@ -76,27 +128,29 @@ async fn state_reconstruct_test() {
     .expect("Invalid response: not utf8");
     assert_eq!(ERC20_SYMBOL, token_symbol);
 
-    // Token name should be "Token"
-    let token_symbol = client
+    // Token name should be "Token" at block 2
+    let token_name = client
         .call(
             erc20_address,
             erc20_name_signature.into(),
             Overrides {
                 from: Some(erc20_rich_address1),
+                block: Some(2.into()),
+                max_fee_per_gas: Some(10000000),
                 ..Default::default()
             },
         )
         .await
         .expect("Error calling contract: name()(string)");
     // Same case as above, but with 5 bytes of data
-    let token_symbol = String::from_utf8(
-        hex::decode(token_symbol.get(130..140).expect("Invalid length"))
+    let token_name = String::from_utf8(
+        hex::decode(token_name.get(130..140).expect("Invalid length"))
             .expect("Invalid response: not hex"),
     )
     .expect("Invalid response: not utf8");
-    assert_eq!(ERC20_NAME, token_symbol);
+    assert_eq!(ERC20_NAME, token_name);
 
-    // Token balance of ERC20_RICH_ADDRESS1 should be 1e39
+    // Token balance of ERC20_RICH_ADDRESS1 should be 1e39 at block 2
     let token_balance = client
         .call(
             erc20_address,
@@ -108,6 +162,8 @@ async fn state_reconstruct_test() {
             .into(),
             Overrides {
                 from: Some(erc20_rich_address1),
+                block: Some(2.into()),
+                max_fee_per_gas: Some(10000000),
                 ..Default::default()
             },
         )
@@ -122,7 +178,7 @@ async fn state_reconstruct_test() {
         U256::from_dec_str("1000000000000000000000000000000000000000").unwrap()
     );
 
-    // Token balance of ERC20_RICH_ADDRESS2 should be 1.23e20
+    // Token balance of ERC20_RICH_ADDRESS2 should be 1.23e20 at block 2
     let token_balance = client
         .call(
             erc20_address,
@@ -134,6 +190,8 @@ async fn state_reconstruct_test() {
             .into(),
             Overrides {
                 from: Some(erc20_rich_address1),
+                block: Some(2.into()),
+                max_fee_per_gas: Some(10000000),
                 ..Default::default()
             },
         )
@@ -146,6 +204,185 @@ async fn state_reconstruct_test() {
     assert_eq!(
         token_balance,
         U256::from_dec_str("123000000000000000000").unwrap()
+    );
+}
+
+#[tokio::test]
+async fn test_block_3() {
+    let client = EthClient::new(ETH_RPC_URL);
+
+    let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
+    let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
+    let erc20_rich_address1 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS1).unwrap());
+    let erc20_rich_address2 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS2).unwrap());
+    let erc20_symbol_signature = hex::decode(ERC20_SYMBOL_SIGNATURE).unwrap();
+    let erc20_name_signature = hex::decode(ERC20_NAME_SIGNATURE).unwrap();
+    let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
+
+    // Token balance of ERC20_RICH_ADDRESS2 should be 1.22e20 at block 3
+    let token_balance = client
+        .call(
+            erc20_address,
+            [
+                erc20_balance_signature.as_slice(),
+                H256::from(erc20_rich_address2).as_bytes(),
+            ]
+            .concat()
+            .into(),
+            Overrides {
+                from: Some(erc20_rich_address1),
+                block: Some(3.into()),
+                max_fee_per_gas: Some(10000000),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("Error calling contract: balanceOf(address)(uint256)");
+    let token_balance = U256::from_big_endian(
+        &hex::decode(token_balance.get(2..).expect("Invalid length"))
+            .expect("Invalid response: not hex"),
+    );
+    assert_eq!(
+        token_balance,
+        U256::from_dec_str("122000000000000000000").unwrap()
+    );
+}
+
+#[tokio::test]
+async fn test_latest_block() {
+    let client = EthClient::new(ETH_RPC_URL);
+
+    let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
+    let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
+    let erc20_rich_address1 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS1).unwrap());
+    let erc20_rich_address2 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS2).unwrap());
+    let erc20_symbol_signature = hex::decode(ERC20_SYMBOL_SIGNATURE).unwrap();
+    let erc20_name_signature = hex::decode(ERC20_NAME_SIGNATURE).unwrap();
+    let erc20_balance_signature = hex::decode(ERC20_BALANCE_SIGNATURE).unwrap();
+
+    // Balance of RICH_ADDRESS should be
+    // 4722366482869645213696 (0x1000000000000000000) at latest block
+    let balance = client
+        .get_balance(rich_address, BlockByNumber::Latest)
+        .await
+        .expect("Error getting balance");
+    assert_eq!(
+        balance,
+        U256::from_dec_str("4722366482869645213696").unwrap()
+    );
+
+    // Nonce of RICH_ADDRESS should be 3 at latest block
+    let nonce = client
+        .get_nonce(rich_address, BlockByNumber::Latest)
+        .await
+        .expect("Error getting nonce");
+    assert_eq!(nonce, 3);
+
+    // Bytecode of ERC20_ADDRESS should be the following ERC20 contract at latest block
+    let bytecode = client
+        .get_code(erc20_address, BlockByNumber::Latest)
+        .await
+        .expect("Error getting code");
+    assert_eq!(bytecode, erc20_bytecode());
+
+    // Token symbol should be ERC20_SYMBOL at latest block
+    let token_symbol = client
+        .call(
+            erc20_address,
+            erc20_symbol_signature.into(),
+            Overrides {
+                from: Some(erc20_rich_address1),
+                max_fee_per_gas: Some(10000000),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("Error calling contract: symbol()(string)");
+
+    // The result is a hexstring with a leading 0x, so we need to skip the first 2 characters.
+    // The next 64 characters (32 bytes) are the offset to the start of the string in the return data.
+    // The next 64 characters (32 bytes) are the length of the string in the return data.
+    // The rest of the return data is the string itself, that should have length 6 (3 bytes).
+    let token_symbol = String::from_utf8(
+        hex::decode(token_symbol.get(130..136).expect("Invalid length"))
+            .expect("Invalid response: not hex"),
+    )
+    .expect("Invalid response: not utf8");
+    assert_eq!(ERC20_SYMBOL, token_symbol);
+
+    // Token name should be "Token" at latest block
+    let token_name = client
+        .call(
+            erc20_address,
+            erc20_name_signature.into(),
+            Overrides {
+                from: Some(erc20_rich_address1),
+                max_fee_per_gas: Some(10000000),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("Error calling contract: name()(string)");
+    // Same case as above, but with 5 bytes of data
+    let token_name = String::from_utf8(
+        hex::decode(token_name.get(130..140).expect("Invalid length"))
+            .expect("Invalid response: not hex"),
+    )
+    .expect("Invalid response: not utf8");
+    assert_eq!(ERC20_NAME, token_name);
+
+    // Token balance of ERC20_RICH_ADDRESS1 should be 1e39 at latest block
+    let token_balance = client
+        .call(
+            erc20_address,
+            [
+                erc20_balance_signature.as_slice(),
+                H256::from(erc20_rich_address1).as_bytes(),
+            ]
+            .concat()
+            .into(),
+            Overrides {
+                from: Some(erc20_rich_address1),
+                max_fee_per_gas: Some(10000000),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("Error calling contract: balanceOf(address)(uint256)");
+    let token_balance = U256::from_big_endian(
+        &hex::decode(token_balance.get(2..).expect("Invalid length"))
+            .expect("Invalid response: not hex"),
+    );
+    assert_eq!(
+        token_balance,
+        U256::from_dec_str("1000000000000000000000000000000000000000").unwrap()
+    );
+
+    // Token balance of ERC20_RICH_ADDRESS2 should be 1.22e20 at latest block
+    let token_balance = client
+        .call(
+            erc20_address,
+            [
+                erc20_balance_signature.as_slice(),
+                H256::from(erc20_rich_address2).as_bytes(),
+            ]
+            .concat()
+            .into(),
+            Overrides {
+                from: Some(erc20_rich_address1),
+                max_fee_per_gas: Some(10000000),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("Error calling contract: balanceOf(address)(uint256)");
+    let token_balance = U256::from_big_endian(
+        &hex::decode(token_balance.get(2..).expect("Invalid length"))
+            .expect("Invalid response: not hex"),
+    );
+    assert_eq!(
+        token_balance,
+        U256::from_dec_str("122000000000000000000").unwrap()
     );
 }
 
