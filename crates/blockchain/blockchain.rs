@@ -101,14 +101,14 @@ impl Blockchain {
         vm: &mut Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
-        validate_block(block, parent_header, &chain_config)?;
+        validate_block(block, parent_header, chain_config)?;
 
         let execution_result = vm.execute_block_without_clearing_state(block)?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
-        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
 
         Ok(execution_result)
     }
@@ -279,7 +279,6 @@ impl Blockchain {
         };
 
         // Validate state root and store blocks
-        let root_hash = state_trie.hash_no_commit();
         let DataToCommitAfterAccountUpdates {
             storage_tries,
             accounts_code,
@@ -291,6 +290,7 @@ impl Blockchain {
             )
             .map_err(|e| (e.into(), None))?;
 
+        let root_hash = state_trie.hash_no_commit();
         validate_state_root(&last_block.header, root_hash).map_err(|err| (err, None))?;
 
         self.storage

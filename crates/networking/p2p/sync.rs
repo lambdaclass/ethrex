@@ -368,7 +368,7 @@ impl SyncManager {
             Some(res) => res.clone(),
             None => return Ok(()),
         };
-        let mut headers_iter = block_headers.into_iter();
+        let mut headers_iter = block_headers.iter();
         let mut blocks: Vec<Block> = vec![];
 
         let max_tries = 10;
@@ -522,7 +522,7 @@ impl SyncManager {
             }
             Ok(())
         } else {
-            self.blockchain.add_blocks_in_batch(&blocks)
+            self.blockchain.add_blocks_in_batch(blocks)
         }
     }
 }

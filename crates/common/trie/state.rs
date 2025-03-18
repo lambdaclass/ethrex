@@ -52,7 +52,7 @@ impl TrieState {
         root: &NodeHash,
     ) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut to_commit = vec![];
-        self.to_commit_tail_recursive(root, &mut to_commit);
+        self.get_nodes_to_commit_tail_recursive(root, &mut to_commit);
         self.cache.clear();
         to_commit
     }
@@ -68,14 +68,14 @@ impl TrieState {
     // Writes a node and its children into the DB
     fn commit_node(&mut self, node_hash: &NodeHash) -> Result<(), TrieError> {
         let mut to_commit = vec![];
-        self.to_commit_tail_recursive(node_hash, &mut to_commit);
+        self.get_nodes_to_commit_tail_recursive(node_hash, &mut to_commit);
 
         self.db.put_batch(to_commit)?;
 
         Ok(())
     }
 
-    fn to_commit_tail_recursive(
+    fn get_nodes_to_commit_tail_recursive(
         &mut self,
         node_hash: &NodeHash,
         acc: &mut Vec<(Vec<u8>, Vec<u8>)>,
@@ -89,11 +89,11 @@ impl TrieState {
             Node::Branch(n) => {
                 for child in n.choices.iter() {
                     if child.is_valid() {
-                        self.to_commit_tail_recursive(child, acc);
+                        self.get_nodes_to_commit_tail_recursive(child, acc);
                     }
                 }
             }
-            Node::Extension(n) => self.to_commit_tail_recursive(&n.child, acc),
+            Node::Extension(n) => self.get_nodes_to_commit_tail_recursive(&n.child, acc),
             Node::Leaf(_) => {}
         }
         // Commit self
