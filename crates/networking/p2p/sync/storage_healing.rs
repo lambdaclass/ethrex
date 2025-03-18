@@ -5,7 +5,7 @@
 //! For each storage received, the process will first queue their root nodes and then queue all the missing children from each node fetched in the same way as state healing
 //! Even if the pivot becomes stale, the healer will remain active and listening until a termination signal (an empty batch) is received
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
@@ -39,7 +39,7 @@ pub(crate) async fn storage_healer(
     let mut stale = false;
     let mut incoming = true;
     while incoming || !pending_paths.is_empty() {
-        if time_since_info.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
+        if time_since_info.elapsed() > Duration::from_secs(200) {
             info!("Storage Healer queue: {} paths", pending_paths.iter().flat_map(|(_, a)| a).count());
             time_since_info = Instant::now();
         }
