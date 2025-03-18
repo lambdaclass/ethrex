@@ -2,7 +2,7 @@ use crate::{commands::wallet::balance_in_wei, config::EthrexL2Config};
 use clap::Subcommand;
 use colored::{self, Colorize};
 use ethrex_common::Address;
-use ethrex_rpc::clients::eth::EthClient;
+use ethrex_rpc::clients::eth::{BlockByNumber, EthClient};
 use keccak_hash::H256;
 use std::str::FromStr;
 
