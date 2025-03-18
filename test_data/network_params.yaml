@@ -29,6 +29,9 @@ participants:
 network_params:
   electra_fork_epoch: 1
 
+  # The address of the staking contract address on the Eth1 chain
+  deposit_contract_address: "0x4242424242424242424242424242424242424242"
+
 additional_services:
   - dora
   - el_forkmon

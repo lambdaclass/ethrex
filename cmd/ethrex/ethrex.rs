@@ -81,18 +81,24 @@ async fn main() {
         } else {
             use ethrex::initializers::{init_network};
 
-            init_network(
-                &matches,
-                &network,
-                &data_dir,
-                local_p2p_node,
-                signer,
-                peer_table.clone(),
-                store.clone(),
-                tracker.clone(),
-                blockchain.clone(),
-            )
-            .await;
+            let p2p_enabled = matches.get_flag("p2p.enabled");
+
+            if p2p_enabled {
+                init_network(
+                    &matches,
+                    &network,
+                    &data_dir,
+                    local_p2p_node,
+                    signer,
+                    peer_table.clone(),
+                    store.clone(),
+                    tracker.clone(),
+                    blockchain.clone(),
+                )
+                .await;
+            } else {
+                info!("P2P is disabled");
+            }
         }
     }
 
@@ -100,9 +106,9 @@ async fn main() {
         if #[cfg(all(feature = "l2", not(feature = "dev")))] {
             use std::future::IntoFuture;
 
-            let l2_proposer = ethrex_l2::start_proposer(store, blockchain).into_future();
+            let l2_sequencer = ethrex_l2::start_l2(store, blockchain).into_future();
 
-            tracker.spawn(l2_proposer);
+            tracker.spawn(l2_sequencer);
         }
     }
 
