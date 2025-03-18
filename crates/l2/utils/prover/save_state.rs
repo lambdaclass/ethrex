@@ -443,7 +443,7 @@ mod tests {
 
             write_state(
                 block.header.number,
-                &StateType::Proof(pico_calldata.clone()),
+                &StateType::Proof(exec_calldata.clone()),
             )?;
 
             write_state(

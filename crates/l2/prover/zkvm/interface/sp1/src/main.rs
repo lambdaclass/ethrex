@@ -3,6 +3,7 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
 // use ethrex_vm::{backends::revm::db::EvmState, backends::revm::REVM};
 use ethrex_vm::backends::levm::LEVM;
+use std::sync::Arc;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -40,7 +41,7 @@ pub fn main() {
     };
 
     // let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
-    let result = LEVM::execute_block(&block, db).expect("failed to execute block");
+    let result = LEVM::execute_block(&block, Arc::new(db)).expect("failed to execute block");
     let receipts = result.receipts;
     let account_updates = result.account_updates;
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
