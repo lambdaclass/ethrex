@@ -552,27 +552,6 @@ impl StoreEngine for Store {
         self.write_batch::<Receipts>(key_values.into_iter())
     }
 
-    fn add_batch_of_receipts(
-        &self,
-        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
-    ) -> std::result::Result<(), StoreError> {
-        let mut key_values = vec![];
-
-        for (block_hash, receipts) in blocks_receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).into();
-                let receipt_rlp = receipt.encode_to_vec();
-                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                    continue;
-                };
-
-                key_values.append(&mut entries);
-            }
-        }
-
-        self.write_batch::<Receipts>(key_values.into_iter())
-    }
-
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
         let mut receipt_index = 0;

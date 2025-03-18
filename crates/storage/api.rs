@@ -111,12 +111,6 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn add_receipts(&self, block_hash: BlockHash, receipts: Vec<Receipt>)
         -> Result<(), StoreError>;
 
-    /// Adds a batch of receipts
-    fn add_batch_of_receipts(
-        &self,
-        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
-    ) -> Result<(), StoreError>;
-
     /// Obtain receipt for a canonical block represented by the block number.
     fn get_receipt(
         &self,

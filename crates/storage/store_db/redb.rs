@@ -599,28 +599,6 @@ impl StoreEngine for RedBStore {
         self.write_batch(RECEIPTS_TABLE, key_values)
     }
 
-    fn add_batch_of_receipts(
-        &self,
-        blocks_receipts: Vec<(BlockHash, Vec<Receipt>)>,
-    ) -> Result<(), StoreError> {
-        let mut key_values = vec![];
-
-        for (block_hash, receipts) in blocks_receipts {
-            for (index, receipt) in receipts.iter().enumerate() {
-                let kv = (
-                    <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
-                        block_hash,
-                        index as u64,
-                    )),
-                    <Receipt as Into<ReceiptRLP>>::into(receipt.clone()),
-                );
-                key_values.push(kv)
-            }
-        }
-
-        self.write_batch(RECEIPTS_TABLE, key_values)
-    }
-
     fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
