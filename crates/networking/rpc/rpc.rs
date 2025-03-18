@@ -490,13 +490,14 @@ mod tests {
     use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
     use ethrex_blockchain::Blockchain;
     use ethrex_common::{
-        constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
         types::{ChainConfig, Genesis},
+        H160,
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
     use std::fs::File;
     use std::io::BufReader;
+    use std::str::FromStr;
 
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
@@ -583,7 +584,7 @@ mod tests {
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
-                        "depositContractAddress": *MAINNET_DEPOSIT_CONTRACT_ADDRESS
+                        "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
                     }
                 },
             }
@@ -709,7 +710,8 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
-            deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS),
+            deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
+                .unwrap(),
             ..Default::default()
         }
     }
