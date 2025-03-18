@@ -254,50 +254,7 @@ impl StoreEngine for RedBStore {
     }
 
     fn add_batch_of_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        let write_txn = self.db.begin_write()?;
-
-        // Begin block so that tables are opened once and dropped at the end.
-        // This prevents ownership errors when to committing changes at the end.
-        {
-            let mut transaction_table =
-                write_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
-            let mut headers_table = write_txn.open_table(HEADERS_TABLE)?;
-            let mut block_bodies_table = write_txn.open_table(BLOCK_BODIES_TABLE)?;
-            let mut block_numbers_table = write_txn.open_table(BLOCK_NUMBERS_TABLE)?;
-
-            for block in blocks {
-                let block_number = block.header.number;
-                let block_hash = block.hash();
-
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    transaction_table.insert(
-                        <H256 as Into<TransactionHashRLP>>::into(transaction.compute_hash()),
-                        <(u64, H256, u64) as Into<Rlp<(BlockNumber, BlockHash, Index)>>>::into((
-                            block_number,
-                            block_hash,
-                            index as u64,
-                        )),
-                    )?;
-                }
-
-                headers_table.insert(
-                    <H256 as Into<BlockHashRLP>>::into(block_hash),
-                    <BlockHeader as Into<BlockHeaderRLP>>::into(block.header.clone()),
-                )?;
-
-                block_bodies_table.insert(
-                    <H256 as Into<BlockHashRLP>>::into(block_hash),
-                    <BlockBody as Into<BlockBodyRLP>>::into(block.body.clone()),
-                )?;
-
-                block_numbers_table
-                    .insert(<H256 as Into<BlockHashRLP>>::into(block_hash), block_number)?;
-            }
-        }
-
-        write_txn.commit()?;
-
-        Ok(())
+        todo!();
     }
 
     fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
