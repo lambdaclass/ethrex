@@ -165,7 +165,7 @@ impl ProverServer {
                         "SP1VERIFIER()" => {
                             needed_proof_types.push(ProverType::SP1);
                         }
-                        "PICOVERIFIER" => {
+                        "PICOVERIFIER()" => {
                             needed_proof_types.push(ProverType::Pico);
                         }
                         _ => unreachable!(),
@@ -475,7 +475,7 @@ impl ProverServer {
                 };
                 exec_proof.calldata
             } else {
-                vec![Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into())]
+                vec![Value::Bytes(vec![].into())]
             }
         };
 
@@ -491,7 +491,7 @@ impl ProverServer {
                 risc0_proof.calldata
             } else {
                 vec![
-                    Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::Bytes(vec![].into()),
                     Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
                     Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
                 ]
@@ -510,8 +510,8 @@ impl ProverServer {
             } else {
                 vec![
                     Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::Bytes(vec![].into()),
+                    Value::Bytes(vec![].into()),
                 ]
             }
         };
@@ -526,14 +526,10 @@ impl ProverServer {
                 }
                 pico_proof.calldata
             } else {
-                let proof = vec![U256::zero(); 8]
-                    .into_iter()
-                    .map(|i| Value::Int(i))
-                    .collect();
-
                 vec![
-                    Value::Bytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::FixedArray(proof),
+                    Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
+                    Value::Bytes(vec![].into()),
+                    Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
                 ]
             }
         };
