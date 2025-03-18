@@ -354,6 +354,10 @@ pub fn block_number_has_all_needed_proofs(
     block_number: u64,
     needed_proof_types: &[ProverType],
 ) -> Result<bool, SaveStateError> {
+    if needed_proof_types.is_empty() {
+        return Ok(true);
+    }
+
     let block_state_path = get_block_state_path(block_number)?;
 
     let mut has_all_proofs = true;

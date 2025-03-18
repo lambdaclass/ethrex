@@ -61,8 +61,6 @@ interface IOnChainProposer {
     /// verified (this is after proved).
     /// @param blockNumber is the number of the block to be verified.
     /// ----------------------------------------------------------------------
-    /// @param execPublicInputs Values used to perform the execution
-    /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the block to be verified.
     /// @param risc0ImageId Digest of the zkVM imageid.
     /// @param risc0JournalDigest Digest of the public_inputs aka journal
@@ -76,8 +74,6 @@ interface IOnChainProposer {
     /// @param picoProof Groth16 proof
     function verify(
         uint256 blockNumber,
-        //exec
-        bytes calldata execPublicInputs,
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,

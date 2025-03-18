@@ -43,7 +43,7 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0xAA,
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verify(uint256,bytes,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -160,12 +160,15 @@ impl ProverServer {
                 } else {
                     match key {
                         "R0VERIFIER()" => {
+                            info!("RISC0 proof needed");
                             needed_proof_types.push(ProverType::RISC0);
                         }
                         "SP1VERIFIER()" => {
+                            info!("SP1 proof needed");
                             needed_proof_types.push(ProverType::SP1);
                         }
                         "PICOVERIFIER()" => {
+                            info!("PICO proof needed");
                             needed_proof_types.push(ProverType::Pico);
                         }
                         _ => unreachable!(),
@@ -309,8 +312,21 @@ impl ProverServer {
 
         if send_tx {
             self.handle_proof_submission(block_to_verify).await?;
+
             // Remove the Proofs for that block_number
-            prune_state(block_to_verify)?;
+            match prune_state(block_to_verify) {
+                Ok(_) => (),
+                Err(e) => {
+                    if let SaveStateError::IOError(ref error) = e {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            return Err(e.into());
+                        }
+                    } else {
+                        return Err(e.into());
+                    }
+                }
+            }
+
             tx_submitted = true;
         }
 
@@ -343,23 +359,26 @@ impl ProverServer {
                     return Ok(());
                 }
 
-                // Check if we have the proof for that ProverType
-                // If we don't have it, insert it.
-                let has_proof = match block_number_has_state_file(
-                    StateFileType::Proof(calldata.prover_type),
-                    block_number,
-                ) {
-                    Ok(has_proof) => has_proof,
-                    Err(e) => {
-                        let error = format!("{e}");
-                        if !error.contains("No such file or directory") {
-                            return Err(e.into());
+                // The ProverType::Exec doesn't generate a real proof, we don't need to save it.
+                if calldata.prover_type != ProverType::Exec {
+                    // Check if we have the proof for that ProverType
+                    let has_proof = match block_number_has_state_file(
+                        StateFileType::Proof(calldata.prover_type),
+                        block_number,
+                    ) {
+                        Ok(has_proof) => has_proof,
+                        Err(e) => {
+                            let error = format!("{e}");
+                            if !error.contains("No such file or directory") {
+                                return Err(e.into());
+                            }
+                            false
                         }
-                        false
+                    };
+                    // If we don't have it, insert it.
+                    if !has_proof {
+                        write_state(block_number, &StateType::Proof(calldata))?;
                     }
-                };
-                if !has_proof {
-                    write_state(block_number, &StateType::Proof(calldata))?;
                 }
 
                 // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
@@ -464,7 +483,7 @@ impl ProverServer {
         // TODO: If the proof is not needed, a default calldata is used,
         // the structure has to match the one defined in the OnChainProposer.sol contract.
         // It may cause some issues, but the ethrex_prover_lib cannot be imported,
-        // this approach is straightforward for now.
+        // this approach is straight-forward for now.
         let risc0_proof = {
             if self.needed_proof_types.contains(&ProverType::RISC0) {
                 let risc0_proof =
@@ -476,11 +495,7 @@ impl ProverServer {
                 }
                 risc0_proof.calldata
             } else {
-                vec![
-                    Value::Bytes(vec![].into()),
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                ]
+                ProverType::RISC0.empty_calldata()
             }
         };
 
@@ -494,11 +509,7 @@ impl ProverServer {
                 }
                 sp1_proof.calldata
             } else {
-                vec![
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::Bytes(vec![].into()),
-                    Value::Bytes(vec![].into()),
-                ]
+                ProverType::SP1.empty_calldata()
             }
         };
 
@@ -512,11 +523,7 @@ impl ProverServer {
                 }
                 pico_proof.calldata
             } else {
-                vec![
-                    Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                    Value::Bytes(vec![].into()),
-                    Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
-                ]
+                ProverType::Pico.empty_calldata()
             }
         };
 
@@ -529,8 +536,6 @@ impl ProverServer {
             pico_proof.as_slice(),
         ]
         .concat();
-
-        warn!("calldata value len: {}", calldata_values.len());
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
