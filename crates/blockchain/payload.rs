@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::{
     cmp::{max, Ordering},
     collections::HashMap,
@@ -5,6 +6,8 @@ use std::{
     time::Instant,
 };
 
+use ethrex_common::types::{TxKind, BYTES_PER_BLOB};
+use ethrex_common::H160;
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
@@ -346,6 +349,9 @@ impl Blockchain {
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        let mut withdrawals_size: usize = 16;
+        let mut deposits_size: usize = 16;
+
         let chain_config = context.chain_config()?;
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
@@ -414,6 +420,21 @@ impl Blockchain {
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
+                    if let Err(_) = Self::check_state_diff_size(
+                        &mut withdrawals_size,
+                        &mut deposits_size,
+                        head_tx.clone().into(),
+                        &receipt,
+                        &context.account_updates,
+                    ) {
+                        debug!(
+                            "Skipping transaction: {}, doesn't feet in blob_size",
+                            head_tx.tx.compute_hash()
+                        );
+                        // We don't have enough space in the blob for the transaction, so we skip all txs from this account
+                        txs.pop();
+                        continue;
+                    }
                     txs.shift()?;
                     // Pull transaction from the mempool
                     self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
@@ -442,6 +463,62 @@ impl Blockchain {
             context.receipts.push(receipt);
         }
         Ok(())
+    }
+
+    const L2_WITHDRAWAL_SIZE: usize = 160 + 256 + 256; // address(H160) + amount(U256) + tx_hash(H256).
+    const L2_DEPOSIT_SIZE: usize = 160 + 256; // address(H160) + amount(U256).
+    pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0xff, 0xff,
+    ]);
+
+    fn check_state_diff_size(
+        withdrawals_size: &mut usize,
+        deposits_size: &mut usize,
+        tx: Transaction,
+        receipt: &Receipt,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), ()> {
+        if Self::is_withdrawal_l2(&tx, receipt) {
+            *withdrawals_size += Self::L2_WITHDRAWAL_SIZE;
+        }
+        if Self::is_deposit_l2(&tx) {
+            *deposits_size += Self::L2_DEPOSIT_SIZE;
+        }
+        let modified_accounts_size = Self::calc_modified_accounts_size(account_updates);
+        if *withdrawals_size + *deposits_size + modified_accounts_size > BYTES_PER_BLOB * 31 / 32 {
+            return Err(());
+        }
+        Ok(())
+    }
+
+    fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
+        // WithdrawalInitiated(address,address,uint256)
+        let withdrawal_event_selector: H256 =
+            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
+                .unwrap();
+
+        match tx.to() {
+            TxKind::Call(to) if to == Self::COMMON_BRIDGE_L2_ADDRESS => {
+                return receipt.logs.iter().any(|log| {
+                    log.topics
+                        .iter()
+                        .any(|topic| *topic == withdrawal_event_selector)
+                });
+            }
+            _ => false,
+        }
+    }
+
+    fn is_deposit_l2(tx: &Transaction) -> bool {
+        match tx {
+            Transaction::PrivilegedL2Transaction(_tx) => true,
+            _ => false,
+        }
+    }
+
+    fn calc_modified_accounts_size(account_updates: &[AccountUpdate]) -> usize {
+        0
     }
 
     /// Executes the transaction, updates gas-related context values & return the receipt
