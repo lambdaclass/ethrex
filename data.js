@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742310923033,
+  "lastUpdate": 1742318440155,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -595,6 +595,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 231242084441,
             "range": "± 1377277024",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "87fc76a74cda059d2bcf25172d26d69bd9fcd8e8",
+          "message": "chore(core): improve double genesis block run error (#2252)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nIt is not obvious how to mitigate this error for users who find\nthemselves having this error. Having a better better error comment might\nhelp with this.",
+          "timestamp": "2025-03-18T16:24:26Z",
+          "tree_id": "7189f240dfe1af7133b042b74fdc45bf61230440",
+          "url": "https://github.com/lambdaclass/ethrex/commit/87fc76a74cda059d2bcf25172d26d69bd9fcd8e8"
+        },
+        "date": 1742318437363,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 228403691215,
+            "range": "± 1044381859",
             "unit": "ns/iter"
           }
         ]
