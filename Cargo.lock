@@ -3169,7 +3169,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cfg-if",
- "clap 4.5.30",
+ "clap 4.5.31",
  "clap_complete",
  "criterion",
  "directories",
