@@ -2,19 +2,25 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use bytes::Bytes;
-#[cfg(feature = "redb")]
-use ethrex_common::types::Receipt;
+
 use ethrex_common::{
     types::{payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader},
     H256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
-#[cfg(feature = "redb")]
-use redb::TypeName;
-#[cfg(feature = "redb")]
-use std::any::type_name;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "redb")] {
+    use ethrex_common::types::Receipt;
+    use redb::TypeName;
+    use std::any::type_name;
+    // Receipt types
+    pub type ReceiptRLP = Rlp<Receipt>;
+    }
+}
 
 // Account types
 pub type AccountCodeHashRLP = Rlp<H256>;
@@ -27,11 +33,6 @@ pub type BlockHashRLP = Rlp<BlockHash>;
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
 pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;
-
-/// NOTE: Only used with redb
-// Receipt types
-#[cfg(feature = "redb")]
-pub type ReceiptRLP = Rlp<Receipt>;
 
 // Transaction types
 pub type TransactionHashRLP = Rlp<H256>;
