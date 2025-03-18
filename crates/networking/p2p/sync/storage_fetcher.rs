@@ -16,7 +16,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{debug, info};
 
 use crate::{
-    peer_handler::PeerHandler,
+    peer_handler::{PeerHandler, RequestStorageRangesMetrics},
     sync::{
         trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, BATCH_SIZE, MAX_CHANNEL_MESSAGES,
         MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES,
@@ -24,7 +24,49 @@ use crate::{
 };
 
 use super::SyncError;
+struct StorageFetcherMetrics {
+    request_range_metrics: RequestStorageRangesMetrics,
+    full_time: u128,
+    write_snapshot: u128,
+}
 
+impl StorageFetcherMetrics {
+    fn show(&self) {
+        let write_snapshot_percentage = (100 * self.write_snapshot) / self.full_time;
+        let request_range_percentage = 100 - write_snapshot_percentage;
+        let find_peer_percentage =
+            (100 * self.request_range_metrics.find_peer) / self.request_range_metrics.full_time;
+        let lock_peer_percentage =
+            (100 * self.request_range_metrics.lock_peer) / self.request_range_metrics.full_time;
+        let send_req_await_res_percentage = (100 * self.request_range_metrics.send_req_await_res)
+            / self.request_range_metrics.full_time;
+        let validate_res_percentage =
+            (100 * self.request_range_metrics.validate_res) / self.request_range_metrics.full_time;
+        let verify_range_cummulative_percentage = (100
+            * self.request_range_metrics.verify_range_cummulative)
+            / self.request_range_metrics.full_time;
+        info!("Fetched storage batch of len {} in {} ms.
+            Time Breakdown:
+            {request_range_percentage}% Requesting Ranges ({}ms)
+            {write_snapshot_percentage}% Writing Snapshot ({}ms)
+            Request Range time breakdown:
+            {find_peer_percentage}% Finding a Peer ({}ms)
+            {lock_peer_percentage}% Locking Peer Receiver (Waiting for other requests to free it) ({}ms)
+            {send_req_await_res_percentage}% Sending Request and awaiting Response ({}ms)
+            {validate_res_percentage}% Validating Response ({}ms)
+            Of which {verify_range_cummulative_percentage}% was spent verifying ranges ({}ms) with the longest call taking ({}ms)",
+        self.request_range_metrics.ranges, self.full_time,
+        self.request_range_metrics.full_time,
+        self.write_snapshot,
+        self.request_range_metrics.find_peer,
+        self.request_range_metrics.lock_peer,
+        self.request_range_metrics.send_req_await_res,
+        self.request_range_metrics.validate_res,
+        self.request_range_metrics.verify_range_cummulative,
+        self.request_range_metrics.verify_range_max
+        );
+    }
+}
 /// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
 /// Upon finsih, remaining storages will be sent to the storage healer
@@ -57,7 +99,11 @@ pub(crate) async fn storage_fetcher(
         // Fetch incoming requests
         let mut msg_buffer = vec![];
         if receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await != 0 {
-            info!("Received {} incoming storage requests, {} in queue",msg_buffer.iter().flatten().count(), pending_storage.len() +  msg_buffer.iter().flatten().count());
+            info!(
+                "Received {} incoming storage requests, {} in queue",
+                msg_buffer.iter().flatten().count(),
+                pending_storage.len() + msg_buffer.iter().flatten().count()
+            );
             for account_hashes_and_roots in msg_buffer {
                 if !account_hashes_and_roots.is_empty() {
                     pending_storage.extend(account_hashes_and_roots);
@@ -101,14 +147,20 @@ pub(crate) async fn storage_fetcher(
                     break;
                 }
             }
-            info!("Completed storage tasks in {} miliseconds", instant.elapsed().as_millis());
+            info!(
+                "Completed storage tasks in {} miliseconds",
+                instant.elapsed().as_millis()
+            );
             // Add unfetched accounts to queue and handle stale signal
             for res in storage_tasks.join_all().await {
                 let (remaining, is_stale) = res?;
                 pending_storage.extend(remaining);
                 stale |= is_stale;
             }
-            info!("{} pending storages after fetch cycle", pending_storage.len())
+            info!(
+                "{} pending storages after fetch cycle",
+                pending_storage.len()
+            )
         }
     }
     info!(
@@ -135,26 +187,20 @@ async fn fetch_storage_batch(
     large_storage_sender: Sender<Vec<(H256, H256, H256)>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
-    let identifier: u8 = rand::random();
     // A list of all completely fetched storages to send to the rebuilder
     let mut complete_storages = vec![];
-    info!(
-        "[ID: {identifier}] Requesting storage ranges for addresses {}..{}",
+    debug!(
+        "Requesting storage ranges for addresses {}..{}",
         batch.first().unwrap().0,
         batch.last().unwrap().0
     );
     let full = Instant::now();
-    let req = Instant::now();
     let (batch_hahses, batch_roots) = batch.clone().into_iter().unzip();
-    if let Some((mut keys, mut values, incomplete)) = peers
-        .request_storage_ranges(identifier, state_root, batch_roots, batch_hahses, H256::zero())
+    if let Some((mut keys, mut values, incomplete, request_range_metrics)) = peers
+        .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
         .await
     {
-        info!(
-            "[ID: {identifier}] Received {} storage ranges in {} ms",
-            keys.len(),
-            req.elapsed().as_millis()
-        );
+        debug!("Received {} storage ranges", keys.len(),);
         //debug!("Received {} storage ranges", keys.len(),);
         // Handle incomplete ranges
         if incomplete {
@@ -184,23 +230,18 @@ async fn fetch_storage_batch(
             store.write_snapshot_storage_batch(account_hash, keys, values)?;
             complete_storages.push((account_hash, expected_root));
         }
-        info!(
-            "[ID: {identifier}] Write storage ranges to snapshot in  {} ms",
-            write_to_snapshot.elapsed().as_millis()
-        );
+        let write_snapshot = write_to_snapshot.elapsed().as_millis();
         // Send complete storages to the rebuilder
-        let send_to_rebuilder = Instant::now();
         storage_trie_rebuilder_sender
             .send(complete_storages)
             .await?;
-        info!(
-            "[ID: {identifier}] Send storages to rebuilder in  {} ms",
-            send_to_rebuilder.elapsed().as_millis()
-        );
-        info!(
-            "[ID: {identifier}] Full storage fetcher time elapsed {} ms",
-            full.elapsed().as_millis()
-        );
+        let full_time = full.elapsed().as_millis();
+        let metrics = StorageFetcherMetrics {
+            request_range_metrics,
+            full_time,
+            write_snapshot,
+        };
+        metrics.show();
         // Return remaining code hashes in the batch if we couldn't fetch all of them
         return Ok((batch, false));
     }

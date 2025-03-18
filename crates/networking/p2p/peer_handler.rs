@@ -42,6 +42,18 @@ pub const HASH_MAX: H256 = H256([0xFF; 32]);
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 1024;
 pub const MAX_BLOCK_HEADERS_TO_REQUEST: usize = 1024;
 
+// Metrics in microseconds
+pub struct RequestStorageRangesMetrics {
+    pub full_time: u128,
+    pub find_peer: u128,
+    pub lock_peer: u128,
+    pub send_req_await_res: u128,
+    pub validate_res: u128,
+    pub verify_range_cummulative: u128,
+    pub verify_range_max: u128,
+    pub ranges: usize,
+}
+
 /// An abstraction over the [KademliaTable] containing logic to make requests to peers
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
@@ -322,12 +334,17 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
-        identifier: u8,
         state_root: H256,
         mut storage_roots: Vec<H256>,
         account_hashes: Vec<H256>,
         start: H256,
-    ) -> Option<(Vec<Vec<H256>>, Vec<Vec<U256>>, bool)> {
+    ) -> Option<(
+        Vec<Vec<H256>>,
+        Vec<Vec<U256>>,
+        bool,
+        RequestStorageRangesMetrics,
+    )> {
+        let full = Instant::now();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
@@ -338,19 +355,13 @@ impl PeerHandler {
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let find_peer = Instant::now();
+            let find_peer_time = Instant::now();
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            info!(
-                "[ID: {identifier}] Find Peer in {} ms",
-                find_peer.elapsed().as_millis()
-            );
-            let lock_peer = Instant::now();
+            let find_peer = find_peer_time.elapsed().as_millis();
+            let lock_peer_time = Instant::now();
             let mut receiver = peer.receiver.lock().await;
-            info!(
-                "[ID: {identifier}] Lock peer in {} ms",
-                lock_peer.elapsed().as_millis()
-            );
-            let send_req_await_res = Instant::now();
+            let lock_peer = lock_peer_time.elapsed().as_millis();
+            let send_req_await_res_time = Instant::now();
             peer.sender.send(request).await.ok()?;
             if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
@@ -370,11 +381,8 @@ impl PeerHandler {
             .ok()
             .flatten()
             {
-                info!(
-                    "[ID: {identifier}] Send req and await res in {} ms",
-                    send_req_await_res.elapsed().as_millis()
-                );
-                let validate_response = Instant::now();
+                let send_req_await_res = send_req_await_res_time.elapsed().as_millis();
+                let validate_res_time = Instant::now();
                 // Check we got a reasonable amount of storage ranges
                 if slots.len() > storage_roots.len() || slots.is_empty() {
                     return None;
@@ -385,8 +393,10 @@ impl PeerHandler {
                 let mut storage_values = vec![];
                 let mut should_continue = false;
                 // Validate each storage range
+                let ranges = slots.len();
+                let mut verify_range_cummulative = 0;
+                let mut verify_range_max = 0;
                 while !slots.is_empty() {
-                    info!("[ID: {identifier}] Slots: {}", slots.len());
                     let (hashed_keys, values): (Vec<_>, Vec<_>) = slots
                         .remove(0)
                         .into_iter()
@@ -422,19 +432,26 @@ impl PeerHandler {
                         tracing::warn!("Storage Range failed verification");
                         continue;
                     }
-                    info!(
-                        "[ID: {identifier}] Call verify_range in {} ms",
-                        call_verify_range.elapsed().as_millis()
-                    );
+                    let this_verify_range = call_verify_range.elapsed().as_millis();
+                    verify_range_cummulative += this_verify_range;
+                    verify_range_max = std::cmp::max(this_verify_range, verify_range_max);
 
                     storage_keys.push(hashed_keys);
                     storage_values.push(values);
                 }
-                info!(
-                    "[ID: {identifier}] Validate response in {} ms",
-                    validate_response.elapsed().as_millis()
-                );
-                return Some((storage_keys, storage_values, should_continue));
+                let validate_res = validate_res_time.elapsed().as_millis();
+                let full_time = full.elapsed().as_millis();
+                let metrics = RequestStorageRangesMetrics {
+                    full_time,
+                    find_peer,
+                    lock_peer,
+                    send_req_await_res,
+                    validate_res,
+                    verify_range_cummulative,
+                    verify_range_max,
+                    ranges,
+                };
+                return Some((storage_keys, storage_values, should_continue, metrics));
             }
         }
         None
