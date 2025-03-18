@@ -240,25 +240,28 @@ impl PeerHandler {
                 response_bytes: MAX_RESPONSE_BYTES,
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some((accounts, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::AccountRange(AccountRange {
-                            id,
-                            accounts,
-                            proof,
-                        })) if id == request_id => return Some((accounts, proof)),
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
+            let peer_response = {
+                let mut receiver = peer.receiver.lock().await;
+                peer.sender.send(request).await.ok()?;
+                tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                    loop {
+                        match receiver.recv().await {
+                            Some(RLPxMessage::AccountRange(AccountRange {
+                                id,
+                                accounts,
+                                proof,
+                            })) if id == request_id => return Some((accounts, proof)),
+                            // Ignore replies that don't match the expected id (such as late responses)
+                            Some(_) => continue,
+                            None => return None,
+                        }
                     }
-                }
-            })
-            .await
-            .ok()
-            .flatten()
+                })
+                .await
+                .ok()
+                .flatten()
+            };
+            if let Some((accounts, proof)) = peer_response
             {
                 // Unzip & validate response
                 let proof = encodable_to_proof(&proof);
