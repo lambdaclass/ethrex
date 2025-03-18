@@ -19,7 +19,7 @@ use serde_json::Value;
 const DELGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
 const EIP7702_DELEGATED_CODE_LEN: usize = 23;
 // This could be an environment variable set in the config.toml is the max amount of gas we are willing to sponsor
-const GAS_LIMIT_HARD_LIMIT: u64 = 100000;
+const GAS_LIMIT_HARD_LIMIT: u64 = 200000;
 
 #[derive(Deserialize, Debug)]
 pub struct SponsoredTx {
