@@ -445,7 +445,7 @@ impl Store {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
-                panic!("tried to run genesis twice with different blocks");
+                panic!("Tried to run genesis twice with different blocks. Try again after clearing the database.");
             }
         }
         // Store genesis accounts
