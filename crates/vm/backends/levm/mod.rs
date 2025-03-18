@@ -5,7 +5,6 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::db::StoreWrapper;
 use crate::execution_result::ExecutionResult;
 use crate::EvmError;
 use bytes::Bytes;
@@ -24,8 +23,7 @@ use ethrex_levm::{
     vm::{EVMConfig, VM},
     Account, AccountInfo as LevmAccountInfo, Environment,
 };
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
-use revm_primitives::Bytes;
+use ethrex_storage::{AccountUpdate, Store};
 use std::cmp::min;
 use std::{collections::HashMap, sync::Arc};
 
