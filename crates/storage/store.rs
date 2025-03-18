@@ -55,6 +55,11 @@ pub struct AccountUpdate {
     // removed_storage_keys: Vec<H256>,
 }
 
+pub struct DataToCommitAfterAccountUpdates {
+    pub storage_tries: Vec<(H256, Trie)>,
+    pub accounts_code: Vec<(H256, Bytes)>,
+}
+
 impl AccountUpdate {
     /// Creates new empty update for the given account
     pub fn new(address: Address) -> AccountUpdate {
@@ -364,7 +369,10 @@ impl Store {
         &self,
         account_updates: &[AccountUpdate],
         state_trie: &mut Trie,
-    ) -> Result<(), StoreError> {
+    ) -> Result<DataToCommitAfterAccountUpdates, StoreError> {
+        let mut storage_tries = vec![];
+        let mut accounts_code = vec![];
+
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -383,7 +391,7 @@ impl Store {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.add_account_code(info.code_hash, code.clone())?;
+                        accounts_code.push((info.code_hash, code.clone()));
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -400,14 +408,17 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
-                    // TODO: don't commit to db here to batch all the writes in a single tx
-                    account_state.storage_root = storage_trie.hash()?;
+                    account_state.storage_root = storage_trie.hash_no_commit();
+                    storage_tries.push((H256::from_slice(&hashed_address), storage_trie));
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
 
-        Ok(())
+        Ok(DataToCommitAfterAccountUpdates {
+            storage_tries,
+            accounts_code,
+        })
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -461,13 +472,6 @@ impl Store {
         self.engine.add_receipts(block_hash, receipts)
     }
 
-    pub fn add_batch_of_receipts(
-        &self,
-        batch: Vec<(BlockHash, Vec<Receipt>)>,
-    ) -> Result<(), StoreError> {
-        self.engine.add_batch_of_receipts(batch)
-    }
-
     pub fn get_receipt(
         &self,
         block_number: BlockNumber,
@@ -487,8 +491,16 @@ impl Store {
         self.add_block_number(hash, number)
     }
 
-    pub fn add_batch_of_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        self.engine.add_batch_of_blocks(blocks)
+    pub fn add_batch_of_blocks(
+        &self,
+        blocks: &[Block],
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+        state_tries: Vec<Trie>,
+        storage_tries: Vec<(H256, Trie)>,
+        accounts_code: Vec<(H256, Bytes)>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .add_batch_of_blocks(blocks, receipts, state_tries, storage_tries, accounts_code)
     }
 
     pub fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {

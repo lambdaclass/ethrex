@@ -68,6 +68,10 @@ impl Trie {
         }
     }
 
+    pub fn root(&self) -> Option<&NodeHash> {
+        self.root.as_ref()
+    }
+
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         if let Some(root) = &self.root {
@@ -125,9 +129,7 @@ impl Trie {
     /// Returns keccak(RLP_NULL) if the trie is empty
     /// Also commits changes to the DB
     pub fn hash(&mut self) -> Result<H256, TrieError> {
-        if let Some(ref root) = self.root {
-            self.state.commit(root)?;
-        }
+        self.commit()?;
         Ok(self
             .root
             .as_ref()
@@ -142,6 +144,15 @@ impl Trie {
             .as_ref()
             .map(|root| root.clone().finalize())
             .unwrap_or(*EMPTY_TRIE_HASH)
+    }
+
+    pub fn commit(&mut self) -> Result<(), TrieError> {
+        if let Some(ref root) = self.root {
+            self.state.commit(root)
+        } else {
+            // nothing to commit
+            Ok(())
+        }
     }
 
     /// Obtain a merkle proof for the given path.
