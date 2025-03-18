@@ -50,12 +50,15 @@ pub fn import_blocks_from_path(
     }
 
     let store = init_store(&data_dir, network);
-    let blockchain = init_blockchain(evm, store);
+    let blockchain = init_blockchain(evm, store.clone());
 
     let blocks = get_import_blocks(path);
 
     if should_batch {
-        blockchain.import_blocks_in_batch(&blocks, false);
+        blockchain.import_blocks_in_batch(&blocks);
+        store
+            .mark_chain_as_canonical(&blocks)
+            .expect("Chain could not be marked as canonical in the db");
     } else {
         blockchain.import_blocks(&blocks);
     }

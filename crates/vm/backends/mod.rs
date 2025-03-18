@@ -98,8 +98,9 @@ impl Evm {
     ) -> Result<BlockExecutionResult, EvmError> {
         match self {
             Evm::REVM { state } => REVM::execute_block(block, state),
-            Evm::LEVM { store_wrapper, .. } => {
-                LEVM::execute_block(block, store_wrapper.store.clone())
+            Evm::LEVM { .. } => {
+                // TODO(#2218): LEVM does not support a way  persist the state between block executions
+                todo!();
             }
         }
     }

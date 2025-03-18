@@ -143,7 +143,7 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError> {
+    fn add_batch_of_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         for block in blocks {
             let header = block.header.clone();
             let number = header.number;
@@ -159,9 +159,6 @@ impl StoreEngine for Store {
             self.add_block_body(hash, block.body.clone())?;
             self.add_block_header(hash, header)?;
             self.add_block_number(hash, number)?;
-            if as_canonical {
-                self.set_canonical_block(number, hash)?;
-            }
         }
 
         Ok(())

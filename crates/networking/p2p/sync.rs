@@ -6,9 +6,7 @@ mod storage_healing;
 mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::{
-    error::ChainError, BatchBlockProcessingFailure, Blockchain, STATE_TRIES_TO_KEEP,
-};
+use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
 use ethrex_common::{
     types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
@@ -443,9 +441,7 @@ impl SyncManager {
         *current_head = last_block.hash();
         *search_head = last_block.hash();
 
-        let blocks_len = blocks.len();
-
-        if let Err((error, failure)) = self.add_blocks(blocks, store.clone()) {
+        if let Err((error, failure)) = self.blockchain.add_blocks_in_batch(&blocks) {
             warn!("Failed to add block during FullSync: {error}");
             if let Some(BatchBlockProcessingFailure {
                 failed_block_hash,
@@ -464,38 +460,11 @@ impl SyncManager {
             return Err(error.into());
         }
 
+        store
+            .mark_chain_as_canonical(&blocks)
+            .map_err(SyncError::Store)?;
         store.update_latest_block_number(last_block.header.number)?;
-        debug!("Executed & stored {} blocks", blocks_len);
-
-        Ok(())
-    }
-
-    fn add_blocks(
-        &self,
-        blocks: Vec<Block>,
-        store: Store,
-    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-        let last_block = blocks.last().unwrap().clone();
-        let blocks_len = blocks.len();
-        let latest_block_number = store
-            .get_latest_block_number()
-            .map_err(|e| (e.into(), None))?;
-
-        if last_block.header.number.saturating_sub(latest_block_number)
-            <= STATE_TRIES_TO_KEEP as u64
-        {
-            if blocks_len <= STATE_TRIES_TO_KEEP {
-                self.blockchain.add_blocks_in_batch(&blocks, true, true)?;
-            } else {
-                let idx = blocks_len - STATE_TRIES_TO_KEEP;
-                self.blockchain
-                    .add_blocks_in_batch(&blocks[..idx], false, true)?;
-                self.blockchain
-                    .add_blocks_in_batch(&blocks[idx..], true, true)?;
-            }
-        } else {
-            self.blockchain.add_blocks_in_batch(&blocks, false, true)?;
-        }
+        debug!("Executed & stored {} blocks", blocks.len());
 
         Ok(())
     }

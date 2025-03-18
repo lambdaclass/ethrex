@@ -125,7 +125,7 @@ impl StoreEngine for Store {
         self.write::<Bodies>(block_hash.into(), block_body.into())
     }
 
-    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError> {
+    fn add_batch_of_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let tx = self
             .db
             .begin_readwrite()
@@ -157,11 +157,6 @@ impl StoreEngine for Store {
 
             tx.upsert::<BlockNumbers>(hash.into(), number)
                 .map_err(StoreError::LibmdbxError)?;
-
-            if as_canonical {
-                tx.upsert::<CanonicalBlockHashes>(number, hash.into())
-                    .map_err(StoreError::LibmdbxError)?;
-            }
         }
 
         tx.commit().map_err(StoreError::LibmdbxError)

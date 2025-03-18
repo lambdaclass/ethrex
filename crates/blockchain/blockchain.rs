@@ -23,7 +23,7 @@ use mempool::Mempool;
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::Store;
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
@@ -63,7 +63,8 @@ impl Blockchain {
         }
     }
 
-    pub fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
+    /// Executes a block withing a new vm instance and state
+    fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -82,25 +83,42 @@ impl Blockchain {
         );
         let execution_result = vm.execute_block(block)?;
 
+        // Validate execution went alright
+        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_receipts_root(&block.header, &execution_result.receipts)?;
+        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+
+        Ok(execution_result)
+    }
+
+    /// Executes a block from a given vm instance an does not clear its state
+    fn execute_block_from_state(
+        &self,
+        parent_header: &BlockHeader,
+        block: &Block,
+        chain_config: &ChainConfig,
+        vm: &mut Evm,
+    ) -> Result<BlockExecutionResult, ChainError> {
+        // Validate the block pre-execution
+        validate_block(block, parent_header, &chain_config)?;
+
+        let execution_result = vm.execute_block_without_clearing_state(block)?;
+
+        // Validate execution went alright
+        validate_gas_used(&execution_result.receipts, &block.header)?;
+        validate_receipts_root(&block.header, &execution_result.receipts)?;
+        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+
         Ok(execution_result)
     }
 
     pub fn store_block(
         &self,
         block: &Block,
-        execution_result: BlockExecutionResult,
+        receipts: Vec<Receipt>,
+        account_updates: Vec<AccountUpdate>,
     ) -> Result<(), ChainError> {
-        // Assumes block is valid
-        let BlockExecutionResult {
-            receipts,
-            requests,
-            account_updates,
-        } = execution_result;
-        let chain_config = self.storage.get_chain_config()?;
-
         let block_hash = block.header.compute_block_hash();
-
-        validate_gas_used(&receipts, &block.header)?;
 
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
@@ -110,12 +128,6 @@ impl Blockchain {
 
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
-
-        // Check receipts root matches the one in block header
-        validate_receipts_root(&block.header, &receipts)?;
-
-        // Processes requests from receipts, computes the requests_hash and compares it against the header
-        validate_requests_hash(&block.header, &chain_config, &requests)?;
 
         self.storage.add_block(block.clone())?;
         self.storage.add_receipts(block_hash, receipts)?;
@@ -128,7 +140,7 @@ impl Blockchain {
 
         let result = self
             .execute_block(block)
-            .and_then(|res| self.store_block(block, res));
+            .and_then(|res| self.store_block(block, res.receipts, res.account_updates));
 
         let interval = Instant::now().duration_since(since).as_millis();
         if interval != 0 {
@@ -146,34 +158,10 @@ impl Blockchain {
     /// - The error type ([`ChainError`]).
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
-    /// `should_commit_intermediate_tries` determines whether the state tries for each block  
-    /// should be stored in the database (the last one is always stored).
-    ///
-    /// `as_canonical` determines whether the block number should be set as canonical for the block hash when committing to the db.
+    /// Note: only the last block state trie is stored in the db
     pub fn add_blocks_in_batch(
         &self,
         blocks: &[Block],
-        should_commit_intermediate_tries: bool,
-        as_canonical: bool,
-    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-        match self.evm_engine {
-            EvmEngine::LEVM => {
-                // TODO(#2218): LEVM does not support batch block processing as it does not persist the state between block executions
-                todo!();
-            }
-            EvmEngine::REVM => self.add_blocks_in_batch_inner(
-                blocks,
-                should_commit_intermediate_tries,
-                as_canonical,
-            ),
-        }
-    }
-
-    fn add_blocks_in_batch_inner(
-        &self,
-        blocks: &[Block],
-        should_commit_intermediate_tries: bool,
-        as_canonical: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
@@ -189,6 +177,13 @@ impl Blockchain {
             return Err((ChainError::ParentNotFound, None));
         };
 
+        let mut vm = Evm::new(
+            self.evm_engine,
+            self.storage.clone(),
+            first_block_header.parent_hash,
+        );
+
+        let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = vec![];
         let mut total_gas_used = 0;
         let chain_config: ChainConfig = self
@@ -196,24 +191,18 @@ impl Blockchain {
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
 
-        let mut vm = Evm::new(
-            self.evm_engine,
-            self.storage.clone(),
-            first_block_header.parent_hash,
-        );
-
-        let mut add_block = |block: &Block, i: usize| -> Result<(), ChainError> {
-            let is_first_block = i == 0;
-            let is_last_block = i == blocks.len() - 1;
-
-            let block_hash = block.header.compute_block_hash();
-
-            let parent_header = if is_first_block {
-                // for the first block, we need to query the store
+        let interval = Instant::now();
+        for (i, block) in blocks.iter().enumerate() {
+            // for the first block, we need to query the store
+            let parent_header = if i == 0 {
                 let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-                    // If the parent is not present, we store it as pending.
-                    self.storage.add_pending_block(block.clone())?;
-                    return Err(ChainError::ParentNotFound);
+                    return Err((
+                        ChainError::ParentNotFound,
+                        Some(BatchBlockProcessingFailure {
+                            failed_block_hash: block.hash(),
+                            last_valid_hash,
+                        }),
+                    ));
                 };
                 parent_header
             } else {
@@ -221,54 +210,54 @@ impl Blockchain {
                 blocks[i - 1].header.clone()
             };
 
-            // Validate the block pre-execution
-            validate_block(block, &parent_header, &chain_config)?;
-
             let BlockExecutionResult {
-                account_updates,
                 receipts,
-                requests,
-            } = vm.execute_block_without_clearing_state(block)?;
-
-            validate_gas_used(&receipts, &block.header)?;
+                account_updates,
+                ..
+            } = match self.execute_block_from_state(&parent_header, block, &chain_config, &mut vm) {
+                Ok(result) => result,
+                Err(err) => {
+                    return Err((
+                        err,
+                        Some(BatchBlockProcessingFailure {
+                            failed_block_hash: block.hash(),
+                            last_valid_hash,
+                        }),
+                    ))
+                }
+            };
 
             self.storage
-                .apply_account_updates_to_trie(&account_updates, &mut state_trie)?;
+                .apply_account_updates_to_trie(&account_updates, &mut state_trie)
+                .map_err(|err| {
+                    (
+                        err.into(),
+                        Some(BatchBlockProcessingFailure {
+                            failed_block_hash: block.hash(),
+                            last_valid_hash,
+                        }),
+                    )
+                })?;
 
-            if should_commit_intermediate_tries || is_last_block {
-                let root_hash = state_trie.hash_no_commit();
-                validate_state_root(&block.header, root_hash)?;
-                // commit to db after validating the root
-                state_trie.hash().map_err(StoreError::Trie)?;
-                validate_receipts_root(&block.header, &receipts)?;
-                validate_requests_hash(&block.header, &chain_config, &requests)?;
-            }
-
-            all_receipts.push((block_hash, receipts));
+            last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
-
-            last_valid_hash = block_hash;
-
-            Ok(())
-        };
-
-        let interval = Instant::now();
-
-        for (i, block) in blocks.iter().enumerate() {
-            if let Err(err) = add_block(block, i) {
-                return Err((
-                    err,
-                    Some(BatchBlockProcessingFailure {
-                        failed_block_hash: block.hash(),
-                        last_valid_hash,
-                    }),
-                ));
-            };
+            all_receipts.push((block.hash(), receipts));
         }
 
-        let blocks_len = blocks.len();
+        let Some(last_block) = blocks.last() else {
+            return Err((ChainError::Custom("Last block not found".into()), None));
+        };
+
+        // Validate state root and store blocks
+        let root_hash = state_trie.hash_no_commit();
+        validate_state_root(&last_block.header, root_hash).map_err(|err| (err, None))?;
+        // commit to db after validating the root
+        state_trie
+            .hash()
+            .map_err(|e| (ChainError::StoreError(e.into()), None))?;
+
         self.storage
-            .add_batch_of_blocks(blocks, as_canonical)
+            .add_batch_of_blocks(blocks)
             .map_err(|e| (e.into(), None))?;
         self.storage
             .add_batch_of_receipts(all_receipts)
@@ -328,12 +317,10 @@ impl Blockchain {
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks_in_batch(&self, blocks: &[Block], should_commit_intermediate_tries: bool) {
+    pub fn import_blocks_in_batch(&self, blocks: &[Block]) {
         let size = blocks.len();
         let last_block = blocks.last().unwrap().header.clone();
-        if let Err((err, _)) =
-            self.add_blocks_in_batch(blocks, should_commit_intermediate_tries, true)
-        {
+        if let Err((err, _)) = self.add_blocks_in_batch(blocks) {
             warn!("Failed to add blocks: {:?}.", err);
         };
         if let Err(err) = self.storage.update_latest_block_number(last_block.number) {

@@ -12,11 +12,7 @@ use ethrex_trie::{Nibbles, Trie};
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
-    ///
-    /// If `as_canonical` is true, each block is assumed to be part of the canonical chain,  
-    /// and the canonical hash is set to the block number. This optimizes writes when  
-    /// processing blocks in bulk.  
-    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError>;
+    fn add_batch_of_blocks(&self, blocks: &[Block]) -> Result<(), StoreError>;
 
     /// Add block header
     fn add_block_header(

@@ -487,12 +487,12 @@ impl Store {
         self.add_block_number(hash, number)
     }
 
-    pub fn add_batch_of_blocks(
-        &self,
-        blocks: &[Block],
-        as_canonical: bool,
-    ) -> Result<(), StoreError> {
-        self.engine.add_batch_of_blocks(blocks, as_canonical)
+    pub fn add_batch_of_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        self.engine.add_batch_of_blocks(blocks)
+    }
+
+    pub fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        Ok(())
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {

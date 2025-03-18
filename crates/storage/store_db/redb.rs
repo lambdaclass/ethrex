@@ -253,7 +253,7 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn add_batch_of_blocks(&self, blocks: &[Block], as_canonical: bool) -> Result<(), StoreError> {
+    fn add_batch_of_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let write_txn = self.db.begin_write()?;
 
         // Begin block so that tables are opened once and dropped at the end.
@@ -264,11 +264,6 @@ impl StoreEngine for RedBStore {
             let mut headers_table = write_txn.open_table(HEADERS_TABLE)?;
             let mut block_bodies_table = write_txn.open_table(BLOCK_BODIES_TABLE)?;
             let mut block_numbers_table = write_txn.open_table(BLOCK_NUMBERS_TABLE)?;
-            let mut canonical_block_hashes_table = if as_canonical {
-                Some(write_txn.open_table(CANONICAL_BLOCK_HASHES_TABLE)?)
-            } else {
-                None
-            };
 
             for block in blocks {
                 let block_number = block.header.number;
@@ -297,10 +292,6 @@ impl StoreEngine for RedBStore {
 
                 block_numbers_table
                     .insert(<H256 as Into<BlockHashRLP>>::into(block_hash), block_number)?;
-
-                if let Some(ref mut table) = canonical_block_hashes_table {
-                    table.insert(block_number, <H256 as Into<BlockHashRLP>>::into(block_hash))?;
-                }
             }
         }
 
