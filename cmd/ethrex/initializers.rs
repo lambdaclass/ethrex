@@ -411,7 +411,7 @@ pub fn get_http_socket_addr(matches: &ArgMatches) -> SocketAddr {
 
 #[cfg(feature = "l2")]
 pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
-    let Some(path) = matches.get_one::<String>("valid_addresses") else {
+    let Some(path) = matches.get_one::<String>("sponsorable_addresses") else {
         warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
         return Vec::new();
     };
