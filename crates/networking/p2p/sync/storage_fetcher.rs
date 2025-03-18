@@ -135,7 +135,7 @@ async fn fetch_storage_batch(
     large_storage_sender: Sender<Vec<(H256, H256, H256)>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
-    let identifier: char = rand::random(); 
+    let identifier: u8 = rand::random();
     // A list of all completely fetched storages to send to the rebuilder
     let mut complete_storages = vec![];
     info!(

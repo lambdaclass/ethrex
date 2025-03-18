@@ -322,7 +322,7 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
         &self,
-        identifier: char,
+        identifier: u8,
         state_root: H256,
         mut storage_roots: Vec<H256>,
         account_hashes: Vec<H256>,
@@ -347,8 +347,8 @@ impl PeerHandler {
             let lock_peer = Instant::now();
             let mut receiver = peer.receiver.lock().await;
             info!(
-                "[ID: {identifier}] Lock peer in {} micros",
-                lock_peer.elapsed().as_micros()
+                "[ID: {identifier}] Lock peer in {} ms",
+                lock_peer.elapsed().as_millis()
             );
             let send_req_await_res = Instant::now();
             peer.sender.send(request).await.ok()?;
