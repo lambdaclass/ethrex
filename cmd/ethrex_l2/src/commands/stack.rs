@@ -4,7 +4,7 @@ use ethrex_common::{
     types::{bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
     Address, U256,
 };
-use ethrex_l2::proposer::state_diff::StateDiff;
+use ethrex_l2::sequencer::state_diff::StateDiff;
 use ethrex_rpc::{
     clients::{beacon::BeaconClient, eth::BlockByNumber},
     EthClient,
