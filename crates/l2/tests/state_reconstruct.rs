@@ -112,9 +112,11 @@ async fn state_reconstruct_test() {
             },
         )
         .await
-        .unwrap();
-    let token_balance =
-        U256::from_big_endian(&hex::decode(token_balance.get(2..).unwrap()).unwrap());
+        .expect("Error calling contract: balanceOf(address)(uint256)");
+    let token_balance = U256::from_big_endian(
+        &hex::decode(token_balance.get(2..).expect("Invalid length"))
+            .expect("Invalid response: not hex"),
+    );
     assert_eq!(
         token_balance,
         U256::from_dec_str("1000000000000000000000000000000000000000").unwrap()
@@ -136,9 +138,11 @@ async fn state_reconstruct_test() {
             },
         )
         .await
-        .unwrap();
-    let token_balance =
-        U256::from_big_endian(&hex::decode(token_balance.get(2..).unwrap()).unwrap());
+        .expect("Error calling contract: balanceOf(address)(uint256)");
+    let token_balance = U256::from_big_endian(
+        &hex::decode(token_balance.get(2..).expect("Invalid length"))
+            .expect("Invalid response: not hex"),
+    );
     assert_eq!(
         token_balance,
         U256::from_dec_str("123000000000000000000").unwrap()
