@@ -3,7 +3,9 @@ use std::marker::PhantomData;
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader},
+    types::{
+        payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt,
+    },
     H256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -25,6 +27,9 @@ pub type BlockHashRLP = Rlp<BlockHash>;
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
 pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;
+
+// Receipt types
+pub type ReceiptRLP = Rlp<Receipt>;
 
 // Transaction types
 pub type TransactionHashRLP = Rlp<H256>;
