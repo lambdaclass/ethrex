@@ -157,34 +157,9 @@ impl Blockchain {
         as_canonical: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         match self.evm_engine {
-            // LEVM does not support batch block processing as it does not persist the state between block executions
-            // Therefore, we must commit to the db after each block
             EvmEngine::LEVM => {
-                let mut last_valid_hash = H256::default();
-                for block in blocks {
-                    let block_hash = block.hash();
-                    let block_number = block.header.number;
-
-                    if let Err(e) = self.add_block(block) {
-                        return Err((
-                            e,
-                            Some(BatchBlockProcessingFailure {
-                                last_valid_hash,
-                                failed_block_hash: block_hash,
-                            }),
-                        ));
-                    };
-
-                    if as_canonical {
-                        self.storage
-                            .set_canonical_block(block_number, block_hash)
-                            .map_err(|e| (e.into(), None))?;
-                    }
-
-                    last_valid_hash = block_hash;
-                }
-
-                Ok(())
+                // TODO(#2218): LEVM does not support batch block processing as it does not persist the state between block executions
+                todo!();
             }
             EvmEngine::REVM => self.add_blocks_in_batch_inner(
                 blocks,
