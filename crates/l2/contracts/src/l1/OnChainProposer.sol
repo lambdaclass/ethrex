@@ -197,7 +197,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
-        bytes32 risc0JournalDigest,
+        bytes calldata risc0Journal,
         //sp1
         bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
@@ -219,7 +219,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: block not committed"
         );
 
+        // TODO: unify public inputs in single parameter
+
         if (PICOVERIFIER != DEV_MODE) {
+            bytes32 picoDepositsLogHash = bytes32(picoPublicValues[64:96]);
+            require(
+                blockCommitments[blockNumber].depositLogs ==
+                    picoDepositsLogHash,
+                "OnChainProposer: wrong deposits log hash for pico public inputs"
+            );
+
             // If the verification fails, it will revert.
             IPicoVerifier(PICOVERIFIER).verifyPicoProof(
                 picoRiscvVkey,
@@ -229,15 +238,26 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
 
         if (R0VERIFIER != DEV_MODE) {
+            bytes32 risc0DepositsLogHash = bytes32(risc0Journal[64:96]);
+            require(
+                blockCommitments[blockNumber].depositLogs ==
+                    risc0DepositsLogHash,
+                "OnChainProposer: wrong deposits log hash for risc0 public inputs"
+            );
             // If the verification fails, it will revert.
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
                 risc0ImageId,
-                risc0JournalDigest
+                sha256(risc0Journal)
             );
         }
 
         if (SP1VERIFIER != DEV_MODE) {
+            bytes32 sp1DepositsLogHash = bytes32(sp1PublicValues[64:96]);
+            require(
+                blockCommitments[blockNumber].depositLogs == sp1DepositsLogHash,
+                "OnChainProposer: wrong deposits log hash for sp1 public inputs"
+            );
             // If the verification fails, it will revert.
             ISP1Verifier(SP1VERIFIER).verifyProof(
                 sp1ProgramVKey,
