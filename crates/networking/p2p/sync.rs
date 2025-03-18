@@ -282,6 +282,7 @@ impl SyncManager {
             block_headers.remove(0);
             // Store headers and save hashes for full block retrieval
             all_block_hashes.extend_from_slice(&block_hashes[..]);
+            store.add_block_headers(block_hashes.clone(), block_headers.clone())?;
 
             if self.sync_mode == SyncMode::Full {
                 self.download_and_run_blocks(
@@ -293,11 +294,6 @@ impl SyncManager {
                     store.clone(),
                 )
                 .await?;
-            }
-
-            // in full sync mode, headers are added after the execution and validation
-            if self.sync_mode == SyncMode::Snap {
-                store.add_block_headers(block_hashes.clone(), block_headers)?;
             }
 
             if sync_head_found {
@@ -368,51 +364,53 @@ impl SyncManager {
         store: Store,
     ) -> Result<(), SyncError> {
         let mut current_chunk_idx = 0;
-        let chunks: Vec<Vec<BlockHash>> = block_hashes
+        let block_hashes_chunks: Vec<Vec<BlockHash>> = block_hashes
             .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        let mut chunk = match chunks.get(current_chunk_idx) {
+        let mut current_block_hashes_chunk = match block_hashes_chunks.get(current_chunk_idx) {
             Some(res) => res.clone(),
             None => return Ok(()),
         };
-        let mut headers_idx = 0;
+        let mut headers_iter = block_headers.into_iter();
         let mut blocks: Vec<Block> = vec![];
 
         let max_tries = 10;
         let mut tries = 0;
 
+        let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
-            if let Some(block_bodies) = self.peers.request_block_bodies(chunk.clone()).await {
+            if let Some(block_bodies) = self
+                .peers
+                .request_block_bodies(current_block_hashes_chunk.clone())
+                .await
+            {
                 let block_bodies_len = block_bodies.len();
 
-                let first_block_hash = chunk.first().map_or(H256::default(), |a| *a);
-                let first_block_header_number = store
-                    .get_block_header_by_hash(first_block_hash)?
-                    .map_or(0, |h| h.number);
+                let first_block_hash = current_block_hashes_chunk
+                    .first()
+                    .map_or(H256::default(), |a| *a);
 
                 debug!(
-                    "Received {} Block Bodies, starting from block hash {:?} with number: {}",
-                    block_bodies_len, first_block_hash, first_block_header_number
+                    "Received {} Block Bodies, starting from block hash {:?}",
+                    block_bodies_len, first_block_hash
                 );
 
                 // Push blocks
-                for ((_, body), header) in chunk
+                for (_, body) in current_block_hashes_chunk
                     .drain(..block_bodies_len)
-                    .zip(block_bodies.into_iter())
-                    .zip(block_headers[headers_idx..block_bodies_len].iter())
+                    .zip(block_bodies)
                 {
+                    let header = headers_iter.next().ok_or(SyncError::BodiesNotFound)?;
                     let block = Block::new(header.clone(), body);
                     blocks.push(block);
                 }
 
-                headers_idx += block_bodies_len;
-
-                if chunk.is_empty() {
+                if current_block_hashes_chunk.is_empty() {
                     current_chunk_idx += 1;
-                    chunk = match chunks.get(current_chunk_idx) {
+                    current_block_hashes_chunk = match block_hashes_chunks.get(current_chunk_idx) {
                         Some(res) => res.clone(),
                         None => break,
                     };
@@ -434,12 +432,29 @@ impl SyncManager {
             }
         }
 
-        debug!("Starting to execute and validate blocks in batch");
+        let blocks_len = blocks.len();
+        debug!(
+            "Starting to execute and validate {} blocks in batch",
+            blocks_len
+        );
+        let Some(first_block) = blocks.first().cloned() else {
+            return Err(SyncError::BodiesNotFound);
+        };
         let Some(last_block) = blocks.last().cloned() else {
             return Err(SyncError::BodiesNotFound);
         };
         *current_head = last_block.hash();
         *search_head = last_block.hash();
+
+        // To ensure proper execution, we set the chain as canonical before processing the blocks.
+        // Some opcodes rely on previous block hashes, and due to our current setup, we only support a single chain (no sidechains).
+        // As a result, we must set the chain upfront to writing to the database during execution.
+        // Each write operation introduces overhead no matter how small.
+        //
+        // For more details, refer to the `get_block_hash` function in [`LevmDatabase`] and the [`revm::Database`].
+        store
+            .mark_chain_as_canonical(&blocks)
+            .map_err(SyncError::Store)?;
 
         if let Err((error, failure)) = self.blockchain.add_blocks_in_batch(&blocks) {
             warn!("Failed to add block during FullSync: {error}");
@@ -460,11 +475,24 @@ impl SyncManager {
             return Err(error.into());
         }
 
-        store
-            .mark_chain_as_canonical(&blocks)
-            .map_err(SyncError::Store)?;
         store.update_latest_block_number(last_block.header.number)?;
-        debug!("Executed & stored {} blocks", blocks.len());
+        let elapsed_secs: f64 = since.elapsed().as_millis() as f64 / 1000.0;
+
+        let blocks_per_second = blocks_len as f64 / elapsed_secs;
+
+        info!(
+            "[SYNCING] Requested, stored, and executed {} blocks in {:.3} seconds.\n\
+            Started at block with hash {} (number {}).\n\
+            Finished at block with hash {} (number {}).\n\
+            Blocks per second: {:.3}",
+            blocks_len,
+            elapsed_secs,
+            first_block.hash(),
+            first_block.header.number,
+            last_block.hash(),
+            last_block.header.number,
+            blocks_per_second
+        );
 
         Ok(())
     }
