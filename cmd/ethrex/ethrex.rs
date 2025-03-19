@@ -18,6 +18,8 @@ async fn main() -> eyre::Result<()> {
         opts,
         #[cfg(feature = "based")]
         based_opts,
+        #[cfg(feature = "l2")]
+        l2_opts,
         command,
     } = CLI::parse();
 
@@ -50,6 +52,8 @@ async fn main() -> eyre::Result<()> {
         &opts,
         #[cfg(feature = "based")]
         &based_opts,
+        #[cfg(feature = "l2")]
+        &l2_opts,
         &signer,
         peer_table.clone(),
         local_p2p_node,

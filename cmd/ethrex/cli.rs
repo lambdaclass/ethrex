@@ -18,10 +18,13 @@ pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author, version=VERSION_STRING, about, long_about = None)]
+#[command(name="ethrex", author = "Lambdaclass", version=VERSION_STRING, about, about = "ethrex Execution client")]
 pub struct CLI {
     #[clap(flatten)]
     pub opts: Options,
+    #[cfg(feature = "l2")]
+    #[clap(flatten)]
+    pub l2_opts: L2Options,
     #[cfg(feature = "based")]
     #[clap(flatten)]
     pub based_opts: BasedOptions,
@@ -175,6 +178,17 @@ impl Default for Options {
             evm: Default::default(),
         }
     }
+}
+
+#[derive(ClapParser)]
+pub struct L2Options {
+    #[arg(
+        long = "sponsorable-addresses",
+        value_name = "SPONSORABLE_ADDRESSES_PATH",
+        help = "Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs",
+        help_heading = "L2 options"
+    )]
+    pub sponsorable_addresses_file_path: Option<String>,
 }
 
 #[cfg(feature = "based")]
