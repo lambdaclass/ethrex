@@ -303,4 +303,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         start: H256,
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError>;
+
+    fn get_invalid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError>;
+
+    fn set_invalid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError>;
 }

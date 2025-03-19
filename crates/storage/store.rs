@@ -1013,6 +1013,18 @@ impl Store {
     ) -> Result<Vec<(H256, U256)>, StoreError> {
         self.engine.read_storage_snapshot(account_hash, start)
     }
+
+    pub fn get_invalid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_invalid_ancestor(block)
+    }
+
+    pub fn set_invalid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.engine.set_invalid_ancestor(bad_block, latest_valid)
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
