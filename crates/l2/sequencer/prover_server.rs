@@ -160,7 +160,7 @@ impl ProverServer {
             if addr == DEV_MODE_ADDRESS {
                 continue;
             } else {
-                match key {
+                match key.as_str() {
                     R0VERIFIER => {
                         info!("RISC0 proof needed");
                         needed_proof_types.push(ProverType::RISC0);
