@@ -3,6 +3,7 @@ pub mod execution_db;
 pub mod helpers;
 #[cfg(feature = "l2")]
 mod mods;
+use rayon::iter::ParallelIterator;
 
 use super::BlockExecutionResult;
 use crate::constants::{
@@ -17,6 +18,7 @@ use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
+use rayon::iter::IntoParallelRefIterator;
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
 use revm::{
@@ -72,8 +74,16 @@ impl REVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for tx in block.body.transactions.iter() {
-            let result = Self::execute_tx(tx, block_header, state, spec_id, tx.sender())?;
+        //calculate tx senders in parallel
+        let senders: Vec<_> = block
+            .body
+            .transactions
+            .par_iter()
+            .map(|tx| tx.sender())
+            .collect();
+
+        for (tx, sender) in block.body.transactions.iter().zip(senders) {
+            let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
                 tx.tx_type(),
