@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::errors::ExecutionDBError;
+use crate::{backends::levm::db::StoreLogger, errors::ExecutionDBError};
 use bytes::Bytes;
 use ethrex_common::{
     types::{AccountInfo, Block, BlockHash, ChainConfig},
@@ -96,5 +96,42 @@ impl ExecutionDB {
             .collect::<Result<_, TrieError>>()?;
 
         Ok((state_trie, storage_trie))
+    }
+
+    /// Execute a block and cache all state changes, returns the cache
+    pub fn pre_execute_new(
+        block: &Block,
+        store_wrapper: &StoreWrapper,
+    ) -> Result<StoreLogger, ExecutionDBError> {
+        // this code was copied from the L1
+        // TODO: if we change EvmState so that it accepts a CacheDB<RpcDB> then we can
+        // simply call execute_block().
+        let mut db = StoreLogger::new(store_wrapper.clone());
+        // beacon root call
+        // #[cfg(not(feature = "l2"))]
+        {
+            let mut cache = HashMap::new();
+            crate::backends::levm::LEVM::beacon_root_contract_call(
+                &block.header,
+                Arc::new(db.clone()),
+                &mut cache,
+            )
+            .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
+            let account_updates = crate::backends::levm::LEVM::get_state_transitions(
+                None,
+                Arc::new(db.clone()),
+                &block.header,
+                &cache,
+            )
+            .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
+
+            db.store
+                .apply_account_updates(block.hash(), &account_updates)
+                .map_err(|e| ExecutionDBError::Store(e))?;
+
+            result.account_updates = account_updates;
+        }
+
+        Ok(db)
     }
 }
