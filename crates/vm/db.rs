@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use ethrex_common::H256 as CoreH256;
 
 use crate::{
-    backends::{levm::db::BLOCK_CACHE, revm::execution_db::ToExecDB},
+    backends::{levm::db::BLOCKS_ACCESSED, revm::execution_db::ToExecDB},
     errors::ExecutionDBError,
     EvmError,
 };
@@ -114,7 +114,7 @@ impl ExecutionDB {
         // simply call execute_block().
 
         let db = store_wrapper.clone();
-        BLOCK_CACHE.lock().unwrap().clear();
+        BLOCKS_ACCESSED.lock().unwrap().clear();
         let mut account_updates = vec![];
         // beacon root call
         #[cfg(not(feature = "l2"))]
@@ -210,7 +210,7 @@ impl ToExecDB for StoreWrapper {
             .iter()
             .map(|update| {
                 // return error if code is missing
-                let hash = update.info.clone().unwrap_or_default().code_hash; // TODO check if this is correct
+                let hash = update.info.clone().unwrap_or_default().code_hash;
                 Ok((
                     hash,
                     store_wrapper
@@ -242,7 +242,7 @@ impl ToExecDB for StoreWrapper {
                 ))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let block_hashes = BLOCK_CACHE
+        let block_hashes = BLOCKS_ACCESSED
             .lock()
             .unwrap()
             .clone()

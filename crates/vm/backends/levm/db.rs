@@ -10,7 +10,7 @@ use ethrex_levm::db::Database as LevmDatabase;
 use crate::db::StoreWrapper;
 
 lazy_static! {
-    pub static ref BLOCK_CACHE: Mutex<HashMap<u64, CoreH256>> = Mutex::new(HashMap::new());
+    pub static ref BLOCKS_ACCESSED: Mutex<HashMap<u64, CoreH256>> = Mutex::new(HashMap::new());
 }
 
 impl LevmDatabase for StoreWrapper {
@@ -51,16 +51,16 @@ impl LevmDatabase for StoreWrapper {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
-        let a = self.store.get_block_header(block_number).unwrap();
+        let block_header = self.store.get_block_header(block_number).unwrap();
 
-        let res = a.map(|a| CoreH256::from(a.compute_block_hash().0));
+        let block_hash = block_header.map(|header| CoreH256::from(header.compute_block_hash().0));
 
-        BLOCK_CACHE
+        BLOCKS_ACCESSED
             .lock()
             .unwrap()
-            .insert(block_number, res.unwrap());
+            .insert(block_number, block_hash.unwrap());
 
-        res
+        block_hash
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
