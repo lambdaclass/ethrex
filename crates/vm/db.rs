@@ -2,7 +2,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 
-use crate::{backends::revm::execution_db::ToExecDB, errors::ExecutionDBError, EvmError};
+use crate::{
+    backends::{levm::db::BLOCK_CACHE, revm::execution_db::ToExecDB},
+    errors::ExecutionDBError,
+    EvmError,
+};
 use bytes::Bytes;
 use ethrex_common::{
     types::{AccountInfo, Block, BlockHash, ChainConfig, Fork},
@@ -178,20 +182,23 @@ impl ToExecDB for StoreWrapper {
         });
 
         // fetch all read/written values from store
-        let cache_accounts = cache.accounts.iter().filter_map(|(address, account)| {
-            let address = CoreAddress::from_slice(address.0.as_ref());
-            // filter new accounts (accounts that didn't exist before) assuming our store is
-            // correct (based on the success of the pre-execution).
-            if store_wrapper
-                .store
-                .get_account_info_by_hash(parent_hash, address)
-                .is_ok_and(|account| account.is_some())
-            {
-                Some((address, account))
-            } else {
-                None
-            }
-        });
+        let cache_accounts = execution_result
+            .account_updates
+            .iter()
+            .filter_map(|update| {
+                let address = update.address;
+                // filter new accounts (accounts that didn't exist before) assuming our store is
+                // correct (based on the success of the pre-execution).
+                if store_wrapper
+                    .store
+                    .get_account_info_by_hash(parent_hash, address)
+                    .is_ok_and(|account| account.is_some())
+                {
+                    Some((address, update.info.clone()))
+                } else {
+                    None
+                }
+            });
         let accounts = cache_accounts
             .clone()
             .map(|(address, _)| {
@@ -208,11 +215,13 @@ impl ToExecDB for StoreWrapper {
                 Ok((address, account?))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let code = cache_accounts
+        let code = execution_result
+            .account_updates
             .clone()
-            .map(|(_, account)| {
+            .iter()
+            .map(|update| {
                 // return error if code is missing
-                let hash = account.info.bytecode_hash();
+                let hash = update.info.clone().unwrap_or_default().code_hash; // TODO check if this is correct
                 Ok((
                     hash,
                     store_wrapper
@@ -222,29 +231,33 @@ impl ToExecDB for StoreWrapper {
                 ))
             })
             .collect::<Result<_, ExecutionDBError>>()?;
-        let storage = cache_accounts
-            .map(|(address, account)| {
+        let storage = execution_result
+            .account_updates
+            .iter()
+            .map(|update| {
                 // return error if storage is missing
                 Ok((
-                    address,
-                    account
-                        .storage
+                    update.address,
+                    update
+                        .added_storage
                         .keys()
                         .map(|key| {
                             let key = CoreH256::from(key.to_fixed_bytes());
                             let value = store_wrapper
                                 .store
-                                .get_storage_at_hash(parent_hash, address, key)
+                                .get_storage_at_hash(parent_hash, update.address, key)
                                 .map_err(ExecutionDBError::Store)?
-                                .ok_or(ExecutionDBError::NewMissingStorage(address, key))?;
+                                .ok_or(ExecutionDBError::NewMissingStorage(update.address, key))?;
                             Ok((key, value))
                         })
                         .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?,
                 ))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let block_hashes = cache
-            .block_hashes
+        let block_hashes = BLOCK_CACHE
+            .lock()
+            .unwrap()
+            .clone()
             .into_iter()
             .map(|(num, hash)| (num, CoreH256::from(hash.0)))
             .collect();

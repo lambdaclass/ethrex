@@ -1,8 +1,17 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use lazy_static::lazy_static;
+
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::db::StoreWrapper;
+
+lazy_static! {
+    pub static ref BLOCK_CACHE: Mutex<HashMap<u64, CoreH256>> = Mutex::new(HashMap::new());
+}
 
 impl LevmDatabase for StoreWrapper {
     fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
@@ -44,7 +53,14 @@ impl LevmDatabase for StoreWrapper {
     fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
         let a = self.store.get_block_header(block_number).unwrap();
 
-        a.map(|a| CoreH256::from(a.compute_block_hash().0))
+        let res = a.map(|a| CoreH256::from(a.compute_block_hash().0));
+
+        BLOCK_CACHE
+            .lock()
+            .unwrap()
+            .insert(block_number, res.unwrap());
+
+        res
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
