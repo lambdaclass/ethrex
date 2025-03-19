@@ -1,5 +1,5 @@
 ## Ethrex-Trie
-This is the implementation of the State Trie (a Merkle Patricia Trie) use
+This is the implementation of the State Trie (a Merkle Patricia Trie) used
 by Ethrex.
 
 ### Benchmarking
