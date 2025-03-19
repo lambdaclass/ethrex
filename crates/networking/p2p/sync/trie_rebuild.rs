@@ -269,7 +269,7 @@ async fn rebuild_storage_trie(
         }
     }
     if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
-        warn!("Mismatched storage root for account {account_hash}");
+        warn!("Mismatched storage root for account {account_hash}, expected: {expected_root}, got: {}", storage_trie.hash()?);
     }
     Ok(())
 }
