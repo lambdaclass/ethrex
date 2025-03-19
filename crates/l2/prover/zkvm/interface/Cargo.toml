@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0.203", features = ["derive"] }
 serde_with = "3.11.0"
-serde_json.workspace = true
+serde_json = "1.0.117"
 thiserror = "2.0.9"
 
 ethrex-common = { path = "../../../../common/", default-features = false }
@@ -15,17 +15,22 @@ ethrex-rlp = { path = "../../../../common/rlp", default-features = false }
 ethrex-storage = { path = "../../../../storage", default-features = false }
 ethrex-trie = { path = "../../../../common/trie", default-features = false }
 
+# Temporarily pin version because 0.11.1 breaks compilation
+# alloy-rpc-types-engine = "=0.11.0"
+
 [build-dependencies]
-risc0-build = { version = "1.2.2" }
-sp1-build = "4.1.0"
+risc0-build = { version = "1.2.2", optional = true }
+sp1-build = { version = "4.1.1", optional = true }
+pico-cli = { git = "https://github.com/brevis-network/pico", optional = true }
 
 [package.metadata.risc0]
 methods = ["risc0"]
 
 [features]
 default = []
-build_risc0 = []
-build_sp1 = []
+risc0 = ["dep:risc0-build"]
+sp1 = ["dep:sp1-build"]
+pico = ["dep:pico-cli"]
 l2 = ["ethrex-vm/l2"]
 
 [lib]

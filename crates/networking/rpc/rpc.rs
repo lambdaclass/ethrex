@@ -56,12 +56,16 @@ use utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
     RpcSuccessResponse,
 };
+cfg_if::cfg_if! {
+    if #[cfg(feature = "l2")] {
+        use l2::transaction::SponsoredTx;
+        use ethrex_common::Address;
+        use secp256k1::SecretKey;
+        mod l2;
+    }
+}
 mod admin;
 mod authentication;
-#[cfg(feature = "based")]
-mod based;
-#[cfg(feature = "based")]
-use based::versioned_message::SignedMessage;
 pub mod engine;
 mod eth;
 mod net;
@@ -75,6 +79,11 @@ pub use clients::{EngineClient, EthClient};
 use axum::extract::State;
 use ethrex_p2p::types::Node;
 use ethrex_storage::{error::StoreError, Store};
+
+#[cfg(feature = "based")]
+mod based;
+#[cfg(feature = "based")]
+use based::versioned_message::SignedMessage;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -98,6 +107,10 @@ pub struct RpcApiContext {
     gateway_auth_client: EngineClient,
     #[cfg(feature = "based")]
     gateway_pubkey: Public,
+    #[cfg(feature = "l2")]
+    valid_delegation_addresses: Vec<Address>,
+    #[cfg(feature = "l2")]
+    sponsor_pk: SecretKey,
 }
 
 /// Describes the client's current sync status:
@@ -171,6 +184,8 @@ pub async fn start_api(
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "based")] gateway_pubkey: Public,
+    #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
+    #[cfg(feature = "l2")] sponsor_pk: SecretKey,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -189,6 +204,10 @@ pub async fn start_api(
         gateway_auth_client,
         #[cfg(feature = "based")]
         gateway_pubkey,
+        #[cfg(feature = "l2")]
+        valid_delegation_addresses,
+        #[cfg(feature = "l2")]
+        sponsor_pk,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -296,6 +315,8 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         #[cfg(feature = "based")]
         Ok(RpcNamespace::Based) => map_based_requests(req, context),
         Err(rpc_err) => Err(rpc_err),
+        #[cfg(feature = "l2")]
+        Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context),
     }
 }
 
@@ -461,6 +482,16 @@ pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
     }
 }
 
+#[cfg(feature = "l2")]
+pub fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "ethrex_sendTransaction" => SponsoredTx::call(req, context),
+        unknown_ethrex_l2_method => {
+            Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
+        }
+    }
+}
+
 fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Value
 where
     E: Into<RpcErrorMetadata>,
@@ -486,18 +517,21 @@ mod tests {
     use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
     use ethrex_blockchain::Blockchain;
     use ethrex_common::{
-        constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
         types::{ChainConfig, Genesis},
+        H160,
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
     use std::fs::File;
     use std::io::BufReader;
+    use std::str::FromStr;
 
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
     use bytes::Bytes;
+    #[cfg(feature = "l2")]
+    use secp256k1::rand;
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -528,6 +562,10 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "based")]
             gateway_pubkey: Default::default(),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -575,7 +613,7 @@ mod tests {
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
-                        "depositContractAddress": *MAINNET_DEPOSIT_CONTRACT_ADDRESS
+                        "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
                     }
                 },
             }
@@ -622,6 +660,10 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "based")]
             gateway_pubkey: Default::default(),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -661,6 +703,10 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "based")]
             gateway_pubkey: Default::default(),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -697,7 +743,8 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
-            deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS),
+            deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
+                .unwrap(),
             ..Default::default()
         }
     }
@@ -731,6 +778,10 @@ mod tests {
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "based")]
             gateway_pubkey: Default::default(),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         // Process request
         let result = map_http_requests(&request, context).await;

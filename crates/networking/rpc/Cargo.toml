@@ -28,6 +28,7 @@ reqwest.workspace = true
 k256 = { version = "0.13.3", features = ["ecdh"] }
 libsecp256k1 = "0.7.1"
 sha3 = "0.10.8"
+sha2.workspace = true
 
 # Clients
 envy = "0.4.2"
@@ -37,6 +38,7 @@ keccak-hash.workspace = true
 
 cfg-if.workspace = true
 
+# Based
 ssz_types = { version = "0.10", optional = true}
 tree_hash = { version = "0.9.1", optional = true}
 tree_hash_derive = { version = "0.9.1", optional = true}
@@ -49,4 +51,5 @@ hex-literal = "0.4.1"
 path = "./rpc.rs"
 
 [features]
-based = ["dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]
+based = ["l2", "dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]
+l2 = []

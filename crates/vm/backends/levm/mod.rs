@@ -6,9 +6,10 @@ use crate::constants::{
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::db::StoreWrapper;
+use crate::execution_result::ExecutionResult;
 use crate::EvmError;
 use ethrex_common::types::requests::Requests;
-use ethrex_common::types::Fork;
+use ethrex_common::types::{AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE};
 use ethrex_common::{
     types::{
         code_hash, AccountInfo, Block, BlockHeader, ChainConfig, Receipt, Transaction, TxKind,
@@ -24,6 +25,7 @@ use ethrex_levm::{
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 use revm_primitives::Bytes;
+use std::cmp::min;
 use std::{collections::HashMap, sync::Arc};
 
 // Export needed types
@@ -190,6 +192,72 @@ impl LEVM {
         )?;
 
         vm.execute().map_err(VMError::into)
+    }
+    pub fn simulate_tx_from_generic(
+        // The transaction to execute.
+        tx: &GenericTransaction,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
+        db: Arc<dyn LevmDatabase>,
+        // A cache database for intermediate state changes during execution.
+        block_cache: CacheDB,
+        // The EVM configuration to use.
+        chain_config: &ChainConfig,
+    ) -> Result<ExecutionResult, EvmError> {
+        let gas_price: U256 = calculate_gas_price(
+            tx,
+            block_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+        );
+
+        let config = EVMConfig::new_from_chain_config(chain_config, block_header);
+        let mut env = Environment {
+            origin: tx.from.0.into(),
+            refunded_gas: 0,
+            gas_limit: tx.gas.unwrap_or(u64::MAX), // Ensure tx doesn't fail due to gas limit
+            config,
+            block_number: block_header.number.into(),
+            coinbase: block_header.coinbase,
+            timestamp: block_header.timestamp.into(),
+            prev_randao: Some(block_header.prev_randao),
+            chain_id: tx.chain_id.unwrap_or(chain_config.chain_id).into(),
+            base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
+            gas_price,
+            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
+            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
+            tx_blob_hashes: tx.blob_versioned_hashes.clone(),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
+            tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
+            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
+            tx_nonce: tx.nonce.unwrap_or_default(),
+            block_gas_limit: u64::MAX, // disable block gas limit
+            transient_storage: HashMap::new(),
+            difficulty: block_header.difficulty,
+        };
+
+        adjust_disabled_base_fee(&mut env);
+
+        let mut vm = VM::new(
+            tx.to.clone(),
+            env,
+            tx.value,
+            tx.input.clone(),
+            db,
+            block_cache.clone(),
+            tx.access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            tx.authorization_list.clone().map(|list| {
+                list.iter()
+                    .map(|list| Into::<AuthorizationTuple>::into(list.clone()))
+                    .collect()
+            }),
+        )?;
+
+        vm.execute()
+            .map(|value| value.into())
+            .map_err(VMError::into)
     }
 
     pub fn get_state_transitions(
@@ -452,7 +520,7 @@ pub fn generic_system_contract_levm(
         U256::zero(),
         calldata.into(),
         store_wrapper,
-        CacheDB::new(),
+        new_state.clone(),
         vec![],
         None,
     )
@@ -463,9 +531,7 @@ pub fn generic_system_contract_levm(
     report.new_state.remove(&system_address);
 
     match report.result {
-        TxResult::Success => {
-            new_state.extend(report.new_state.clone());
-        }
+        TxResult::Success => {}
         _ => {
             return Err(EvmError::Custom(
                 "ERROR in generic_system_contract_levm(). TX didn't succeed.".to_owned(),
@@ -474,6 +540,14 @@ pub fn generic_system_contract_levm(
     }
 
     // new_state is a CacheDB coming from outside the function
+    for (address, account) in report.new_state.iter_mut() {
+        if let Some(existing_account) = new_state.get(address) {
+            let mut existing_storage = existing_account.storage.clone();
+            existing_storage.extend(account.storage.clone());
+            account.storage = existing_storage;
+            account.info.balance = existing_account.info.balance;
+        }
+    }
     new_state.extend(report.new_state.clone());
 
     Ok(report)
@@ -500,10 +574,6 @@ pub fn extract_all_requests_levm(
         }
     }
 
-    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
-        "deposit_contract_address config is missing".to_string(),
-    ))?;
-
     let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, store, cache) {
         Some(report) => {
             // the cache is updated inside the generic_system_call
@@ -521,9 +591,40 @@ pub fn extract_all_requests_levm(
             None => Default::default(),
         };
 
-    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
     Ok(vec![deposits, withdrawals, consolidation])
+}
+
+/// Calculating gas_price according to EIP-1559 rules
+/// See https://github.com/ethereum/go-ethereum/blob/7ee9a6e89f59cee21b5852f5f6ffa2bcfc05a25f/internal/ethapi/transaction_args.go#L430
+pub fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> U256 {
+    if tx.gas_price != 0 {
+        // Legacy gas field was specified, use it
+        tx.gas_price.into()
+    } else {
+        // Backfill the legacy gas price for EVM execution, (zero if max_fee_per_gas is zero)
+        min(
+            tx.max_priority_fee_per_gas.unwrap_or(0) + basefee,
+            tx.max_fee_per_gas.unwrap_or(0),
+        )
+        .into()
+    }
+}
+
+/// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
+/// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
+/// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
+fn adjust_disabled_base_fee(env: &mut Environment) {
+    if env.gas_price == U256::zero() {
+        env.base_fee_per_gas = U256::zero();
+    }
+    if env
+        .tx_max_fee_per_blob_gas
+        .is_some_and(|v| v == U256::zero())
+    {
+        env.block_excess_blob_gas = None;
+    }
 }
