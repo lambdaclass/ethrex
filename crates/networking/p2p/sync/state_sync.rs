@@ -96,7 +96,9 @@ pub(crate) async fn state_sync(
             storage_healer_sender.clone(),
         ));
     }
+    info!("Finished state sync segment!");
     show_progress_handle.await?;
+    info!("Finished show progress!");
     // Check for pivot staleness
     let mut stale_pivot = false;
     let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
@@ -237,7 +239,9 @@ async fn state_sync_segment(
             .show();
             // As we are downloading the state trie in segments the `should_continue` flag will mean that there
             // are more accounts to be fetched but these accounts may belong to the next segment
-            if !should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number] {
+            // TODO: This is to cut cycles short and debug stuck healer
+            // PLEASE REMOVE PLEASE
+            if true || (!should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number]) {
                 // All accounts fetched!
                 break;
             }
