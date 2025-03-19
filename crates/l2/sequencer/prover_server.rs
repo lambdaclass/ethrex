@@ -37,7 +37,11 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-const VERIFIER_CONTRACTS: [&str; 3] = ["R0VERIFIER()", "SP1VERIFIER()", "PICOVERIFIER()"];
+// These constants have to match with the OnChainProposer.sol contract
+const R0VERIFIER: &str = "R0VERIFIER()";
+const SP1VERIFIER: &str = "SP1VERIFIER()";
+const PICOVERIFIER: &str = "PICOVERIFIER()";
+const VERIFIER_CONTRACTS: [&str; 3] = [R0VERIFIER, SP1VERIFIER, PICOVERIFIER];
 const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0xAA,
@@ -151,28 +155,25 @@ impl ProverServer {
         .await?;
 
         let mut needed_proof_types = vec![];
-        for key in VERIFIER_CONTRACTS {
-            let val = verifier_contracts.get(key);
 
-            if let Some(addr) = val {
-                if *addr == DEV_MODE_ADDRESS {
-                    continue;
-                } else {
-                    match key {
-                        "R0VERIFIER()" => {
-                            info!("RISC0 proof needed");
-                            needed_proof_types.push(ProverType::RISC0);
-                        }
-                        "SP1VERIFIER()" => {
-                            info!("SP1 proof needed");
-                            needed_proof_types.push(ProverType::SP1);
-                        }
-                        "PICOVERIFIER()" => {
-                            info!("PICO proof needed");
-                            needed_proof_types.push(ProverType::Pico);
-                        }
-                        _ => unreachable!(),
+        for (k, v) in verifier_contracts {
+            if *addr == DEV_MODE_ADDRESS {
+                continue;
+            } else {
+                match key {
+                    R0VERIFIER => {
+                        info!("RISC0 proof needed");
+                        needed_proof_types.push(ProverType::RISC0);
                     }
+                    SP1VERIFIER => {
+                        info!("SP1 proof needed");
+                        needed_proof_types.push(ProverType::SP1);
+                    }
+                    PICOVERIFIER => {
+                        info!("PICO proof needed");
+                        needed_proof_types.push(ProverType::Pico);
+                    }
+                    _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
                 }
             }
         }
