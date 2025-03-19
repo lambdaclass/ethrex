@@ -10,3 +10,7 @@
 #### 2025-02-28
 
 * Don't recompute transaction senders when building blocks [#2097](https://github.com/lambdaclass/ethrex/pull/2097)
+
+### 2025-03-19
+
+* Compute tx senders in parallel [#2268](https://github.com/lambdaclass/ethrex/pull/2268)
