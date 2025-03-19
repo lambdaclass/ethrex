@@ -12,12 +12,15 @@ pub type AccessListItem = (Address, Vec<H256>);
 
 pub type AuthorizationList = Vec<AuthorizationTuple>;
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthorizationTuple {
     pub chain_id: U256,
     pub address: Address,
     pub nonce: u64,
     pub y_parity: U256,
+    #[serde(rename = "r")]
     pub r_signature: U256,
+    #[serde(rename = "s")]
     pub s_signature: U256,
 }
 
