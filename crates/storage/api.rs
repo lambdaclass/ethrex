@@ -12,14 +12,9 @@ use ethrex_trie::{Nibbles, Trie};
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
-    fn add_blocks_with_state_and_receipts(
-        &self,
-        blocks: &[Block],
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-        state_tries: Vec<Trie>,
-        storage_tries: Vec<(H256, Trie)>,
-        accounts_code: Vec<(H256, Bytes)>,
-    ) -> Result<(), StoreError>;
+    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError>;
+
+    fn add_block(&self, block: Block) -> Result<(), StoreError>;
 
     /// Sets the blocks as part of the canonical chain
     fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError>;
@@ -107,9 +102,15 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         receipt: Receipt,
     ) -> Result<(), StoreError>;
 
-    /// Add receipt
+    /// Add receipts
     fn add_receipts(&self, block_hash: BlockHash, receipts: Vec<Receipt>)
         -> Result<(), StoreError>;
+
+    /// Adds receipts for a batch of blocks
+    fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError>;
 
     /// Obtain receipt for a canonical block represented by the block number.
     fn get_receipt(

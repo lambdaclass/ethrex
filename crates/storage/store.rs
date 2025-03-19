@@ -55,11 +55,6 @@ pub struct AccountUpdate {
     // removed_storage_keys: Vec<H256>,
 }
 
-pub struct DataToCommitAfterAccountUpdates {
-    pub storage_tries: Vec<(H256, Trie)>,
-    pub accounts_code: Vec<(H256, Bytes)>,
-}
-
 impl AccountUpdate {
     /// Creates new empty update for the given account
     pub fn new(address: Address) -> AccountUpdate {
@@ -365,14 +360,12 @@ impl Store {
     }
 
     /// Applies state transitions to the given trie and does not commit nor calculate root hash
-    pub fn apply_account_updates_without_committing(
+    /// Note: it does commit storage tries and new account codes
+    pub fn apply_account_updates_to_trie(
         &self,
         account_updates: &[AccountUpdate],
         state_trie: &mut Trie,
-    ) -> Result<DataToCommitAfterAccountUpdates, StoreError> {
-        let mut storage_tries = vec![];
-        let mut accounts_code = vec![];
-
+    ) -> Result<(), StoreError> {
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -391,7 +384,7 @@ impl Store {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        accounts_code.push((info.code_hash, code.clone()));
+                        self.add_account_code(account_state.code_hash, code.clone())?;
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -408,17 +401,13 @@ impl Store {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
                         }
                     }
-                    account_state.storage_root = storage_trie.hash_no_commit();
-                    storage_tries.push((H256::from_slice(&hashed_address), storage_trie));
+                    account_state.storage_root = storage_trie.hash()?;
                 }
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
 
-        Ok(DataToCommitAfterAccountUpdates {
-            storage_tries,
-            accounts_code,
-        })
+        Ok(())
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -472,6 +461,13 @@ impl Store {
         self.engine.add_receipts(block_hash, receipts)
     }
 
+    pub fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError> {
+        self.engine.add_receipts_for_blocks(receipts)
+    }
+
     pub fn get_receipt(
         &self,
         block_number: BlockNumber,
@@ -481,56 +477,11 @@ impl Store {
     }
 
     pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        let header = block.header;
-        let number = header.number;
-        let hash = header.compute_block_hash();
-        self.add_transaction_locations(&block.body.transactions, number, hash)?;
-        self.add_block_body(hash, block.body)?;
-        self.add_block_header(hash, header)?;
-        self.add_block_number(hash, number)
+        self.engine.add_block(block)
     }
 
-    /// Stores a block along with their associated receipts, state tries,
-    /// storage tries, and account code. This function is typically called after
-    /// executing a block to persist the data to the storage engine in a single transaction.
-    pub fn add_single_block_with_state_and_receipts(
-        &self,
-        block: Block,
-        receipts: Vec<Receipt>,
-        state_trie: Trie,
-        storage_tries: Vec<(H256, Trie)>,
-        accounts_code: Vec<(H256, Bytes)>,
-    ) -> Result<(), StoreError> {
-        let mut receipts_map = HashMap::new();
-        receipts_map.insert(block.hash(), receipts);
-
-        self.engine.add_blocks_with_state_and_receipts(
-            &[block],
-            receipts_map,
-            vec![state_trie],
-            storage_tries,
-            accounts_code,
-        )
-    }
-
-    /// Stores a batch of blocks along with their associated receipts, state tries,
-    /// storage tries, and account code. This function is typically called after
-    /// executing a block to persist the data to the storage engine in a single transaction.
-    pub fn add_blocks_with_state_and_receipts(
-        &self,
-        blocks: &[Block],
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-        state_tries: Vec<Trie>,
-        storage_tries: Vec<(H256, Trie)>,
-        accounts_code: Vec<(H256, Bytes)>,
-    ) -> Result<(), StoreError> {
-        self.engine.add_blocks_with_state_and_receipts(
-            blocks,
-            receipts,
-            state_tries,
-            storage_tries,
-            accounts_code,
-        )
+    pub fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        self.engine.add_blocks(blocks)
     }
 
     pub fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {

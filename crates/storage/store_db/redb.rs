@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, panic::RefUnwindSafe, sync::Arc};
+use std::{borrow::Borrow, collections::HashMap, panic::RefUnwindSafe, sync::Arc};
 
 use crate::rlp::{AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP};
 use crate::store::MAX_SNAPSHOT_READS;
@@ -253,14 +253,65 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn add_blocks_with_state_and_receipts(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        todo!();
+    fn add_block(&self, block: Block) -> Result<(), StoreError> {
+        self.add_blocks(&[block])
+    }
+
+    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        let write_txn = self.db.begin_write()?;
+
+        {
+            // Begin block so that tables are opened once and dropped at the end.
+            // This prevents ownership errors when to committing changes at the end.
+            {
+                let mut transaction_table =
+                    write_txn.open_multimap_table(TRANSACTION_LOCATIONS_TABLE)?;
+                let mut headers_table = write_txn.open_table(HEADERS_TABLE)?;
+                let mut block_bodies_table = write_txn.open_table(BLOCK_BODIES_TABLE)?;
+                let mut block_numbers_table = write_txn.open_table(BLOCK_NUMBERS_TABLE)?;
+
+                for block in blocks {
+                    let block_number = block.header.number;
+                    let block_hash = block.hash();
+
+                    for (index, transaction) in block.body.transactions.iter().enumerate() {
+                        transaction_table.insert(
+                            <H256 as Into<TransactionHashRLP>>::into(transaction.compute_hash()),
+                            <(u64, H256, u64) as Into<Rlp<(BlockNumber, BlockHash, Index)>>>::into(
+                                (block_number, block_hash, index as u64),
+                            ),
+                        )?;
+                    }
+
+                    headers_table.insert(
+                        <H256 as Into<BlockHashRLP>>::into(block_hash),
+                        <BlockHeader as Into<BlockHeaderRLP>>::into(block.header.clone()),
+                    )?;
+                    block_bodies_table.insert(
+                        <H256 as Into<BlockHashRLP>>::into(block_hash),
+                        <BlockBody as Into<BlockBodyRLP>>::into(block.body.clone()),
+                    )?;
+                    block_numbers_table
+                        .insert(<H256 as Into<BlockHashRLP>>::into(block_hash), block_number)?;
+                }
+            }
+
+            write_txn.commit()?;
+
+            Ok(())
+        }
     }
 
     fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let key_values = blocks
             .iter()
-            .map(|e| (e.header.number, <H256 as Into<BlockHashRLP>>::into(hash)));
+            .map(|e| {
+                (
+                    e.header.number,
+                    <H256 as Into<BlockHashRLP>>::into(e.hash()),
+                )
+            })
+            .collect();
 
         self.write_batch(CANONICAL_BLOCK_HASHES_TABLE, key_values)
     }
@@ -380,6 +431,33 @@ impl StoreEngine for RedBStore {
             <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index)),
             <Receipt as Into<ReceiptRLP>>::into(receipt),
         )
+    }
+
+    fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError> {
+        let mut key_values = vec![];
+
+        for (block_hash, receipts) in receipts.into_iter() {
+            let mut kv = receipts
+                .into_iter()
+                .enumerate()
+                .map(|(index, receipt)| {
+                    (
+                        <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((
+                            block_hash,
+                            index as u64,
+                        )),
+                        <Receipt as Into<ReceiptRLP>>::into(receipt),
+                    )
+                })
+                .collect();
+
+            key_values.append(&mut kv);
+        }
+
+        self.write_batch(RECEIPTS_TABLE, key_values)
     }
 
     fn get_receipt(

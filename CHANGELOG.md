@@ -13,4 +13,4 @@
 
 #### 2025-03-11
 
-* Process blocks in batches when syncing and importing and store blocks in a single tx [#2174](https://github.com/lambdaclass/ethrex/pull/2174) 
+* Process blocks in batches when syncing and importing [#2174](https://github.com/lambdaclass/ethrex/pull/2174) 

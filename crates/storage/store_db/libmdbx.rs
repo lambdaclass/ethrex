@@ -126,14 +126,11 @@ impl StoreEngine for Store {
         self.write::<Bodies>(block_hash.into(), block_body.into())
     }
 
-    fn add_blocks_with_state_and_receipts(
-        &self,
-        blocks: &[Block],
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-        state_tries: Vec<Trie>,
-        storage_tries: Vec<(H256, Trie)>,
-        accounts_code: Vec<(H256, Bytes)>,
-    ) -> Result<(), StoreError> {
+    fn add_block(&self, block: Block) -> std::result::Result<(), StoreError> {
+        self.add_blocks(&[block])
+    }
+
+    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let tx = self
             .db
             .begin_readwrite()
@@ -164,48 +161,6 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)?;
 
             tx.upsert::<BlockNumbers>(hash.into(), number)
-                .map_err(StoreError::LibmdbxError)?;
-
-            let receipts = receipts.get(&hash).unwrap();
-            let mut cursor = tx.cursor::<Receipts>().map_err(StoreError::LibmdbxError)?;
-            for (index, receipt) in receipts.clone().into_iter().enumerate() {
-                let key = (hash, index as u64).into();
-                let receipt_rlp = receipt.encode_to_vec();
-                let Some(entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
-                    continue;
-                };
-                for (k, v) in entries {
-                    cursor.upsert(k, v).map_err(StoreError::LibmdbxError)?;
-                }
-            }
-        }
-
-        for mut trie in state_tries {
-            let Some(root) = trie.root().cloned() else {
-                continue;
-            };
-            let key_values = trie.state_mut().get_nodes_to_commit_and_clear_cache(&root);
-
-            for (k, v) in key_values {
-                tx.upsert::<StateTrieNodes>(k, v)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-        }
-
-        for (account_hash, mut trie) in storage_tries {
-            let Some(root) = trie.root().cloned() else {
-                continue;
-            };
-            let key_values = trie.state_mut().get_nodes_to_commit_and_clear_cache(&root);
-
-            for (k, v) in key_values {
-                tx.upsert::<StorageTriesNodes>((account_hash.0, node_hash_to_fixed_size(k)), v)
-                    .map_err(StoreError::LibmdbxError)?;
-            }
-        }
-
-        for (code_hash, code) in accounts_code {
-            tx.upsert::<AccountCodes>(code_hash.into(), code.into())
                 .map_err(StoreError::LibmdbxError)?;
         }
 
@@ -547,6 +502,27 @@ impl StoreEngine for Store {
             };
 
             key_values.append(&mut entries);
+        }
+
+        self.write_batch::<Receipts>(key_values.into_iter())
+    }
+
+    fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError> {
+        let mut key_values = vec![];
+
+        for (block_hash, receipts) in receipts.into_iter() {
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                let key = (block_hash, index as u64).into();
+                let receipt_rlp = receipt.encode_to_vec();
+                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                    continue;
+                };
+
+                key_values.append(&mut entries);
+            }
         }
 
         self.write_batch::<Receipts>(key_values.into_iter())

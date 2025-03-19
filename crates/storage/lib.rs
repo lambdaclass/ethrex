@@ -8,6 +8,6 @@ mod utils;
 
 pub mod error;
 pub use store::{
-    hash_address, hash_key, AccountUpdate, DataToCommitAfterAccountUpdates, EngineType, Store,
-    MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS,
+    hash_address, hash_key, AccountUpdate, EngineType, Store, MAX_SNAPSHOT_READS,
+    STATE_TRIE_SEGMENTS,
 };

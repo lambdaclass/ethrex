@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
-use ethrex_storage::{AccountUpdate, DataToCommitAfterAccountUpdates, Store};
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
@@ -118,7 +118,7 @@ impl Blockchain {
         block: &Block,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
-        // Apply the account updates over the last block's state and compute the new state root
+        // Apply the account updates over the block's parent state and compute the new state root
         let Some(mut state_trie) = self
             .storage
             .state_trie(block.header.parent_hash)
@@ -127,29 +127,23 @@ impl Blockchain {
             return Err(ChainError::ParentStateNotFound);
         };
 
-        let DataToCommitAfterAccountUpdates {
-            storage_tries,
-            accounts_code,
-        } = self
-            .storage
-            .apply_account_updates_without_committing(
-                &execution_result.account_updates,
-                &mut state_trie,
-            )
+        self.storage
+            .apply_account_updates_to_trie(&execution_result.account_updates, &mut state_trie)
             .map_err(ChainError::StoreError)?;
 
         let new_state_root = state_trie.hash_no_commit();
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
+        // Commit to db
+        state_trie
+            .commit()
+            .map_err(|e| ChainError::StoreError(e.into()))?;
         self.storage
-            .add_single_block_with_state_and_receipts(
-                block.clone(),
-                execution_result.receipts,
-                state_trie,
-                storage_tries,
-                accounts_code,
-            )
+            .add_block(block.clone())
+            .map_err(ChainError::StoreError)?;
+        self.storage
+            .add_receipts(block.hash(), execution_result.receipts)
             .map_err(ChainError::StoreError)
     }
 
@@ -278,13 +272,9 @@ impl Blockchain {
             return Err((ChainError::Custom("Last block not found".into()), None));
         };
 
-        // Validate state root and store blocks
-        let DataToCommitAfterAccountUpdates {
-            storage_tries,
-            accounts_code,
-        } = self
-            .storage
-            .apply_account_updates_without_committing(
+        // Compute state trie
+        self.storage
+            .apply_account_updates_to_trie(
                 &all_account_updates.into_values().collect::<Vec<_>>(),
                 &mut state_trie,
             )
@@ -293,14 +283,15 @@ impl Blockchain {
         let root_hash = state_trie.hash_no_commit();
         validate_state_root(&last_block.header, root_hash).map_err(|err| (err, None))?;
 
+        // Commit to db
+        state_trie
+            .commit()
+            .map_err(|e| (ChainError::StoreError(e.into()), None))?;
         self.storage
-            .add_blocks_with_state_and_receipts(
-                blocks,
-                all_receipts,
-                vec![state_trie],
-                storage_tries,
-                accounts_code,
-            )
+            .add_blocks(blocks)
+            .map_err(|e| (e.into(), None))?;
+        self.storage
+            .add_receipts_for_blocks(all_receipts)
             .map_err(|e| (e.into(), None))?;
 
         let elapsed_total = interval.elapsed().as_millis();

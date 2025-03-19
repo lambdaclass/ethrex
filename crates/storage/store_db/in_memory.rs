@@ -143,14 +143,11 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn add_blocks_with_state_and_receipts(
-        &self,
-        blocks: &[Block],
-        receipts: HashMap<BlockHash, Vec<Receipt>>,
-        state_tries: Vec<Trie>,
-        storage_tries: Vec<(H256, Trie)>,
-        accounts_code: Vec<(H256, Bytes)>,
-    ) -> Result<(), StoreError> {
+    fn add_block(&self, block: Block) -> Result<(), StoreError> {
+        self.add_blocks(&[block])
+    }
+
+    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         for block in blocks {
             let header = block.header.clone();
             let number = header.number;
@@ -166,19 +163,6 @@ impl StoreEngine for Store {
             self.add_block_body(hash, block.body.clone())?;
             self.add_block_header(hash, header)?;
             self.add_block_number(hash, number)?;
-            self.add_receipts(hash, receipts.get(&hash).unwrap().to_vec())?;
-        }
-
-        for (code_hash, code) in accounts_code {
-            self.add_account_code(code_hash, code)?;
-        }
-
-        for mut trie in state_tries {
-            trie.commit()?;
-        }
-
-        for (_, mut trie) in storage_tries {
-            trie.commit()?;
         }
 
         Ok(())
@@ -426,6 +410,17 @@ impl StoreEngine for Store {
         for (index, receipt) in receipts.into_iter().enumerate() {
             entry.insert(index as u64, receipt);
         }
+        Ok(())
+    }
+
+    fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError> {
+        for (block_hash, receipts) in receipts.into_iter() {
+            self.add_receipts(block_hash, receipts)?;
+        }
+
         Ok(())
     }
 
