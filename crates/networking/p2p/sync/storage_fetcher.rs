@@ -2,11 +2,10 @@
 //! It works like a queue, waiting for the state sync to advertise newly downloaded accounts with non-empty storages
 //! Each storage will be queued and fetch in batches, once a storage is fully fetched it is then advertised to the storage rebuilder
 //! Each downloaded storage will be written to the storage snapshot in the DB
+//! If a large storage is detected while fetching it will be delegated to a separate large storage fetcher process in order to not stall the rest of the storages
+//! A large storage fetcher will exist and by supervised by each storage fetcher
 //! If the pivot becomes stale while there are still pending storages in queue these will be sent to the storage healer
 //! Even if the pivot becomes stale, the fetcher will remain active and listening until a termination signal (an empty batch) is received
-//! Potential Improvements: Currenlty, we have a specific method to handle large storage tries (aka storage tries that don't fit into a single storage range request).
-//! This method is called while fetching a storage batch and can stall the fetching of other smaller storages.
-//! Large storage handling could be moved to its own separate queue process so that it runs parallel to regular storage fetching
 
 use std::cmp::min;
 
@@ -25,7 +24,7 @@ use crate::{
 
 use super::SyncError;
 
-/// An in-progress large storage trie request
+/// An in-progress large storage trie fetch request
 struct LargeStorageRequest {
     account_hash: H256,
     storage_root: H256,
@@ -34,7 +33,7 @@ struct LargeStorageRequest {
 
 /// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their storages in batches
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
-/// Upon finsih, remaining storages will be sent to the storage healer
+/// Upon finish, remaining storages will be sent to the storage healer
 pub(crate) async fn storage_fetcher(
     mut receiver: Receiver<Vec<(H256, H256)>>,
     peers: PeerHandler,
@@ -189,9 +188,9 @@ async fn fetch_storage_batch(
     Ok((batch, true))
 }
 
-/// Waits for incoming account hashes, storage roots & paths from the receiver channel endpoint, queues them, and fetches and stores their storage ranges in batches
+/// Waits for incoming large storage requests from the receiver channel endpoint, queues them, and fullfils them in parallel
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
-/// Upon finsih, remaining storages will be sent to the storage healer
+/// Upon finish, remaining storages will be sent to the storage healer and storage rebuilder (so we can rebuild the partial tries)
 async fn large_storage_fetcher(
     mut receiver: Receiver<Vec<LargeStorageRequest>>,
     peers: PeerHandler,
@@ -274,7 +273,8 @@ async fn large_storage_fetcher(
     Ok(())
 }
 
-// Receives a batch of account hashes with their storage roots, fetches their respective storage ranges via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
+// Receives a large storage request and attempts to fulfill it (by fetching the next storage range)
+// Returns the updated request status or None if the request was fulfilled
 /// Also returns a boolean indicating if the pivot became stale during the request
 async fn fetch_large_storage(
     mut request: LargeStorageRequest,
