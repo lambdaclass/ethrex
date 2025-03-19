@@ -2,9 +2,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ethrex::{
-    import,
     initializers::{init_blockchain, init_store},
-    removedb,
     utils::set_datadir,
     DEFAULT_DATADIR,
 };
@@ -16,18 +14,28 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 fn block_import() {
     let data_dir = DEFAULT_DATADIR;
     set_datadir(data_dir);
-    removedb::remove_db(data_dir);
+
+    ethrex::cli::Subcommand::RemoveDB {
+        datadir: data_dir.to_owned(),
+    }
+    .run(&ethrex::cli::Options::default())
+    .unwrap();
 
     let evm_engine = "revm".to_owned().try_into().unwrap();
 
     let network = "../../test_data/genesis-l2-ci.json";
 
-    import::import_blocks_from_datadir(
-        data_dir.to_owned(),
-        evm_engine,
-        network,
-        "../../test_data/l2-1k-erc20.rlp",
-    );
+    ethrex::cli::Subcommand::Import {
+        path: "../../test_data/l2-1k-erc20.rlp".to_owned(),
+        removedb: false,
+    }
+    .run(&ethrex::cli::Options {
+        datadir: data_dir.to_owned(),
+        network: Some(network.to_owned()),
+        evm: evm_engine,
+        ..Default::default()
+    })
+    .unwrap();
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {
