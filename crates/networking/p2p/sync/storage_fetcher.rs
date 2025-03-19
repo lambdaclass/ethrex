@@ -170,8 +170,6 @@ async fn fetch_storage_batch(
     large_storage_sender: Sender<Vec<(H256, H256, H256)>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
-    // A list of all completely fetched storages to send to the rebuilder
-    let mut complete_storages = vec![];
     debug!(
         "Requesting storage ranges for addresses {}..{}",
         batch.first().unwrap().0,
@@ -207,12 +205,10 @@ async fn fetch_storage_batch(
         }
         let write_to_snapshot = Instant::now();
         // Store the storage ranges & rebuild the storage trie for each account
-        for (keys, values) in keys.into_iter().zip(values.into_iter()) {
-            let (account_hash, expected_root) = batch.remove(0);
-            // Write storage to snapshot
-            store.write_snapshot_storage_batch(account_hash, keys, values)?;
-            complete_storages.push((account_hash, expected_root));
-        }
+        let complete_storages = batch[..values.len()].to_vec();
+        let batch = batch[values.len()..].to_vec();
+        let account_hashes: Vec<H256> = complete_storages.iter().map(|(hash, _)| *hash).collect();
+        store.write_snapshot_storage_batches(account_hashes, keys, values)?;
         let write_snapshot = write_to_snapshot.elapsed().as_millis();
         // Send complete storages to the rebuilder
         storage_trie_rebuilder_sender
