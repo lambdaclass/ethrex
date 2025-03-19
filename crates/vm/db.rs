@@ -18,8 +18,6 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "levm-l2"))]
 use crate::backends::revm::db::evm_state;
-#[cfg(feature = "levm-l2")]
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct StoreWrapper {
