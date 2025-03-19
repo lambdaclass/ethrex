@@ -274,7 +274,7 @@ pub(crate) async fn large_storage_fetcher(
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
-            for batch in pending_storage.iter().take(MAX_PARALLEL_FETCHES) {
+            for batch in pending_storage.drain(..min(pending_storage.len(), MAX_PARALLEL_FETCHES)) {
                 storage_tasks.spawn(fetch_large_storage_batch(
                     *batch,
                     state_root,
