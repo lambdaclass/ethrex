@@ -280,9 +280,6 @@ impl StoreWrapper {
             .map(|(address, _)| hash_address(&address))
             .collect();
         let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
-        if let Some(a) = &initial_state_proofs.0 {
-            println!("a: {}", a.len());
-        }
         let final_state_proofs: Vec<_> = hashed_addresses
             .iter()
             .map(|hashed_address| Ok((hashed_address, state_trie.get_proof(hashed_address)?)))
