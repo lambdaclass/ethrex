@@ -70,42 +70,6 @@ async fn setup() -> (ProgramInput, Block) {
         block_hash: block_to_prove.header.parent_hash,
     };
     let db = store.to_exec_db_levm(block_to_prove).unwrap();
-    let db_revm = store.to_exec_db_revm(block_to_prove).unwrap();
-
-    if db.accounts != db_revm.accounts {
-        println!("Accounts are different");
-    } else {
-        println!("Accounts are the same");
-    }
-    if db.code != db_revm.code {
-        println!("Code is different");
-    } else {
-        println!("Code is the same");
-    }
-    if db.storage != db_revm.storage {
-        println!("Storage is different");
-    } else {
-        println!("Storage is the same");
-    }
-    if db.block_hashes != db_revm.block_hashes {
-        println!("Block hashes are different");
-    } else {
-        println!("Block hashes are the same");
-    }
-    if db.state_proofs != db_revm.state_proofs {
-        println!(
-            "State proofs are different LEVM len {} REVM len {}",
-            db.state_proofs.1.len(),
-            db_revm.state_proofs.1.len()
-        );
-    } else {
-        println!("State proofs are the same");
-    }
-    if db.storage_proofs != db_revm.storage_proofs {
-        println!("Storage proofs are different");
-    } else {
-        println!("Storage proofs are the same");
-    }
 
     let input = ProgramInput {
         block: block_to_prove.clone(),
