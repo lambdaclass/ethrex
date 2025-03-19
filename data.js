@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742414925391,
+  "lastUpdate": 1742415936747,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -745,6 +745,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 226275017717,
             "range": "± 1327541083",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "156438142+fborello-lambda@users.noreply.github.com",
+            "name": "Federico Borello",
+            "username": "fborello-lambda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "652ffd357827ba5a390062ef4479f882b1ce4119",
+          "message": "chore(l2): fix lint (#2271)\n\n**Motivation**\n\nThe linter was failing\n\n**Description**\n\n- Update the `lint` target\n- Implement the suggestions made by clippy",
+          "timestamp": "2025-03-19T19:28:20Z",
+          "tree_id": "38a24c5b9957f616967cde9b9c548f6bbf4918e8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/652ffd357827ba5a390062ef4479f882b1ce4119"
+        },
+        "date": 1742415934117,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 227444733037,
+            "range": "± 635540582",
             "unit": "ns/iter"
           }
         ]
