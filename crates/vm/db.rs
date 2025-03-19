@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
+use ethrex_common::H256 as CoreH256;
 
 use crate::{
     backends::{levm::db::BLOCK_CACHE, revm::execution_db::ToExecDB},
@@ -9,14 +9,12 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, Block, BlockHash, ChainConfig, Fork},
+    types::{AccountInfo, Block, BlockHash, ChainConfig},
     Address, H160, H256, U256,
 };
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{Node, NodeRLP, PathRLP, Trie, TrieError};
 use serde::{Deserialize, Serialize};
-
-use crate::backends::BlockExecutionResult;
 
 #[cfg(not(feature = "levm-l2"))]
 use crate::backends::revm::db::evm_state;
@@ -110,19 +108,16 @@ impl ExecutionDB {
     pub fn pre_execute_new(
         block: &Block,
         store_wrapper: &StoreWrapper,
-    ) -> Result<(BlockExecutionResult, StoreWrapper), ExecutionDBError> {
+    ) -> Result<(Vec<AccountUpdate>, StoreWrapper), ExecutionDBError> {
         // this code was copied from the L1
         // TODO: if we change EvmState so that it accepts a CacheDB<RpcDB> then we can
         // simply call execute_block().
 
         let db = store_wrapper.clone();
-        let mut result = BlockExecutionResult {
-            account_updates: vec![],
-            receipts: vec![],
-            requests: vec![],
-        };
+        BLOCK_CACHE.lock().unwrap().clear();
+        let mut account_updates = vec![];
         // beacon root call
-        // #[cfg(not(feature = "l2"))]
+        #[cfg(not(feature = "l2"))]
         {
             let mut cache = HashMap::new();
             crate::backends::levm::LEVM::beacon_root_contract_call(
@@ -131,7 +126,7 @@ impl ExecutionDB {
                 &mut cache,
             )
             .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
-            let account_updates = crate::backends::levm::LEVM::get_state_transitions(
+            let account_updates_beacon = crate::backends::levm::LEVM::get_state_transitions(
                 None,
                 Arc::new(db.clone()),
                 &block.header,
@@ -140,20 +135,18 @@ impl ExecutionDB {
             .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
 
             db.store
-                .apply_account_updates(block.hash(), &account_updates)
-                .map_err(|e| ExecutionDBError::Store(e))?;
+                .apply_account_updates(block.hash(), &account_updates_beacon)
+                .map_err(ExecutionDBError::Store)?;
 
-            result.account_updates = account_updates;
+            account_updates.extend(account_updates_beacon);
         }
 
         // execute block
         let report = crate::backends::levm::LEVM::execute_block(block, Arc::new(db.clone()))
             .map_err(Box::new)?;
-        result.receipts = report.receipts;
-        result.requests = report.requests;
-        result.account_updates.extend(report.account_updates); // check if this is correct
+        account_updates.extend(report.account_updates);
 
-        Ok((result, db))
+        Ok((account_updates, db))
     }
 }
 
@@ -166,11 +159,11 @@ impl ToExecDB for StoreWrapper {
         let chain_config = self.store.get_chain_config()?;
 
         // pre-execute and get all state changes
-        let (execution_result, store_wrapper) = ExecutionDB::pre_execute_new(block, self)
+        let (execution_updates, store_wrapper) = ExecutionDB::pre_execute_new(block, self)
             .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
 
         // index read and touched account addresses and storage keys
-        let index = execution_result.account_updates.iter().map(|update| {
+        let index = execution_updates.iter().map(|update| {
             // CHECK if we only need the touched storage keys
             let address = update.address;
             let storage_keys: Vec<_> = update
@@ -182,23 +175,20 @@ impl ToExecDB for StoreWrapper {
         });
 
         // fetch all read/written values from store
-        let cache_accounts = execution_result
-            .account_updates
-            .iter()
-            .filter_map(|update| {
-                let address = update.address;
-                // filter new accounts (accounts that didn't exist before) assuming our store is
-                // correct (based on the success of the pre-execution).
-                if store_wrapper
-                    .store
-                    .get_account_info_by_hash(parent_hash, address)
-                    .is_ok_and(|account| account.is_some())
-                {
-                    Some((address, update.info.clone()))
-                } else {
-                    None
-                }
-            });
+        let cache_accounts = execution_updates.iter().filter_map(|update| {
+            let address = update.address;
+            // filter new accounts (accounts that didn't exist before) assuming our store is
+            // correct (based on the success of the pre-execution).
+            if store_wrapper
+                .store
+                .get_account_info_by_hash(parent_hash, address)
+                .is_ok_and(|account| account.is_some())
+            {
+                Some((address, update.info.clone()))
+            } else {
+                None
+            }
+        });
         let accounts = cache_accounts
             .clone()
             .map(|(address, _)| {
@@ -215,8 +205,7 @@ impl ToExecDB for StoreWrapper {
                 Ok((address, account?))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let code = execution_result
-            .account_updates
+        let code = execution_updates
             .clone()
             .iter()
             .map(|update| {
@@ -231,8 +220,7 @@ impl ToExecDB for StoreWrapper {
                 ))
             })
             .collect::<Result<_, ExecutionDBError>>()?;
-        let storage = execution_result
-            .account_updates
+        let storage = execution_updates
             .iter()
             .map(|update| {
                 // return error if storage is missing

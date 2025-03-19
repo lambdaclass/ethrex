@@ -1,11 +1,5 @@
-use std::collections::HashMap;
-
-use ethrex_common::{
-    types::{Block, BlockHash},
-    Address as CoreAddress, H256 as CoreH256,
-};
-use ethrex_storage::{error::StoreError, hash_address, hash_key, Store};
-use ethrex_trie::{Node, NodeRLP, PathRLP, Trie, TrieError};
+use ethrex_common::{types::BlockHash, Address as CoreAddress, H256 as CoreH256};
+use ethrex_storage::{error::StoreError, Store};
 use revm::primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
@@ -13,8 +7,7 @@ use revm::primitives::{
 
 use crate::{
     db::{ExecutionDB, StoreWrapper},
-    errors::ExecutionDBError,
-    spec_id, ChainConfig, EvmError,
+    ChainConfig, EvmError,
 };
 
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
@@ -62,8 +55,6 @@ impl From<ExecutionDB> for EvmState {
         EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
     }
 }
-
-use super::execution_db::ToExecDB;
 
 impl revm::Database for StoreWrapper {
     type Error = StoreError;
