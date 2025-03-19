@@ -40,49 +40,36 @@ impl TreeHash for SealV0 {
     }
 
     fn tree_hash_root(&self) -> tree_hash::Hash256 {
+        let total_frags = self.total_frags.tree_hash_root();
+        let block_number = self.block_number.tree_hash_root();
+        let gas_used = self.gas_used.tree_hash_root();
+        let gas_limit = self.gas_limit.tree_hash_root();
+        let parent_hash = self.parent_hash.as_fixed_bytes().tree_hash_root();
+        let transactions_root = self.transactions_root.as_fixed_bytes().tree_hash_root();
+        let receipts_root = self.receipts_root.as_fixed_bytes().tree_hash_root();
+        let state_root = self.state_root.as_fixed_bytes().tree_hash_root();
+        let block_hash = self.block_hash.as_fixed_bytes().tree_hash_root();
+
+        let leaves = [
+            total_frags.as_slice(),
+            block_number.as_slice(),
+            gas_used.as_slice(),
+            gas_limit.as_slice(),
+            parent_hash.as_slice(),
+            transactions_root.as_slice(),
+            receipts_root.as_slice(),
+            state_root.as_slice(),
+            block_hash.as_slice(),
+        ];
         let mut hasher = tree_hash::MerkleHasher::with_leaves(10);
-        hasher
-            .write(self.total_frags.tree_hash_root().as_slice())
-            .expect("could not tree hash total_frags");
-        hasher
-            .write(self.block_number.tree_hash_root().as_slice())
-            .expect("could not tree hash block_number");
-        hasher
-            .write(self.gas_used.tree_hash_root().as_slice())
-            .expect("could not tree hash gas_used");
-        hasher
-            .write(self.gas_limit.tree_hash_root().as_slice())
-            .expect("could not tree hash gas_limit");
-        hasher
-            .write(
-                self.parent_hash
-                    .as_fixed_bytes()
-                    .tree_hash_root()
-                    .as_slice(),
-            )
-            .expect("could not tree hash parent_hash");
-        hasher
-            .write(
-                self.transactions_root
-                    .as_fixed_bytes()
-                    .tree_hash_root()
-                    .as_slice(),
-            )
-            .expect("could not tree hash transactions_root");
-        hasher
-            .write(
-                self.receipts_root
-                    .as_fixed_bytes()
-                    .tree_hash_root()
-                    .as_slice(),
-            )
-            .expect("could not tree hash receipts_root");
-        hasher
-            .write(self.state_root.as_fixed_bytes().tree_hash_root().as_slice())
-            .expect("could not tree hash state_root");
-        hasher
-            .write(self.block_hash.as_fixed_bytes().tree_hash_root().as_slice())
-            .expect("could not tree hash block_hash");
+
+        // PANIC: the following `expect`s would only fail if we exceed the declared
+        // number of leaves, which is impossible by construction
+        // See https://docs.rs/tree_hash/0.9.1/tree_hash/struct.MerkleHasher.html#method.write
+        for leaf in leaves {
+            hasher.write(leaf).expect("could not hash leaf");
+        }
+
         hasher.finish().expect("could not finish tree hash")
     }
 }

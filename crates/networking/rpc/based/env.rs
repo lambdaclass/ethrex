@@ -46,47 +46,42 @@ impl TreeHash for EnvV0 {
     }
 
     fn tree_hash_root(&self) -> tree_hash::Hash256 {
+        let number = self.number.tree_hash_root();
+        let parent_hash = self.parent_hash.as_fixed_bytes().tree_hash_root();
+        let beneficiary = encode_address(&self.beneficiary);
+        let timestamp = self.timestamp.tree_hash_root();
+        let gas_limit = self.gas_limit.tree_hash_root();
+        let basefee = self.basefee.tree_hash_root();
+        let difficulty = encode_u256(&self.difficulty);
+        let prevrandao = self.prevrandao.as_fixed_bytes().tree_hash_root();
+        let extra_data = self.extra_data.tree_hash_root();
+        let parent_beacon_block_root = self
+            .parent_beacon_block_root
+            .as_fixed_bytes()
+            .tree_hash_root();
+
+        let leaves = [
+            number.as_slice(),
+            parent_hash.as_slice(),
+            beneficiary.as_slice(),
+            timestamp.as_slice(),
+            gas_limit.as_slice(),
+            basefee.as_slice(),
+            difficulty.as_slice(),
+            prevrandao.as_slice(),
+            extra_data.as_slice(),
+            parent_beacon_block_root.as_slice(),
+        ];
+
         let mut hasher = tree_hash::MerkleHasher::with_leaves(10);
-        hasher
-            .write(self.number.tree_hash_root().as_slice())
-            .expect("could not tree hash number");
-        hasher
-            .write(
-                self.parent_hash
-                    .as_fixed_bytes()
-                    .tree_hash_root()
-                    .as_slice(),
-            )
-            .expect("could not tree hash parent_hash");
-        hasher
-            .write(encode_address(&self.beneficiary).as_slice())
-            .expect("could not tree hash beneficiary");
-        hasher
-            .write(self.timestamp.tree_hash_root().as_slice())
-            .expect("could not tree hash timestamp");
-        hasher
-            .write(self.gas_limit.tree_hash_root().as_slice())
-            .expect("could not tree hash gas_limit");
-        hasher
-            .write(self.basefee.tree_hash_root().as_slice())
-            .expect("could not tree hash basefee");
-        hasher
-            .write(encode_u256(&self.difficulty).as_slice())
-            .expect("could not tree hash difficulty");
-        hasher
-            .write(self.prevrandao.as_fixed_bytes().tree_hash_root().as_slice())
-            .expect("could not tree hash prevrandao");
-        hasher
-            .write(self.extra_data.tree_hash_root().as_slice())
-            .expect("could not tree hash extra_data");
-        hasher
-            .write(
-                self.parent_beacon_block_root
-                    .as_fixed_bytes()
-                    .tree_hash_root()
-                    .as_slice(),
-            )
-            .expect("could not tree hash parent_beacon_block_root");
+
+        // PANIC: the following `expect`s would only fail if we exceed the declared
+        // number of leaves, which is impossible by construction
+        // See https://docs.rs/tree_hash/0.9.1/tree_hash/struct.MerkleHasher.html#method.write
+        for leaf in &leaves {
+            hasher.write(leaf).expect("could not write leaf to hasher");
+        }
+
         hasher.finish().expect("could not finish tree hash")
     }
 }
