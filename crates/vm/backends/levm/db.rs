@@ -58,14 +58,22 @@ impl LevmDatabase for StoreWrapper {
     fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
         let block_header = self.store.get_block_header(block_number).unwrap();
 
-        let block_hash = block_header.map(|header| CoreH256::from(header.compute_block_hash().0));
+        #[cfg(feature = "levm-l2")]
+        {
+            let block_hash =
+                block_header.map(|header| CoreH256::from(header.compute_block_hash().0));
 
-        BLOCKS_ACCESSED
-            .lock()
-            .unwrap()
-            .insert(block_number, block_hash.unwrap());
+            BLOCKS_ACCESSED
+                .lock()
+                .unwrap()
+                .insert(block_number, block_hash.unwrap());
 
-        block_hash
+            block_hash
+        }
+        #[cfg(not(feature = "levm-l2"))]
+        {
+            block_header.map(|header| CoreH256::from(header.compute_block_hash().0))
+        }
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
