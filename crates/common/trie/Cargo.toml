@@ -39,5 +39,9 @@ uuid = { version = "1.16.0", features = ["v4"] }
 path = "./trie.rs"
 
 [[bench]]
-name = "trie_bench"
+name = "ethrex_trie_bench"
+harness = false
+
+[[bench]]
+name = "cita_trie_bench"
 harness = false
