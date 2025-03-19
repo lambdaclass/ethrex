@@ -2,7 +2,7 @@ use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::db::StoreWrapper;
+use crate::db::{ExecutionDB, StoreWrapper};
 
 impl LevmDatabase for StoreWrapper {
     fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
@@ -52,7 +52,7 @@ impl LevmDatabase for StoreWrapper {
     }
 }
 
-impl LevmDatabase for crate::db::ExecutionDB {
+impl LevmDatabase for ExecutionDB {
     fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::AccountInfo {
         let Some(acc_info) = self.accounts.get(&address) else {
             return ethrex_levm::AccountInfo::default();
