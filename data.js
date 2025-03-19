@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742402194354,
+  "lastUpdate": 1742414925391,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -715,6 +715,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 229899677477,
             "range": "± 744277514",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f1693f5490035e9244fac5e365792bf7830daa9c",
+          "message": "refactor(core): ethrex cli (#2240)\n\n**Motivation**\n\nTo improve `ethrex`'s CLI readability and extensibility.\n\n**Description**\n\nThis PR refactors de CLI to use clap derive instead of clap builder\napproach. Using the latter suited perfectly for the first version but as\nwe keep adding flags/args and subcommands, using the the first is better\nfor readability and also extensibility.\n\nIn the new design, the CLI is modeled as the struct `CLI` as follows:\n\n```Rust\npub struct CLI {\n    #[clap(flatten)]\n    pub opts: Options,\n    #[cfg(feature = \"based\")]\n    #[clap(flatten)]\n    pub based_opts: BasedOptions,\n    #[command(subcommand)]\n    pub command: Option<Subcommand>,\n}\n```\n\nwhere `opts` are the flags corresponding to `ethrex` common usage,\n`based_opts` are the flags needed when running `ethrex` with the `based`\nfeature, and `command` is an enum containing the subcommands\n(`removedb`, and `import` for now) which is optional.\n\nIf you'd want to add a new subcommand, simply add it to the `Subcommand`\nenum and implement its handler in the `Subcommand::run` `match`.\n\nThe CLI args are contained in `Options` and `BasedOptions`. Adding a new\nflag/arg would mean to add a field on the corresponding struct, and if\nyou want for example to add flags/args for the L2 feature it'd be good\nfor you to create an `L2Options` struct with them. The\n`#[clap(flatten)]` basically \"unpacks\" the struct fields (args and\nflags) for the CLI.\n\nRunning `cargo run --release --bin ethrex -- --help` displays:\n\n```Shell\nUsage: ethrex [OPTIONS] [COMMAND]\n\nCommands:\n  removedb  Remove the database\n  import    Import blocks to the database\n  help      Print this message or the help of the given subcommand(s)\n\nOptions:\n  -h, --help\n          Print help (see a summary with '-h')\n\n  -V, --version\n          Print version\n\nRPC options:\n      --http.addr <ADDRESS>\n          Listening address for the http rpc server.\n\n          [default: localhost]\n\n      --http.port <PORT>\n          Listening port for the http rpc server.\n\n          [default: 8545]\n\n      --authrpc.addr <ADDRESS>\n          Listening address for the authenticated rpc server.\n\n          [default: localhost]\n\n      --authrpc.port <PORT>\n          Listening port for the authenticated rpc server.\n\n          [default: 8551]\n\n      --authrpc.jwtsecret <JWTSECRET_PATH>\n          Receives the jwt secret used for authenticated rpc requests.\n\n          [default: jwt.hex]\n\nNode options:\n      --log.level <LOG_LEVEL>\n          Possible values: info, debug, trace, warn, error\n\n          [default: INFO]\n\n      --network <GENESIS_FILE_PATH>\n          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include Holesky, Sepolia and Mekong.\n\n      --datadir <DATABASE_DIRECTORY>\n          If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.\n\n          [default: ethrex]\n\n      --metrics.port <PROMETHEUS_METRICS_PORT>\n\n\n      --dev\n          If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.\n\n      --evm <EVM_BACKEND>\n          Has to be `levm` or `revm`\n\n          [default: revm]\n\nP2P options:\n      --p2p.enabled\n\n\n      --p2p.addr <ADDRESS>\n          [default: 0.0.0.0]\n\n      --p2p.port <PORT>\n          [default: 30303]\n\n      --discovery.addr <ADDRESS>\n          UDP address for P2P discovery.\n\n          [default: 0.0.0.0]\n\n      --discovery.port <PORT>\n          UDP port for P2P discovery.\n\n          [default: 30303]\n\n      --bootnodes <BOOTNODE_LIST>...\n          Comma separated enode URLs for P2P discovery bootstrap.\n\n      --syncmode <SYNC_MODE>\n          Can be either \"full\" or \"snap\" with \"full\" as default value.\n\n          [default: full]\n```",
+          "timestamp": "2025-03-19T19:11:51Z",
+          "tree_id": "26cb3cbe5bc142445ae282bef6c4b2f66bba1f80",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f1693f5490035e9244fac5e365792bf7830daa9c"
+        },
+        "date": 1742414923389,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 226275017717,
+            "range": "± 1327541083",
             "unit": "ns/iter"
           }
         ]
