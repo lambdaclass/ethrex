@@ -212,23 +212,16 @@ fn handle_forkchoice(
     let fork_choice_res = match context.sync_status()? {
         // Apply current fork choice
         SyncStatus::Inactive => {
-            let invalid_ancestors = {
-                let lock = context.syncer.try_lock();
-                match lock {
-                    Ok(sync) => sync.invalid_ancestors.clone(),
-                    Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-                }
-            };
-
             // Check head block hash in invalid_ancestors
-            if let Some(latest_valid_hash) =
-                invalid_ancestors.get(&fork_choice_state.head_block_hash)
+            if let Some(latest_valid_hash) = context
+                .storage
+                .get_invalid_ancestor(fork_choice_state.head_block_hash)?
             {
                 warn!(
                     "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
                     latest_valid_hash
                 );
-                Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
+                Err(InvalidForkChoice::InvalidAncestor(latest_valid_hash))
             } else {
                 // Check parent block hash in invalid_ancestors (if head block exists)
                 let check_parent = context
@@ -239,7 +232,10 @@ fn handle_forkchoice(
                             "Checking parent for invalid ancestor {}",
                             head_block.parent_hash
                         );
-                        invalid_ancestors.get(&head_block.parent_hash).copied()
+                        context
+                            .storage
+                            .get_invalid_ancestor(head_block.parent_hash)
+                            .unwrap()
                     });
 
                 if let Some(latest_valid_hash) = check_parent {

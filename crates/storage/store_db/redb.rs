@@ -45,6 +45,8 @@ pub const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 33])
     MultimapTableDefinition::new("StorageTrieNodes");
 const CHAIN_DATA_TABLE: TableDefinition<ChainDataIndex, Vec<u8>> =
     TableDefinition::new("ChainData");
+const INVALID_ANCESOTRS_TABLE: TableDefinition<BlockHashRLP, BlockHashRLP> =
+    TableDefinition::new("InvalidAncestors");
 const PAYLOADS_TABLE: TableDefinition<BlockNumber, PayloadBundleRLP> =
     TableDefinition::new("Payloads");
 const PENDING_BLOCKS_TABLE: TableDefinition<BlockHashRLP, BlockRLP> =
@@ -868,6 +870,27 @@ impl StoreEngine for RedBStore {
             })
             .take(MAX_SNAPSHOT_READS)
             .collect())
+    }
+
+    fn get_invalid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self
+            .read(
+                INVALID_ANCESOTRS_TABLE,
+                <H256 as Into<BlockHashRLP>>::into(block),
+            )?
+            .map(|b| b.value().to()))
+    }
+
+    fn set_invalid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.write(
+            INVALID_ANCESOTRS_TABLE,
+            <H256 as Into<BlockHashRLP>>::into(bad_block),
+            <H256 as Into<BlockHashRLP>>::into(latest_valid),
+        )
     }
 }
 

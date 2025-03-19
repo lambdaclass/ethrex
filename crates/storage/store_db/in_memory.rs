@@ -39,6 +39,8 @@ struct StoreInner {
     // Stores local blocks by payload id
     payloads: HashMap<u64, PayloadBundle>,
     pending_blocks: HashMap<BlockHash, Block>,
+    // Stores invalid block and its latest valid ancestor
+    invalid_ancestors: HashMap<BlockHash, BlockHash>,
     // Stores current Snap Sate
     snap_state: SnapState,
     // Stores State trie leafs from the last downloaded tries
@@ -542,6 +544,21 @@ impl StoreEngine for Store {
 
     fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         Ok(self.inner().snap_state.storage_trie_rebuild_pending.clone())
+    }
+
+    fn get_invalid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self.inner().invalid_ancestors.get(&block).cloned())
+    }
+
+    fn set_invalid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.inner()
+            .invalid_ancestors
+            .insert(bad_block, latest_valid);
+        Ok(())
     }
 }
 

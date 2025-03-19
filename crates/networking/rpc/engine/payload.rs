@@ -529,24 +529,21 @@ fn validate_ancestors(
     block: &Block,
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
-    // Obtain the invalid ancestors from the syncer
-    let invalid_ancestors = match context.syncer.try_lock() {
-        Ok(syncer) => syncer.invalid_ancestors.clone(),
-        Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-    };
-
     // Check if the block has already been invalidated
-    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
+    if let Some(latest_valid_hash) = context.storage.get_invalid_ancestor(block.hash())? {
         return Ok(Some(PayloadStatus::invalid_with(
-            *latest_valid_hash,
+            latest_valid_hash,
             "Header has been previously invalidated.".into(),
         )));
     }
 
     // Check if the parent block has already been invalidated
-    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash) {
+    if let Some(latest_valid_hash) = context
+        .storage
+        .get_invalid_ancestor(block.header.parent_hash)?
+    {
         return Ok(Some(PayloadStatus::invalid_with(
-            *latest_valid_hash,
+            latest_valid_hash,
             "Parent header has been previously invalidated.".into(),
         )));
     }
@@ -690,12 +687,10 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
     let add_block_to_invalid_ancestor = || {
-        let lock = context.syncer.try_lock();
-        if let Ok(mut syncer) = lock {
-            syncer
-                .invalid_ancestors
-                .insert(block_hash, latest_valid_hash);
-        };
+        context
+            .storage
+            .set_invalid_ancestor(block_hash, latest_valid_hash)
+            .unwrap();
     };
 
     match context.blockchain.add_block(block) {
