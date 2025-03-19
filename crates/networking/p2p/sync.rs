@@ -530,6 +530,9 @@ impl SyncManager {
             .await?;
             if stale_pivot {
                 warn!("Stale Pivot, aborting state sync");
+                // Send empty batch to signal that no more batches are incoming
+                storage_healer_sender.send(vec![]).await?;
+                storage_healer_handler.await??;
                 return Ok(false);
             }
         }
