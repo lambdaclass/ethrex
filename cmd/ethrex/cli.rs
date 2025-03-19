@@ -224,7 +224,6 @@ pub struct BasedOptions {
     pub gateway_jwtsecret: String,
     #[arg(
         long = "gateway.pubkey",
-        default_value = "pubkey.hex",
         value_name = "GATEWAY_PUBKEY_PATH",
         help_heading = "Based options"
     )]
