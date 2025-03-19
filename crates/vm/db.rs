@@ -9,6 +9,8 @@ use ethrex_common::{
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_trie::{Node, NodeRLP, PathRLP, Trie, TrieError};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "levm-l2")]
+use std::sync::Arc;
 
 #[cfg(not(feature = "levm-l2"))]
 use crate::backends::revm::db::evm_state;
