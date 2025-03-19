@@ -22,7 +22,7 @@ const ERC20_BALANCE_SIGNATURE: &str = "70a08231";
 
 #[tokio::test]
 async fn test_state_reconstruct_block_0() {
-    let client = EthClient::new(ETH_RPC_URL);
+    let client = connect().await;
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
 
@@ -36,7 +36,7 @@ async fn test_state_reconstruct_block_0() {
 
 #[tokio::test]
 async fn test_state_reconstruct_block_1() {
-    let client = EthClient::new(ETH_RPC_URL);
+    let client = connect().await;
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
     let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
@@ -69,7 +69,7 @@ async fn test_state_reconstruct_block_1() {
 
 #[tokio::test]
 async fn test_state_reconstruct_block_2() {
-    let client = EthClient::new(ETH_RPC_URL);
+    let client = connect().await;
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
     let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
@@ -223,7 +223,7 @@ async fn test_state_reconstruct_block_2() {
 
 #[tokio::test]
 async fn test_state_reconstruct_block_3() {
-    let client = EthClient::new(ETH_RPC_URL);
+    let client = connect().await;
 
     let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
     let erc20_rich_address1 = Address::from_slice(&hex::decode(ERC20_RICH_ADDRESS1).unwrap());
@@ -261,7 +261,7 @@ async fn test_state_reconstruct_block_3() {
 
 #[tokio::test]
 async fn test_state_reconstruct_latest_block() {
-    let client = EthClient::new(ETH_RPC_URL);
+    let client = connect().await;
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
     let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
@@ -417,6 +417,24 @@ async fn test_state_reconstruct_latest_block() {
         token_balance,
         U256::from_dec_str("122000000000000000000").unwrap()
     );
+}
+
+async fn connect() -> EthClient {
+    let client = EthClient::new(ETH_RPC_URL);
+
+    let mut retries = 0;
+    while retries < 20 {
+        match client.get_block_number().await {
+            Ok(_) => return client,
+            Err(_) => {
+                println!("Couldn't get block number. Retries: {retries}");
+                retries += 1;
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }
+    }
+
+    panic!("Couldn't connect to the RPC server")
 }
 
 fn erc20_bytecode() -> Bytes {
