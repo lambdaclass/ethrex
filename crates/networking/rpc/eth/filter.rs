@@ -1,4 +1,4 @@
-crates/networking/rpc/eth/filter.rs// The behaviour of the filtering endpoints is based on:
+// The behaviour of the filtering endpoints is based on:
 // - Manually testing the behaviour deploying contracts on the Sepolia test network.
 // - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
