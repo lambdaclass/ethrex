@@ -271,6 +271,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         storage_values: Vec<U256>,
     ) -> Result<(), StoreError>;
 
+    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
+    fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError>;
+
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
     fn set_state_trie_rebuild_checkpoint(
         &self,
