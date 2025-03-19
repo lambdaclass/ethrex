@@ -73,7 +73,7 @@ impl LevmDatabase for StoreWrapper {
     }
 }
 
-impl LevmDatabase for crate::db::ExecutionDB {
+impl LevmDatabase for ExecutionDB {
     fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::AccountInfo {
         let Some(acc_info) = self.accounts.get(&address) else {
             return ethrex_levm::AccountInfo::default();
