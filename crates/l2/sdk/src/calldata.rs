@@ -2,6 +2,7 @@ use ethrex_common::Bytes;
 use ethrex_common::{Address, H32, U256};
 use ethrex_rpc::clients::eth::errors::CalldataEncodeError;
 use keccak_hash::keccak;
+use serde::{Deserialize, Serialize};
 
 /// Struct representing the possible solidity types for function arguments
 /// - `Uint` -> `uint256`
@@ -13,7 +14,7 @@ use keccak_hash::keccak;
 /// - `Tuple` -> `(X_1, ..., X_k)`
 /// - `FixedArray` -> `T[k]`
 /// - `FixedBytes` -> `bytesN`
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum Value {
     Address(Address),
     Uint(U256),
