@@ -11,20 +11,32 @@ use uuid::Uuid;
 
 use cita_trie::MemoryDB;
 use cita_trie::{PatriciaTrie, Trie};
+use ethrex_trie::InMemoryTrieDB;
+use ethrex_trie::Trie as EthrexTrie;
+use ethrex_trie::TrieDB;
 
 fn insert_worse_case_benchmark(c: &mut Criterion) {
+    let key = Uuid::new_v4().as_bytes().to_vec();
+    let value = Uuid::new_v4().as_bytes().to_vec();
     c.bench_function("cita-trie insert one", |b| {
         let mut trie = PatriciaTrie::new(
             Arc::new(MemoryDB::new(false)),
             Arc::new(HasherKeccak::new()),
         );
 
+        b.iter(|| trie.insert(key.clone(), value.clone()).unwrap());
+    });
+
+    c.bench_function("ethrex-trie insert one", |b| {
+        let mut trie = EthrexTrie::new(Box::new(InMemoryTrieDB::new_empty()));
         b.iter(|| {
             let key = Uuid::new_v4().as_bytes().to_vec();
             let value = Uuid::new_v4().as_bytes().to_vec();
-            trie.insert(key, value).unwrap()
-        })
+            trie.insert(key.clone(), value.clone()).unwrap()
+        });
     });
+
+    let (keys, values) = random_data(1000);
 
     c.bench_function("cita-trie insert 1k", |b| {
         let mut trie = PatriciaTrie::new(
@@ -32,7 +44,6 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
             Arc::new(HasherKeccak::new()),
         );
 
-        let (keys, values) = random_data(1000);
         b.iter(|| {
             for i in 0..keys.len() {
                 trie.insert(keys[i].clone(), values[i].clone()).unwrap()
@@ -40,13 +51,33 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
         });
     });
 
+    c.bench_function("ethrex-trie insert 1k", |b| {
+        let mut trie = EthrexTrie::new(Box::new(InMemoryTrieDB::new_empty()));
+        b.iter(|| {
+            for i in 0..keys.len() {
+                trie.insert(keys[i].clone(), values[i].clone()).unwrap()
+            }
+        });
+    });
+
+    let (keys, values) = random_data(10000);
+
     c.bench_function("cita-trie insert 10k", |b| {
         let mut trie = PatriciaTrie::new(
             Arc::new(MemoryDB::new(false)),
             Arc::new(HasherKeccak::new()),
         );
 
-        let (keys, values) = random_data(10000);
+        b.iter(|| {
+            for i in 0..keys.len() {
+                trie.insert(keys[i].clone(), values[i].clone()).unwrap()
+            }
+        });
+    });
+
+    c.bench_function("ethrex-trie insert 10k", |b| {
+        let mut trie = EthrexTrie::new(Box::new(InMemoryTrieDB::new_empty()));
+
         b.iter(|| {
             for i in 0..keys.len() {
                 trie.insert(keys[i].clone(), values[i].clone()).unwrap()
