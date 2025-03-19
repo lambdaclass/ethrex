@@ -282,7 +282,7 @@ async fn fetch_large_storage_batch(
         // Update next batch's start
         batch.2 = *keys.last().unwrap();
         // Write storage range to snapshot
-        store.write_snapshot_storage_batch(batch.1, keys, values)?;
+        store.write_snapshot_storage_batch(batch.0, keys, values)?;
         if incomplete {
             Ok((Some(batch), false))
         } else {
