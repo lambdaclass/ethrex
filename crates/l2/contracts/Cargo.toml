@@ -29,6 +29,10 @@ name = "ethrex_l2_l1_deployer"
 path = "./deployer.rs"
 
 [[bin]]
+name = "ethrex_l2_toml_parser"
+path = "./toml_parser.rs"
+
+[[bin]]
 name = "ethrex_l2_system_contracts_updater"
 path = "./system_contracts_updater.rs"
 

@@ -4,6 +4,11 @@
 
 .DEFAULT_GOAL := help
 
+ifneq (,$(wildcard ./.env))
+    include .env
+    export
+endif
+
 L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
 L1_GENESIS_FILE_PATH=../../test_data/genesis-l1-dev.json
 
@@ -147,7 +152,7 @@ init-prover: ## 🚀 Initializes the Prover
 	@if [ -z "$$T" ]; then \
 		echo "Error: ProverType (T) is missing."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover T=<prover_type: (risc0, sp1)> <G=true>."; \
+		echo "make init-prover T=<prover_type: (risc0, sp1, pico, exec)> <G=true>."; \
 		echo "The prover can also be run with GPU (G)"; \
 		exit 1; \
 	fi; \
@@ -157,7 +162,17 @@ init-prover: ## 🚀 Initializes the Prover
 	else \
 		GPU=",gpu"; \
 	fi; \
-	cargo run --release --features "build_$$T$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
+
+	@if [ -z "$$P" ]; then \
+		echo "Not overwritting the .env"; \
+		echo "<P=true> can be used only if this command is used to deploy a prover_client in a separated machine"; \
+		echo "else, the toml_parser will be in executed inside the deployer.rs"; \
+	else \
+		CONFIG_FILE=config.toml cargo run --release --bin ethrex_l2_toml_parser --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- prover;\
+	fi; \
+
+
+	SP1_PROVER=$(SP1_PROVER) RISC0_DEV_MODE=$(RISC0_DEV_MODE) cargo run --release --features "$$T$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}

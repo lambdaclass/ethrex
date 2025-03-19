@@ -2,6 +2,7 @@ use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_common::U256;
+use ethrex_l2::parse_toml::TomlParserMode;
 use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
@@ -24,6 +25,9 @@ use std::{
 
 mod utils;
 use utils::compile_contract;
+
+mod toml_parser;
+use toml_parser::parse_toml;
 
 struct SetupResult {
     deployer_address: Address,
@@ -53,6 +57,8 @@ pub enum DeployError {
     DependencyError(String),
     #[error("Deployer compilation error: {0}")]
     CompilationError(#[from] utils::ContractCompilationError),
+    #[error("TomlParser error: {0}")]
+    TomlParserError(#[from] toml_parser::TomlParserError),
     #[error("Deployer EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
@@ -80,24 +86,7 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
-    #[allow(clippy::expect_fun_call, clippy::expect_used)]
-    let toml_config = std::env::var("CONFIG_FILE").expect(
-        format!(
-            "CONFIG_FILE environment variable not defined. Expected in {}, line: {}
-If running locally, a reasonable value would be CONFIG_FILE=config.toml",
-            file!(),
-            line!()
-        )
-        .as_str(),
-    );
-
-    match ethrex_l2::parse_toml::read_toml(toml_config) {
-        Ok(_) => (),
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
-    };
+    parse_toml(TomlParserMode::Full)?;
 
     let setup_result = setup()?;
     download_contract_deps(&setup_result.contracts_path)?;

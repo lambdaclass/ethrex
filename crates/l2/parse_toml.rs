@@ -3,6 +3,19 @@ use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
 
+pub enum TomlParserMode {
+    /// Parses the entire the config.toml
+    /// And generates a full .env with all the config variables
+    /// It's used if you run the prover_server and prover_client
+    /// in the same machine.
+    Full,
+    /// Parses the `prover` variables inside the config.toml
+    /// And generates a .env only with the prover_client config variables
+    /// It's used if you run the prover_server and prover_client
+    /// in different machines.
+    ProverClient,
+}
+
 #[derive(Deserialize, Debug)]
 struct Deployer {
     address: String,
@@ -154,6 +167,8 @@ impl Committer {
 #[derive(Deserialize, Debug)]
 struct Client {
     prover_server_endpoint: String,
+    sp1_prover: String,
+    risc0_dev_mode: u64,
     interval_ms: u64,
 }
 
@@ -164,8 +179,10 @@ impl Client {
             "
 {prefix}_PROVER_SERVER_ENDPOINT={}
 {prefix}_INTERVAL_MS={}
+RISC0_DEV_MODE={}
+SP1_PROVER={}
 ",
-            self.prover_server_endpoint, self.interval_ms
+            self.prover_server_endpoint, self.interval_ms, self.risc0_dev_mode, self.sp1_prover
         )
     }
 }
@@ -229,15 +246,26 @@ struct L2Config {
 }
 
 impl L2Config {
-    pub fn to_env(&self) -> String {
+    pub fn to_env(&self, mode: TomlParserMode) -> String {
         let mut env_representation = String::new();
-        env_representation.push_str(&self.deployer.to_env());
-        env_representation.push_str(&self.eth.to_env());
-        env_representation.push_str(&self.engine.to_env());
-        env_representation.push_str(&self.watcher.to_env());
-        env_representation.push_str(&self.proposer.to_env());
-        env_representation.push_str(&self.committer.to_env());
-        env_representation.push_str(&self.prover.to_env());
+
+        match mode {
+            TomlParserMode::Full => {
+                env_representation.push_str(&self.deployer.to_env());
+                env_representation.push_str(&self.eth.to_env());
+                env_representation.push_str(&self.engine.to_env());
+                env_representation.push_str(&self.watcher.to_env());
+                env_representation.push_str(&self.proposer.to_env());
+                env_representation.push_str(&self.committer.to_env());
+                env_representation.push_str(&self.prover.to_env());
+            }
+            TomlParserMode::ProverClient => {
+                env_representation.push_str(&self.prover.client.to_env());
+                // Remove starting new_line
+                env_representation = env_representation.trim_start().to_string();
+            }
+        }
+
         env_representation
     }
 }
@@ -271,9 +299,9 @@ pub fn write_to_env(config: String) -> Result<(), ConfigError> {
     Ok(())
 }
 
-pub fn read_toml(toml_path: String) -> Result<(), ConfigError> {
+pub fn read_toml(toml_path: String, mode: TomlParserMode) -> Result<(), ConfigError> {
     let file = std::fs::read_to_string(toml_path).map_err(|_| ConfigError::TomlFileNotFound)?;
     let config: L2Config = toml::from_str(&file).map_err(|_| ConfigError::TomlFormat)?;
-    write_to_env(config.to_env())?;
+    write_to_env(config.to_env(mode))?;
     Ok(())
 }
