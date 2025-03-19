@@ -93,7 +93,7 @@ down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
 	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH} down
 	docker compose -f docker-compose-l2.yaml down
 
-restart-local-l1: down-local-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
+restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
 
 rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX}
@@ -141,7 +141,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pkill -f ethrex || exit 0
 
-restart-l2: down-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
+restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
 init-prover: ## 🚀 Initializes the Prover
 	@if [ -z "$$T" ]; then \
