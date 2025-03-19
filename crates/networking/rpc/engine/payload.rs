@@ -4,6 +4,7 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
@@ -530,10 +531,11 @@ fn validate_ancestors(
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
     // Obtain the invalid ancestors from the syncer
-    let invalid_ancestors = match context.syncer.try_lock() {
-        Ok(syncer) => syncer.invalid_ancestors.clone(),
-        Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-    };
+    let invalid_ancestors = context
+        .storage
+        .invalid_ancestors
+        .try_lock()
+        .map_err(|err| RpcErr::Internal(format!("Internal error {}", err)))?;
 
     // Check if the block has already been invalidated
     if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
@@ -592,13 +594,6 @@ fn handle_new_payload_v3(
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
-    // Ignore incoming
-    // Check sync status
-    match context.sync_status()? {
-        SyncStatus::Active | SyncStatus::Pending => return Ok(PayloadStatus::syncing()),
-        SyncStatus::Inactive => {}
-    }
-
     // Validate block hash
     if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
         return Ok(PayloadStatus::invalid_with_err(&error_msg));
@@ -690,14 +685,27 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
     let add_block_to_invalid_ancestor = || {
-        let lock = context.syncer.try_lock();
+        let lock = context.storage.invalid_ancestors.try_lock();
         if let Ok(mut syncer) = lock {
-            syncer
-                .invalid_ancestors
-                .insert(block_hash, latest_valid_hash);
+            syncer.insert(block_hash, latest_valid_hash);
         };
     };
 
+    // NOTE: According to Hive Test "engine-cancun/Invalid NewPayload,
+    // ParentHash, Syncing=True, EmptyTxs=False, DynFeeTxs=False",
+    // even when a node is syncing, it should be able to respond if a
+    // newPayload is valid. The exception being if the node is
+    // performing a SnapSync; in that case, the node should reply with
+    // "Syncing". For reference, see:
+    // https://github.com/ethereum/go-ethereum/blob/e3853e910a53696c9e1199c85e86b8b6e3287476/eth/catalyst/api.go#L819
+    if *context
+        .sync_mode
+        .try_lock()
+        .map_err(|err| RpcErr::Internal(format!("Internal error {}", err)))?
+        == SyncMode::Snap
+    {
+        return Ok(PayloadStatus::syncing());
+    }
     match context.blockchain.add_block(block) {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state

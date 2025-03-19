@@ -16,12 +16,12 @@ use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
-use std::{array, collections::HashMap, sync::Arc};
+use std::{array, sync::Arc};
 use storage_healing::storage_healer;
 use tokio::{
     sync::{
         mpsc::{self, error::SendError},
-        Mutex,
+        Mutex as TokioMutex,
     },
     time::{Duration, Instant},
 };
@@ -65,7 +65,7 @@ lazy_static::lazy_static! {
     };
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SyncMode {
     Full,
     Snap,
@@ -75,20 +75,12 @@ pub enum SyncMode {
 /// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct SyncManager {
-    sync_mode: SyncMode,
+    sync_mode: Arc<TokioMutex<SyncMode>>,
     peers: PeerHandler,
     /// The last block number used as a pivot for snap-sync
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
-    /// when processing an invalid payload. To provide this, we must track invalid chains.
-    ///
-    /// We only store the last known valid head upon encountering a bad block,
-    /// rather than tracking every subsequent invalid block.
-    ///
-    /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
-    pub invalid_ancestors: HashMap<BlockHash, BlockHash>,
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
@@ -97,8 +89,8 @@ pub struct SyncManager {
 
 impl SyncManager {
     pub fn new(
-        peer_table: Arc<Mutex<KademliaTable>>,
-        sync_mode: SyncMode,
+        peer_table: Arc<TokioMutex<KademliaTable>>,
+        sync_mode: Arc<TokioMutex<SyncMode>>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
     ) -> Self {
@@ -106,7 +98,6 @@ impl SyncManager {
             sync_mode,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             cancel_token,
             blockchain,
@@ -116,12 +107,11 @@ impl SyncManager {
     /// Creates a dummy SyncManager for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
     pub fn dummy() -> Self {
-        let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
+        let dummy_peer_table = Arc::new(TokioMutex::new(KademliaTable::new(Default::default())));
         Self {
-            sync_mode: SyncMode::Full,
+            sync_mode: Arc::new(TokioMutex::new(SyncMode::Full)),
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
@@ -170,7 +160,7 @@ impl SyncManager {
         // Check if we have some blocks downloaded from a previous sync attempt
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
-        if matches!(self.sync_mode, SyncMode::Snap) {
+        if matches!(*self.sync_mode.lock().await, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
                 current_head = last_header;
@@ -187,7 +177,7 @@ impl SyncManager {
 
         loop {
             debug!("Requesting Block Headers from {search_head}");
-            let block_header_limit = match self.sync_mode {
+            let block_header_limit = match *self.sync_mode.lock().await {
                 SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
                 // In Full sync mode, request the same number of block bodies as headers,
                 // since they are processed together at the same rate.
@@ -260,20 +250,21 @@ impl SyncManager {
                 );
                 search_head = last_block_hash;
                 current_head = last_block_hash;
-                if self.sync_mode == SyncMode::Snap {
+                if *self.sync_mode.lock().await == SyncMode::Snap {
                     store.set_header_download_checkpoint(current_head)?;
                 }
             }
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
-            if self.sync_mode == SyncMode::Snap {
+            if *self.sync_mode.lock().await == SyncMode::Snap {
                 let latest_block_number = store.get_latest_block_number()?;
                 if last_block_header.number.saturating_sub(latest_block_number)
                     < MIN_FULL_BLOCKS as u64
                 {
                     // Too few blocks for a snap sync, switching to full sync
                     store.clear_snap_state()?;
-                    self.sync_mode = SyncMode::Full
+                    let mut sync_mode = self.sync_mode.lock().await;
+                    *sync_mode = SyncMode::Full;
                 }
             }
 
@@ -284,7 +275,7 @@ impl SyncManager {
             all_block_hashes.extend_from_slice(&block_hashes[..]);
             store.add_block_headers(block_hashes.clone(), block_headers)?;
 
-            if self.sync_mode == SyncMode::Full {
+            if *self.sync_mode.lock().await == SyncMode::Full {
                 self.download_and_run_blocks(&mut block_hashes, sync_head, store.clone())
                     .await?;
             }
@@ -293,7 +284,9 @@ impl SyncManager {
                 break;
             };
         }
-        match self.sync_mode {
+
+        let current_mode = self.sync_mode.lock().await.clone();
+        match current_mode {
             SyncMode::Snap => {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
                 // - Fetch each block's body and its receipt via eth p2p requests
@@ -335,8 +328,11 @@ impl SyncManager {
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
                 store.clear_snap_state()?;
-                // Next sync will be full-sync
-                self.sync_mode = SyncMode::Full;
+                {
+                    // Next sync will be full-sync
+                    let mut sync_mode = self.sync_mode.lock().await;
+                    *sync_mode = SyncMode::Full;
+                }
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
@@ -392,12 +388,24 @@ impl SyncManager {
                     let block = Block::new(header, body);
                     if let Err(error) = self.blockchain.add_block(&block) {
                         warn!("Failed to add block during FullSync: {error}");
-                        self.invalid_ancestors.insert(hash, last_valid_hash);
+                        store
+                            .invalid_ancestors
+                            .lock()
+                            .map_err(|err| {
+                                SyncError::Store(StoreError::InvalidAncestorsError(err.to_string()))
+                            })?
+                            .insert(hash, last_valid_hash);
 
                         // TODO(#2127): Just marking the failing ancestor and the sync head is enough
                         // to fix the Missing Ancestors hive test, we want to look at a more robust
                         // solution in the future if needed.
-                        self.invalid_ancestors.insert(sync_head, last_valid_hash);
+                        store
+                            .invalid_ancestors
+                            .lock()
+                            .map_err(|err| {
+                                SyncError::Store(StoreError::InvalidAncestorsError(err.to_string()))
+                            })?
+                            .insert(sync_head, last_valid_hash);
 
                         return Err(error.into());
                     }

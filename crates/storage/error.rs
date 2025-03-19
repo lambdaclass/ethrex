@@ -12,6 +12,10 @@ pub enum StoreError {
     #[cfg(feature = "libmdbx")]
     #[error("Libmdbx error: {0}")]
     LibmdbxError(anyhow::Error),
+    #[error("Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2")]
+    GenesisTwiceDifferentBlocks,
+    #[error("failed to obtain invalid_ancestors")]
+    InvalidAncestorsError(String),
     #[cfg(feature = "redb")]
     #[error("Redb Storage error: {0}")]
     RedbStorageError(#[from] StorageError),

@@ -450,6 +450,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             active_filters: filters_pointer.clone(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            sync_mode: Arc::new(TokioMutex::new(ethrex_p2p::sync::SyncMode::Full)),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -520,6 +521,7 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: active_filters.clone(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            sync_mode: Arc::new(TokioMutex::new(ethrex_p2p::sync::SyncMode::Full)),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -555,6 +557,7 @@ mod tests {
             active_filters: active_filters.clone(),
             jwt_secret: Default::default(),
             syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            sync_mode: Arc::new(TokioMutex::new(ethrex_p2p::sync::SyncMode::Full)),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
