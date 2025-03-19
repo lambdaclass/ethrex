@@ -11,6 +11,11 @@ pub enum TomlParserError {
     InvalidMode(String),
 }
 
+// Used for the binary,
+// throws an error without the allow
+// because the deployer.rs is importing the module
+// and doesn't use the main function.
+#[allow(dead_code)]
 fn main() -> Result<(), TomlParserError> {
     let args: Vec<String> = env::args().collect();
 
@@ -19,7 +24,7 @@ fn main() -> Result<(), TomlParserError> {
         return Err(TomlParserError::MissingArgument);
     }
 
-    let mode_str = &args[1];
+    let mode_str = &args.get(1).ok_or(TomlParserError::MissingArgument)?;
     let mode = match mode_str.to_lowercase().as_str() {
         "full" => TomlParserMode::Full,
         "prover" => TomlParserMode::ProverClient,
@@ -30,6 +35,7 @@ fn main() -> Result<(), TomlParserError> {
 
     parse_toml(mode)
 }
+
 pub fn parse_toml(mode: TomlParserMode) -> Result<(), TomlParserError> {
     #[allow(clippy::expect_fun_call, clippy::expect_used)]
     let toml_config = std::env::var("CONFIG_FILE").expect(
