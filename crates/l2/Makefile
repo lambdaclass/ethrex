@@ -180,6 +180,7 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 
 	# State reconstruction tests
 	rm -rf $$PWD/store
+	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
 	make init-l2 ethrex_L2_DEV_LIBMDBX=$$PWD/store 2>&1 >/dev/null &
