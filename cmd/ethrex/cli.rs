@@ -198,6 +198,7 @@ pub struct BasedOptions {
         long = "gateway.addr",
         default_value = "0.0.0.0",
         value_name = "GATEWAY_ADDRESS",
+        env = "GATEWAY_ADDRESS",
         help_heading = "Based options"
     )]
     pub gateway_addr: String,
@@ -205,6 +206,7 @@ pub struct BasedOptions {
         long = "gateway.eth_port",
         default_value = "8546",
         value_name = "GATEWAY_ETH_PORT",
+        env = "GATEWAY_ETH_PORT",
         help_heading = "Based options"
     )]
     pub gateway_eth_port: String,
@@ -212,6 +214,7 @@ pub struct BasedOptions {
         long = "gateway.auth_port",
         default_value = "8553",
         value_name = "GATEWAY_AUTH_PORT",
+        env = "GATEWAY_AUTH_PORT",
         help_heading = "Based options"
     )]
     pub gateway_auth_port: String,
@@ -219,9 +222,17 @@ pub struct BasedOptions {
         long = "gateway.jwtsecret",
         default_value = "jwt.hex",
         value_name = "GATEWAY_JWTSECRET_PATH",
+        env = "GATEWAY_JWTSECRET_PATH",
         help_heading = "Based options"
     )]
     pub gateway_jwtsecret: String,
+    #[arg(
+        long = "gateway.pubkey",
+        value_name = "GATEWAY_PUBKEY",
+        env = "GATEWAY_PUBKEY",
+        help_heading = "Based options"
+    )]
+    pub gateway_pubkey: String,
 }
 
 #[derive(ClapSubcommand)]

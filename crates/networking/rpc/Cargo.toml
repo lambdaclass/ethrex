@@ -26,6 +26,7 @@ rand.workspace = true
 tokio-util.workspace = true
 reqwest.workspace = true
 k256 = { version = "0.13.3", features = ["ecdh"] }
+libsecp256k1 = "0.7.1"
 sha3 = "0.10.8"
 sha2.workspace = true
 
@@ -37,6 +38,12 @@ keccak-hash.workspace = true
 
 cfg-if.workspace = true
 
+# Based
+ssz_types = { version = "0.10", optional = true}
+tree_hash = { version = "0.9.1", optional = true}
+tree_hash_derive = { version = "0.9.1", optional = true}
+strum_macros = { version = "0.24", optional = true }
+
 [dev-dependencies]
 hex-literal = "0.4.1"
 
@@ -44,5 +51,5 @@ hex-literal = "0.4.1"
 path = "./rpc.rs"
 
 [features]
-based = ["l2"]
+based = ["l2", "dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]
 l2 = []
