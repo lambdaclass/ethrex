@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742326818143,
+  "lastUpdate": 1742342955555,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -655,6 +655,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 228981095719,
             "range": "± 1067523608",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5264f986a96ca89cda8e9436195a008ee50940a9",
+          "message": "chore(l2): remove db when restarting (#2257)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n`make restart` should mean \"having initialized the network previously,\nstart over from scratch\".\n\nIn reality, this wasn't happening since both the L1 and L2 databases\nwere not being restarted.\n\n**Description**\n\nRestart L1 and L2 dbs when doing `make restart`.",
+          "timestamp": "2025-03-18T23:10:02Z",
+          "tree_id": "99d8dee59da3f19c983f3d05c22bfadcf5545dbd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5264f986a96ca89cda8e9436195a008ee50940a9"
+        },
+        "date": 1742342953217,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 229927631621,
+            "range": "± 1713766248",
             "unit": "ns/iter"
           }
         ]
