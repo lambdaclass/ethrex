@@ -44,8 +44,10 @@ pub(crate) async fn storage_healer(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
-    while incoming || !pending_paths.is_empty() {
-        if time_since_info.elapsed() > Duration::from_secs(200) {
+    // The storage healer is the last process to be finalized, so if we got an end signal then we can be sure that
+    // no other processes are active and we must return to enter the next cycle
+    while incoming {
+        if time_since_info.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
             info!(
                 "Storage Healer queue: {} paths",
                 pending_paths.iter().flat_map(|(_, a)| a).count()
