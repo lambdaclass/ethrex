@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742342955555,
+  "lastUpdate": 1742402194354,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -685,6 +685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 229927631621,
             "range": "± 1713766248",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0b51b10a9623159780641a0d1e35a4c4a788b952",
+          "message": "feat(l2): sponsored transaction endpoints (#2214)\n\n**Motivation**\n\nWe want to add a new rpc endpoint that sponsors eip-7702 and eip-1559\nthat calls to addresses that are delegated to whitelisted contracts.\n\n**Description**\n\n- Add new namespace `ethrex` to rpc crate\n- Add feature \"l2\" rpc crate\n- Add new flag to ethrex cmd to provide a file with addresses for\ncontracts we want to sponsor txs to\n- Add new endpoint `ethrex_SendTransaction` that sponsor txs that are\n  - EIP-7702 tx with access list delegating to a whitelisted contract\n- EIP-1559 tx that call to an address that is delegated (starts with\n0xef0100) and the address that it delegates to is whitelisted\n  - Create transactions (to=0x0) are not allowed\n\n**Resources**\nhttps://ithaca.xyz/updates/exp-0000\nhttps://github.com/ithacaxyz/odyssey\nhttps://eips.ethereum.org/EIPS/eip-7702\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-03-19T15:37:48Z",
+          "tree_id": "fd307c9d44d5b6801ac6200f63acb42ff9eb6c27",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0b51b10a9623159780641a0d1e35a4c4a788b952"
+        },
+        "date": 1742402191776,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 229899677477,
+            "range": "± 744277514",
             "unit": "ns/iter"
           }
         ]
