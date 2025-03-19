@@ -753,41 +753,47 @@ impl EthClient {
             ..Default::default()
         };
 
-        let mut wrapped_tx;
+        // let mut wrapped_tx;
 
         if let Some(overrides_gas_limit) = overrides.gas_limit {
             tx.gas_limit = overrides_gas_limit;
             Ok(tx)
         } else {
-            let mut retry = 0_u64;
-            while retry < bump_retries {
-                wrapped_tx = WrappedTransaction::EIP1559(tx.clone());
-                match self
-                    .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                    .await
-                {
-                    Ok(gas_limit) => {
-                        // Estimation succeeded.
-                        tx.gas_limit = gas_limit;
-                        return Ok(tx);
-                    }
-                    Err(e) => {
-                        let error = format!("{e}");
-                        if error.contains("replacement transaction underpriced") {
-                            warn!("Bumping gas while building: already known");
-                            retry += 1;
-                            self.bump_eip1559(&mut tx, 110);
-                            continue;
-                        }
-                        return Err(e);
-                    }
-                }
-            }
-            Err(EthClientError::EstimateGasPriceError(
-                EstimateGasPriceError::Custom(
-                    "Exceeded maximum retries while estimating gas.".to_string(),
-                ),
-            ))
+            let mut wrapped_tx = WrappedTransaction::EIP1559(tx.clone());
+            let gas_limit = self
+                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+                .await?;
+            tx.gas_limit = gas_limit;
+            Ok(tx)
+            //     let mut retry = 0_u64;
+            //     while retry < bump_retries {
+            //         wrapped_tx = WrappedTransaction::EIP1559(tx.clone());
+            //         match self
+            //             .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+            //             .await
+            //         {
+            //             Ok(gas_limit) => {
+            //                 // Estimation succeeded.
+            //                 tx.gas_limit = gas_limit;
+            //                 return Ok(tx);
+            //             }
+            //             Err(e) => {
+            //                 let error = format!("{e}");
+            //                 if error.contains("replacement transaction underpriced") {
+            //                     warn!("Bumping gas while building: already known");
+            //                     retry += 1;
+            //                     self.bump_eip1559(&mut tx, 110);
+            //                     continue;
+            //                 }
+            //                 return Err(e);
+            //             }
+            //         }
+            //     }
+            //     Err(EthClientError::EstimateGasPriceError(
+            //         EstimateGasPriceError::Custom(
+            //             "Exceeded maximum retries while estimating gas.".to_string(),
+            //         ),
+            //     ))
         }
     }
 
@@ -838,41 +844,49 @@ impl EthClient {
         };
 
         let mut wrapped_eip4844 = WrappedEIP4844Transaction { tx, blobs_bundle };
-        let mut wrapped_tx;
+        // let mut wrapped_tx;
+        // self.estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)?
         if let Some(overrides_gas_limit) = overrides.gas_limit {
             wrapped_eip4844.tx.gas = overrides_gas_limit;
             Ok(wrapped_eip4844)
         } else {
-            let mut retry = 0_u64;
-            while retry < bump_retries {
-                wrapped_tx = WrappedTransaction::EIP4844(wrapped_eip4844.clone());
+            let mut wrapped_tx = WrappedTransaction::EIP4844(wrapped_eip4844.clone());
+            let gas_limit = self
+                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+                .await?;
+            wrapped_eip4844.tx.gas = gas_limit;
+            Ok(wrapped_eip4844)
 
-                match self
-                    .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                    .await
-                {
-                    Ok(gas_limit) => {
-                        // Estimation succeeded.
-                        wrapped_eip4844.tx.gas = gas_limit;
-                        return Ok(wrapped_eip4844);
-                    }
-                    Err(e) => {
-                        let error = format!("{e}");
-                        if error.contains("already known") {
-                            warn!("Bumping gas while building: already known");
-                            retry += 1;
-                            self.bump_eip4844(&mut wrapped_eip4844, 110);
-                            continue;
-                        }
-                        return Err(e);
-                    }
-                }
-            }
-            Err(EthClientError::EstimateGasPriceError(
-                EstimateGasPriceError::Custom(
-                    "Exceeded maximum retries while estimating gas.".to_string(),
-                ),
-            ))
+            // let mut retry = 0_u64;
+            // while retry < bump_retries {
+            //     wrapped_tx = WrappedTransaction::EIP4844(wrapped_eip4844.clone());
+
+            //     match self
+            //         .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+            //         .await
+            //     {
+            //         Ok(gas_limit) => {
+            //             // Estimation succeeded.
+            //             wrapped_eip4844.tx.gas = gas_limit;
+            //             return Ok(wrapped_eip4844);
+            //         }
+            //         Err(e) => {
+            //             let error = format!("{e}");
+            //             if error.contains("already known") {
+            //                 warn!("Bumping gas while building: already known");
+            //                 retry += 1;
+            //                 self.bump_eip4844(&mut wrapped_eip4844, 110);
+            //                 continue;
+            //             }
+            //             return Err(e);
+            //         }
+            //     }
+            // }
+            // Err(EthClientError::EstimateGasPriceError(
+            //     EstimateGasPriceError::Custom(
+            //         "Exceeded maximum retries while estimating gas.".to_string(),
+            //     ),
+            // ))
         }
     }
 
@@ -918,41 +932,47 @@ impl EthClient {
             ..Default::default()
         };
 
-        let mut wrapped_tx;
+        // let mut wrapped_tx;
 
         if let Some(overrides_gas_limit) = overrides.gas_limit {
             tx.gas_limit = overrides_gas_limit;
             Ok(tx)
         } else {
-            let mut retry = 0_u64;
-            while retry < bump_retries {
-                wrapped_tx = WrappedTransaction::L2(tx.clone());
-                match self
-                    .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                    .await
-                {
-                    Ok(gas_limit) => {
-                        // Estimation succeeded.
-                        tx.gas_limit = gas_limit;
-                        return Ok(tx);
-                    }
-                    Err(e) => {
-                        let error = format!("{e}");
-                        if error.contains("already known") {
-                            warn!("Bumping gas while building: already known");
-                            retry += 1;
-                            self.bump_privileged_l2(&mut tx, 110);
-                            continue;
-                        }
-                        return Err(e);
-                    }
-                }
-            }
-            Err(EthClientError::EstimateGasPriceError(
-                EstimateGasPriceError::Custom(
-                    "Exceeded maximum retries while estimating gas.".to_string(),
-                ),
-            ))
+            let mut wrapped_tx = WrappedTransaction::L2(tx.clone());
+            let gas_limit = self
+                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+                .await?;
+            tx.gas_limit = gas_limit;
+            Ok(tx)
+            // let mut retry = 0_u64;
+            // while retry < bump_retries {
+            //     wrapped_tx = WrappedTransaction::L2(tx.clone());
+            //     match self
+            //         .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+            //         .await
+            //     {
+            //         Ok(gas_limit) => {
+            //             // Estimation succeeded.
+            //             tx.gas_limit = gas_limit;
+            //             return Ok(tx);
+            //         }
+            //         Err(e) => {
+            //             let error = format!("{e}");
+            //             if error.contains("already known") {
+            //                 warn!("Bumping gas while building: already known");
+            //                 retry += 1;
+            //                 self.bump_privileged_l2(&mut tx, 110);
+            //                 continue;
+            //             }
+            //             return Err(e);
+            //         }
+            //     }
+            // }
+            // Err(EthClientError::EstimateGasPriceError(
+            //     EstimateGasPriceError::Custom(
+            //         "Exceeded maximum retries while estimating gas.".to_string(),
+            //     ),
+            // ))
         }
     }
 
