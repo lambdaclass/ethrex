@@ -9,7 +9,7 @@ that compares against [citahub's cita_trie implementation](https://github.com/ci
 To run it, you'll need rust installed of course, and you 
 can run it with:
 ```bash
-```
+make bench
 Benches are in the `benches` folder.
 
 ### Useful Links
