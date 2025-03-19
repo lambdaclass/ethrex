@@ -16,7 +16,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{debug, info};
 
 use crate::{
-    peer_handler::{PeerHandler, RequestStorageRangesMetrics},
+    peer_handler::{PeerHandler, RequestRangesMetrics},
     sync::{
         trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, BATCH_SIZE, MAX_CHANNEL_MESSAGES,
         MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES,
@@ -25,7 +25,7 @@ use crate::{
 
 use super::SyncError;
 struct StorageFetcherMetrics {
-    request_range_metrics: RequestStorageRangesMetrics,
+    request_range_metrics: RequestRangesMetrics,
     full_time: u128,
     write_snapshot: u128,
 }
@@ -33,37 +33,20 @@ struct StorageFetcherMetrics {
 impl StorageFetcherMetrics {
     fn show(&self) {
         let write_snapshot_percentage = (100 * self.write_snapshot) / self.full_time;
-        let request_range_percentage = 100 - write_snapshot_percentage;
-        let find_peer_percentage =
-            (100 * self.request_range_metrics.find_peer) / self.request_range_metrics.full_time;
-        let lock_peer_percentage =
-            (100 * self.request_range_metrics.lock_peer) / self.request_range_metrics.full_time;
-        let send_req_await_res_percentage = (100 * self.request_range_metrics.send_req_await_res)
-            / self.request_range_metrics.full_time;
-        let validate_res_percentage =
-            (100 * self.request_range_metrics.validate_res) / self.request_range_metrics.full_time;
-        let verify_range_cummulative_percentage = (100
-            * self.request_range_metrics.verify_range_cummulative)
-            / self.request_range_metrics.full_time;
-        info!("Fetched storage batch of len {} in {} ms.
+        let request_range_percentage =
+            (100 * self.request_range_metrics.full_time) / self.full_time;
+        info!(
+            "Fetched storage batch of len {} in {} ms.
             Time Breakdown:
             {request_range_percentage}% Requesting Ranges ({}ms)
             {write_snapshot_percentage}% Writing Snapshot ({}ms)
             Request Range time breakdown:
-            {find_peer_percentage}% Finding a Peer ({}ms)
-            {lock_peer_percentage}% Locking Peer Receiver (Waiting for other requests to free it) ({}ms)
-            {send_req_await_res_percentage}% Sending Request and awaiting Response ({}ms)
-            {validate_res_percentage}% Validating Response ({}ms)
-            Of which {verify_range_cummulative_percentage}% was spent verifying ranges ({}ms) with the longest call taking ({}ms)",
-        self.request_range_metrics.ranges, self.full_time,
-        self.request_range_metrics.full_time,
-        self.write_snapshot,
-        self.request_range_metrics.find_peer,
-        self.request_range_metrics.lock_peer,
-        self.request_range_metrics.send_req_await_res,
-        self.request_range_metrics.validate_res,
-        self.request_range_metrics.verify_range_cummulative,
-        self.request_range_metrics.verify_range_max
+            {}",
+            self.request_range_metrics.ranges,
+            self.full_time,
+            self.request_range_metrics.full_time,
+            self.write_snapshot,
+            self.request_range_metrics.breakdown()
         );
     }
 }

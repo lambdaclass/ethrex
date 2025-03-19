@@ -20,7 +20,7 @@ use tokio::{
 use tracing::{debug, info};
 
 use crate::{
-    peer_handler::PeerHandler,
+    peer_handler::{PeerHandler, RequestRangesMetrics},
     sync::{
         bytecode_fetcher, seconds_to_readable, storage_fetcher::storage_fetcher,
         MAX_CHANNEL_MESSAGES, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
@@ -28,6 +28,41 @@ use crate::{
 };
 
 use super::{SyncError, SHOW_PROGRESS_INTERVAL_DURATION};
+
+struct StateSyncMetrics {
+    request_range_metrics: RequestRangesMetrics,
+    full_time: u128,
+    progress_tracking: u128,
+    update_bytecodes_storages_queue: u128,
+    write_snapshot: u128,
+    accounts_len: usize,
+}
+
+impl StateSyncMetrics {
+    fn show(&self) {
+        let write_snapshot_percentage = (100 * self.write_snapshot) / self.full_time;
+        let request_range_percentage =
+            (100 * self.request_range_metrics.full_time) / self.full_time;
+        let progress_tracking_percentage = (100 * self.progress_tracking) / self.full_time;
+        let update_bytecodes_storages_queue_percentage =
+            (100 * self.update_bytecodes_storages_queue) / self.full_time;
+        info!("Fetched account batch of len {} in {} ms.
+            Time Breakdown:
+            {progress_tracking_percentage}% Tracking Progress ({}ms)
+            {request_range_percentage}% Requesting Ranges ({}ms)
+            {update_bytecodes_storages_queue_percentage}% Updating Bytecodes & Storage Fetchers ({}ms)
+            {write_snapshot_percentage}% Writing Snapshot ({}ms)
+            Request Range time breakdown:
+            {}",
+        self.accounts_len, self.full_time,
+        self.progress_tracking,
+        self.request_range_metrics.full_time,
+        self.update_bytecodes_storages_queue,
+        self.write_snapshot,
+        self.request_range_metrics.breakdown()
+        );
+    }
+}
 
 /// Downloads the leaf values of a Block's state trie by requesting snap state from peers
 /// Also downloads the storage tries & bytecodes for each downloaded account
@@ -129,14 +164,17 @@ async fn state_sync_segment(
     // If we reached the maximum amount of retries then it means the state we are requesting is probably old and no longer available
     let mut stale = false;
     loop {
+        let full = Instant::now();
+        let progress_tracking_time = Instant::now();
         // Update sync progress (this task is not vital so we can detach it)
         tokio::task::spawn(StateSyncProgress::update_key(
             state_sync_progress.clone(),
             segment_number,
             start_account_hash,
         ));
+        let progress_tracking = progress_tracking_time.elapsed().as_millis();
         info!("[Segment {segment_number}]: Requesting Account Range for state root {state_root}, starting hash: {start_account_hash}");
-        if let Some((account_hashes, accounts, should_continue)) = peers
+        if let Some((account_hashes, accounts, should_continue, request_range_metrics)) = peers
             .request_account_range(
                 state_root,
                 start_account_hash,
@@ -148,8 +186,10 @@ async fn state_sync_segment(
                 "[Segment {segment_number}]: Received {} account ranges",
                 accounts.len()
             );
+            let accounts_len = accounts.len();
             // Update starting hash for next batch
             start_account_hash = *account_hashes.last().unwrap();
+            let update_bytecodes_storages_queue_time = Instant::now();
             // Fetch Account Storage & Bytecode
             let mut code_hashes = vec![];
             let mut account_hashes_and_storage_roots = vec![];
@@ -179,8 +219,22 @@ async fn state_sync_segment(
                     .send(account_hashes_and_storage_roots)
                     .await?;
             }
+            let update_bytecodes_storages_queue =
+                update_bytecodes_storages_queue_time.elapsed().as_millis();
+            let write_snapshot_time = Instant::now();
             // Update Snapshot
             store.write_snapshot_account_batch(account_hashes, accounts)?;
+            let write_snapshot = write_snapshot_time.elapsed().as_millis();
+            let full_time = full.elapsed().as_millis();
+            StateSyncMetrics {
+                request_range_metrics,
+                full_time,
+                progress_tracking,
+                update_bytecodes_storages_queue,
+                write_snapshot,
+                accounts_len,
+            }
+            .show();
             // As we are downloading the state trie in segments the `should_continue` flag will mean that there
             // are more accounts to be fetched but these accounts may belong to the next segment
             if !should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number] {

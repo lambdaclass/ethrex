@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, sync::Arc, time::{Duration, Instant}};
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -43,7 +47,7 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 1024;
 pub const MAX_BLOCK_HEADERS_TO_REQUEST: usize = 1024;
 
 // Metrics in microseconds
-pub struct RequestStorageRangesMetrics {
+pub struct RequestRangesMetrics {
     pub full_time: u128,
     pub find_peer: u128,
     pub lock_peer: u128,
@@ -52,6 +56,32 @@ pub struct RequestStorageRangesMetrics {
     pub verify_range_cummulative: u128,
     pub verify_range_max: u128,
     pub ranges: usize,
+}
+
+impl RequestRangesMetrics {
+    pub fn breakdown(&self) -> String {
+        let find_peer_percentage = (100 * self.find_peer) / self.full_time;
+        let lock_peer_percentage = (100 * self.lock_peer) / self.full_time;
+        let send_req_await_res_percentage = (100 * self.send_req_await_res) / self.full_time;
+        let validate_res_percentage = (100 * self.validate_res) / self.full_time;
+        let verify_range_cummulative_percentage =
+            (100 * self.verify_range_cummulative) / self.full_time;
+        format!("
+            Request Range Time Breakdown ({} range(s)):
+            {find_peer_percentage}% Finding a Peer ({}ms)
+            {lock_peer_percentage}% Locking Peer Receiver (Waiting for other requests to free it) ({}ms)
+            {send_req_await_res_percentage}% Sending Request and awaiting Response ({}ms)
+            {validate_res_percentage}% Validating Response ({}ms)
+            Of which {verify_range_cummulative_percentage}% was spent verifying ranges ({}ms) with the longest call taking ({}ms)",
+        self.ranges,
+        self.find_peer,
+        self.lock_peer,
+        self.send_req_await_res,
+        self.validate_res,
+        self.verify_range_cummulative,
+        self.verify_range_max
+        )
+    }
 }
 
 /// An abstraction over the [KademliaTable] containing logic to make requests to peers
@@ -229,7 +259,8 @@ impl PeerHandler {
         state_root: H256,
         start: H256,
         limit: H256,
-    ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
+    ) -> Option<(Vec<H256>, Vec<AccountState>, bool, RequestRangesMetrics)> {
+        let full = Instant::now();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetAccountRange(GetAccountRange {
@@ -239,11 +270,16 @@ impl PeerHandler {
                 limit_hash: limit,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
+            let find_peer_time = Instant::now();
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let peer_response = {
+            let find_peer = find_peer_time.elapsed().as_millis();
+            let (peer_response, lock_peer, send_req_await_res) = {
+                let lock_peer_time = Instant::now();
                 let mut receiver = peer.receiver.lock().await;
+                let lock_peer = lock_peer_time.elapsed().as_millis();
+                let send_req_await_res_time = Instant::now();
                 peer.sender.send(request).await.ok()?;
-                tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+                let res = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                     loop {
                         match receiver.recv().await {
                             Some(RLPxMessage::AccountRange(AccountRange {
@@ -259,10 +295,12 @@ impl PeerHandler {
                 })
                 .await
                 .ok()
-                .flatten()
+                .flatten();
+                let send_req_await_res = send_req_await_res_time.elapsed().as_millis();
+                (res, lock_peer, send_req_await_res)
             };
-            if let Some((accounts, proof)) = peer_response
-            {
+            if let Some((accounts, proof)) = peer_response {
+                let validate_res_time = Instant::now();
                 // Unzip & validate response
                 let proof = encodable_to_proof(&proof);
                 let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
@@ -273,14 +311,29 @@ impl PeerHandler {
                     .iter()
                     .map(|acc| acc.encode_to_vec())
                     .collect::<Vec<_>>();
-                if let Ok(should_continue) = verify_range(
+                let call_verify_range = Instant::now();
+                let verify_res = verify_range(
                     state_root,
                     &start,
                     &account_hashes,
                     &encoded_accounts,
                     &proof,
-                ) {
-                    return Some((account_hashes, accounts, should_continue));
+                );
+                let verify_range = call_verify_range.elapsed().as_millis();
+                let validate_res = validate_res_time.elapsed().as_millis();
+                let full_time = full.elapsed().as_millis();
+                let metrics = RequestRangesMetrics {
+                    full_time,
+                    find_peer,
+                    lock_peer,
+                    send_req_await_res,
+                    validate_res,
+                    verify_range_cummulative: verify_range,
+                    verify_range_max: verify_range,
+                    ranges: 1,
+                };
+                if let Ok(should_continue) = verify_res {
+                    return Some((account_hashes, accounts, should_continue, metrics));
                 }
             }
         }
@@ -341,12 +394,7 @@ impl PeerHandler {
         mut storage_roots: Vec<H256>,
         account_hashes: Vec<H256>,
         start: H256,
-    ) -> Option<(
-        Vec<Vec<H256>>,
-        Vec<Vec<U256>>,
-        bool,
-        RequestStorageRangesMetrics,
-    )> {
+    ) -> Option<(Vec<Vec<H256>>, Vec<Vec<U256>>, bool, RequestRangesMetrics)> {
         let full = Instant::now();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
@@ -444,7 +492,7 @@ impl PeerHandler {
                 }
                 let validate_res = validate_res_time.elapsed().as_millis();
                 let full_time = full.elapsed().as_millis();
-                let metrics = RequestStorageRangesMetrics {
+                let metrics = RequestRangesMetrics {
                     full_time,
                     find_peer,
                     lock_peer,

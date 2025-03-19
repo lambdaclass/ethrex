@@ -13,7 +13,10 @@ use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
 use tokio::{sync::mpsc::Receiver, time::Instant};
 use tracing::{debug, info};
 
-use crate::{peer_handler::PeerHandler, sync::{node_missing_children, SHOW_PROGRESS_INTERVAL_DURATION}};
+use crate::{
+    peer_handler::PeerHandler,
+    sync::{node_missing_children, SHOW_PROGRESS_INTERVAL_DURATION},
+};
 
 use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
 
@@ -33,14 +36,20 @@ pub(crate) async fn storage_healer(
         .into_iter()
         .collect();
     let mut time_since_info = Instant::now();
-    info!("Spawned Storage Healer, backlog: {} storage paths", pending_paths.iter().flat_map(|(_, a)| a).count());
+    info!(
+        "Spawned Storage Healer, backlog: {} storage paths",
+        pending_paths.iter().flat_map(|(_, a)| a).count()
+    );
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
     while incoming || !pending_paths.is_empty() {
         if time_since_info.elapsed() > Duration::from_secs(200) {
-            info!("Storage Healer queue: {} paths", pending_paths.iter().flat_map(|(_, a)| a).count());
+            info!(
+                "Storage Healer queue: {} paths",
+                pending_paths.iter().flat_map(|(_, a)| a).count()
+            );
             time_since_info = Instant::now();
         }
         // If we have enough pending storages to fill a batch
@@ -78,7 +87,10 @@ pub(crate) async fn storage_healer(
             // Fetch incoming requests
             let mut msg_buffer = vec![];
             if receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await != 0 {
-                info!("Received {} storage heal requests", msg_buffer.iter().flatten().count());
+                info!(
+                    "Received {} storage heal requests",
+                    msg_buffer.iter().flatten().count()
+                );
                 for account_hashes in msg_buffer {
                     if !account_hashes.is_empty() {
                         pending_paths.extend(
@@ -99,7 +111,10 @@ pub(crate) async fn storage_healer(
     }
     let healing_complete = pending_paths.is_empty();
     // Store pending paths
-    info!("Concluding storage healer, pending paths: {}", pending_paths.len());
+    info!(
+        "Concluding storage healer, pending paths: {}",
+        pending_paths.len()
+    );
     store.set_storage_heal_paths(pending_paths.into_iter().collect())?;
     Ok(healing_complete)
 }

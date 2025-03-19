@@ -165,7 +165,11 @@ impl SyncManager {
     ) -> Result<(), SyncError> {
         // DEBUG CODE PLEASE REMOVE
         // Request sync_head just to show it
-        if let Some(sync_block) =  self.peers.request_block_headers(sync_head, BlockRequestOrder::NewToOld, 1).await {
+        if let Some(sync_block) = self
+            .peers
+            .request_block_headers(sync_head, BlockRequestOrder::NewToOld, 1)
+            .await
+        {
             info!("sync head block number: {}", sync_block[0].number);
         } else {
             info!("sync head not found in peers");
