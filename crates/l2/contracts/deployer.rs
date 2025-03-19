@@ -516,7 +516,6 @@ async fn create2_deploy(
             deployer,
             calldata.into(),
             Overrides::default(),
-            10,
         )
         .await?;
 
@@ -648,7 +647,6 @@ async fn initialize_on_chain_proposer(
             deployer,
             on_chain_proposer_initialization_calldata.into(),
             Overrides::default(),
-            10,
         )
         .await?;
     let initialize_tx_hash = eth_client
@@ -676,7 +674,6 @@ async fn initialize_bridge(
             deployer,
             bridge_initialization_calldata.into(),
             Overrides::default(),
-            10,
         )
         .await
         .map_err(DeployError::from)?;
@@ -746,7 +743,7 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
         };
 
         let build = eth_client
-            .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides, 1)
+            .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides)
             .await?;
 
         match eth_client

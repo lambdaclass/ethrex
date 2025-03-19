@@ -272,7 +272,6 @@ impl L1Watcher {
                         max_priority_fee_per_gas: Some(gas_price),
                         ..Default::default()
                     },
-                    10,
                 )
                 .await?;
             mint_transaction.sign_inplace(&self.l2_proposer_pk);

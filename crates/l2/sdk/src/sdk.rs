@@ -91,7 +91,6 @@ pub async fn transfer(
                 value: Some(amount),
                 ..Default::default()
             },
-            10,
         )
         .await?;
     client.send_eip1559_transaction(&tx, &private_key).await
@@ -138,7 +137,6 @@ pub async fn withdraw(
                 gas_limit: Some(21000 * 2),
                 ..Default::default()
             },
-            10,
         )
         .await?;
 
@@ -208,7 +206,6 @@ pub async fn claim_withdraw(
                 from: Some(from),
                 ..Default::default()
             },
-            10,
         )
         .await?;
 
