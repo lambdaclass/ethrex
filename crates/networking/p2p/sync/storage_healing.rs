@@ -47,19 +47,24 @@ pub(crate) async fn storage_healer(
     // The storage healer is the last process to be finalized, so if we got an end signal then we can be sure that
     // no other processes are active and we must return to enter the next cycle
     while incoming {
-        if time_since_info.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
-            info!(
-                "Storage Healer queue: {} paths",
-                pending_paths.iter().flat_map(|(_, a)| a).count()
-            );
-            time_since_info = Instant::now();
-        }
+        // if time_since_info.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
+        //     info!(
+        //         "Storage Healer queue: {} paths",
+        //         pending_paths.iter().flat_map(|(_, a)| a).count()
+        //     );
+        //     time_since_info = Instant::now();
+        // }
+        info!(
+            "[Looping] Storage Healer queue: {} paths",
+            pending_paths.iter().flat_map(|(_, a)| a).count()
+        );
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
         let mut storage_tasks = tokio::task::JoinSet::new();
         let mut task_num = 0;
         while !stale && !pending_paths.is_empty() && task_num < MAX_PARALLEL_FETCHES {
+            info!("Spawning storage trienode request {task_num}");
             let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
             // Fill batch
             let mut batch_size = 0;
@@ -85,7 +90,9 @@ pub(crate) async fn storage_healer(
 
         // Read incoming requests that are already awaiting on the receiver
         // Don't wait for requests unless we have no pending paths left
+        info!("Incoming: {incoming}, receiver len: {}", receiver.len());
         if incoming && (!receiver.is_empty() || pending_paths.is_empty()) {
+            info!("Listening for incoming storage heal requests");
             // Fetch incoming requests
             let mut msg_buffer = vec![];
             if receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await != 0 {
@@ -102,11 +109,13 @@ pub(crate) async fn storage_healer(
                         );
                     } else {
                         // Empty message signaling no more bytecodes to sync
+                        info!("Storage Healer received end signal, bye bye");
                         incoming = false
                     }
                 }
             } else {
                 // Disconnect
+                info!("Storage Healer received end signal, bye bye");
                 incoming = false
             }
         }
