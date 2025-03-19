@@ -163,8 +163,9 @@ pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
     limit
 }
 
-pub struct PayloadBuildContext<'a> {
-    pub payload: &'a mut Block,
+#[derive(Clone)]
+pub struct PayloadBuildContext {
+    pub payload: Block,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
     pub requests: Vec<EncodedRequests>,
@@ -177,12 +178,8 @@ pub struct PayloadBuildContext<'a> {
     pub account_updates: Vec<AccountUpdate>,
 }
 
-impl<'a> PayloadBuildContext<'a> {
-    fn new(
-        payload: &'a mut Block,
-        evm_engine: EvmEngine,
-        storage: &Store,
-    ) -> Result<Self, EvmError> {
+impl PayloadBuildContext {
+    fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
         let config = storage.get_chain_config()?;
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
@@ -209,7 +206,7 @@ impl<'a> PayloadBuildContext<'a> {
     }
 }
 
-impl<'a> PayloadBuildContext<'a> {
+impl PayloadBuildContext {
     fn parent_hash(&self) -> BlockHash {
         self.payload.header.parent_hash
     }
@@ -235,7 +232,7 @@ pub struct PayloadBuildResult {
     pub account_updates: Vec<AccountUpdate>,
 }
 
-impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
+impl From<PayloadBuildContext> for PayloadBuildResult {
     fn from(value: PayloadBuildContext) -> Self {
         let PayloadBuildContext {
             blobs_bundle,
@@ -258,7 +255,7 @@ impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
 
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub fn build_payload(&self, payload: &mut Block) -> Result<PayloadBuildResult, ChainError> {
+    pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -349,8 +346,8 @@ impl Blockchain {
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-        let mut withdrawals_size: usize = 16;
-        let mut deposits_size: usize = 16;
+        // Two bytes for the len
+        let (mut withdrawals_size, mut deposits_size): (usize, usize) = (16, 16);
 
         let chain_config = context.chain_config()?;
         let max_blob_number_per_block = chain_config
@@ -417,16 +414,18 @@ impl Blockchain {
             // or we want it before the return?
             metrics!(METRICS_TX.inc_tx());
 
+            let previous_context = context.clone();
+
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
-                    if let Err(_) = Self::check_state_diff_size(
+                    if Self::check_state_diff_size(
                         &mut withdrawals_size,
                         &mut deposits_size,
                         head_tx.clone().into(),
                         &receipt,
-                        &context.account_updates,
-                    ) {
+                        &context,
+                    )? {
                         debug!(
                             "Skipping transaction: {}, doesn't feet in blob_size",
                             head_tx.tx.compute_hash()
@@ -477,19 +476,19 @@ impl Blockchain {
         deposits_size: &mut usize,
         tx: Transaction,
         receipt: &Receipt,
-        account_updates: &[AccountUpdate],
-    ) -> Result<(), ()> {
+        context: &PayloadBuildContext,
+    ) -> Result<bool, StoreError> {
         if Self::is_withdrawal_l2(&tx, receipt) {
             *withdrawals_size += Self::L2_WITHDRAWAL_SIZE;
         }
         if Self::is_deposit_l2(&tx) {
             *deposits_size += Self::L2_DEPOSIT_SIZE;
         }
-        let modified_accounts_size = Self::calc_modified_accounts_size(account_updates);
+        let modified_accounts_size = Self::calc_modified_accounts_size(context)?;
         if *withdrawals_size + *deposits_size + modified_accounts_size > BYTES_PER_BLOB * 31 / 32 {
-            return Err(());
+            return Ok(false);
         }
-        Ok(())
+        Ok(true)
     }
 
     fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
@@ -517,8 +516,52 @@ impl Blockchain {
         }
     }
 
-    fn calc_modified_accounts_size(account_updates: &[AccountUpdate]) -> usize {
-        0
+    fn calc_modified_accounts_size(context: &PayloadBuildContext) -> Result<usize, StoreError> {
+        // Starts from modified_accounts_len(u16)
+        let mut modified_accounts_size: usize = 16;
+        for account_update in &context.account_updates {
+            // r#type(u8) + address(H160)
+            modified_accounts_size += 8 + 160;
+            if account_update.info.is_some() {
+                modified_accounts_size += 256; // new_balance(U256)
+            }
+            if Self::has_new_nonce(account_update, context)? {
+                modified_accounts_size += 16; // nonce_diff(u16)
+            }
+            if !account_update.added_storage.is_empty() {
+                modified_accounts_size += 16; // stoarge_len(u16)
+                for _storage in account_update.added_storage.iter() {
+                    modified_accounts_size += 256; // key(H256)
+                    modified_accounts_size += 256; // value(U256)
+                }
+            }
+            if let Some(bytecode) = &account_update.code {
+                modified_accounts_size += 16; // bytecode_len(u16)
+                modified_accounts_size += bytecode.len(); // bytecode(Bytes)
+            }
+        }
+        Ok(modified_accounts_size)
+    }
+
+    fn has_new_nonce(
+        account_update: &AccountUpdate,
+        context: &PayloadBuildContext,
+    ) -> Result<bool, StoreError> {
+        let prev_nonce = match context
+            .store
+            .get_account_info(context.block_number() - 1, account_update.address)
+            .map_err(StoreError::from)?
+        {
+            Some(acc) => acc.nonce,
+            None => 0,
+        };
+
+        let new_nonce = if let Some(info) = &account_update.info {
+            info.nonce
+        } else {
+            prev_nonce
+        };
+        Ok(prev_nonce != new_nonce)
     }
 
     /// Executes the transaction, updates gas-related context values & return the receipt

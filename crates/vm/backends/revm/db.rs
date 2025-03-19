@@ -23,6 +23,26 @@ pub enum EvmState {
     Execution(Box<revm::db::CacheDB<ExecutionDB>>),
 }
 
+impl Clone for EvmState {
+    fn clone(&self) -> Self {
+        match self {
+            EvmState::Store(state) => EvmState::Store(revm::db::State::<StoreWrapper> {
+                cache: state.cache.clone(),
+                database: state.database.clone(),
+                transition_state: state.transition_state.clone(),
+                bundle_state: state.bundle_state.clone(),
+                use_preloaded_bundle: state.use_preloaded_bundle.clone(),
+                block_hashes: state.block_hashes.clone(),
+            }),
+            EvmState::Execution(execution) => {
+                EvmState::Execution(Box::new(Into::<revm::db::CacheDB<ExecutionDB>>::into(
+                    *execution.clone(),
+                )))
+            }
+        }
+    }
+}
+
 impl EvmState {
     /// Get a reference to inner `Store` database
     pub fn database(&self) -> Option<&Store> {
