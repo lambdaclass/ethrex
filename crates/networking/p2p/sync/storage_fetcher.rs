@@ -276,7 +276,7 @@ pub(crate) async fn large_storage_fetcher(
             let mut storage_tasks = tokio::task::JoinSet::new();
             for batch in pending_storage.drain(..min(pending_storage.len(), MAX_PARALLEL_FETCHES)) {
                 storage_tasks.spawn(fetch_large_storage_batch(
-                    *batch,
+                    batch,
                     state_root,
                     peers.clone(),
                     store.clone(),
