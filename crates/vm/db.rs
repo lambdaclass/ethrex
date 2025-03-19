@@ -103,7 +103,7 @@ impl ExecutionDB {
     }
 
     /// Execute a block and cache all state changes, returns the cache
-    pub fn pre_execute_new(
+    pub fn pre_execute(
         block: &Block,
         store_wrapper: &StoreWrapper,
     ) -> Result<(Vec<AccountUpdate>, StoreWrapper), ExecutionDBError> {
@@ -157,8 +157,8 @@ impl ToExecDB for StoreWrapper {
         let chain_config = self.store.get_chain_config()?;
 
         // pre-execute and get all state changes
-        let (execution_updates, store_wrapper) = ExecutionDB::pre_execute_new(block, self)
-            .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
+        let (execution_updates, store_wrapper) =
+            ExecutionDB::pre_execute(block, self).map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
 
         // index read and touched account addresses and storage keys
         let index = execution_updates.iter().map(|update| {
