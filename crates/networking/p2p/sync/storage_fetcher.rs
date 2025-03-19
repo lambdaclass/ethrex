@@ -8,6 +8,8 @@
 //! This method is called while fetching a storage batch and can stall the fetching of other smaller storages.
 //! Large storage handling could be moved to its own separate queue process so that it runs parallel to regular storage fetching
 
+use std::cmp::min;
+
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -23,6 +25,13 @@ use crate::{
 
 use super::SyncError;
 
+/// An in-progress large storage trie request
+struct LargeStorageRequest {
+    account_hash: H256,
+    storage_root: H256,
+    last_key: H256,
+}
+
 /// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their storages in batches
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
 /// Upon finsih, remaining storages will be sent to the storage healer
@@ -36,7 +45,7 @@ pub(crate) async fn storage_fetcher(
 ) -> Result<(), SyncError> {
     // Spawn large storage fetcher
     let (large_storage_sender, large_storage_receiver) =
-        channel::<Vec<(H256, H256, H256)>>(MAX_CHANNEL_MESSAGES);
+        channel::<Vec<LargeStorageRequest>>(MAX_CHANNEL_MESSAGES);
     let large_storage_fetcher_handler = tokio::spawn(large_storage_fetcher(
         large_storage_receiver,
         peers.clone(),
@@ -122,7 +131,7 @@ async fn fetch_storage_batch(
     state_root: H256,
     peers: PeerHandler,
     store: Store,
-    large_storage_sender: Sender<Vec<(H256, H256, H256)>>,
+    large_storage_sender: Sender<Vec<LargeStorageRequest>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
     // A list of all completely fetched storages to send to the rebuilder
@@ -152,7 +161,11 @@ async fn fetch_storage_batch(
                 store.write_snapshot_storage_batch(account_hash, last_keys, last_values)?;
                 // Delegate the rest of the trie to the large trie fetcher
                 large_storage_sender
-                    .send(vec![(account_hash, storage_root, last_key)])
+                    .send(vec![LargeStorageRequest {
+                        account_hash,
+                        storage_root,
+                        last_key,
+                    }])
                     .await?;
                 return Ok((batch, false));
             }
@@ -179,8 +192,8 @@ async fn fetch_storage_batch(
 /// Waits for incoming account hashes, storage roots & paths from the receiver channel endpoint, queues them, and fetches and stores their storage ranges in batches
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
 /// Upon finsih, remaining storages will be sent to the storage healer
-pub(crate) async fn large_storage_fetcher(
-    mut receiver: Receiver<Vec<(H256, H256, H256)>>,
+async fn large_storage_fetcher(
+    mut receiver: Receiver<Vec<LargeStorageRequest>>,
     peers: PeerHandler,
     store: Store,
     state_root: H256,
@@ -189,7 +202,7 @@ pub(crate) async fn large_storage_fetcher(
 ) -> Result<(), SyncError> {
     // Pending list of storages to fetch
     // (account_hash, storage_root, last_key)
-    let mut pending_storage: Vec<(H256, H256, H256)> = vec![];
+    let mut pending_storage: Vec<LargeStorageRequest> = vec![];
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
@@ -219,9 +232,9 @@ pub(crate) async fn large_storage_fetcher(
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
-            for batch in pending_storage.iter().take(MAX_PARALLEL_FETCHES) {
-                storage_tasks.spawn(fetch_large_storage_batch(
-                    *batch,
+            for req in pending_storage.drain(..min(pending_storage.len(), MAX_PARALLEL_FETCHES)) {
+                storage_tasks.spawn(fetch_large_storage(
+                    req,
                     state_root,
                     peers.clone(),
                     store.clone(),
@@ -247,7 +260,7 @@ pub(crate) async fn large_storage_fetcher(
         // As these are large storages we should rebuild the partial tries instead of delegating them fully to the healer
         let account_hashes: Vec<H256> = pending_storage
             .into_iter()
-            .map(|(hash, _, _)| hash)
+            .map(|req| req.account_hash)
             .collect();
         let account_hashes_and_roots: Vec<(H256, H256)> = account_hashes
             .iter()
@@ -263,37 +276,41 @@ pub(crate) async fn large_storage_fetcher(
 
 // Receives a batch of account hashes with their storage roots, fetches their respective storage ranges via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
 /// Also returns a boolean indicating if the pivot became stale during the request
-async fn fetch_large_storage_batch(
-    // (acc_hash, storage_root, hash)
-    mut batch: (H256, H256, H256),
+async fn fetch_large_storage(
+    mut request: LargeStorageRequest,
     state_root: H256,
     peers: PeerHandler,
     store: Store,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-) -> Result<(Option<(H256, H256, H256)>, bool), SyncError> {
-    info!(
+) -> Result<(Option<LargeStorageRequest>, bool), SyncError> {
+    debug!(
         "Requesting large storage range for trie: {} from key: {}",
-        batch.1, batch.2,
+        request.storage_root, request.last_key,
     );
     if let Some((keys, values, incomplete)) = peers
-        .request_storage_range(state_root, batch.1, batch.0, batch.2)
+        .request_storage_range(
+            state_root,
+            request.storage_root,
+            request.account_hash,
+            request.last_key,
+        )
         .await
     {
         // Update next batch's start
-        batch.2 = *keys.last().unwrap();
+        request.last_key = *keys.last().unwrap();
         // Write storage range to snapshot
-        store.write_snapshot_storage_batch(batch.0, keys, values)?;
+        store.write_snapshot_storage_batch(request.account_hash, keys, values)?;
         if incomplete {
-            Ok((Some(batch), false))
+            Ok((Some(request), false))
         } else {
             // Send complete trie to rebuilder
             storage_trie_rebuilder_sender
-                .send(vec![(batch.0, batch.1)])
+                .send(vec![(request.account_hash, request.storage_root)])
                 .await?;
             Ok((None, false))
         }
     } else {
         // Pivot became stale
-        Ok((Some(batch), true))
+        Ok((Some(request), true))
     }
 }

@@ -604,12 +604,8 @@ enum SyncError {
     Chain(#[from] ChainError),
     #[error(transparent)]
     Store(#[from] StoreError),
-    #[error(transparent)]
-    SendHashes(#[from] SendError<Vec<H256>>),
-    #[error(transparent)]
-    SendStorage(#[from] SendError<Vec<(H256, H256)>>),
-    #[error(transparent)]
-    SendLargeStorage(#[from] SendError<Vec<(H256, H256, H256)>>),
+    #[error("{0}")]
+    Send(String),
     #[error(transparent)]
     Trie(#[from] TrieError),
     #[error(transparent)]
@@ -620,4 +616,10 @@ enum SyncError {
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]
     CorruptDB,
+}
+
+impl<T> From<SendError<T>> for SyncError {
+    fn from(value: SendError<T>) -> Self {
+        Self::Send(value.to_string())
+    }
 }
