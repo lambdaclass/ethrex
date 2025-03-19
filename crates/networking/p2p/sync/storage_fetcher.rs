@@ -23,7 +23,7 @@ use crate::{
 
 use super::SyncError;
 
-/// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
+/// Waits for incoming account hashes & storage roots from the receiver channel endpoint, queues them, and fetches and stores their storages in batches
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
 /// Upon finsih, remaining storages will be sent to the storage healer
 pub(crate) async fn storage_fetcher(
@@ -59,7 +59,7 @@ pub(crate) async fn storage_fetcher(
                 if !account_hashes_and_roots.is_empty() {
                     pending_storage.extend(account_hashes_and_roots);
                 } else {
-                    // Empty message signaling no more bytecodes to sync
+                    // Empty message signaling no more storages to sync
                     incoming = false
                 }
             }
@@ -67,7 +67,7 @@ pub(crate) async fn storage_fetcher(
             // Disconnect
             incoming = false
         }
-        // If we have enough pending bytecodes to fill a batch
+        // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
         while !stale
@@ -203,7 +203,7 @@ pub(crate) async fn large_storage_fetcher(
                     if !hashes_roots_keys.is_empty() {
                         pending_storage.extend(hashes_roots_keys);
                     } else {
-                        // Empty message signaling no more bytecodes to sync
+                        // Empty message signaling no more storages to sync
                         incoming = false
                     }
                 }
