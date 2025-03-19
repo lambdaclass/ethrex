@@ -1,7 +1,3 @@
-#[cfg(feature = "based")]
-use crate::cli::BasedOptions;
-#[cfg(feature = "l2")]
-use crate::cli::L2Options;
 use crate::{
     cli::Options,
     networks,
@@ -14,8 +10,6 @@ use ethrex_p2p::{
     sync::SyncManager,
     types::{Node, NodeRecord},
 };
-#[cfg(feature = "based")]
-use ethrex_rpc::{EngineClient, EthClient};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::backends::EvmEngine;
 use k256::ecdsa::SigningKey;
@@ -32,8 +26,16 @@ use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
+
+#[cfg(feature = "l2")]
+use crate::cli::L2Options;
 #[cfg(feature = "l2")]
 use ::{ethrex_common::Address, ethrex_l2::utils::config::read_env_file, secp256k1::SecretKey};
+
+#[cfg(feature = "based")]
+use crate::cli::BasedOptions;
+#[cfg(feature = "based")]
+use ethrex_rpc::{EngineClient, EthClient};
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
