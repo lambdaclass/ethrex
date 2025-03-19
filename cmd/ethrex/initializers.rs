@@ -32,6 +32,8 @@ use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
+#[cfg(feature = "l2")]
+use ::{ethrex_common::Address, ethrex_l2::utils::config::read_env_file, secp256k1::SecretKey};
 
 pub fn init_tracing(matches: &ArgMatches) {
     let log_level = matches
@@ -129,6 +131,10 @@ pub fn init_rpc_api(
         get_gateway_http_client(matches),
         #[cfg(feature = "based")]
         get_gateway_auth_client(matches),
+        #[cfg(feature = "l2")]
+        get_valid_delegation_addresses(matches),
+        #[cfg(feature = "l2")]
+        get_sponsor_pk(),
     )
     .into_future();
 
@@ -393,4 +399,35 @@ pub fn get_http_socket_addr(matches: &ArgMatches) -> SocketAddr {
         .get_one::<String>("http.port")
         .expect("http.port is required");
     parse_socket_addr(http_addr, http_port).expect("Failed to parse http address and port")
+}
+
+#[cfg(feature = "l2")]
+pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
+    let Some(path) = matches.get_one::<String>("sponsorable_addresses") else {
+        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
+        return Vec::new();
+    };
+    let addresses: Vec<Address> = fs::read_to_string(path)
+        .unwrap_or_else(|_| panic!("Failed to load file {}", path))
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.to_string().parse::<Address>())
+        .filter_map(Result::ok)
+        .collect();
+    if addresses.is_empty() {
+        warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
+    }
+    addresses
+}
+
+#[cfg(feature = "l2")]
+pub fn get_sponsor_pk() -> SecretKey {
+    if let Err(e) = read_env_file() {
+        panic!("Failed to read .env file: {e}");
+    }
+    let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();
+    pk.strip_prefix("0x")
+        .unwrap_or(&pk)
+        .parse::<SecretKey>()
+        .expect("Failed to parse a secret key to sponsor transactions")
 }

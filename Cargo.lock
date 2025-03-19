@@ -2971,6 +2971,7 @@ dependencies = [
  "local-ip-address",
  "rand 0.8.5",
  "redb",
+ "secp256k1",
  "serde_json",
  "tokio",
  "tokio-util",
