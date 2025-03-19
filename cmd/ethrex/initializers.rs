@@ -252,9 +252,6 @@ pub fn get_network(matches: &ArgMatches) -> String {
     if network == "sepolia" {
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
     }
-    if network == "mekong" {
-        network = String::from(networks::MEKONG_GENESIS_PATH);
-    }
     if network == "ephemery" {
         network = String::from(networks::EPHEMERY_GENESIS_PATH);
     }
@@ -278,11 +275,6 @@ pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec
     if network == networks::SEPOLIA_GENESIS_PATH {
         info!("Adding sepolia preset bootnodes");
         bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
-    }
-
-    if network == networks::MEKONG_GENESIS_PATH {
-        info!("Adding mekong preset bootnodes");
-        bootnodes.extend(networks::MEKONG_BOOTNODES.iter());
     }
 
     if network == networks::EPHEMERY_GENESIS_PATH {

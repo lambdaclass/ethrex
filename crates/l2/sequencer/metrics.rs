@@ -1,5 +1,5 @@
 use crate::{
-    proposer::errors::MetricsGathererError,
+    sequencer::errors::MetricsGathererError,
     utils::config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
         l1_watcher::L1WatcherConfig,
