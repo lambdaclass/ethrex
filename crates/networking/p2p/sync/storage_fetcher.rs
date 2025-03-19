@@ -14,6 +14,7 @@ use ethrex_common::H256;
 use ethrex_storage::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{debug, info};
+use std::cmp::min;
 
 use crate::{
     peer_handler::{PeerHandler, RequestRangesMetrics},
