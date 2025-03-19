@@ -272,7 +272,9 @@ impl Subcommand {
                     .as_ref()
                     .expect("--network is required and it was not provided");
 
-                let store = init_store(&opts.datadir, network);
+                let data_dir = set_datadir(&opts.datadir);
+
+                let store = init_store(&data_dir, network);
 
                 let blockchain = init_blockchain(opts.evm, store);
 
