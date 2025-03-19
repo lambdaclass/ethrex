@@ -156,8 +156,8 @@ impl ProverServer {
 
         let mut needed_proof_types = vec![];
 
-        for (k, v) in verifier_contracts {
-            if *addr == DEV_MODE_ADDRESS {
+        for (key, addr) in verifier_contracts {
+            if addr == DEV_MODE_ADDRESS {
                 continue;
             } else {
                 match key {
