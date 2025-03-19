@@ -964,7 +964,8 @@ impl Store {
         storage_keys: Vec<Vec<H256>>,
         storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError> {
-        self.engine.write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
+        self.engine
+            .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
     }
 
     /// Clears all checkpoint data created during the last snap sync

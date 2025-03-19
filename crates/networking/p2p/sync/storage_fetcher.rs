@@ -151,9 +151,9 @@ async fn fetch_storage_batch(
             // The incomplete range is not the first, we cannot asume it is a large trie, so lets add it back to the queue
         }
         // Store the storage ranges & rebuild the storage trie for each account
-        complete_storages.extend(batch[..values.len()].iter());
-        let account_hashes: Vec<H256> = batch[..values.len()].iter().map(|(hash, _)| *hash).collect();
-        let batch = batch[values.len()..].to_vec();
+        let filled_storages: Vec<(H256, H256)> = batch.drain(..values.len()).collect();
+        let account_hashes: Vec<H256> = filled_storages.iter().map(|(hash, _)| *hash).collect();
+        complete_storages.extend(filled_storages);
         store.write_snapshot_storage_batches(account_hashes, keys, values)?;
         // Send complete storages to the rebuilder
         storage_trie_rebuilder_sender
