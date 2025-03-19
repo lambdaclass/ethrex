@@ -21,7 +21,7 @@ const ERC20_DECIMALS: u8 = 18;
 const ERC20_BALANCE_SIGNATURE: &str = "70a08231";
 
 #[tokio::test]
-async fn test_block_0() {
+async fn test_state_reconstruct_block_0() {
     let client = EthClient::new(ETH_RPC_URL);
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
@@ -35,7 +35,7 @@ async fn test_block_0() {
 }
 
 #[tokio::test]
-async fn test_block_1() {
+async fn test_state_reconstruct_block_1() {
     let client = EthClient::new(ETH_RPC_URL);
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
@@ -68,7 +68,7 @@ async fn test_block_1() {
 }
 
 #[tokio::test]
-async fn test_block_2() {
+async fn test_state_reconstruct_block_2() {
     let client = EthClient::new(ETH_RPC_URL);
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
@@ -222,7 +222,7 @@ async fn test_block_2() {
 }
 
 #[tokio::test]
-async fn test_block_3() {
+async fn test_state_reconstruct_block_3() {
     let client = EthClient::new(ETH_RPC_URL);
 
     let erc20_address = Address::from_slice(&hex::decode(ERC20_ADDRESS).unwrap());
@@ -260,7 +260,7 @@ async fn test_block_3() {
 }
 
 #[tokio::test]
-async fn test_latest_block() {
+async fn test_state_reconstruct_latest_block() {
     let client = EthClient::new(ETH_RPC_URL);
 
     let rich_address = Address::from_slice(&hex::decode(RICH_ADDRESS).unwrap());
