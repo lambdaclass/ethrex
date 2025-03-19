@@ -262,6 +262,7 @@ pub mod test_utils {
     };
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
+    use tokio::sync::Mutex as TokioMutex;
 
     use crate::start_api;
     #[cfg(feature = "based")]
@@ -327,7 +328,7 @@ pub mod test_utils {
             jwt_secret,
             local_p2p_node,
             example_local_node_record(),
-            ethrex_p2p::sync::SyncMode::Full,
+            Arc::new(TokioMutex::new(ethrex_p2p::sync::SyncMode::Full)),
             SyncManager::dummy(),
             #[cfg(feature = "based")]
             gateway_eth_client,

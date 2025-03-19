@@ -163,7 +163,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
-    sync_mode: SyncMode,
+    sync_mode: Arc<TokioMutex<SyncMode>>,
     syncer: SyncManager,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
@@ -179,7 +179,7 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(TokioMutex::new(syncer)),
-        sync_mode: Arc::new(TokioMutex::new(sync_mode)),
+        sync_mode,
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]

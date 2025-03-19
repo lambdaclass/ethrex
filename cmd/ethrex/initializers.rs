@@ -108,8 +108,14 @@ pub fn init_rpc_api(
     let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, signer)
         .expect("Node record could not be created from local node");
 
+    let sync_mode = Arc::new(Mutex::new(sync_mode(matches)));
     // Create SyncManager
-    let syncer = SyncManager::new(peer_table.clone(), cancel_token, blockchain.clone());
+    let syncer = SyncManager::new(
+        peer_table.clone(),
+        sync_mode.clone(),
+        cancel_token,
+        blockchain.clone(),
+    );
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(matches),
@@ -119,7 +125,7 @@ pub fn init_rpc_api(
         get_jwt_secret(matches),
         local_p2p_node,
         local_node_record,
-        sync_mode(matches),
+        sync_mode,
         syncer,
         #[cfg(feature = "based")]
         get_gateway_http_client(matches),
