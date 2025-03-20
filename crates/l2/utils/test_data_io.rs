@@ -5,11 +5,11 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-#[cfg(feature = "levm-l2")]
-use ethrex_vm::backends::levm::StoreWrapper;
 #[cfg(not(feature = "levm-l2"))]
 use ethrex_vm::backends::revm::db::evm_state;
 use ethrex_vm::backends::Evm;
+#[cfg(feature = "levm-l2")]
+use ethrex_vm::db::StoreWrapper;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 

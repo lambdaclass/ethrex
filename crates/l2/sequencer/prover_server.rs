@@ -17,12 +17,12 @@ use ethrex_common::{
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
-#[cfg(feature = "levm-l2")]
-use ethrex_vm::backends::levm::StoreWrapper;
 #[cfg(not(feature = "levm-l2"))]
 use ethrex_vm::backends::revm::db::evm_state;
 use ethrex_vm::backends::Evm;
 use ethrex_vm::db::ExecutionDB;
+#[cfg(feature = "levm-l2")]
+use ethrex_vm::db::StoreWrapper;
 use ethrex_vm::EvmError;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
