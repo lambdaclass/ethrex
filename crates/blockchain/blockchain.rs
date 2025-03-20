@@ -72,7 +72,7 @@ impl Blockchain {
             self.storage.clone(),
             block.header.parent_hash,
         );
-        let execution_result = vm.execute_block(block)?;
+        let execution_result = vm.execute_block_parallel(block)?;
 
         Ok(execution_result)
     }
