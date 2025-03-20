@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742498238976,
+  "lastUpdate": 1742498485129,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -835,6 +835,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 229011647065,
             "range": "± 410351860",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "31dd81a4a8a26640c365a1eb58180f98d4f663c2",
+          "message": "fix(l1): enable CORS for rpc endpoints (#2275)\n\n**Motivation**\n\nTo be used with different applications\n\n**Description**\n\nAdds a permissive CORS layer using\n[axum](https://docs.rs/axum/latest/axum/middleware/index.html) +\n[tower-http](https://docs.rs/tower-http/0.6.2/tower_http/cors/index.html).\n- All request headers allowed.\n- All methods allowed.\n- All origins allowed.\n- All headers exposed.\n\nCloses None",
+          "timestamp": "2025-03-20T18:25:53Z",
+          "tree_id": "149791b9bd1e6254a1f0bf5fa7fc5918a624cf0e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/31dd81a4a8a26640c365a1eb58180f98d4f663c2"
+        },
+        "date": 1742498482468,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 225153168984,
+            "range": "± 875558649",
             "unit": "ns/iter"
           }
         ]
