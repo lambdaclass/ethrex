@@ -2,17 +2,17 @@ use std::collections::HashMap;
 
 use ethrex_common::{
     types::{
-        AccountInfo, AccountState, BlockHeader, ChainConfig, Fork, Transaction, TxKind,
+        AccountInfo, BlockHeader, ChainConfig, Fork, Transaction, TxKind, EMPTY_TRIE_HASH,
         INITIAL_BASE_FEE,
     },
-    H160, H256, U256,
+    BigEndianHash, H160, H256, U256,
 };
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{error::StoreError, hash_address, AccountUpdate};
+use ethrex_storage::{error::StoreError, AccountUpdate};
 use pevm::EvmAccount;
 use revm_pevm::primitives::{
-    AccessListItem, Address, BlobExcessGasAndPrice, BlockEnv, Bytecode, Bytes as RevmBytes,
-    FixedBytes, SignedAuthorization, SpecId, TxEnv, TxKind as RevmTxKind, B256, U256 as RevmU256,
+    keccak256, AccessListItem, Address, BlobExcessGasAndPrice, BlockEnv, Bytecode,
+    Bytes as RevmBytes, FixedBytes, SignedAuthorization, SpecId, TxEnv, TxKind as RevmTxKind, B256,
+    KECCAK_EMPTY, U256 as RevmU256,
 };
 
 use crate::db::StoreWrapper;
@@ -147,21 +147,17 @@ pub fn map_account_update_to_ethrex_type(
     };
 
     let code = if let Some(code) = account.code {
-        let bytecode: Result<Bytecode, _> = code.try_into();
-        if let Ok(bytecode) = bytecode {
-            Some(bytecode.bytes().0)
-        } else {
-            None
-        }
+        let bytecode: Bytecode = code.try_into().unwrap();
+        Some(bytecode.original_bytes().0)
     } else {
         None
     };
 
     let mut storage_changes: HashMap<H256, U256> = HashMap::new();
-
     for (k, v) in account.storage.iter() {
-        let bytes: [u8; 32] = k.to_be_bytes();
-        storage_changes.insert(H256::from(bytes), U256(v.as_limbs().clone()));
+        let key = H256::from_uint(&U256::from_little_endian(k.as_le_slice()));
+        let value = U256::from_little_endian(v.as_le_slice());
+        storage_changes.insert(key, value);
     }
 
     return AccountUpdate {
@@ -169,7 +165,7 @@ pub fn map_account_update_to_ethrex_type(
         info: Some(AccountInfo {
             balance: U256(account.balance.as_limbs().clone()),
             nonce: account.nonce,
-            code_hash: H256::from(account.code_hash.unwrap_or_default().0),
+            code_hash: H256::from(account.code_hash.unwrap_or(KECCAK_EMPTY).0),
         }),
         code,
         removed: false,
@@ -210,8 +206,8 @@ impl pevm::Storage for StoreWrapper {
             .map(|b| Bytecode::new_raw(RevmBytes(b)));
 
         match code {
-            Some(code) => Ok(Some(B256::from_slice(code.bytes_slice()))),
-            None => Ok(None),
+            Some(code) => Ok(Some(keccak256(code.bytes_slice()))),
+            None => Ok(Some(KECCAK_EMPTY)),
         }
     }
 
@@ -232,16 +228,14 @@ impl pevm::Storage for StoreWrapper {
     }
 
     fn has_storage(&self, address: &Address) -> Result<bool, Self::Error> {
-        let trie = self.store.open_state_trie(self.block_hash);
-        let account = match trie
-            .get(&hash_address(&H160::from(address.0.as_ref())))
-            .unwrap()
-        {
-            Some(encoded) => AccountState::decode(&encoded)?,
-            None => AccountState::default(),
+        let Some(account_state) = self
+            .store
+            .get_account_state_by_hash(self.block_hash, H160::from(address.0.as_ref()))?
+        else {
+            return Ok(false);
         };
 
-        Ok(!account.storage_root.is_zero())
+        Ok(account_state.storage_root != *EMPTY_TRIE_HASH)
     }
 
     fn storage(&self, address: &Address, index: &RevmU256) -> Result<RevmU256, Self::Error> {
@@ -253,13 +247,14 @@ impl pevm::Storage for StoreWrapper {
                 H256::from(index.to_be_bytes()),
             )?
             .map(|value| RevmU256::from_limbs(value.0))
-            .unwrap_or_else(|| RevmU256::ZERO))
+            .unwrap_or_default())
     }
 
     fn block_hash(&self, number: &u64) -> Result<B256, Self::Error> {
-        self.store
+        Ok(self
+            .store
             .get_block_header(*number)?
             .map(|header| B256::from_slice(&header.compute_block_hash().0))
-            .ok_or_else(|| StoreError::Custom(format!("Block {number} not found")))
+            .unwrap_or_else(|| keccak256(number.to_string().as_bytes())))
     }
 }
