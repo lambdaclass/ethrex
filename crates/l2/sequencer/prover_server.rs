@@ -28,7 +28,10 @@ use std::{
     fmt::Debug,
     io::{BufReader, BufWriter, Write},
     net::{IpAddr, Shutdown, TcpListener, TcpStream},
-    sync::mpsc::{self, Receiver},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::{
@@ -219,6 +222,20 @@ impl ProverServer {
 
         info!("Starting TCP server at {}:{}", self.ip, self.port);
 
+        let self_arc = Arc::new(tokio::sync::Mutex::new(std::mem::replace(
+            self,
+            ProverServer {
+                ip: self.ip,
+                port: self.port,
+                store: self.store.clone(),
+                eth_client: self.eth_client.clone(),
+                on_chain_proposer_address: self.on_chain_proposer_address,
+                verifier_address: self.verifier_address,
+                verifier_private_key: self.verifier_private_key,
+                dev_interval_ms: self.dev_interval_ms,
+            },
+        )));
+
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
@@ -229,9 +246,16 @@ impl ProverServer {
                         break;
                     }
 
-                    if let Err(e) = self.handle_connection(stream).await {
-                        error!("Error handling connection: {}", e);
-                    }
+                    tokio::task::spawn({
+                        let self_arc = Arc::clone(&self_arc);
+                        async move {
+                            let mut self_lock = self_arc.lock().await;
+
+                            if let Err(e) = self_lock.handle_connection(stream).await {
+                                error!("Error handling connection: {}", e);
+                            }
+                        }
+                    });
                 }
                 Err(e) => {
                     error!("Failed to accept connection: {}", e);
