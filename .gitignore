@@ -64,4 +64,3 @@ cmd/ef_tests/state/levm_perfgraphs
 prof_*.json
 prof.json
 
-.compare.md

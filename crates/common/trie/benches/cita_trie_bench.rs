@@ -11,9 +11,6 @@ use uuid::Uuid;
 
 use cita_trie::MemoryDB;
 use cita_trie::{PatriciaTrie, Trie};
-use ethrex_trie::InMemoryTrieDB;
-use ethrex_trie::Trie as EthrexTrie;
-use ethrex_trie::TrieDB;
 
 fn insert_worse_case_benchmark(c: &mut Criterion) {
     let (keys, values) = random_data(1000);

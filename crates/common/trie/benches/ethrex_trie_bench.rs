@@ -2,18 +2,12 @@
 // modified to suit our needs, and to have a baseline to benchmark our own
 // trie implementation against an existing one.
 
-use std::sync::Arc;
-
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use hasher::HasherKeccak;
 use uuid::Uuid;
 
-use cita_trie::MemoryDB;
-use cita_trie::{PatriciaTrie, Trie};
 use ethrex_trie::InMemoryTrieDB;
 use ethrex_trie::Trie as EthrexTrie;
-use ethrex_trie::TrieDB;
 
 fn insert_worse_case_benchmark(c: &mut Criterion) {
     let (keys, values) = random_data(1000);
