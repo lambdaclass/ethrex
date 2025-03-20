@@ -378,18 +378,21 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
 mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
-    #[cfg(not(feature = "levm-l2"))]
-    use ethrex_vm::backends::revm::db::evm_state;
-    #[cfg(feature = "levm-l2")]
-    use ethrex_vm::db::StoreWrapper;
-    use ethrex_vm::{backends::Evm, db::ExecutionDB};
+    use ethrex_vm::{
+        backends::{revm::db::evm_state, Evm, EvmEngine},
+        db::{ExecutionDB, StoreWrapper},
+    };
+    use test_casing::test_casing;
 
     use super::*;
     use crate::utils::test_data_io;
     use std::fs::{self};
 
+    #[test_casing(2, [EvmEngine::LEVM, EvmEngine::REVM])]
     #[test]
-    fn test_state_file_integration() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_state_file_integration(
+        evm_engine: EvmEngine,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = fs::remove_dir_all(default_datadir()?) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 eprintln!("Directory NotFound: {:?}", default_datadir()?);
@@ -435,18 +438,17 @@ mod tests {
 
         // Write all the account_updates and proofs for each block
         for block in &blocks {
-            #[cfg(feature = "levm-l2")]
-            let mut evm = Evm::LEVM {
-                store_wrapper: StoreWrapper {
-                    store: store.clone(),
-                    block_hash: block.hash(),
+            let mut evm = match evm_engine {
+                EvmEngine::LEVM => Evm::LEVM {
+                    store_wrapper: StoreWrapper {
+                        store: store.clone(),
+                        block_hash: block.hash(),
+                    },
+                    block_cache: Default::default(),
                 },
-                block_cache: Default::default(),
-            };
-
-            #[cfg(not(feature = "levm-l2"))]
-            let mut evm = Evm::REVM {
-                state: evm_state(store.clone(), block.hash()),
+                EvmEngine::REVM => Evm::REVM {
+                    state: evm_state(store.clone(), block.hash()),
+                },
             };
 
             let account_updates =
