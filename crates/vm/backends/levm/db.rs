@@ -1,15 +1,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use ethrex_common::types::Block;
-use ethrex_storage::AccountUpdate;
-
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::db::{ExecutionDB, StoreWrapper};
-use crate::errors::ExecutionDBError;
 
 #[derive(Clone)]
 pub struct BlockLogger {
@@ -127,52 +123,5 @@ impl LevmDatabase for BlockLogger {
     }
     fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
         self.db.get_storage_slot(address, key)
-    }
-}
-
-impl ExecutionDB {
-    pub fn pre_execute_levm(
-        block: &Block,
-        store_wrapper: &StoreWrapper,
-    ) -> Result<(Vec<AccountUpdate>, BlockLogger), ExecutionDBError> {
-        // this code was copied from the L1
-        // TODO: if we change EvmState so that it accepts a CacheDB<RpcDB> then we can
-        // simply call execute_block().
-
-        let db = BlockLogger::new(store_wrapper.clone());
-
-        let mut account_updates = vec![];
-        // beacon root call
-        #[cfg(not(feature = "l2"))]
-        {
-            let mut cache = HashMap::new();
-            crate::backends::levm::LEVM::beacon_root_contract_call(
-                &block.header,
-                Arc::new(db.clone()),
-                &mut cache,
-            )
-            .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
-            let account_updates_beacon = crate::backends::levm::LEVM::get_state_transitions(
-                None,
-                Arc::new(db.clone()),
-                &block.header,
-                &cache,
-            )
-            .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
-
-            db.db
-                .store
-                .apply_account_updates(block.hash(), &account_updates_beacon)
-                .map_err(ExecutionDBError::Store)?;
-
-            account_updates.extend(account_updates_beacon);
-        }
-
-        // execute block
-        let report = crate::backends::levm::LEVM::execute_block(block, Arc::new(db.clone()))
-            .map_err(Box::new)?;
-        account_updates.extend(report.account_updates);
-
-        Ok((account_updates, db))
     }
 }

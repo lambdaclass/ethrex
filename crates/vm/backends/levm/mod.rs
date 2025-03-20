@@ -10,6 +10,7 @@ use crate::errors::ExecutionDBError;
 use crate::execution_result::ExecutionResult;
 use crate::EvmError;
 use bytes::Bytes;
+use db::BlockLogger;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE};
 use ethrex_common::{
@@ -475,8 +476,8 @@ impl LEVM {
         let chain_config = store_wrapper.store.get_chain_config()?;
 
         // pre-execute and get all state changes
-        let (execution_updates, logger) = ExecutionDB::pre_execute_levm(block, store_wrapper)
-            .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
+        let (execution_updates, logger) =
+            Self::pre_execute(block, store_wrapper).map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
 
         // index read and touched account addresses and storage keys
         let index = execution_updates.iter().map(|update| {
@@ -652,6 +653,51 @@ impl LEVM {
             state_proofs,
             storage_proofs,
         })
+    }
+
+    pub fn pre_execute(
+        block: &Block,
+        store_wrapper: &StoreWrapper,
+    ) -> Result<(Vec<AccountUpdate>, BlockLogger), ExecutionDBError> {
+        // this code was copied from the L1
+        // TODO: if we change EvmState so that it accepts a CacheDB<RpcDB> then we can
+        // simply call execute_block().
+
+        let db = BlockLogger::new(store_wrapper.clone());
+
+        let mut account_updates = vec![];
+        // beacon root call
+        #[cfg(not(feature = "l2"))]
+        {
+            let mut cache = HashMap::new();
+            crate::backends::levm::LEVM::beacon_root_contract_call(
+                &block.header,
+                Arc::new(db.clone()),
+                &mut cache,
+            )
+            .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
+            let account_updates_beacon = crate::backends::levm::LEVM::get_state_transitions(
+                None,
+                Arc::new(db.clone()),
+                &block.header,
+                &cache,
+            )
+            .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
+
+            db.db
+                .store
+                .apply_account_updates(block.hash(), &account_updates_beacon)
+                .map_err(ExecutionDBError::Store)?;
+
+            account_updates.extend(account_updates_beacon);
+        }
+
+        // execute block
+        let report = crate::backends::levm::LEVM::execute_block(block, Arc::new(db.clone()))
+            .map_err(Box::new)?;
+        account_updates.extend(report.account_updates);
+
+        Ok((account_updates, db))
     }
 }
 
