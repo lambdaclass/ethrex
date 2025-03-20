@@ -502,8 +502,6 @@ impl ProverServer {
 
     pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
         loop {
-            sleep_random(self.dev_interval_ms).await;
-
             let last_committed_block = EthClient::get_last_committed_block(
                 &self.eth_client,
                 self.on_chain_proposer_address,
@@ -593,6 +591,8 @@ impl ProverServer {
                 "Mocked verify transaction sent for block {}",
                 last_verified_block + 1
             );
+
+            sleep_random(self.dev_interval_ms).await;
         }
     }
 }
