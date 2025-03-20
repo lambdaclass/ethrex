@@ -16,17 +16,6 @@ use ethrex_trie::Trie as EthrexTrie;
 use ethrex_trie::TrieDB;
 
 fn insert_worse_case_benchmark(c: &mut Criterion) {
-    let key = Uuid::new_v4().as_bytes().to_vec();
-    let value = Uuid::new_v4().as_bytes().to_vec();
-    c.bench_function("ethrex-trie insert one", |b| {
-        let mut trie = EthrexTrie::new(Box::new(InMemoryTrieDB::new_empty()));
-        b.iter(|| {
-            let key = Uuid::new_v4().as_bytes().to_vec();
-            let value = Uuid::new_v4().as_bytes().to_vec();
-            trie.insert(key.clone(), value.clone()).unwrap()
-        });
-    });
-
     let (keys, values) = random_data(1000);
 
     c.bench_function("ethrex-trie insert 1k", |b| {
