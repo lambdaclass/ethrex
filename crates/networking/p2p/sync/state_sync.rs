@@ -237,9 +237,6 @@ async fn state_sync_segment(
                 accounts_len,
             }
             .show();
-            // TODO: This is to cut cycles short and debug stuck healer
-            // PLEASE REMOVE PLEASE
-            stale = true;
 
             // As we are downloading the state trie in segments the `should_continue` flag will mean that there
             // are more accounts to be fetched but these accounts may belong to the next segment
