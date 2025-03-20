@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::utils::config::read_env_file;
+use crate::utils::config::{read_env_file_by_config, ConfigMode};
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -23,7 +23,7 @@ pub mod errors;
 pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>) {
     info!("Starting Proposer");
 
-    if let Err(e) = read_env_file(crate::parse_toml::TomlParserMode::Sequencer) {
+    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
         error!("Failed to read .env file: {e}");
         return;
     }

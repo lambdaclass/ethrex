@@ -2,10 +2,10 @@ use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_common::U256;
-use ethrex_l2::errors::ConfigError;
-use ethrex_l2::parse_toml::{parse_configs, TomlParserMode};
 use ethrex_l2::utils::config::errors;
-use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
+use ethrex_l2::utils::config::{
+    read_env_as_lines, read_env_file_by_config, toml_parser::parse_configs, write_env, ConfigMode,
+};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
@@ -55,14 +55,12 @@ pub enum DeployError {
     DependencyError(String),
     #[error("Deployer compilation error: {0}")]
     CompilationError(#[from] utils::ContractCompilationError),
-    #[error("TomlParser error: {0}")]
-    TomlParserError(#[from] ConfigError),
     #[error("Deployer EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
     DecodingError(String),
-    #[error("Failed to interact with .env file, error: {0}")]
-    EnvFileError(#[from] errors::ConfigError),
+    #[error("Config error: {0}")]
+    ConfigError(#[from] errors::ConfigError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
 }
@@ -84,7 +82,7 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
-    parse_configs(TomlParserMode::Sequencer)?;
+    parse_configs(ConfigMode::Sequencer)?;
 
     let setup_result = setup()?;
     download_contract_deps(&setup_result.contracts_path)?;
@@ -128,7 +126,7 @@ async fn main() -> Result<(), DeployError> {
         }
     }
 
-    let env_lines = read_env_as_lines().map_err(DeployError::EnvFileError)?;
+    let env_lines = read_env_as_lines().map_err(DeployError::ConfigError)?;
 
     let mut wr_lines: Vec<String> = Vec::new();
     let mut env_lines_iter = env_lines.into_iter();
@@ -153,12 +151,12 @@ async fn main() -> Result<(), DeployError> {
         }
         wr_lines.push(line);
     }
-    write_env(wr_lines).map_err(DeployError::EnvFileError)?;
+    write_env(wr_lines).map_err(DeployError::ConfigError)?;
     Ok(())
 }
 
 fn setup() -> Result<SetupResult, DeployError> {
-    read_env_file(TomlParserMode::Sequencer)?;
+    read_env_file_by_config(ConfigMode::Sequencer)?;
 
     let eth_client = EthClient::new(&read_env_var("ETH_RPC_URL")?);
 

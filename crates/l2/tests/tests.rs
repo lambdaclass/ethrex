@@ -2,7 +2,7 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
-use ethrex_l2::utils::config::read_env_file;
+use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::calldata;
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, from_hex_string_to_u256, BlockByNumber, EthClient,
@@ -45,7 +45,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
     let proposer_client = proposer_client();
 
-    read_env_file()?;
+    read_env_file_by_config(ConfigMode::Sequencer)?;
 
     // 1. Check balances on L1 and L2
 

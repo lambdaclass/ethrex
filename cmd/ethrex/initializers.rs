@@ -35,7 +35,7 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 #[cfg(feature = "l2")]
 use ::{
     ethrex_common::Address,
-    ethrex_l2::{parse_toml::TomlParserMode, utils::config::read_env_file},
+    ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
     secp256k1::SecretKey,
 };
 
@@ -426,7 +426,7 @@ pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
 
 #[cfg(feature = "l2")]
 pub fn get_sponsor_pk() -> SecretKey {
-    if let Err(e) = read_env_file(TomlParserMode::Sequencer) {
+    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
         panic!("Failed to read .env file: {e}");
     }
     let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();

@@ -1,48 +1,11 @@
-use crate::errors::*;
+use crate::utils::config::{
+    errors::{ConfigError, TomlParserError},
+    ConfigMode,
+};
 use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-
-#[derive(Clone, Copy)]
-pub enum TomlParserMode {
-    /// Parses the entire the config.toml
-    /// And generates a .env with all the config variables
-    /// It's used if you run the prover_server and prover_client
-    /// in the same machine.
-    Sequencer,
-    /// Parses the `prover` variables inside the config.toml
-    /// And generates a .env only with the prover_client config variables
-    /// It's used if you run the prover_server and prover_client
-    /// in different machines.
-    ProverClient,
-}
-
-impl TomlParserMode {
-    fn get_config_file_path(&self, config_path: &str) -> Result<String, ConfigError> {
-        match self {
-            TomlParserMode::Sequencer => {
-                let binding = Path::new(&config_path).join("config.toml");
-                let path = binding.to_str().ok_or(ConfigError::InternalParsingError)?;
-                Ok(path.to_string())
-            }
-            TomlParserMode::ProverClient => {
-                let binding = Path::new(&config_path).join("prover_config.toml");
-                let path = binding.to_str().ok_or(ConfigError::InternalParsingError)?;
-                Ok(path.to_string())
-            }
-        }
-    }
-
-    pub fn get_env_path_or_default(&self) -> String {
-        match self {
-            TomlParserMode::Sequencer => std::env::var("ENV_FILE").unwrap_or(".env".to_owned()),
-            TomlParserMode::ProverClient => {
-                std::env::var("PROVER_ENV_FILE").unwrap_or(".env.prover".to_owned())
-            }
-        }
-    }
-}
 
 #[derive(Deserialize, Debug)]
 struct Deployer {
@@ -60,8 +23,7 @@ impl Deployer {
     fn to_env(&self) -> String {
         let prefix = "DEPLOYER";
         format!(
-            "
-{prefix}_ADDRESS={}
+            "{prefix}_ADDRESS={}
 {prefix}_PRIVATE_KEY={}
 {prefix}_RISC0_CONTRACT_VERIFIER={}
 {prefix}_SP1_CONTRACT_VERIFIER={}
@@ -270,7 +232,7 @@ struct L2Config {
     prover_server: ProverServer,
 }
 
-impl L2ConfigFile {
+impl L2Config {
     fn to_env(&self) -> String {
         let mut env_representation = String::new();
 
@@ -286,7 +248,7 @@ impl L2ConfigFile {
     }
 }
 
-fn write_to_env(config: String, mode: TomlParserMode) -> Result<(), ConfigError> {
+fn write_to_env(config: String, mode: ConfigMode) -> Result<(), TomlParserError> {
     let env_file_name = mode.get_env_path_or_default();
 
     let env_file = OpenOptions::new()
@@ -297,7 +259,7 @@ fn write_to_env(config: String, mode: TomlParserMode) -> Result<(), ConfigError>
     match env_file {
         Ok(mut file) => {
             file.write_all(&config.into_bytes()).map_err(|_| {
-                ConfigError::EnvWriteError(format!(
+                TomlParserError::EnvWriteError(format!(
                     "Couldn't write file in {}, line: {}",
                     file!(),
                     line!()
@@ -305,7 +267,7 @@ fn write_to_env(config: String, mode: TomlParserMode) -> Result<(), ConfigError>
             })?;
         }
         Err(err) => {
-            return Err(ConfigError::EnvWriteError(format!(
+            return Err(TomlParserError::EnvWriteError(format!(
                 "Error: {}. Couldn't write file in {}, line: {}",
                 err,
                 file!(),
@@ -316,25 +278,25 @@ fn write_to_env(config: String, mode: TomlParserMode) -> Result<(), ConfigError>
     Ok(())
 }
 
-fn read_config(config_path: String, mode: TomlParserMode) -> Result<(), ConfigError> {
+fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError> {
     let toml_path = mode.get_config_file_path(&config_path)?;
     let toml_file_name = Path::new(&toml_path)
         .file_name()
-        .ok_or(ConfigError::InternalParsingError)?
+        .ok_or(ConfigError::Custom("Invalid CONFIGS_PATH".to_string()))?
         .to_str()
-        .ok_or(ConfigError::InternalParsingError)?
+        .ok_or(ConfigError::Custom("Couldn't convert to_str()".to_string()))?
         .to_owned();
     let file = std::fs::read_to_string(toml_path)
-        .map_err(|_| ConfigError::TomlFileNotFound(toml_file_name.clone()))?;
+        .map_err(|_| TomlParserError::TomlFileNotFound(toml_file_name.clone()))?;
     match mode {
-        TomlParserMode::Sequencer => {
+        ConfigMode::Sequencer => {
             let config: L2Config = toml::from_str(&file)
-                .map_err(|_| ConfigError::TomlFormat(toml_file_name.clone()))?;
+                .map_err(|_| TomlParserError::TomlFormat(toml_file_name.clone()))?;
             write_to_env(config.to_env(), mode)?;
         }
-        TomlParserMode::ProverClient => {
+        ConfigMode::ProverClient => {
             let config: ProverClientConfig =
-                toml::from_str(&file).map_err(|_| ConfigError::TomlFormat(toml_file_name))?;
+                toml::from_str(&file).map_err(|_| TomlParserError::TomlFormat(toml_file_name))?;
             write_to_env(config.to_env(), mode)?;
         }
     }
@@ -342,7 +304,7 @@ fn read_config(config_path: String, mode: TomlParserMode) -> Result<(), ConfigEr
     Ok(())
 }
 
-pub fn parse_configs(mode: TomlParserMode) -> Result<(), ConfigError> {
+pub fn parse_configs(mode: ConfigMode) -> Result<(), ConfigError> {
     #[allow(clippy::expect_fun_call, clippy::expect_used)]
     let config_path = std::env::var("CONFIGS_PATH").expect(
         format!(
@@ -354,5 +316,5 @@ If running locally, a reasonable value would be CONFIGS_PATH=./configs",
         .as_str(),
     );
 
-    read_config(config_path, mode)
+    read_config(config_path, mode).map_err(From::from)
 }

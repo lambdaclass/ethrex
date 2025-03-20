@@ -4,8 +4,9 @@
 
 .DEFAULT_GOAL := help
 
-ifneq (,$(wildcard ./.env))
-    include .env
+# Used to get the SP1_PROVER and RISC0_DEV_MODE
+ifneq (,$(wildcard ./.env.prover))
+    include .env.prover
     export
 endif
 
@@ -54,6 +55,8 @@ ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain
 CI_ETHREX_WORKDIR := /usr/local/bin
 
 ethrex_L2_CONFIGS_PATH=$(shell pwd)/configs
+ethrex_L2_SEQUENCER_CONFIG_FILE=config.toml
+ethrex_L2_PROVER_CLIENT_CONFIG_FILE=prover_client_config.toml
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
@@ -164,7 +167,14 @@ init-prover: ## 🚀 Initializes the Prover
 		GPU=",gpu"; \
 	fi; \
 
-	SP1_PROVER=$(SP1_PROVER) RISC0_DEV_MODE=$(RISC0_DEV_MODE) CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} PROVER_ENV_FILE=".env.prover" cargo run --release --features "$$T$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
+	SP1_PROVER=$(SP1_PROVER) \
+	RISC0_DEV_MODE=$(RISC0_DEV_MODE) \
+	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
+	PROVER_CLIENT_CONFIG_FILE=${ethrex_L2_PROVER_CLIENT_CONFIG_FILE} \
+	PROVER_ENV_FILE=".env.prover" \
+	cargo run --release --features "$$T$$GPU,l2" \
+	--manifest-path ./prover/Cargo.toml \
+	--bin ethrex_prover -- $$T
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
