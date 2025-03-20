@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{backends::revm::execution_db::ToExecDB, errors::ExecutionDBError};
+use crate::{backends::Evm, errors::ExecutionDBError};
 use bytes::Bytes;
 use ethrex_common::{
     types::{AccountInfo, Block, BlockHash, ChainConfig},
@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 #[cfg(not(feature = "levm-l2"))]
 use crate::backends::revm::db::evm_state;
-
 #[derive(Clone)]
 pub struct StoreWrapper {
     pub store: Store,
@@ -52,28 +51,13 @@ impl ExecutionDB {
     /// Gets the Vec<[AccountUpdate]>/StateTransitions obtained after executing a block.
     pub fn get_account_updates(
         block: &Block,
-        store: &Store,
+        evm: &mut Evm,
     ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
         // TODO: perform validation to exit early
 
-        #[cfg(feature = "levm-l2")]
-        {
-            let store_wrapper = StoreWrapper {
-                store: store.clone(),
-                block_hash: block.header.parent_hash,
-            };
-            let result = crate::backends::levm::LEVM::execute_block(block, Arc::new(store_wrapper))
-                .map_err(Box::new)?;
-            Ok(result.account_updates)
-        }
-        #[cfg(not(feature = "levm-l2"))]
-        {
-            let mut state = evm_state(store.clone(), block.header.parent_hash);
-
-            let result =
-                crate::backends::revm::REVM::execute_block(block, &mut state).map_err(Box::new)?;
-            Ok(result.account_updates)
-        }
+        evm.execute_block(block)
+            .map(|result| result.account_updates)
+            .map_err(|e| ExecutionDBError::Evm(Box::new(e)))
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
