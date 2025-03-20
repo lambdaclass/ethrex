@@ -960,9 +960,9 @@ impl Encodable for SnapStateIndex {
 ///
 /// - See here: https://github.com/erthink/libmdbx/tree/master?tab=readme-ov-file#limitations
 /// - and here: https://libmdbx.dqdkfa.ru/structmdbx_1_1env_1_1geometry.html#a45048bf2de9120d01dae2151c060d459
-const DB_PAGE_SIZE: usize = 4096;
+const DB_PAGE_SIZE: usize = 65536;
 /// For a default page size of 4096, the max value size is roughly 1/2 page size.
-const DB_MAX_VALUE_SIZE: usize = 2022;
+const DB_MAX_VALUE_SIZE: usize = 32742;
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
