@@ -129,12 +129,16 @@ impl StateDiff {
             encoded.extend(diff_encoded);
         }
 
+        let withdrawal_len: u16 = self.withdrawal_logs.len().try_into()?;
+        encoded.extend(withdrawal_len.to_be_bytes());
         for withdrawal in self.withdrawal_logs.iter() {
             encoded.extend(withdrawal.address.0);
             encoded.extend_from_slice(&withdrawal.amount.to_big_endian());
             encoded.extend(&withdrawal.tx_hash.0);
         }
 
+        let deposits_len: u16 = self.deposit_logs.len().try_into()?;
+        encoded.extend(deposits_len.to_be_bytes());
         for deposit in self.deposit_logs.iter() {
             encoded.extend(deposit.address.0);
             encoded.extend_from_slice(&deposit.amount.to_big_endian());
