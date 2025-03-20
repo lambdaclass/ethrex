@@ -167,7 +167,7 @@ impl StateDiff {
         let modified_accounts_len = decoder.get_u16()?;
 
         let mut modified_accounts = HashMap::with_capacity(modified_accounts_len.into());
-        for _ in 0..accounts_updated {
+        for _ in 0..modified_accounts_len {
             let next_bytes = bytes.get(decoder.consumed()..).ok_or(
                 StateDiffError::FailedToSerializeStateDiff("Not enough bytes".to_string()),
             )?;
