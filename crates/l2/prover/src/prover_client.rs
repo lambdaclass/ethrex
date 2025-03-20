@@ -3,12 +3,12 @@ use ethrex_l2::{
     sequencer::prover_server::ProofData,
     utils::{config::prover_client::ProverClientConfig, prover::proving_systems::ProofCalldata},
 };
-use std::{
-    io::{BufReader, BufWriter},
-    time::Duration,
+use std::time::Duration;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+    time::sleep,
 };
-use tokio::{io::AsyncReadExt, net::TcpStream};
-use tokio::{io::AsyncWriteExt, time::sleep};
 use tracing::{debug, error, info, warn};
 use zkvm_interface::io::ProgramInput;
 
