@@ -24,6 +24,7 @@ use std::{
 
 pub const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum Command {
     #[clap(
