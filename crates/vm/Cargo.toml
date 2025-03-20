@@ -17,6 +17,12 @@ revm = { version = "19.0.0", features = [
     "optional_no_base_fee",
     "optional_block_gas_limit",
 ], default-features = false }
+# Pevm utilizes their own revm fork
+revm_pevm = { git = "https://github.com/risechain/revm", rev = "ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c", features = [
+  "serde",
+], package = "revm" }
+
+pevm = { git = "https://github.com/risechain/pevm.git", rev = "4e8ff98e54c76af2c52072ca19b0d96eb5c6b6e9" }
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
 revm-inspectors = { version = "0.15.0" }

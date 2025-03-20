@@ -22,6 +22,8 @@ pub enum EvmError {
     Precompile(String),
     #[error("Invalid EVM or EVM not supported: {0}")]
     InvalidEVM(String),
+    #[error("Pevm error")]
+    Pevm(pevm::PevmError<pevm::chain::PevmEthereum>),
     #[error("{0}")]
     Custom(String),
 }

@@ -2048,7 +2048,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -3126,7 +3126,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3531,6 +3531,8 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "lazy_static",
+ "pevm",
+ "revm 19.2.0",
  "revm 19.5.0",
  "revm-inspectors",
  "revm-primitives 15.2.0",
@@ -4822,7 +4824,7 @@ checksum = "e19b23d53f35ce9f56aebc7d1bb4e6ac1e9c0db7ac85c8d1760c04379edced37"
 dependencies = [
  "hermit-abi 0.4.0",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5054,7 +5056,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -6703,6 +6705,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "pevm"
+version = "0.1.0"
+source = "git+https://github.com/risechain/pevm.git?rev=4e8ff98e54c76af2c52072ca19b0d96eb5c6b6e9#4e8ff98e54c76af2c52072ca19b0d96eb5c6b6e9"
+dependencies = [
+ "alloy-consensus 0.9.2",
+ "alloy-primitives 0.8.21",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-types-eth 0.9.2",
+ "alloy-trie",
+ "bitflags 2.8.0",
+ "bitvec",
+ "dashmap 6.1.0",
+ "hashbrown 0.15.2",
+ "revm 19.2.0",
+ "rustc-hash 2.1.1",
+ "serde",
+ "smallvec",
+ "thiserror 2.0.11",
+]
+
+[[package]]
 name = "phf"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7260,7 +7284,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7565,6 +7589,20 @@ dependencies = [
 
 [[package]]
 name = "revm"
+version = "19.2.0"
+source = "git+https://github.com/risechain/revm?rev=ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c#ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c"
+dependencies = [
+ "auto_impl",
+ "cfg-if",
+ "dyn-clone",
+ "revm-interpreter 15.0.0",
+ "revm-precompile 16.0.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "revm"
 version = "19.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfc5bef3c95fadf3b6a24a253600348380c169ef285f9780a793bb7090c8990d"
@@ -7608,6 +7646,15 @@ dependencies = [
 
 [[package]]
 name = "revm-interpreter"
+version = "15.0.0"
+source = "git+https://github.com/risechain/revm?rev=ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c#ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c"
+dependencies = [
+ "revm-primitives 15.1.0",
+ "serde",
+]
+
+[[package]]
+name = "revm-interpreter"
 version = "15.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dcab7ef2064057acfc84731205f4bc77f4ec1b35630800b26ff6a185731c5ab"
@@ -7628,6 +7675,24 @@ dependencies = [
  "k256",
  "once_cell",
  "revm-primitives 4.0.0",
+ "ripemd",
+ "secp256k1",
+ "sha2 0.10.8",
+ "substrate-bn",
+]
+
+[[package]]
+name = "revm-precompile"
+version = "16.0.0"
+source = "git+https://github.com/risechain/revm?rev=ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c#ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c"
+dependencies = [
+ "aurora-engine-modexp",
+ "blst",
+ "c-kzg",
+ "cfg-if",
+ "k256",
+ "once_cell",
+ "revm-primitives 15.1.0",
  "ripemd",
  "secp256k1",
  "sha2 0.10.8",
@@ -7686,6 +7751,25 @@ dependencies = [
  "auto_impl",
  "bitflags 2.8.0",
  "bitvec",
+ "cfg-if",
+ "dyn-clone",
+ "enumn",
+ "hex",
+ "serde",
+]
+
+[[package]]
+name = "revm-primitives"
+version = "15.1.0"
+source = "git+https://github.com/risechain/revm?rev=ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c#ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c"
+dependencies = [
+ "alloy-eip2930",
+ "alloy-eip7702 0.5.0",
+ "alloy-primitives 0.8.21",
+ "auto_impl",
+ "bitflags 2.8.0",
+ "bitvec",
+ "c-kzg",
  "cfg-if",
  "dyn-clone",
  "enumn",
@@ -8235,7 +8319,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9564,7 +9648,7 @@ dependencies = [
  "getrandom 0.3.1",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10600,7 +10684,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
