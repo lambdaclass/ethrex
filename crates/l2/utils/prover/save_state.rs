@@ -378,7 +378,11 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
 mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
-    use ethrex_vm::db::ExecutionDB;
+    #[cfg(not(feature = "levm-l2"))]
+    use ethrex_vm::backends::revm::db::evm_state;
+    #[cfg(feature = "levm-l2")]
+    use ethrex_vm::db::StoreWrapper;
+    use ethrex_vm::{backends::Evm, db::ExecutionDB};
 
     use super::*;
     use crate::utils::test_data_io;
@@ -431,8 +435,22 @@ mod tests {
 
         // Write all the account_updates and proofs for each block
         for block in &blocks {
+            #[cfg(feature = "levm-l2")]
+            let mut evm = Evm::LEVM {
+                store_wrapper: StoreWrapper {
+                    store: store.clone(),
+                    block_hash: block.hash(),
+                },
+                block_cache: Default::default(),
+            };
+
+            #[cfg(not(feature = "levm-l2"))]
+            let mut evm = Evm::REVM {
+                state: evm_state(store.clone(), block.hash()),
+            };
+
             let account_updates =
-                ExecutionDB::get_account_updates(blocks.last().unwrap(), &store).unwrap();
+                ExecutionDB::get_account_updates(blocks.last().unwrap(), &mut evm).unwrap();
 
             account_updates_vec.push(account_updates.clone());
 
