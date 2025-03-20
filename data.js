@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742415936747,
+  "lastUpdate": 1742492645789,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -775,6 +775,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 227444733037,
             "range": "± 635540582",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d38ee5932da6c9d667f2267646f81e839b1fe3c3",
+          "message": "refactor(l2): add flag for setting sponsor private key (#2281)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nThe current implementation requires a `.env` file to exist and the\nexecution panics if this file does not exist. Nevertheless, this has a\npurpose of being. As this feature should be used in `l2` it is assumed\nthat there's a `.env` file and that is ok because it should. This PR\nintends to add a second path for setting the sponsor pk without needing\na `.env`.\n\n**Description**\n\nAdd a flag `--sponsor-private-key` as a second option for setting this\nvalue.",
+          "timestamp": "2025-03-20T16:48:16Z",
+          "tree_id": "d21d99b7d4992673f2d8352fa4c5e49e6c1fd55b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d38ee5932da6c9d667f2267646f81e839b1fe3c3"
+        },
+        "date": 1742492643359,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 231005160866,
+            "range": "± 1266839643",
             "unit": "ns/iter"
           }
         ]
