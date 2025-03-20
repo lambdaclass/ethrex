@@ -25,6 +25,9 @@ struct StorageHealingMetrics {
     request: u128,
     node_count: usize,
     update_children_and_write_nodes_time: u128,
+    update_children: u128,
+    hash_nodes: u128,
+    write_nodes: u128,
 }
 
 impl StorageHealingMetrics {
@@ -32,11 +35,16 @@ impl StorageHealingMetrics {
         let request_percentage = (100 * self.request) / self.full_time;
         let update_children_and_write_nodes_time_percentage =
             (100 * self.update_children_and_write_nodes_time) / self.full_time;
+        let update_children_percentage = (100 * self.update_children) / self.update_children_and_write_nodes_time;
+        let hash_nodes_percentage = (100 * self.hash_nodes) / self.update_children_and_write_nodes_time;
+        let write_nodes_percentage = (100 * self.write_nodes) / self.update_children_and_write_nodes_time;
         info!("
             Fetched storage heal batch of len {} in {} ms.
             Time Breakdown:
             {request_percentage}% Requesting Nodes ({}ms)
-            {update_children_and_write_nodes_time_percentage}% Updating Children & Writing Nodes ({}ms)",
+            {update_children_and_write_nodes_time_percentage}% Updating Children & Writing Nodes ({}ms)
+            Of which:
+                ",
             self.node_count,
             self.full_time,
             self.request,
@@ -170,18 +178,25 @@ async fn heal_storage_batch(
         let node_count = nodes.len();
         // Process the nodes for each account path
         let update_children_and_write_nodes_time = Instant::now();
+        let mut update_children = 0;
+        let mut write_nodes = 0;
+        let mut hash_nodes = 0;
         for (acc_path, paths) in batch.iter_mut() {
             let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
             // Get the corresponding nodes
-            for node in nodes.drain(..paths.len().min(nodes.len())) {
-                let path = paths.remove(0);
-                // Add children to batch
-                let children = node_missing_children(&node, &path, trie.state())?;
-                paths.extend(children);
-                let hash = node.compute_hash();
-                trie.state_mut().write_node(node, hash)?;
-            }
-            // Cut the loop if we ran out of nodes
+            let trie_nodes: Vec<ethrex_trie::Node> = nodes.drain(..paths.len().min(nodes.len())).collect();
+            // Add children to batch
+            let child_time = Instant::now();
+            let children = trie_nodes.iter().zip(paths.drain(..paths.len().min(nodes.len()))).map(|(node, path)| node_missing_children(&node, &path, trie.state())).collect::<Result<Vec<_>,_>>()?;
+            paths.extend(children.into_iter().flatten());
+            update_children += child_time.elapsed().as_millis();
+            // Write nodes to trie
+            let hash_time = Instant::now();
+            let node_hashes = trie_nodes.iter().map(|node| node.compute_hash()).collect();
+            hash_nodes += hash_time.elapsed().as_millis();
+            let write_time = Instant::now();
+            trie.state_mut().write_node_batch(trie_nodes, node_hashes)?;
+            write_nodes += write_time.elapsed().as_millis();
             if nodes.is_empty() {
                 break;
             }
@@ -197,6 +212,9 @@ async fn heal_storage_batch(
             request,
             node_count,
             update_children_and_write_nodes_time,
+            update_children,
+            hash_nodes,
+            write_nodes,
         }
         .show();
         return Ok((batch, false));
