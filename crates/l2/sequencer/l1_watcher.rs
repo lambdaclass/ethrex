@@ -14,9 +14,10 @@ use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_storage::Store;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{cmp::min, ops::Mul, sync::Arc, time::Duration};
-use tokio::time::sleep;
+use std::{cmp::min, ops::Mul, sync::Arc};
 use tracing::{debug, error, info, warn};
+
+use super::utils::sleep_random;
 
 pub async fn start_l1_watcher(
     store: Store,
@@ -36,7 +37,7 @@ pub struct L1Watcher {
     max_block_step: U256,
     last_block_fetched: U256,
     l2_proposer_pk: SecretKey,
-    check_interval: Duration,
+    check_interval: u64,
 }
 
 impl L1Watcher {
@@ -55,7 +56,7 @@ impl L1Watcher {
             max_block_step: watcher_config.max_block_step,
             last_block_fetched,
             l2_proposer_pk: watcher_config.l2_proposer_private_key,
-            check_interval: Duration::from_millis(watcher_config.check_interval_ms),
+            check_interval: watcher_config.check_interval_ms,
         })
     }
 
@@ -64,8 +65,6 @@ impl L1Watcher {
             if let Err(err) = self.main_logic(store, blockchain).await {
                 error!("L1 Watcher Error: {}", err);
             }
-
-            sleep(self.check_interval).await;
         }
     }
 
@@ -75,7 +74,7 @@ impl L1Watcher {
         blockchain: &Blockchain,
     ) -> Result<(), L1WatcherError> {
         loop {
-            sleep(self.check_interval).await;
+            sleep_random(self.check_interval).await;
 
             let logs = self.get_logs().await?;
 

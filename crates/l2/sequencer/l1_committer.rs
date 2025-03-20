@@ -23,11 +23,10 @@ use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 use ethrex_vm::backends::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
-use tokio::time::sleep;
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-use super::{errors::BlobEstimationError, execution_cache::ExecutionCache};
+use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
 
@@ -80,7 +79,7 @@ impl Committer {
                 error!("L1 Committer Error: {}", err);
             }
 
-            sleep(Duration::from_millis(self.interval_ms)).await;
+            sleep_random(self.interval_ms).await;
         }
     }
 

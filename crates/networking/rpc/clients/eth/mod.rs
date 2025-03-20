@@ -750,7 +750,7 @@ impl EthClient {
         overrides: Overrides,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
         let mut get_gas_price = 1;
-        let mut tx = PrivilegedL2Transaction {
+        let tx = PrivilegedL2Transaction {
             to: TxKind::Call(to),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id

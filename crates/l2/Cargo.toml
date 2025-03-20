@@ -28,6 +28,7 @@ jsonwebtoken.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true
 envy = "0.4.2"
+rand = "0.9.0"
 thiserror.workspace = true
 directories = "5.0.1"
 toml = { version = "0.8.19", features = ["parse"] }

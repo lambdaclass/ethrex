@@ -1,4 +1,5 @@
 use crate::sequencer::errors::{ProverServerError, SigIntError};
+use crate::sequencer::utils::sleep_random;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -502,7 +503,7 @@ impl ProverServer {
 
     pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
         loop {
-            tokio::time::sleep(Duration::from_millis(self.dev_interval_ms)).await;
+            sleep_random(self.dev_interval_ms).await;
 
             let last_committed_block = EthClient::get_last_committed_block(
                 &self.eth_client,
