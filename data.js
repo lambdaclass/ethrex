@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742498485129,
+  "lastUpdate": 1742500763622,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -865,6 +865,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 225153168984,
             "range": "± 875558649",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4f7024cdd9997138bb88ddb94f5721d0343ad95c",
+          "message": "fix(l2): make TCP connection async (#2280)\n\n**Motivation**\n\nThe prover server-client TCP connection uses blocking primitive from the\nstandard library, so whenever one of the processes is expecting a\nconnection they don't yield control to the runtime and all other\nprocesses get blocked (because tokio's scheduler is cooperative).\n\nThis PR replaces these primitives with tokio's async ones.\n\nCloses #1983\nCloses #2019",
+          "timestamp": "2025-03-20T19:04:14Z",
+          "tree_id": "ccfea38803d446965230600c877f88b69ee4e550",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4f7024cdd9997138bb88ddb94f5721d0343ad95c"
+        },
+        "date": 1742500761736,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 226396001375,
+            "range": "± 381946602",
             "unit": "ns/iter"
           }
         ]
