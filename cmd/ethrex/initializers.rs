@@ -131,7 +131,7 @@ pub fn init_rpc_api(
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
-        get_sponsor_pk(),
+        get_sponsor_pk(l2_opts),
     )
     .into_future();
 
@@ -364,8 +364,14 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
 }
 
 #[cfg(feature = "l2")]
-pub fn get_sponsor_pk() -> SecretKey {
-    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
+pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
+    if let Some(pk) = opts.sponsor_private_key {
+        return pk;
+    }
+
+    warn!("Sponsor private key not provided. Trying to read from the .env file.");
+
+    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer)  {
         panic!("Failed to read .env file: {e}");
     }
     let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();
