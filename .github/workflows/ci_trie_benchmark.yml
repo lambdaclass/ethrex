@@ -1,10 +1,11 @@
 name: trie benchmark
 
 on:
+  workflow_call:
   pull_request:
     branches: ["**"]
-  paths:
-    - "crates/common/trie/**"
+    paths:
+      - "crates/l2/**"
 
 permissions:
   # deployments permission to deploy GitHub pages website
