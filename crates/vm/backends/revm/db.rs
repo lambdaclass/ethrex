@@ -31,7 +31,7 @@ impl Clone for EvmState {
                 database: state.database.clone(),
                 transition_state: state.transition_state.clone(),
                 bundle_state: state.bundle_state.clone(),
-                use_preloaded_bundle: state.use_preloaded_bundle.clone(),
+                use_preloaded_bundle: state.use_preloaded_bundle,
                 block_hashes: state.block_hashes.clone(),
             }),
             EvmState::Execution(execution) => {

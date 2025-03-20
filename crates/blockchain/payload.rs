@@ -230,6 +230,7 @@ pub struct PayloadBuildResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<EncodedRequests>,
     pub account_updates: Vec<AccountUpdate>,
+    pub payload: Block,
 }
 
 impl From<PayloadBuildContext> for PayloadBuildResult {
@@ -240,6 +241,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             requests,
             receipts,
             account_updates,
+            payload,
             ..
         } = value;
 
@@ -249,6 +251,7 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
             requests,
             receipts,
             account_updates,
+            payload,
         }
     }
 }
@@ -424,7 +427,7 @@ impl Blockchain {
                         &mut deposits_size,
                         head_tx.clone().into(),
                         &receipt,
-                        &context,
+                        context,
                     )? {
                         debug!(
                             "Skipping transaction: {}, doesn't feet in blob_size",
@@ -432,6 +435,7 @@ impl Blockchain {
                         );
                         // We don't have enough space in the blob for the transaction, so we skip all txs from this account
                         txs.pop();
+                        *context = previous_context.clone();
                         continue;
                     }
                     txs.shift()?;
@@ -510,10 +514,7 @@ impl Blockchain {
     }
 
     fn is_deposit_l2(tx: &Transaction) -> bool {
-        match tx {
-            Transaction::PrivilegedL2Transaction(_tx) => true,
-            _ => false,
-        }
+        matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
     }
 
     fn calc_modified_accounts_size(context: &PayloadBuildContext) -> Result<usize, StoreError> {
