@@ -116,7 +116,9 @@ update-system-contracts:
 	DEPLOYER_CONTRACTS_PATH=contracts CONFIG_FILE=config.toml cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- ${L2_GENESIS_FILE_PATH}
 
 # L2
-init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
+init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
+
+init-l2-no-metrics: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [[ -z "$$BASED" ]]; then \
 		FEATURES="l2,metrics"; \
 		echo "Running ethrex L2 vanilla"; \
@@ -184,7 +186,7 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
-	make init-l2 ethrex_L2_DEV_LIBMDBX=$$PWD/store 2>&1 >/dev/null &
+	make init-l2-no-metrics ethrex_L2_DEV_LIBMDBX=$$PWD/store 2>&1 >/dev/null &
 	cargo test state_reconstruct --release
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
