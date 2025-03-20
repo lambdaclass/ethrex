@@ -96,9 +96,8 @@ pub(crate) async fn state_sync(
             storage_healer_sender.clone(),
         ));
     }
-    info!("Finished state sync segment!");
     show_progress_handle.await?;
-    info!("Finished show progress!");
+    info!("AAAAAAAAA Finished show progress!");
     // Check for pivot staleness
     let mut stale_pivot = false;
     let mut state_trie_checkpoint = [H256::zero(); STATE_TRIE_SEGMENTS];
@@ -107,6 +106,7 @@ pub(crate) async fn state_sync(
         stale_pivot |= is_stale;
         state_trie_checkpoint[index] = last_key;
     }
+    info!("Finished state sync segment!");
     // Update state trie checkpoint
     store.set_state_trie_key_checkpoint(state_trie_checkpoint)?;
     Ok(stale_pivot)
@@ -260,11 +260,14 @@ async fn state_sync_segment(
     storage_sender.send(vec![]).await?;
     bytecode_sender.send(vec![]).await?;
     storage_fetcher_handle.await??;
+    info!("[Segment {segment_number}]: Storage fetcher finished");
     bytecode_fetcher_handle.await??;
+    info!("[Segment {segment_number}]: Bytecode fetcher finished");
     if !stale {
         // State sync finished before becoming stale, update checkpoint so we skip state sync on the next cycle
         start_account_hash = STATE_TRIE_SEGMENTS_END[segment_number]
     }
+    info!("[Segment {segment_number}]: state sync segment finished");
     Ok((segment_number, stale, start_account_hash))
 }
 
@@ -300,6 +303,7 @@ impl StateSyncProgress {
         progress.data.lock().await.current_keys[segment_number] = current_key
     }
     async fn end_segment(progress: StateSyncProgress, segment_number: usize) {
+        info!("SHOW PROGRESS ENDING SEGMENT {segment_number}");
         progress.data.lock().await.ended[segment_number] = true
     }
 
