@@ -65,7 +65,7 @@ pub enum BlockByNumber {
 impl From<BlockByNumber> for Value {
     fn from(value: BlockByNumber) -> Self {
         match value {
-            BlockByNumber::Number(n) => json!(format!("{:#x}", n)),
+            BlockByNumber::Number(n) => json!(format!("{n:#x}")),
             BlockByNumber::Latest => json!("latest"),
             BlockByNumber::Earliest => json!("earliest"),
             BlockByNumber::Pending => json!("pending"),
