@@ -672,7 +672,8 @@ impl EthClient {
         calldata: Bytes,
         overrides: Overrides,
     ) -> Result<EIP1559Transaction, EthClientError> {
-        let tx = EIP1559Transaction {
+        let mut get_gas_price = 1;
+        let mut tx = EIP1559Transaction {
             to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
@@ -684,14 +685,31 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: overrides.max_fee_per_gas.unwrap_or_default(),
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or_default(),
+            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
+                gas_price
+            } else {
+                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?;
+
+                get_gas_price
+            },
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
-            gas_limit: overrides.gas_limit.unwrap_or_default(),
             ..Default::default()
         };
+
+        if let Some(overrides_gas_limit) = overrides.gas_limit {
+            tx.gas_limit = overrides_gas_limit;
+        } else {
+            let mut wrapped_tx = WrappedTransaction::EIP1559(tx.clone());
+            let gas_limit = self
+                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+                .await?;
+            tx.gas_limit = gas_limit;
+        }
 
         Ok(tx)
     }
@@ -710,6 +728,7 @@ impl EthClient {
         blobs_bundle: BlobsBundle,
     ) -> Result<WrappedEIP4844Transaction, EthClientError> {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+        let mut get_gas_price = 1;
         let tx = EIP4844Transaction {
             to,
             chain_id: if let Some(chain_id) = overrides.chain_id {
@@ -722,18 +741,35 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: overrides.max_fee_per_gas.unwrap_or_default(),
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or_default(),
+            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
+                gas_price
+            } else {
+                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
+                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
+                })?;
+
+                get_gas_price
+            },
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
             max_fee_per_blob_gas: overrides.gas_price_per_blob.unwrap_or_default(),
             blob_versioned_hashes,
-            gas: overrides.gas_limit.unwrap_or_default(),
             ..Default::default()
         };
 
-        let wrapped_eip4844 = WrappedEIP4844Transaction { tx, blobs_bundle };
+        let mut wrapped_eip4844 = WrappedEIP4844Transaction { tx, blobs_bundle };
+        if let Some(overrides_gas_limit) = overrides.gas_limit {
+            wrapped_eip4844.tx.gas = overrides_gas_limit;
+        } else {
+            let mut wrapped_tx = WrappedTransaction::EIP4844(wrapped_eip4844.clone());
+            let gas_limit = self
+                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+                .await?;
+            wrapped_eip4844.tx.gas = gas_limit;
+        }
+
         Ok(wrapped_eip4844)
     }
 
@@ -750,7 +786,7 @@ impl EthClient {
         overrides: Overrides,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
         let mut get_gas_price = 1;
-        let tx = PrivilegedL2Transaction {
+        let mut tx = PrivilegedL2Transaction {
             to: TxKind::Call(to),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
@@ -775,9 +811,18 @@ impl EthClient {
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
-            gas_limit: overrides.gas_limit.unwrap_or_default(),
             ..Default::default()
         };
+
+        if let Some(overrides_gas_limit) = overrides.gas_limit {
+            tx.gas_limit = overrides_gas_limit;
+        } else {
+            let mut wrapped_tx = WrappedTransaction::L2(tx.clone());
+            let gas_limit = self
+                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
+                .await?;
+            tx.gas_limit = gas_limit;
+        }
 
         Ok(tx)
     }

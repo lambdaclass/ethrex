@@ -510,12 +510,24 @@ async fn create2_deploy(
         init_code,
     ]
     .concat();
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
     let deploy_tx = eth_client
         .build_eip1559_transaction(
             DETERMINISTIC_CREATE2_ADDRESS,
             deployer,
             calldata.into(),
-            Overrides::default(),
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?;
 
@@ -645,12 +657,24 @@ async fn initialize_on_chain_proposer(
     let on_chain_proposer_initialization_calldata =
         encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
 
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
     let initialize_tx = eth_client
         .build_eip1559_transaction(
             on_chain_proposer,
             deployer,
             on_chain_proposer_initialization_calldata.into(),
-            Overrides::default(),
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?;
     let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(initialize_tx);
@@ -675,12 +699,24 @@ async fn initialize_bridge(
     let bridge_initialization_calldata =
         encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
     let initialize_tx = eth_client
         .build_eip1559_transaction(
             bridge,
             deployer,
             bridge_initialization_calldata.into(),
-            Overrides::default(),
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await
         .map_err(DeployError::from)?;
@@ -741,10 +777,17 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
+
+        let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
             gas_limit: Some(21000 * 5),
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
             ..Overrides::default()
         };
 

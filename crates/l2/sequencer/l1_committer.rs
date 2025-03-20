@@ -380,15 +380,13 @@ impl Committer {
         .to_le_bytes();
 
         let gas_price_per_blob = U256::from_little_endian(&le_bytes);
-        let max_fee_per_gas = self
+        let gas_price = self
             .eth_client
             .get_gas_price_with_extra(20)
             .await?
             .try_into()
             .map_err(|_| {
-                CommitterError::InternalError(
-                    "Failed to convert max_fee_per_gas to a u64".to_owned(),
-                )
+                CommitterError::InternalError("Failed to convert gas_price to a u64".to_owned())
             })?;
 
         let wrapped_tx = self
@@ -400,8 +398,8 @@ impl Committer {
                 Overrides {
                     from: Some(self.l1_address),
                     gas_price_per_blob: Some(gas_price_per_blob),
-                    max_fee_per_gas: Some(max_fee_per_gas),
-                    max_priority_fee_per_gas: Some(max_fee_per_gas),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
                     ..Default::default()
                 },
                 blobs_bundle,

@@ -465,15 +465,13 @@ impl ProverServer {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let max_fee_per_gas = self
+        let gas_price = self
             .eth_client
             .get_gas_price_with_extra(20)
             .await?
             .try_into()
             .map_err(|_| {
-                ProverServerError::InternalError(
-                    "Failed to convert max_fee_per_gas to a u64".to_owned(),
-                )
+                ProverServerError::InternalError("Failed to convert gas_price to a u64".to_owned())
             })?;
 
         let verify_tx = self
@@ -483,7 +481,8 @@ impl ProverServer {
                 self.verifier_address,
                 calldata.into(),
                 Overrides {
-                    max_fee_per_gas: Some(max_fee_per_gas),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
                     ..Default::default()
                 },
             )
@@ -551,14 +550,14 @@ impl ProverServer {
 
             let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-            let max_fee_per_gas = self
+            let gas_price = self
                 .eth_client
                 .get_gas_price_with_extra(20)
                 .await?
                 .try_into()
                 .map_err(|_| {
                     ProverServerError::InternalError(
-                        "Failed to convert max_fee_per_gas to a u64".to_owned(),
+                        "Failed to convert gas_price to a u64".to_owned(),
                     )
                 })?;
 
@@ -569,8 +568,8 @@ impl ProverServer {
                     self.verifier_address,
                     calldata.into(),
                     Overrides {
-                        max_fee_per_gas: Some(max_fee_per_gas),
-                        max_priority_fee_per_gas: Some(max_fee_per_gas),
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
                         ..Default::default()
                     },
                 )
