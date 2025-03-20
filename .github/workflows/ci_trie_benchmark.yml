@@ -3,6 +3,8 @@ name: trie benchmark
 on:
   pull_request:
     branches: ["**"]
+  paths:
+    - "crates/common/trie/**"
 
 permissions:
   # deployments permission to deploy GitHub pages website
