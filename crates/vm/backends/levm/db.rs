@@ -2,16 +2,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use ethrex_common::types::Block;
-use ethrex_storage::{hash_address, hash_key, AccountUpdate};
-use ethrex_trie::{NodeRLP, TrieError};
+use ethrex_storage::AccountUpdate;
 
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::db::{get_potential_child_nodes, ExecutionDB, StoreWrapper};
+use crate::db::{ExecutionDB, StoreWrapper};
 use crate::errors::ExecutionDBError;
-use crate::EvmError;
 
 #[derive(Clone)]
 pub struct BlockLogger {
@@ -176,188 +174,5 @@ impl ExecutionDB {
         account_updates.extend(report.account_updates);
 
         Ok((account_updates, db))
-    }
-}
-
-impl StoreWrapper {
-    pub fn to_exec_db_levm(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
-        // TODO: Simplify this function and potentially merge with the implementation for
-        // RpcDB.
-
-        let parent_hash = block.header.parent_hash;
-        let chain_config = self.store.get_chain_config()?;
-
-        // pre-execute and get all state changes
-        let (execution_updates, logger) = ExecutionDB::pre_execute_levm(block, self)
-            .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
-
-        // index read and touched account addresses and storage keys
-        let index = execution_updates.iter().map(|update| {
-            // CHECK if we only need the touched storage keys
-            let address = update.address;
-            let storage_keys: Vec<_> = update
-                .added_storage
-                .keys()
-                .map(|key| CoreH256::from_slice(&key.to_fixed_bytes()))
-                .collect();
-            (address, storage_keys)
-        });
-
-        // fetch all read/written values from store
-        let cache_accounts = execution_updates.iter().filter_map(|update| {
-            let address = update.address;
-            // filter new accounts (accounts that didn't exist before) assuming our store is
-            // correct (based on the success of the pre-execution).
-            if logger
-                .db
-                .store
-                .get_account_info_by_hash(parent_hash, address)
-                .is_ok_and(|account| account.is_some())
-            {
-                Some((address, update.info.clone()))
-            } else {
-                None
-            }
-        });
-        let accounts = cache_accounts
-            .clone()
-            .map(|(address, _)| {
-                // return error if account is missing
-                let account = match logger
-                    .db
-                    .store
-                    .get_account_info_by_hash(parent_hash, address)
-                {
-                    Ok(Some(some)) => Ok(some),
-                    Err(err) => Err(ExecutionDBError::Store(err)),
-                    Ok(None) => unreachable!(), // we are filtering out accounts that are not present
-                                                // in the store
-                };
-                Ok((address, account?))
-            })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let code = execution_updates
-            .clone()
-            .iter()
-            .map(|update| {
-                // return error if code is missing
-                let hash = update.info.clone().unwrap_or_default().code_hash;
-                Ok((
-                    hash,
-                    logger
-                        .db
-                        .store
-                        .get_account_code(hash)?
-                        .ok_or(ExecutionDBError::NewMissingCode(hash))?,
-                ))
-            })
-            .collect::<Result<_, ExecutionDBError>>()?;
-        let storage = execution_updates
-            .iter()
-            .map(|update| {
-                // return error if storage is missing
-                Ok((
-                    update.address,
-                    update
-                        .added_storage
-                        .keys()
-                        .map(|key| {
-                            let key = CoreH256::from(key.to_fixed_bytes());
-                            let value = logger
-                                .db
-                                .store
-                                .get_storage_at_hash(parent_hash, update.address, key)
-                                .map_err(ExecutionDBError::Store)?
-                                .ok_or(ExecutionDBError::NewMissingStorage(update.address, key))?;
-                            Ok((key, value))
-                        })
-                        .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?,
-                ))
-            })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let block_hashes = logger
-            .block_hashes_accessed
-            .lock()
-            .unwrap()
-            .clone()
-            .into_iter()
-            .map(|(num, hash)| (num, CoreH256::from(hash.0)))
-            .collect();
-
-        // get account proofs
-        let state_trie = self
-            .store
-            .state_trie(block.hash())?
-            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
-        let parent_state_trie = self
-            .store
-            .state_trie(parent_hash)?
-            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
-        let hashed_addresses: Vec<_> = index
-            .clone()
-            .map(|(address, _)| hash_address(&address))
-            .collect();
-        let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
-        let final_state_proofs: Vec<_> = hashed_addresses
-            .iter()
-            .map(|hashed_address| Ok((hashed_address, state_trie.get_proof(hashed_address)?)))
-            .collect::<Result<_, TrieError>>()?;
-        let potential_account_child_nodes = final_state_proofs
-            .iter()
-            .filter_map(|(hashed_address, proof)| get_potential_child_nodes(proof, hashed_address))
-            .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
-            .collect();
-        let state_proofs = (
-            initial_state_proofs.0,
-            [initial_state_proofs.1, potential_account_child_nodes].concat(),
-        );
-
-        // get storage proofs
-        let mut storage_proofs = HashMap::new();
-        let mut final_storage_proofs = HashMap::new();
-        for (address, storage_keys) in index {
-            let Some(parent_storage_trie) = self.store.storage_trie(parent_hash, address)? else {
-                // the storage of this account was empty or the account is newly created, either
-                // way the storage trie was initially empty so there aren't any proofs to add.
-                continue;
-            };
-            let storage_trie = self.store.storage_trie(block.hash(), address)?.ok_or(
-                ExecutionDBError::NewMissingStorageTrie(block.hash(), address),
-            )?;
-            let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
-
-            let initial_proofs = parent_storage_trie.get_proofs(&paths)?;
-            let final_proofs: Vec<(_, Vec<_>)> = storage_keys
-                .iter()
-                .map(|key| {
-                    let hashed_key = hash_key(key);
-                    let proof = storage_trie.get_proof(&hashed_key)?;
-                    Ok((hashed_key, proof))
-                })
-                .collect::<Result<_, TrieError>>()?;
-
-            let potential_child_nodes: Vec<NodeRLP> = final_proofs
-                .iter()
-                .filter_map(|(hashed_key, proof)| get_potential_child_nodes(proof, hashed_key))
-                .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
-                .collect();
-            let proofs = (
-                initial_proofs.0,
-                [initial_proofs.1, potential_child_nodes].concat(),
-            );
-
-            storage_proofs.insert(address, proofs);
-            final_storage_proofs.insert(address, final_proofs);
-        }
-
-        Ok(ExecutionDB {
-            accounts,
-            code,
-            storage,
-            block_hashes,
-            chain_config,
-            state_proofs,
-            storage_proofs,
-        })
     }
 }
