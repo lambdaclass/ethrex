@@ -17,8 +17,13 @@ use ethrex_common::{
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
+#[cfg(feature = "levm-l2")]
+use ethrex_vm::backends::levm::StoreWrapper;
+#[cfg(not(feature = "levm-l2"))]
+use ethrex_vm::backends::revm::db::evm_state;
+use ethrex_vm::backends::Evm;
 use ethrex_vm::db::ExecutionDB;
-use ethrex_vm::{backends::revm::execution_db::ToExecDB, db::StoreWrapper, EvmError};
+use ethrex_vm::EvmError;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -393,11 +398,19 @@ impl ProverServer {
         let block = Block::new(header, body);
 
         let parent_hash = block.header.parent_hash;
-        let store = StoreWrapper {
-            store: self.store.clone(),
-            block_hash: parent_hash,
+        #[cfg(feature = "levm-l2")]
+        let mut evm = Evm::LEVM {
+            store_wrapper: StoreWrapper {
+                store: self.store.clone(),
+                block_hash: parent_hash,
+            },
+            block_cache: Default::default(),
         };
-        let db = store.to_exec_db(&block).map_err(EvmError::ExecutionDB)?;
+        #[cfg(not(feature = "levm-l2"))]
+        let mut evm = Evm::REVM {
+            state: evm_state(self.store.clone(), parent_hash),
+        };
+        let db = evm.to_exec_db(&block).map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store

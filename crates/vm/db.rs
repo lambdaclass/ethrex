@@ -9,15 +9,16 @@ use ethrex_common::{
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_trie::{Node, NodeRLP, PathRLP, Trie, TrieError};
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "levm-l2")]
-use std::sync::Arc;
-
-#[cfg(not(feature = "levm-l2"))]
-use crate::backends::revm::db::evm_state;
 #[derive(Clone)]
 pub struct StoreWrapper {
     pub store: Store,
     pub block_hash: BlockHash,
+}
+
+/// Creates an [ExecutionDB] from an initial database and a block to execute, usually via
+/// pre-execution.
+pub trait ToExecDB {
+    fn to_exec_db(&self, block: &Block, evm: &mut Evm) -> Result<ExecutionDB, ExecutionDBError>;
 }
 
 /// In-memory EVM database for single execution data.
@@ -84,15 +85,16 @@ impl ExecutionDB {
 }
 
 impl ToExecDB for StoreWrapper {
-    fn to_exec_db(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
-        #[cfg(feature = "levm-l2")]
-        {
-            self.to_exec_db_levm(block)
-        }
-        #[cfg(not(feature = "levm-l2"))]
-        {
-            self.to_exec_db_revm(block)
-        }
+    fn to_exec_db(&self, block: &Block, evm: &mut Evm) -> Result<ExecutionDB, ExecutionDBError> {
+        evm.to_exec_db(block)
+        // #[cfg(feature = "levm-l2")]
+        // {
+        //     self.to_exec_db_levm(block)
+        // }
+        // #[cfg(not(feature = "levm-l2"))]
+        // {
+        //     self.to_exec_db_revm(block)
+        // }
     }
 }
 
