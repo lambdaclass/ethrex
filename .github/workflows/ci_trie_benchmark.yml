@@ -1,0 +1,39 @@
+name: trie benchmark
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  # deployments permission to deploy GitHub pages website
+  deployments: write
+  # contents permission to update benchmark contents in gh-pages branch
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.85.0
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Checkout LFS objects
+        run: git lfs checkout
+      - name: Build benchmarks
+        run: |
+          cd crates/common/trie
+          make build-ethrex-bench
+          make build-cita-bench
+      - name: Run benchmarks and save output
+        run: |
+          make compare
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: compare.md
+          edit-mode: replace
