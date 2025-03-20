@@ -2,7 +2,8 @@ use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_common::U256;
-use ethrex_l2::parse_toml::TomlParserMode;
+use ethrex_l2::errors::ConfigError;
+use ethrex_l2::parse_toml::{parse_configs, TomlParserMode};
 use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
@@ -25,9 +26,6 @@ use std::{
 
 mod utils;
 use utils::compile_contract;
-
-mod toml_parser;
-use toml_parser::parse_toml;
 
 struct SetupResult {
     deployer_address: Address,
@@ -58,7 +56,7 @@ pub enum DeployError {
     #[error("Deployer compilation error: {0}")]
     CompilationError(#[from] utils::ContractCompilationError),
     #[error("TomlParser error: {0}")]
-    TomlParserError(#[from] toml_parser::TomlParserError),
+    TomlParserError(#[from] ConfigError),
     #[error("Deployer EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
@@ -86,7 +84,7 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
-    parse_toml(TomlParserMode::Full)?;
+    parse_configs(TomlParserMode::Sequencer)?;
 
     let setup_result = setup()?;
     download_contract_deps(&setup_result.contracts_path)?;
@@ -160,7 +158,7 @@ async fn main() -> Result<(), DeployError> {
 }
 
 fn setup() -> Result<SetupResult, DeployError> {
-    read_env_file()?;
+    read_env_file(TomlParserMode::Sequencer)?;
 
     let eth_client = EthClient::new(&read_env_var("ETH_RPC_URL")?);
 

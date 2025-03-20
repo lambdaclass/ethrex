@@ -1,6 +1,8 @@
 use std::io::{BufRead, Write};
 
 use tracing::{debug, info};
+
+use crate::parse_toml::TomlParserMode;
 pub mod block_producer;
 pub mod committer;
 pub mod eth;
@@ -10,8 +12,8 @@ pub mod prover_server;
 
 pub mod errors;
 
-pub fn read_env_file() -> Result<(), errors::ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+pub fn read_env_file(mode: TomlParserMode) -> Result<(), errors::ConfigError> {
+    let env_file_name = mode.get_env_path_or_default();
     let env_file_path = open_readable(env_file_name)?;
     let reader = std::io::BufReader::new(env_file_path);
 

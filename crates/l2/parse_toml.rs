@@ -2,18 +2,46 @@ use crate::errors::*;
 use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::Path;
 
+#[derive(Clone, Copy)]
 pub enum TomlParserMode {
     /// Parses the entire the config.toml
-    /// And generates a full .env with all the config variables
+    /// And generates a .env with all the config variables
     /// It's used if you run the prover_server and prover_client
     /// in the same machine.
-    Full,
+    Sequencer,
     /// Parses the `prover` variables inside the config.toml
     /// And generates a .env only with the prover_client config variables
     /// It's used if you run the prover_server and prover_client
     /// in different machines.
     ProverClient,
+}
+
+impl TomlParserMode {
+    fn get_config_file_path(&self, config_path: &str) -> Result<String, ConfigError> {
+        match self {
+            TomlParserMode::Sequencer => {
+                let binding = Path::new(&config_path).join("config.toml");
+                let path = binding.to_str().ok_or(ConfigError::InternalParsingError)?;
+                Ok(path.to_string())
+            }
+            TomlParserMode::ProverClient => {
+                let binding = Path::new(&config_path).join("prover_config.toml");
+                let path = binding.to_str().ok_or(ConfigError::InternalParsingError)?;
+                Ok(path.to_string())
+            }
+        }
+    }
+
+    pub fn get_env_path_or_default(&self) -> String {
+        match self {
+            TomlParserMode::Sequencer => std::env::var("ENV_FILE").unwrap_or(".env".to_owned()),
+            TomlParserMode::ProverClient => {
+                std::env::var("PROVER_ENV_FILE").unwrap_or(".env.prover".to_owned())
+            }
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -29,7 +57,7 @@ struct Deployer {
 }
 
 impl Deployer {
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         let prefix = "DEPLOYER";
         format!(
             "
@@ -60,7 +88,7 @@ struct Eth {
 }
 
 impl Eth {
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         let prefix = "ETH";
         format!(
             "
@@ -78,7 +106,7 @@ struct Engine {
 }
 
 impl Engine {
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         let prefix = "ENGINE_API";
         format!(
             "
@@ -123,7 +151,7 @@ struct Proposer {
 }
 
 impl Proposer {
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         let prefix = "PROPOSER";
         format!(
             "
@@ -165,19 +193,18 @@ impl Committer {
 }
 
 #[derive(Deserialize, Debug)]
-struct Client {
+struct ProverClient {
     prover_server_endpoint: String,
     sp1_prover: String,
     risc0_dev_mode: u64,
     interval_ms: u64,
 }
 
-impl Client {
-    pub fn to_env(&self) -> String {
+impl ProverClient {
+    fn to_env(&self) -> String {
         let prefix = "PROVER_CLIENT";
         format!(
-            "
-{prefix}_PROVER_SERVER_ENDPOINT={}
+            "{prefix}_PROVER_SERVER_ENDPOINT={}
 {prefix}_INTERVAL_MS={}
 RISC0_DEV_MODE={}
 SP1_PROVER={}
@@ -188,7 +215,20 @@ SP1_PROVER={}
 }
 
 #[derive(Deserialize, Debug)]
-struct Server {
+struct ProverClientConfig {
+    prover_client: ProverClient,
+}
+
+impl ProverClientConfig {
+    fn to_env(&self) -> String {
+        let mut env_representation = String::new();
+        env_representation.push_str(&self.prover_client.to_env());
+        env_representation
+    }
+}
+
+#[derive(Deserialize, Debug)]
+struct ProverServer {
     listen_ip: String,
     listen_port: u64,
     verifier_address: String,
@@ -197,8 +237,8 @@ struct Server {
     dev_interval_ms: u64,
 }
 
-impl Server {
-    pub fn to_env(&self) -> String {
+impl ProverServer {
+    fn to_env(&self) -> String {
         let prefix = "PROVER_SERVER";
         format!(
             "
@@ -220,21 +260,6 @@ impl Server {
 }
 
 #[derive(Deserialize, Debug)]
-struct Prover {
-    client: Client,
-    server: Server,
-}
-
-impl Prover {
-    pub fn to_env(&self) -> String {
-        let mut env = String::new();
-        env.push_str(&self.client.to_env());
-        env.push_str(&self.server.to_env());
-        env
-    }
-}
-
-#[derive(Deserialize, Debug)]
 struct L2Config {
     deployer: Deployer,
     eth: Eth,
@@ -242,36 +267,28 @@ struct L2Config {
     watcher: Watcher,
     proposer: Proposer,
     committer: Committer,
-    prover: Prover,
+    prover_server: ProverServer,
 }
 
-impl L2Config {
-    pub fn to_env(&self, mode: TomlParserMode) -> String {
+impl L2ConfigFile {
+    fn to_env(&self) -> String {
         let mut env_representation = String::new();
 
-        match mode {
-            TomlParserMode::Full => {
-                env_representation.push_str(&self.deployer.to_env());
-                env_representation.push_str(&self.eth.to_env());
-                env_representation.push_str(&self.engine.to_env());
-                env_representation.push_str(&self.watcher.to_env());
-                env_representation.push_str(&self.proposer.to_env());
-                env_representation.push_str(&self.committer.to_env());
-                env_representation.push_str(&self.prover.to_env());
-            }
-            TomlParserMode::ProverClient => {
-                env_representation.push_str(&self.prover.client.to_env());
-                // Remove starting new_line
-                env_representation = env_representation.trim_start().to_string();
-            }
-        }
+        env_representation.push_str(&self.deployer.to_env());
+        env_representation.push_str(&self.eth.to_env());
+        env_representation.push_str(&self.engine.to_env());
+        env_representation.push_str(&self.watcher.to_env());
+        env_representation.push_str(&self.proposer.to_env());
+        env_representation.push_str(&self.committer.to_env());
+        env_representation.push_str(&self.prover_server.to_env());
 
         env_representation
     }
 }
 
-pub fn write_to_env(config: String) -> Result<(), ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+fn write_to_env(config: String, mode: TomlParserMode) -> Result<(), ConfigError> {
+    let env_file_name = mode.get_env_path_or_default();
+
     let env_file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -299,9 +316,43 @@ pub fn write_to_env(config: String) -> Result<(), ConfigError> {
     Ok(())
 }
 
-pub fn read_toml(toml_path: String, mode: TomlParserMode) -> Result<(), ConfigError> {
-    let file = std::fs::read_to_string(toml_path).map_err(|_| ConfigError::TomlFileNotFound)?;
-    let config: L2Config = toml::from_str(&file).map_err(|_| ConfigError::TomlFormat)?;
-    write_to_env(config.to_env(mode))?;
+fn read_config(config_path: String, mode: TomlParserMode) -> Result<(), ConfigError> {
+    let toml_path = mode.get_config_file_path(&config_path)?;
+    let toml_file_name = Path::new(&toml_path)
+        .file_name()
+        .ok_or(ConfigError::InternalParsingError)?
+        .to_str()
+        .ok_or(ConfigError::InternalParsingError)?
+        .to_owned();
+    let file = std::fs::read_to_string(toml_path)
+        .map_err(|_| ConfigError::TomlFileNotFound(toml_file_name.clone()))?;
+    match mode {
+        TomlParserMode::Sequencer => {
+            let config: L2Config = toml::from_str(&file)
+                .map_err(|_| ConfigError::TomlFormat(toml_file_name.clone()))?;
+            write_to_env(config.to_env(), mode)?;
+        }
+        TomlParserMode::ProverClient => {
+            let config: ProverClientConfig =
+                toml::from_str(&file).map_err(|_| ConfigError::TomlFormat(toml_file_name))?;
+            write_to_env(config.to_env(), mode)?;
+        }
+    }
+
     Ok(())
+}
+
+pub fn parse_configs(mode: TomlParserMode) -> Result<(), ConfigError> {
+    #[allow(clippy::expect_fun_call, clippy::expect_used)]
+    let config_path = std::env::var("CONFIGS_PATH").expect(
+        format!(
+            "CONFIGS_PATH environment variable not defined. Expected in {}, line: {}
+If running locally, a reasonable value would be CONFIGS_PATH=./configs",
+            file!(),
+            line!()
+        )
+        .as_str(),
+    );
+
+    read_config(config_path, mode)
 }

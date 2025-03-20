@@ -42,16 +42,7 @@ interval_ms = 1000
 # 1 Gwei
 arbitrary_base_blob_gas_price = 1000000000
 
-[prover.client]
-prover_server_endpoint = "localhost:3900"
-interval_ms = 5000
-# mock, cpu, cuda
-sp1_prover = "mock"
-# 1 for dev_mode
-# 0 for real_proofs
-risc0_dev_mode = 1
-
-[prover.server]
+[prover_server]
 # set it to 0.0.0.0 to allow connections from other machines
 listen_ip = "127.0.0.1"
 listen_port = 3900

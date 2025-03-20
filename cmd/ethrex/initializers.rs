@@ -33,7 +33,11 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 #[cfg(feature = "l2")]
-use ::{ethrex_common::Address, ethrex_l2::utils::config::read_env_file, secp256k1::SecretKey};
+use ::{
+    ethrex_common::Address,
+    ethrex_l2::{parse_toml::TomlParserMode, utils::config::read_env_file},
+    secp256k1::SecretKey,
+};
 
 pub fn init_tracing(matches: &ArgMatches) {
     let log_level = matches
@@ -422,7 +426,7 @@ pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
 
 #[cfg(feature = "l2")]
 pub fn get_sponsor_pk() -> SecretKey {
-    if let Err(e) = read_env_file() {
+    if let Err(e) = read_env_file(TomlParserMode::Sequencer) {
         panic!("Failed to read .env file: {e}");
     }
     let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();

@@ -1,4 +1,7 @@
-use ethrex_l2::utils::config::{prover_client::ProverClientConfig, read_env_file};
+use ethrex_l2::{
+    parse_toml::{parse_configs, TomlParserMode},
+    utils::config::{prover_client::ProverClientConfig, read_env_file},
+};
 use ethrex_prover_lib::init_client;
 use tracing::{self, debug, error, warn, Level};
 
@@ -13,8 +16,14 @@ async fn main() {
         return;
     }
 
-    if let Err(e) = read_env_file() {
-        warn!("Failed to read .env file: {e}");
+    if let Err(e) = parse_configs(TomlParserMode::ProverClient) {
+        error!("Failed to parse .toml file: {e}");
+        return;
+    }
+
+    if let Err(e) = read_env_file(TomlParserMode::ProverClient) {
+        error!("Failed to read .env file: {e}");
+        return;
     }
 
     let Ok(config) = ProverClientConfig::from_env() else {

@@ -23,7 +23,7 @@ pub mod errors;
 pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>) {
     info!("Starting Proposer");
 
-    if let Err(e) = read_env_file() {
+    if let Err(e) = read_env_file(crate::parse_toml::TomlParserMode::Sequencer) {
         error!("Failed to read .env file: {e}");
         return;
     }
