@@ -371,7 +371,7 @@ pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
 
     warn!("Sponsor private key not provided. Trying to read from the .env file.");
 
-    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer)  {
+    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
         panic!("Failed to read .env file: {e}");
     }
     let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();
