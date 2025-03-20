@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 use ethrex_common::types::Block;
 use ethrex_storage::{hash_address, hash_key, AccountUpdate};
 use ethrex_trie::{NodeRLP, TrieError};
-use lazy_static::lazy_static;
 
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
@@ -14,8 +13,10 @@ use crate::db::{get_potential_child_nodes, ExecutionDB, StoreWrapper};
 use crate::errors::ExecutionDBError;
 use crate::EvmError;
 
-lazy_static! {
-    pub static ref BLOCKS_ACCESSED: Mutex<HashMap<u64, CoreH256>> = Mutex::new(HashMap::new());
+#[derive(Clone)]
+pub struct BlockLogger {
+    pub block_hashes_accessed: Arc<Mutex<HashMap<u64, CoreH256>>>,
+    pub db: StoreWrapper,
 }
 
 impl LevmDatabase for StoreWrapper {
@@ -58,22 +59,7 @@ impl LevmDatabase for StoreWrapper {
     fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
         let block_header = self.store.get_block_header(block_number).unwrap();
 
-        #[cfg(feature = "levm-l2")]
-        {
-            let block_hash =
-                block_header.map(|header| CoreH256::from(header.compute_block_hash().0));
-
-            BLOCKS_ACCESSED
-                .lock()
-                .unwrap()
-                .insert(block_number, block_hash.unwrap());
-
-            block_hash
-        }
-        #[cfg(not(feature = "levm-l2"))]
-        {
-            block_header.map(|header| CoreH256::from(header.compute_block_hash().0))
-        }
+        block_header.map(|header| CoreH256::from(header.compute_block_hash().0))
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
@@ -114,17 +100,49 @@ impl LevmDatabase for ExecutionDB {
     }
 }
 
+impl BlockLogger {
+    pub fn new(db: StoreWrapper) -> Self {
+        Self {
+            block_hashes_accessed: Arc::new(Mutex::new(HashMap::new())),
+            db,
+        }
+    }
+}
+
+impl LevmDatabase for BlockLogger {
+    fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::AccountInfo {
+        self.db.get_account_info(address)
+    }
+    fn account_exists(&self, address: CoreAddress) -> bool {
+        self.db.account_exists(address)
+    }
+    fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
+        let block_hash = self.db.get_block_hash(block_number);
+        self.block_hashes_accessed
+            .lock()
+            .unwrap()
+            .insert(block_number, block_hash.unwrap());
+        block_hash
+    }
+    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+        self.db.get_chain_config()
+    }
+    fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
+        self.db.get_storage_slot(address, key)
+    }
+}
+
 impl ExecutionDB {
     pub fn pre_execute_levm(
         block: &Block,
         store_wrapper: &StoreWrapper,
-    ) -> Result<(Vec<AccountUpdate>, StoreWrapper), ExecutionDBError> {
+    ) -> Result<(Vec<AccountUpdate>, BlockLogger), ExecutionDBError> {
         // this code was copied from the L1
         // TODO: if we change EvmState so that it accepts a CacheDB<RpcDB> then we can
         // simply call execute_block().
 
-        let db = store_wrapper.clone();
-        BLOCKS_ACCESSED.lock().unwrap().clear();
+        let db = BlockLogger::new(store_wrapper.clone());
+
         let mut account_updates = vec![];
         // beacon root call
         #[cfg(not(feature = "l2"))]
@@ -144,7 +162,8 @@ impl ExecutionDB {
             )
             .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
 
-            db.store
+            db.db
+                .store
                 .apply_account_updates(block.hash(), &account_updates_beacon)
                 .map_err(ExecutionDBError::Store)?;
 
@@ -169,7 +188,7 @@ impl StoreWrapper {
         let chain_config = self.store.get_chain_config()?;
 
         // pre-execute and get all state changes
-        let (execution_updates, store_wrapper) = ExecutionDB::pre_execute_levm(block, self)
+        let (execution_updates, logger) = ExecutionDB::pre_execute_levm(block, self)
             .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
 
         // index read and touched account addresses and storage keys
@@ -189,7 +208,8 @@ impl StoreWrapper {
             let address = update.address;
             // filter new accounts (accounts that didn't exist before) assuming our store is
             // correct (based on the success of the pre-execution).
-            if store_wrapper
+            if logger
+                .db
                 .store
                 .get_account_info_by_hash(parent_hash, address)
                 .is_ok_and(|account| account.is_some())
@@ -203,7 +223,8 @@ impl StoreWrapper {
             .clone()
             .map(|(address, _)| {
                 // return error if account is missing
-                let account = match store_wrapper
+                let account = match logger
+                    .db
                     .store
                     .get_account_info_by_hash(parent_hash, address)
                 {
@@ -223,7 +244,8 @@ impl StoreWrapper {
                 let hash = update.info.clone().unwrap_or_default().code_hash;
                 Ok((
                     hash,
-                    store_wrapper
+                    logger
+                        .db
                         .store
                         .get_account_code(hash)?
                         .ok_or(ExecutionDBError::NewMissingCode(hash))?,
@@ -241,7 +263,8 @@ impl StoreWrapper {
                         .keys()
                         .map(|key| {
                             let key = CoreH256::from(key.to_fixed_bytes());
-                            let value = store_wrapper
+                            let value = logger
+                                .db
                                 .store
                                 .get_storage_at_hash(parent_hash, update.address, key)
                                 .map_err(ExecutionDBError::Store)?
@@ -252,7 +275,8 @@ impl StoreWrapper {
                 ))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let block_hashes = BLOCKS_ACCESSED
+        let block_hashes = logger
+            .block_hashes_accessed
             .lock()
             .unwrap()
             .clone()
