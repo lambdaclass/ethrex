@@ -1,8 +1,8 @@
 name: trie benchmark
 
 on:
-  push:
-    branches: [main]
+  pull_request:
+    branches: ["**"]
 
 permissions:
   # deployments permission to deploy GitHub pages website
