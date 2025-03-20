@@ -186,7 +186,6 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	cargo b --manifest-path ../../Cargo.toml --release
 	make init-l2 ethrex_L2_DEV_LIBMDBX=$$PWD/store 2>&1 >/dev/null &
 	cargo test state_reconstruct --release
-	make down
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	CONFIG_FILE=config.toml cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
