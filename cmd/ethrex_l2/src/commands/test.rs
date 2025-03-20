@@ -20,10 +20,6 @@ use std::{
     fs::File,
     io::{self, BufRead},
     path::Path,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -111,9 +107,8 @@ fn address_from_pub_key(public_key: PublicKey) -> H160 {
     let bytes = public_key.serialize_uncompressed();
     let hash = keccak(&bytes[1..]);
     let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
-    let address = Address::from(address_bytes);
 
-    address
+    Address::from(address_bytes)
 }
 
 async fn transfer_from(
@@ -153,7 +148,6 @@ async fn transfer_from(
                 calldata.clone(),
                 Overrides {
                     chain_id: Some(cfg.network.l2_chain_id),
-                    nonce: Some(i),
                     value: if calldata.is_empty() {
                         Some(value)
                     } else {
@@ -207,7 +201,7 @@ async fn wait_receipt(
     tx_hash: H256,
     retries: Option<u64>,
 ) -> eyre::Result<RpcReceipt> {
-    let retries = retries.unwrap_or_else(|| 10_u64);
+    let retries = retries.unwrap_or(10_u64);
     for _ in 0..retries {
         match client.get_transaction_receipt(tx_hash).await {
             Err(_) | Ok(None) => {
@@ -247,16 +241,16 @@ async fn erc20_deploy(config: &EthrexL2Config) -> eyre::Result<Address> {
 async fn claim_erc20_balances(
     cfg: &EthrexL2Config,
     contract_address: Address,
-    private_keys: &Vec<SecretKey>,
+    private_keys: &[SecretKey],
 ) -> eyre::Result<()> {
     let accounts = private_keys
         .iter()
-        .map(|pk| (pk.clone(), pk.public_key(secp256k1::SECP256K1)))
+        .map(|pk| (*pk, pk.public_key(secp256k1::SECP256K1)))
         .collect_vec();
     let mut tasks = JoinSet::new();
 
     for (sk, pk) in accounts {
-        let contract = contract_address.clone();
+        let contract = contract_address;
         let url = cfg.network.l2_rpc_url.clone();
         tasks.spawn(async move {
             let client = EthClient::new(url.as_str());
@@ -302,13 +296,13 @@ async fn erc20_load_test(
     config: &EthrexL2Config,
     tx_amount: u64,
     contract_address: Address,
-    senders: &Vec<SecretKey>,
+    senders: &[SecretKey],
 ) -> eyre::Result<()> {
     let client = EthClient::new(&config.network.l2_rpc_url);
     let mut tasks = JoinSet::new();
     let accounts = senders
         .iter()
-        .map(|pk| (pk.clone(), pk.public_key(secp256k1::SECP256K1)))
+        .map(|pk| (*pk, pk.public_key(secp256k1::SECP256K1)))
         .collect_vec();
     for (sk, pk) in accounts {
         let nonce = client.get_nonce(address_from_pub_key(pk)).await.unwrap();
@@ -450,7 +444,6 @@ impl Command {
             } => {
                 let contract_address = erc20_deploy(&cfg).await?;
                 let private_keys: Result<Vec<_>, _> = read_lines(path)?
-                    .into_iter()
                     .map(|pk| {
                         pk.unwrap()
                             .parse::<H256>()

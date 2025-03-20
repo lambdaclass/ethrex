@@ -27,6 +27,7 @@ tokio-util.workspace = true
 reqwest.workspace = true
 k256 = { version = "0.13.3", features = ["ecdh"] }
 sha3 = "0.10.8"
+sha2.workspace = true
 
 # Clients
 envy = "0.4.2"
@@ -43,4 +44,5 @@ hex-literal = "0.4.1"
 path = "./rpc.rs"
 
 [features]
-based = []
+based = ["l2"]
+l2 = []

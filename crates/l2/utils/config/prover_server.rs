@@ -13,6 +13,7 @@ pub struct ProverServerConfig {
     #[serde(deserialize_with = "secret_key_deserializer")]
     pub verifier_private_key: SecretKey,
     pub dev_mode: bool,
+    pub dev_interval_ms: u64,
 }
 
 impl ProverServerConfig {

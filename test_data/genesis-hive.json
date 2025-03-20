@@ -18,7 +18,8 @@
     "mergeNetsplitBlock": 0,
     "terminalTotalDifficulty": 131072,
     "shanghaiTime": 0,
-    "cancunTime": 0
+    "cancunTime": 0,
+    "depositContractAddress": "0x4242424242424242424242424242424242424242"
   },
   "alloc": {
     "0000000000000000000000000000000000000100": {
