@@ -20,7 +20,7 @@ hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 k256.workspace = true
-clap = { version = "4.3", features = ["derive"] }
+clap = { version = "4.3", features = ["derive", "env"] }
 clap_complete = "4.5.17"
 eyre = "0.6.12"
 directories = "5.0.1"
