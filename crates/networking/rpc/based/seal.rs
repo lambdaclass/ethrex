@@ -61,7 +61,7 @@ impl TreeHash for SealV0 {
             state_root.as_slice(),
             block_hash.as_slice(),
         ];
-        let mut hasher = tree_hash::MerkleHasher::with_leaves(10);
+        let mut hasher = tree_hash::MerkleHasher::with_leaves(leaves.len());
 
         // PANIC: the following `expect`s would only fail if we exceed the declared
         // number of leaves, which is impossible by construction

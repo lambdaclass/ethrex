@@ -73,7 +73,7 @@ impl TreeHash for EnvV0 {
             parent_beacon_block_root.as_slice(),
         ];
 
-        let mut hasher = tree_hash::MerkleHasher::with_leaves(10);
+        let mut hasher = tree_hash::MerkleHasher::with_leaves(leaves.len());
 
         // PANIC: the following `expect`s would only fail if we exceed the declared
         // number of leaves, which is impossible by construction
