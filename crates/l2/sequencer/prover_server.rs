@@ -384,7 +384,7 @@ impl ProverServer {
 
         let buffer = serde_json::to_vec(&response)?;
         stream
-            .write(&buffer)
+            .write_all(&buffer)
             .await
             .map_err(ProverServerError::ConnectionError)?;
         Ok(())
