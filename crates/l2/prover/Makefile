@@ -16,7 +16,7 @@ RUST_LOG?="info"
 
 perf-sp1:
 	@echo "Using SP1_PROVER: ${SP1_PROVER}"
-	RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features "sp1,l2,levm-l2" -- test_performance_zkvm --exact --show-output
+	RUST_LOG=${RUST_LOG} cargo test --release --test perf_zkvm --features "sp1,l2" -- test_performance_zkvm --exact --show-output
 	
 perf-sp1-gpu:
 	@echo "Using SP1_PROVER: ${SP1_PROVER}"
