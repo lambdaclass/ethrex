@@ -125,7 +125,7 @@ async fn connect_to_prover_server_wr(
     let mut stream = TcpStream::connect(addr).await?;
     debug!("Connection established!");
 
-    stream.write(&serde_json::to_vec(&write)?).await?;
+    stream.write_all(&serde_json::to_vec(&write)?).await?;
     stream.shutdown().await?;
 
     let mut buffer = Vec::new();
