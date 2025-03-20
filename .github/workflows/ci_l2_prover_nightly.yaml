@@ -35,10 +35,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
       # https://pico-docs.brevis.network/getting-started/installation
       - name: Install pico-cli
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: pico-cli
-          git: https://github.com/brevis-network/pico
+        run: cargo +nightly install --git https://github.com/brevis-network/pico pico-cli
       - name: ${{ matrix.action.command }} Command
         run: cargo +nightly-2024-11-27 ${{ matrix.action.command }} ${{ matrix.action.args }}
 
@@ -56,10 +53,7 @@ jobs:
           components: rust-src
       # https://pico-docs.brevis.network/getting-started/installation
       - name: Install pico-cli
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: pico-cli
-          git: https://github.com/brevis-network/pico
+        run: cargo +nightly install --git https://github.com/brevis-network/pico pico-cli
       - name: Build
         run: |
           cd crates/l2/prover
