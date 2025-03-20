@@ -46,7 +46,8 @@ impl StateSyncMetrics {
         let progress_tracking_percentage = (100 * self.progress_tracking) / self.full_time;
         let update_bytecodes_storages_queue_percentage =
             (100 * self.update_bytecodes_storages_queue) / self.full_time;
-        info!("Fetched account batch of len {} in {} ms.
+        info!("
+            Fetched account batch of len {} in {} ms.
             Time Breakdown:
             {progress_tracking_percentage}% Tracking Progress ({}ms)
             {request_range_percentage}% Requesting Ranges ({}ms)
@@ -240,7 +241,10 @@ async fn state_sync_segment(
 
             // As we are downloading the state trie in segments the `should_continue` flag will mean that there
             // are more accounts to be fetched but these accounts may belong to the next segment
-            if stale || (!should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number]) {
+            if stale
+                || (!should_continue
+                    || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number])
+            {
                 // All accounts fetched!
                 break;
             }

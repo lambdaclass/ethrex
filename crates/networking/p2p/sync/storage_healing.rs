@@ -5,7 +5,7 @@
 //! For each storage received, the process will first queue their root nodes and then queue all the missing children from each node fetched in the same way as state healing
 //! Even if the pivot becomes stale, the healer will remain active and listening until a termination signal (an empty batch) is received
 
-use std::{collections::BTreeMap, time::Duration};
+use std::collections::BTreeMap;
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
@@ -19,6 +19,31 @@ use crate::{
 };
 
 use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
+
+struct StorageHealingMetrics {
+    full_time: u128,
+    request: u128,
+    node_count: usize,
+    update_children_and_write_nodes_time: u128,
+}
+
+impl StorageHealingMetrics {
+    fn show(&self) {
+        let request_percentage = (100 * self.request) / self.full_time;
+        let update_children_and_write_nodes_time_percentage =
+            (100 * self.update_children_and_write_nodes_time) / self.full_time;
+        info!("
+            Fetched storage heal batch of len {} in {} ms.
+            Time Breakdown:
+            {request_percentage}% Requesting Nodes ({}ms)
+            {update_children_and_write_nodes_time_percentage}% Updating Children & Writing Nodes ({}ms)",
+            self.node_count,
+            self.full_time,
+            self.request,
+            self.update_children_and_write_nodes_time
+        );
+    }
+}
 
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
 /// Also retrieves their children nodes until we have the full storage trie stored
@@ -134,12 +159,17 @@ async fn heal_storage_batch(
     peers: PeerHandler,
     store: Store,
 ) -> Result<(BTreeMap<H256, Vec<Nibbles>>, bool), SyncError> {
+    let full = Instant::now();
+    let request_time = Instant::now();
     if let Some(mut nodes) = peers
         .request_storage_trienodes(state_root, batch.clone())
         .await
     {
+        let request = request_time.elapsed().as_millis();
         debug!("Received {} storage nodes", nodes.len());
+        let node_count = nodes.len();
         // Process the nodes for each account path
+        let update_children_and_write_nodes_time = Instant::now();
         for (acc_path, paths) in batch.iter_mut() {
             let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
             // Get the corresponding nodes
@@ -156,9 +186,19 @@ async fn heal_storage_batch(
                 break;
             }
         }
+        let update_children_and_write_nodes_time =
+            update_children_and_write_nodes_time.elapsed().as_millis();
         // Return remaining and added paths to be added to the queue
         // Filter out the storages we completely fetched
         batch.retain(|_, v| !v.is_empty());
+        let full_time = full.elapsed().as_millis();
+        StorageHealingMetrics {
+            full_time,
+            request,
+            node_count,
+            update_children_and_write_nodes_time,
+        }
+        .show();
         return Ok((batch, false));
     }
     // Pivot became stale, lets inform the fetcher
