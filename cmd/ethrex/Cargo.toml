@@ -48,7 +48,7 @@ name = "ethrex"
 path = "./lib.rs"
 
 [features]
-default = ["libmdbx", "c-kzg", "blst", "l2"]
+default = ["libmdbx", "c-kzg", "blst"]
 dev = ["dep:ethrex-dev"]
 c-kzg = [
     "ethrex-vm/c-kzg",
