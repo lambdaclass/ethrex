@@ -115,14 +115,23 @@ clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
 
 deploy-l1: ## 📜 Deploys the L1 contracts
-	DEPLOYER_CONTRACTS_PATH=contracts CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- --deposit_rich
+	DEPLOYER_CONTRACTS_PATH=contracts \
+	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
+	SEQUENCER_CONFIG_FILE=${ethrex_L2_SEQUENCER_CONFIG_FILE} \
+	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- --deposit_rich
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
-	DEPLOYER_CONTRACTS_PATH=contracts CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
+	DEPLOYER_CONTRACTS_PATH=contracts \
+	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
+	SEQUENCER_CONFIG_FILE=${ethrex_L2_SEQUENCER_CONFIG_FILE} \
+	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
 
 update-system-contracts:
-	DEPLOYER_CONTRACTS_PATH=contracts CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- ${L2_GENESIS_FILE_PATH}
+	DEPLOYER_CONTRACTS_PATH=contracts \
+	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
+	SEQUENCER_CONFIG_FILE=${ethrex_L2_SEQUENCER_CONFIG_FILE} \
+	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- ${L2_GENESIS_FILE_PATH}
 
 # L2
 init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
