@@ -44,11 +44,16 @@ impl StorageHealingMetrics {
             {request_percentage}% Requesting Nodes ({}ms)
             {update_children_and_write_nodes_time_percentage}% Updating Children & Writing Nodes ({}ms)
             Of which:
-                ",
+            {update_children_percentage}% Updating Children ({}ms)
+            {hash_nodes_percentage}% Hashing Nodes ({}ms)
+            {write_nodes_percentage}% Writing Nodes ({}ms)",
             self.node_count,
             self.full_time,
             self.request,
-            self.update_children_and_write_nodes_time
+            self.update_children_and_write_nodes_time,
+            self.update_children,
+            self.hash_nodes,
+            self.write_nodes
         );
     }
 }
