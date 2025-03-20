@@ -84,20 +84,6 @@ impl ExecutionDB {
     }
 }
 
-impl ToExecDB for StoreWrapper {
-    fn to_exec_db(&self, block: &Block, evm: &mut Evm) -> Result<ExecutionDB, ExecutionDBError> {
-        evm.to_exec_db(block)
-        // #[cfg(feature = "levm-l2")]
-        // {
-        //     self.to_exec_db_levm(block)
-        // }
-        // #[cfg(not(feature = "levm-l2"))]
-        // {
-        //     self.to_exec_db_revm(block)
-        // }
-    }
-}
-
 /// Get all potential child nodes of a node whose value was deleted.
 ///
 /// After deleting a value from a (partial) trie it's possible that the node containing the value gets

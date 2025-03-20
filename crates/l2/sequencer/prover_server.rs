@@ -398,6 +398,7 @@ impl ProverServer {
         let block = Block::new(header, body);
 
         let parent_hash = block.header.parent_hash;
+
         #[cfg(feature = "levm-l2")]
         let mut evm = Evm::LEVM {
             store_wrapper: StoreWrapper {
