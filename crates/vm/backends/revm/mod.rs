@@ -42,6 +42,7 @@ use revm_primitives::{
     TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::cmp::min;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 #[derive(Debug)]
@@ -114,15 +115,14 @@ impl REVM {
         let block_header = &block.header;
         let spec_id: revm_pevm::primitives::SpecId =
             pevm_utils::spec_id(&state.chain_config()?, block_header.timestamp);
-
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
-                if block_header.parent_beacon_block_root.is_some() && spec_id >= SpecId::CANCUN {
+                if block_header.parent_beacon_block_root.is_some() && spec_id >= revm_pevm::primitives::SpecId::CANCUN {
                     Self::beacon_root_contract_call(block_header, state)?;
                 }
 
                 //eip 2935: stores parent block hash in system contract
-                if spec_id >= SpecId::PRAGUE {
+                if spec_id >= revm_pevm::primitives::SpecId::PRAGUE {
                     Self::process_block_hash_history(block_header, state)?;
                 }
             }
@@ -146,10 +146,11 @@ impl REVM {
             _ => return Err(StoreError::MissingStore.into()),
         };
 
+        let chain_config = state.chain_config()?;
         let result = pevm
             .execute_revm_parallel(
                 // this param really does not matter, they use it for testing and mocking purposes only
-                &pevm::chain::PevmEthereum::mainnet(),
+                &pevm::chain::PevmEthereum::new(chain_config.chain_id),
                 storage,
                 spec_id,
                 block_env,
@@ -158,12 +159,8 @@ impl REVM {
             )
             .map_err(EvmError::Pevm)?;
 
-        if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(state, withdrawals)?;
-        }
-
         let mut receipts = vec![];
-        let mut account_updates = vec![];
+        let mut account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
 
         for (i, tx_result) in result.into_iter().enumerate() {
             let receipt = tx_result.receipt;
@@ -191,7 +188,17 @@ impl REVM {
             // build account update
             for (address, account) in tx_result.state.into_iter() {
                 let update = pevm_utils::map_account_update_to_ethrex_type(address, account);
-                account_updates.push(update);
+                // check if we have already update this account
+                let Some(cache) = account_updates.get_mut(&update.address) else {
+                    account_updates.insert(H160::from_slice(address.0.as_ref()), update);
+                    continue;
+                };
+                for (k, v) in update.added_storage {
+                    cache.added_storage.insert(k, v);
+                }
+                cache.info = update.info;
+                cache.code = update.code;
+                cache.removed = cache.removed;
             }
         }
 
@@ -203,10 +210,29 @@ impl REVM {
             }
         }
 
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(state, withdrawals)?;
+        }
+
+        // get the withdrawals updates
+        let account_updates_withdrawals = Self::get_state_transitions(state);
+        for update in account_updates_withdrawals {
+            let Some(account) = account_updates.get_mut(&update.address) else {
+                account_updates.insert(update.address, update);
+                continue;
+            };
+            if let Some(info) = &mut account.info {
+                info.balance += update.info.clone().unwrap().balance;
+                info.nonce += update.info.unwrap().nonce;
+            } else {
+                account.info = update.info;
+            }
+        }
+
         Ok(BlockExecutionResult {
             receipts,
             requests,
-            account_updates,
+            account_updates: account_updates.into_values().collect(),
         })
     }
 
