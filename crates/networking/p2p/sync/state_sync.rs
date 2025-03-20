@@ -237,11 +237,13 @@ async fn state_sync_segment(
                 accounts_len,
             }
             .show();
-            // As we are downloading the state trie in segments the `should_continue` flag will mean that there
-            // are more accounts to be fetched but these accounts may belong to the next segment
             // TODO: This is to cut cycles short and debug stuck healer
             // PLEASE REMOVE PLEASE
-            if true || (!should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number]) {
+            stale = true;
+
+            // As we are downloading the state trie in segments the `should_continue` flag will mean that there
+            // are more accounts to be fetched but these accounts may belong to the next segment
+            if (!should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number]) {
                 // All accounts fetched!
                 break;
             }

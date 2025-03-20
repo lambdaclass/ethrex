@@ -12,9 +12,9 @@ use std::time::Instant;
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
+use std::cmp::min;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{debug, info};
-use std::cmp::min;
 
 use crate::{
     peer_handler::{PeerHandler, RequestRangesMetrics},
@@ -254,7 +254,7 @@ pub(crate) async fn large_storage_fetcher(
             if receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await != 0 {
                 for hashes_roots_keys in msg_buffer {
                     if !hashes_roots_keys.is_empty() {
-                        for (hash, root,_) in hashes_roots_keys.iter() {
+                        for (hash, root, _) in hashes_roots_keys.iter() {
                             info!("Received large storage trie request for account: {hash} root: {root}");
                         }
                         pending_storage.extend(hashes_roots_keys);
