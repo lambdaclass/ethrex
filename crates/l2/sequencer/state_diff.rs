@@ -164,9 +164,9 @@ impl StateDiff {
         let base_fee_per_gas = decoder.get_u64()?;
 
         // Accounts diff
-        let accounts_updated = decoder.get_u16()?;
+        let modified_accounts_len = decoder.get_u16()?;
 
-        let mut modified_accounts = HashMap::with_capacity(accounts_updated.into());
+        let mut modified_accounts = HashMap::with_capacity(modified_accounts_len.into());
         for _ in 0..accounts_updated {
             let next_bytes = bytes.get(decoder.consumed()..).ok_or(
                 StateDiffError::FailedToSerializeStateDiff("Not enough bytes".to_string()),
