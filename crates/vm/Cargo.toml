@@ -22,7 +22,7 @@ revm_pevm = { git = "https://github.com/risechain/revm", rev = "ac75f1ef59ecae15
   "serde",
 ], package = "revm" }
 
-pevm = { git = "https://github.com/risechain/pevm.git", rev = "4e8ff98e54c76af2c52072ca19b0d96eb5c6b6e9" }
+pevm = { git = "https://github.com/MarcosNicolau/pevm.git", branch = "main" }
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
 revm-inspectors = { version = "0.15.0" }
