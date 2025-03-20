@@ -1122,26 +1122,10 @@ impl Transaction {
                     &Bytes::from(buf),
                 )
             }
-            Transaction::PrivilegedL2Transaction(tx) => {
-                let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
-            }
+            Transaction::PrivilegedL2Transaction(tx) => match tx.to.clone() {
+                TxKind::Call(to) => to,
+                TxKind::Create => panic!(),
+            },
         }
     }
 
