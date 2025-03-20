@@ -92,6 +92,22 @@ impl Evm {
         }
     }
 
+    pub fn execute_block_parallel(
+        &mut self,
+        block: &Block,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        match self {
+            Evm::REVM { state } => {
+                let mut state =
+                    evm_state(state.database().unwrap().clone(), block.header.parent_hash);
+                REVM::execute_block_parallel(block, &mut state)
+            }
+            Evm::LEVM { .. } => {
+                todo!();
+            }
+        }
+    }
+
     /// Wraps [REVM::execute_tx] and [LEVM::execute_tx].
     /// The output is `(Receipt, u64)` == (transaction_receipt, gas_used).
     #[allow(clippy::too_many_arguments)]
