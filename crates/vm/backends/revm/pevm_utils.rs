@@ -1,14 +1,18 @@
 use std::collections::HashMap;
 
 use ethrex_common::{
-    types::{AccountInfo, BlockHeader, ChainConfig, Fork, Transaction, TxKind, INITIAL_BASE_FEE},
+    types::{
+        AccountInfo, AccountState, BlockHeader, ChainConfig, Fork, Transaction, TxKind,
+        INITIAL_BASE_FEE,
+    },
     H160, H256, U256,
 };
-use ethrex_storage::{error::StoreError, AccountUpdate};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_storage::{error::StoreError, hash_address, AccountUpdate};
 use pevm::EvmAccount;
 use revm_pevm::primitives::{
-    AccessListItem, Address, BlobExcessGasAndPrice, BlockEnv, FixedBytes, SignedAuthorization,
-    SpecId, TxEnv, TxKind as RevmTxKind, B256, U256 as RevmU256,
+    AccessListItem, Address, BlobExcessGasAndPrice, BlockEnv, Bytecode, Bytes as RevmBytes,
+    FixedBytes, SignedAuthorization, SpecId, TxEnv, TxKind as RevmTxKind, B256, U256 as RevmU256,
 };
 
 use crate::db::StoreWrapper;
@@ -143,7 +147,7 @@ pub fn map_account_update_to_ethrex_type(
     };
 
     let code = if let Some(code) = account.code {
-        let bytecode: Result<revm_pevm::primitives::Bytecode, _> = code.try_into();
+        let bytecode: Result<Bytecode, _> = code.try_into();
         if let Ok(bytecode) = bytecode {
             Some(bytecode.bytes().0)
         } else {
@@ -175,4 +179,87 @@ pub fn map_account_update_to_ethrex_type(
 
 impl pevm::Storage for StoreWrapper {
     type Error = StoreError;
+
+    fn basic(&self, address: &Address) -> Result<Option<pevm::AccountBasic>, Self::Error> {
+        let acc_info = match self
+            .store
+            .get_account_info_by_hash(self.block_hash, H160::from(address.0.as_ref()))?
+        {
+            None => return Ok(None),
+            Some(acc_info) => acc_info,
+        };
+
+        Ok(Some(pevm::AccountBasic {
+            balance: RevmU256::from_limbs(acc_info.balance.0),
+            nonce: acc_info.nonce,
+        }))
+    }
+
+    fn code_hash(&self, address: &Address) -> Result<Option<B256>, Self::Error> {
+        let acc_info = match self
+            .store
+            .get_account_info_by_hash(self.block_hash, H160::from(address.0.as_ref()))?
+        {
+            None => return Ok(None),
+            Some(acc_info) => acc_info,
+        };
+
+        let code = self
+            .store
+            .get_account_code(acc_info.code_hash)?
+            .map(|b| Bytecode::new_raw(RevmBytes(b)));
+
+        match code {
+            Some(code) => Ok(Some(B256::from_slice(code.bytes_slice()))),
+            None => Ok(None),
+        }
+    }
+
+    fn code_by_hash(&self, code_hash: &B256) -> Result<Option<pevm::EvmCode>, Self::Error> {
+        let code = self
+            .store
+            .get_account_code(H256::from(code_hash.as_ref()))?
+            .map(|b| Bytecode::new_raw(RevmBytes(b)));
+
+        match code {
+            Some(code) => {
+                let evm_code: pevm::EvmCode =
+                    code.try_into().map_err(|_| StoreError::DecodeError)?;
+                Ok(Some(evm_code))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn has_storage(&self, address: &Address) -> Result<bool, Self::Error> {
+        let trie = self.store.open_state_trie(self.block_hash);
+        let account = match trie
+            .get(&hash_address(&H160::from(address.0.as_ref())))
+            .unwrap()
+        {
+            Some(encoded) => AccountState::decode(&encoded)?,
+            None => AccountState::default(),
+        };
+
+        Ok(!account.storage_root.is_zero())
+    }
+
+    fn storage(&self, address: &Address, index: &RevmU256) -> Result<RevmU256, Self::Error> {
+        Ok(self
+            .store
+            .get_storage_at_hash(
+                self.block_hash,
+                H160::from(address.0.as_ref()),
+                H256::from(index.to_be_bytes()),
+            )?
+            .map(|value| RevmU256::from_limbs(value.0))
+            .unwrap_or_else(|| RevmU256::ZERO))
+    }
+
+    fn block_hash(&self, number: &u64) -> Result<B256, Self::Error> {
+        self.store
+            .get_block_header(*number)?
+            .map(|header| B256::from_slice(&header.compute_block_hash().0))
+            .ok_or_else(|| StoreError::Custom(format!("Block {number} not found")))
+    }
 }
