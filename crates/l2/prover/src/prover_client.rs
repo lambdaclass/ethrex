@@ -5,10 +5,10 @@ use ethrex_l2::{
 };
 use std::{
     io::{BufReader, BufWriter},
-    net::TcpStream,
     time::Duration,
 };
-use tokio::time::sleep;
+use tokio::{io::AsyncReadExt, net::TcpStream};
+use tokio::{io::AsyncWriteExt, time::sleep};
 use tracing::{debug, error, info, warn};
 use zkvm_interface::io::ProgramInput;
 
@@ -38,14 +38,15 @@ impl ProverClient {
     pub async fn start(&self) {
         // Build the prover depending on the prover_type passed as argument.
         loop {
-            match self.request_new_input() {
+            match self.request_new_input().await {
                 // If we get the input
                 Ok(prover_data) => {
                     // Generate the Proof
                     match prove(prover_data.input).and_then(to_calldata) {
                         Ok(proving_output) => {
-                            if let Err(e) =
-                                self.submit_proof(prover_data.block_number, proving_output)
+                            if let Err(e) = self
+                                .submit_proof(prover_data.block_number, proving_output)
+                                .await
                             {
                                 // TODO: Retry?
                                 warn!("Failed to submit proof: {e}");
@@ -63,10 +64,11 @@ impl ProverClient {
         }
     }
 
-    fn request_new_input(&self) -> Result<ProverData, String> {
+    async fn request_new_input(&self) -> Result<ProverData, String> {
         // Request the input with the correct block_number
         let request = ProofData::request();
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
+            .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
         match response {
@@ -95,10 +97,15 @@ impl ProverClient {
         }
     }
 
-    fn submit_proof(&self, block_number: u64, proving_output: ProofCalldata) -> Result<(), String> {
+    async fn submit_proof(
+        &self,
+        block_number: u64,
+        proving_output: ProofCalldata,
+    ) -> Result<(), String> {
         let submit = ProofData::submit(block_number, proving_output);
 
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
+            .await
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;
 
         match submit_ack {
@@ -111,17 +118,19 @@ impl ProverClient {
     }
 }
 
-fn connect_to_prover_server_wr(
+async fn connect_to_prover_server_wr(
     addr: &str,
     write: &ProofData,
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
-    let stream = TcpStream::connect(addr)?;
-    let buf_writer = BufWriter::new(&stream);
+    let mut stream = TcpStream::connect(addr).await?;
     debug!("Connection established!");
-    serde_json::ser::to_writer(buf_writer, write)?;
-    stream.shutdown(std::net::Shutdown::Write)?;
 
-    let buf_reader = BufReader::new(&stream);
-    let response: ProofData = serde_json::de::from_reader(buf_reader)?;
-    Ok(response)
+    stream.write(&serde_json::to_vec(&write)?).await?;
+    stream.shutdown().await?;
+
+    let mut buffer = Vec::new();
+    stream.read_to_end(&mut buffer).await?;
+
+    let response: Result<ProofData, _> = serde_json::from_slice(&buffer);
+    Ok(response?)
 }
