@@ -464,24 +464,35 @@ impl ProverServer {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+        let max_fee_per_gas = self
+            .eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                ProverServerError::InternalError(
+                    "Failed to convert max_fee_per_gas to a u64".to_owned(),
+                )
+            })?;
+
         let verify_tx = self
             .eth_client
             .build_eip1559_transaction(
                 self.on_chain_proposer_address,
                 self.verifier_address,
                 calldata.into(),
-                Overrides::default(),
+                Overrides {
+                    max_fee_per_gas: Some(max_fee_per_gas),
+                    ..Default::default()
+                },
             )
             .await?;
 
+        let mut tx = WrappedTransaction::EIP1559(verify_tx);
+
         let verify_tx_hash = self
             .eth_client
-            .send_wrapped_transaction_with_retry(
-                &WrappedTransaction::EIP1559(verify_tx),
-                &self.verifier_private_key,
-                3 * 60,
-                10,
-            )
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
             .await?;
 
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
@@ -539,6 +550,17 @@ impl ProverServer {
 
             let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+            let max_fee_per_gas = self
+                .eth_client
+                .get_gas_price_with_extra(20)
+                .await?
+                .try_into()
+                .map_err(|_| {
+                    ProverServerError::InternalError(
+                        "Failed to convert max_fee_per_gas to a u64".to_owned(),
+                    )
+                })?;
+
             let verify_tx = self
                 .eth_client
                 .build_eip1559_transaction(
@@ -546,6 +568,8 @@ impl ProverServer {
                     self.verifier_address,
                     calldata.into(),
                     Overrides {
+                        max_fee_per_gas: Some(max_fee_per_gas),
+                        max_priority_fee_per_gas: Some(max_fee_per_gas),
                         ..Default::default()
                     },
                 )
@@ -553,14 +577,14 @@ impl ProverServer {
 
             info!("Sending verify transaction.");
 
+            let mut tx = WrappedTransaction::EIP1559(verify_tx);
+            self.eth_client
+                .set_gas_for_wrapped_tx(&mut tx, self.verifier_address)
+                .await?;
+
             let verify_tx_hash = self
                 .eth_client
-                .send_wrapped_transaction_with_retry(
-                    &WrappedTransaction::EIP1559(verify_tx),
-                    &self.verifier_private_key,
-                    3 * 60,
-                    10,
-                )
+                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
                 .await?;
 
             info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");

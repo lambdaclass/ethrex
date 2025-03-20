@@ -56,6 +56,8 @@ pub enum ProverServerError {
     SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

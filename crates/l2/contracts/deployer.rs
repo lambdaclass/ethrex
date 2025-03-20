@@ -519,8 +519,12 @@ async fn create2_deploy(
         )
         .await?;
 
+    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(deploy_tx);
+    eth_client
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
+        .await?;
     let deploy_tx_hash = eth_client
-        .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
         .await?;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client)
@@ -649,11 +653,14 @@ async fn initialize_on_chain_proposer(
             Overrides::default(),
         )
         .await?;
+    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(initialize_tx);
+    eth_client
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
+        .await?;
     let initialize_tx_hash = eth_client
-        .send_eip1559_transaction(&initialize_tx, &deployer_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
         .await?;
 
-    wait_for_transaction_receipt(initialize_tx_hash, eth_client).await?;
     Ok(initialize_tx_hash)
 }
 
@@ -677,14 +684,13 @@ async fn initialize_bridge(
         )
         .await
         .map_err(DeployError::from)?;
+    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(initialize_tx);
+    eth_client
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
+        .await?;
     let initialize_tx_hash = eth_client
-        .send_eip1559_transaction(&initialize_tx, &deployer_private_key)
-        .await
-        .map_err(DeployError::from)?;
-
-    wait_for_transaction_receipt(initialize_tx_hash, eth_client)
-        .await
-        .map_err(DeployError::from)?;
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
+        .await?;
 
     Ok(initialize_tx_hash)
 }

@@ -1,4 +1,7 @@
-use std::{fmt, time::Duration};
+use std::{
+    cmp::{max, min},
+    fmt,
+};
 
 use crate::{
     types::{
@@ -28,7 +31,6 @@ use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::ops::Div;
-use tokio::time::{sleep, Instant};
 use tracing::warn;
 
 pub mod errors;
@@ -60,6 +62,12 @@ pub enum BlockByNumber {
     Earliest,
     Pending,
 }
+
+const MAX_NUMBER_OF_RETRIES: u64 = 10;
+const BACKOFF_FACTOR: u64 = 2;
+// Give at least 8 blocks before trying to bump gas.
+const MIN_RETRY_DELAY: u64 = 96;
+const MAX_RETRY_DELAY: u64 = 1800;
 
 // 0x08c379a0 == Error(String)
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
@@ -132,21 +140,12 @@ impl EthClient {
         self.send_raw_transaction(encoded_tx.as_slice()).await
     }
 
-    /// Sends a [WrappedTransaction] with retries and gas bumping.
-    ///
-    /// The total wait time for each retry is determined by dividing the `max_seconds_to_wait`
-    /// by the `retries` parameter. The transaction is sent again with a gas bump if the receipt
-    /// is not confirmed within each retry period.
-    ///
-    /// seconds_per_retry = max_seconds_to_wait / retries;
-    pub async fn send_wrapped_transaction_with_retry(
+    pub async fn send_wrapped_transaction(
         &self,
         wrapped_tx: &WrappedTransaction,
         private_key: &SecretKey,
-        max_seconds_to_wait: u64,
-        retries: u64,
     ) -> Result<H256, EthClientError> {
-        let tx_hash_res = match wrapped_tx {
+        match wrapped_tx {
             WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
                 self.send_eip4844_transaction(wrapped_eip4844_transaction, private_key)
                     .await
@@ -159,84 +158,7 @@ impl EthClient {
                 self.send_privileged_l2_transaction(privileged_l2_transaction, private_key)
                     .await
             }
-        };
-
-        // Check if the tx is `already known`, bump gas and resend it.
-        let mut tx_hash = match tx_hash_res {
-            Ok(hash) => hash,
-            Err(e) => {
-                return Err(e);
-            }
-        };
-
-        let mut wrapped_tx = wrapped_tx.clone();
-
-        let seconds_per_retry = max_seconds_to_wait / retries;
-        let timer_total = Instant::now();
-
-        for r in 0..retries {
-            // Check if we are not waiting more than needed.
-            if timer_total.elapsed().as_secs() > max_seconds_to_wait {
-                return Err(EthClientError::Custom(
-                    "TimeOut: Failed to send_wrapped_transaction_with_retry".to_owned(),
-                ));
-            }
-
-            // Wait for the receipt with some time between retries.
-            let timer_per_retry = Instant::now();
-            while timer_per_retry.elapsed().as_secs() < seconds_per_retry {
-                match self.get_transaction_receipt(tx_hash).await? {
-                    Some(_) => return Ok(tx_hash),
-                    None => sleep(Duration::from_secs(1)).await,
-                }
-            }
-
-            // If receipt is not found after the time period, increase gas and resend the transaction.
-            tx_hash = match &mut wrapped_tx {
-                WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                    warn!("Resending EIP4844Transaction, attempts [{r}/{retries}]");
-                    self.bump_and_resend_eip4844(wrapped_eip4844_transaction, private_key)
-                        .await?
-                }
-                WrappedTransaction::EIP1559(eip1559_transaction) => {
-                    warn!("Resending EIP1559Transaction, attempts [{r}/{retries}]");
-                    self.bump_and_resend_eip1559(eip1559_transaction, private_key)
-                        .await?
-                }
-                WrappedTransaction::L2(privileged_l2_transaction) => {
-                    warn!("Resending PrivilegedL2Transaction, attempts [{r}/{retries}]");
-                    self.bump_and_resend_privileged_l2(privileged_l2_transaction, private_key)
-                        .await?
-                }
-            };
         }
-
-        // If the loop ends without success, return a timeout error
-        Err(EthClientError::Custom(
-            "Max retries exceeded while waiting for transaction receipt".to_owned(),
-        ))
-    }
-
-    pub async fn bump_and_resend_eip1559(
-        &self,
-        tx: &mut EIP1559Transaction,
-        private_key: &SecretKey,
-    ) -> Result<H256, EthClientError> {
-        let from = get_address_from_secret_key(private_key).map_err(|e| {
-            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {e}"))
-        })?;
-        // Sometimes the penalty is a 100%
-        // Increase max fee per gas by 110% (set it to 210% of the original)
-        self.bump_eip1559(tx, 110);
-        let wrapped_tx = &mut WrappedTransaction::EIP1559(tx.clone());
-        self.estimate_gas_for_wrapped_tx(wrapped_tx, from).await?;
-
-        if let WrappedTransaction::EIP1559(eip1559) = wrapped_tx {
-            tx.max_fee_per_gas = eip1559.max_fee_per_gas;
-            tx.max_priority_fee_per_gas = eip1559.max_fee_per_gas;
-            tx.gas_limit = eip1559.gas_limit;
-        }
-        self.send_eip1559_transaction(tx, private_key).await
     }
 
     /// Increase max fee per gas by percentage% (set it to (100+percentage)% of the original)
@@ -245,28 +167,63 @@ impl EthClient {
         tx.max_priority_fee_per_gas += (tx.max_priority_fee_per_gas * (100 + percentage)) / 100;
     }
 
-    pub async fn bump_and_resend_eip4844(
+    pub async fn send_tx_bump_gas_exponential_backoff(
         &self,
-        wrapped_tx: &mut WrappedEIP4844Transaction,
+        wrapped_tx: &mut WrappedTransaction,
         private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let from = get_address_from_secret_key(private_key).map_err(|e| {
-            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {e}"))
-        })?;
-        // Sometimes the penalty is a 100%
-        // Increase max fee per gas by 110% (set it to 210% of the original)
-        self.bump_eip4844(wrapped_tx, 110);
-        let wrapped_eip4844 = &mut WrappedTransaction::EIP4844(wrapped_tx.clone());
-        self.estimate_gas_for_wrapped_tx(wrapped_eip4844, from)
-            .await?;
+        let mut number_of_retries = 0;
 
-        if let WrappedTransaction::EIP4844(eip4844) = wrapped_eip4844 {
-            wrapped_tx.tx.max_fee_per_gas = eip4844.tx.max_fee_per_gas;
-            wrapped_tx.tx.max_priority_fee_per_gas = eip4844.tx.max_fee_per_gas;
-            wrapped_tx.tx.gas = eip4844.tx.gas;
-            wrapped_tx.tx.max_fee_per_blob_gas = eip4844.tx.max_fee_per_blob_gas;
+        'outer: while number_of_retries < MAX_NUMBER_OF_RETRIES {
+            let tx_hash = self
+                .send_wrapped_transaction(wrapped_tx, private_key)
+                .await?;
+
+            if number_of_retries > 0 {
+                warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{MAX_NUMBER_OF_RETRIES}]\nTxHash: {tx_hash:#x}");
+            }
+
+            let mut receipt = self.get_transaction_receipt(tx_hash).await?;
+
+            let mut attempt = 1;
+            let attempts_to_wait_in_seconds = max(
+                min(
+                    BACKOFF_FACTOR.pow(number_of_retries as u32),
+                    MAX_RETRY_DELAY,
+                ),
+                MIN_RETRY_DELAY,
+            );
+            while receipt.is_none() {
+                if attempt >= (attempts_to_wait_in_seconds / 2) {
+                    // We waited long enough for the receipt but did not find it, bump gas
+                    // and go to the next one.
+                    match wrapped_tx {
+                        WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
+                            self.bump_eip4844(wrapped_eip4844_transaction, 30);
+                        }
+                        WrappedTransaction::EIP1559(eip1559_transaction) => {
+                            self.bump_eip1559(eip1559_transaction, 30);
+                        }
+                        WrappedTransaction::L2(privileged_l2_transaction) => {
+                            self.bump_privileged_l2(privileged_l2_transaction, 30);
+                        }
+                    }
+
+                    number_of_retries += 1;
+                    continue 'outer;
+                }
+
+                attempt += 1;
+
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+                receipt = self.get_transaction_receipt(tx_hash).await?;
+            }
+
+            return Ok(tx_hash);
         }
-        self.send_eip4844_transaction(wrapped_tx, private_key).await
+
+        Err(EthClientError::TimeoutError)
     }
 
     /// Increase max fee per gas by percentage% (set it to (100+percentage)% of the original)
@@ -280,27 +237,6 @@ impl EthClient {
             .max_fee_per_blob_gas
             .saturating_mul(U256::from(factor))
             .div(10);
-    }
-
-    pub async fn bump_and_resend_privileged_l2(
-        &self,
-        tx: &mut PrivilegedL2Transaction,
-        private_key: &SecretKey,
-    ) -> Result<H256, EthClientError> {
-        let from = get_address_from_secret_key(private_key).map_err(|e| {
-            EthClientError::Custom(format!("Failed to get_address_from_secret_key: {e}"))
-        })?;
-        // Sometimes the penalty is a 100%
-        // Increase max fee per gas by 110% (set it to 210% of the original)
-        self.bump_privileged_l2(tx, 110);
-        let wrapped_tx = &mut WrappedTransaction::L2(tx.clone());
-        self.estimate_gas_for_wrapped_tx(wrapped_tx, from).await?;
-        if let WrappedTransaction::L2(l2_tx) = wrapped_tx {
-            tx.max_fee_per_gas = l2_tx.max_fee_per_gas;
-            tx.max_priority_fee_per_gas = l2_tx.max_fee_per_gas;
-            tx.gas_limit = l2_tx.gas_limit;
-        }
-        self.send_privileged_l2_transaction(tx, private_key).await
     }
 
     /// Increase max fee per gas by percentage% (set it to (100+percentage)% of the original)
@@ -436,6 +372,15 @@ impl EthClient {
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub async fn get_gas_price_with_extra(
+        &self,
+        bump_percent: u64,
+    ) -> Result<U256, EthClientError> {
+        let gas_price = self.get_gas_price().await?;
+
+        Ok((gas_price * (100 + bump_percent)) / 100)
     }
 
     pub async fn get_nonce(&self, address: Address) -> Result<u64, EthClientError> {
@@ -660,48 +605,59 @@ impl EthClient {
         }
     }
 
+    pub async fn set_gas_for_wrapped_tx(
+        &self,
+        wrapped_tx: &mut WrappedTransaction,
+        from: Address,
+    ) -> Result<(), EthClientError> {
+        let mut transaction = match wrapped_tx {
+            WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
+                GenericTransaction::from(wrapped_eip4844_transaction.clone().tx)
+            }
+            WrappedTransaction::EIP1559(eip1559_transaction) => {
+                GenericTransaction::from(eip1559_transaction.clone())
+            }
+            WrappedTransaction::L2(privileged_l2_transaction) => {
+                GenericTransaction::from(privileged_l2_transaction.clone())
+            }
+        };
+
+        transaction.from = from;
+        let gas_limit = self.estimate_gas(transaction).await?;
+        match wrapped_tx {
+            WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
+                wrapped_eip4844_transaction.tx.gas = gas_limit;
+            }
+            WrappedTransaction::EIP1559(eip1559_transaction) => {
+                eip1559_transaction.gas_limit = gas_limit;
+            }
+            WrappedTransaction::L2(privileged_l2_transaction) => {
+                privileged_l2_transaction.gas_limit = gas_limit;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn estimate_gas_for_wrapped_tx(
         &self,
         wrapped_tx: &mut WrappedTransaction,
         from: H160,
     ) -> Result<u64, EthClientError> {
-        loop {
-            let mut transaction = match wrapped_tx {
-                WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                    GenericTransaction::from(wrapped_eip4844_transaction.clone().tx)
-                }
-                WrappedTransaction::EIP1559(eip1559_transaction) => {
-                    GenericTransaction::from(eip1559_transaction.clone())
-                }
-                WrappedTransaction::L2(privileged_l2_transaction) => {
-                    GenericTransaction::from(privileged_l2_transaction.clone())
-                }
-            };
+        let mut transaction = match wrapped_tx {
+            WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
+                GenericTransaction::from(wrapped_eip4844_transaction.clone().tx)
+            }
+            WrappedTransaction::EIP1559(eip1559_transaction) => {
+                GenericTransaction::from(eip1559_transaction.clone())
+            }
+            WrappedTransaction::L2(privileged_l2_transaction) => {
+                GenericTransaction::from(privileged_l2_transaction.clone())
+            }
+        };
 
-            transaction.from = from;
-
-            match self.estimate_gas(transaction).await {
-                Ok(gas_limit) => return Ok(gas_limit),
-                Err(e) => {
-                    let error = format!("{e}").to_owned();
-                    if error.contains("transaction underpriced") {
-                        match wrapped_tx {
-                            WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                                self.bump_eip4844(wrapped_eip4844_transaction, 110);
-                            }
-                            WrappedTransaction::EIP1559(eip1559_transaction) => {
-                                self.bump_eip1559(eip1559_transaction, 110);
-                            }
-                            WrappedTransaction::L2(privileged_l2_transaction) => {
-                                self.bump_privileged_l2(privileged_l2_transaction, 110);
-                            }
-                        };
-                        continue;
-                    }
-                    return Err(e);
-                }
-            };
-        }
+        transaction.from = from;
+        self.estimate_gas(transaction).await
     }
 
     /// Build an EIP1559 transaction with the given parameters.
@@ -716,8 +672,7 @@ impl EthClient {
         calldata: Bytes,
         overrides: Overrides,
     ) -> Result<EIP1559Transaction, EthClientError> {
-        let mut get_gas_price = 1;
-        let mut tx = EIP1559Transaction {
+        let tx = EIP1559Transaction {
             to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
@@ -729,33 +684,16 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
-                gas_price
-            } else {
-                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?;
-
-                get_gas_price
-            },
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
+            max_fee_per_gas: overrides.max_fee_per_gas.unwrap_or_default(),
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or_default(),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
+            gas_limit: overrides.gas_limit.unwrap_or_default(),
             ..Default::default()
         };
 
-        if let Some(overrides_gas_limit) = overrides.gas_limit {
-            tx.gas_limit = overrides_gas_limit;
-            Ok(tx)
-        } else {
-            let mut wrapped_tx = WrappedTransaction::EIP1559(tx.clone());
-            let gas_limit = self
-                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                .await?;
-            tx.gas_limit = gas_limit;
-            Ok(tx)
-        }
+        Ok(tx)
     }
 
     /// Build an EIP4844 transaction with the given parameters.
@@ -772,7 +710,6 @@ impl EthClient {
         blobs_bundle: BlobsBundle,
     ) -> Result<WrappedEIP4844Transaction, EthClientError> {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
-        let mut get_gas_price = 1;
         let tx = EIP4844Transaction {
             to,
             chain_id: if let Some(chain_id) = overrides.chain_id {
@@ -785,36 +722,19 @@ impl EthClient {
             nonce: self
                 .get_nonce_from_overrides_or_rpc(&overrides, from)
                 .await?,
-            max_fee_per_gas: if let Some(gas_price) = overrides.max_fee_per_gas {
-                gas_price
-            } else {
-                get_gas_price = self.get_gas_price().await?.try_into().map_err(|_| {
-                    EthClientError::Custom("Failed at gas_price.try_into()".to_owned())
-                })?;
-
-                get_gas_price
-            },
-            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
+            max_fee_per_gas: overrides.max_fee_per_gas.unwrap_or_default(),
+            max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or_default(),
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
             max_fee_per_blob_gas: overrides.gas_price_per_blob.unwrap_or_default(),
             blob_versioned_hashes,
+            gas: overrides.gas_limit.unwrap_or_default(),
             ..Default::default()
         };
 
-        let mut wrapped_eip4844 = WrappedEIP4844Transaction { tx, blobs_bundle };
-        if let Some(overrides_gas_limit) = overrides.gas_limit {
-            wrapped_eip4844.tx.gas = overrides_gas_limit;
-            Ok(wrapped_eip4844)
-        } else {
-            let mut wrapped_tx = WrappedTransaction::EIP4844(wrapped_eip4844.clone());
-            let gas_limit = self
-                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                .await?;
-            wrapped_eip4844.tx.gas = gas_limit;
-            Ok(wrapped_eip4844)
-        }
+        let wrapped_eip4844 = WrappedEIP4844Transaction { tx, blobs_bundle };
+        Ok(wrapped_eip4844)
     }
 
     /// Build a PrivilegedL2 transaction with the given parameters.
@@ -855,20 +775,11 @@ impl EthClient {
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
+            gas_limit: overrides.gas_limit.unwrap_or_default(),
             ..Default::default()
         };
 
-        if let Some(overrides_gas_limit) = overrides.gas_limit {
-            tx.gas_limit = overrides_gas_limit;
-            Ok(tx)
-        } else {
-            let mut wrapped_tx = WrappedTransaction::L2(tx.clone());
-            let gas_limit = self
-                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                .await?;
-            tx.gas_limit = gas_limit;
-            Ok(tx)
-        }
+        Ok(tx)
     }
 
     async fn get_nonce_from_overrides_or_rpc(
