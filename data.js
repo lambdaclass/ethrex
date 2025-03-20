@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742492645789,
+  "lastUpdate": 1742498238976,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -805,6 +805,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 231005160866,
             "range": "± 1266839643",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d964a2fece5ad19273b02aa5081b6a85609437dc",
+          "message": "chore(core): add `rust-toolchain.toml` (#2278)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe have a pinned version of Rust in the CI and also in `.tool-versions`\n(for `asdf`) but not for `rustup`. We encountered ourselves running\ndifferent versions of Rust, with different results, specially when\nrunning tools like Clippy\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdded a `rust-toolchain.toml` file with the pinned version of Rust so\nit's evaluated by default when using `rustup`. As a side effect, needed\nto change the way Pico CLI is installed in the CI.",
+          "timestamp": "2025-03-20T18:21:32Z",
+          "tree_id": "bcc88ad5fae1cf708aacd02da9f6c9ae1d647967",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d964a2fece5ad19273b02aa5081b6a85609437dc"
+        },
+        "date": 1742498237074,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 229011647065,
+            "range": "± 410351860",
             "unit": "ns/iter"
           }
         ]
