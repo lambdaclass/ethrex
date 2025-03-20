@@ -47,17 +47,13 @@ pub(crate) async fn storage_healer(
     // The storage healer is the last process to be finalized, so if we got an end signal then we can be sure that
     // no other processes are active and we must return to enter the next cycle
     while incoming {
-        // if time_since_info.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
-        //     info!(
-        //         "Storage Healer queue: {} paths",
-        //         pending_paths.iter().flat_map(|(_, a)| a).count()
-        //     );
-        //     time_since_info = Instant::now();
-        // }
-        info!(
-            "[Looping] Storage Healer queue: {} paths",
-            pending_paths.iter().flat_map(|(_, a)| a).count()
-        );
+        if time_since_info.elapsed() > SHOW_PROGRESS_INTERVAL_DURATION {
+            info!(
+                "Storage Healer queue: {} paths",
+                pending_paths.iter().flat_map(|(_, a)| a).count()
+            );
+            time_since_info = Instant::now();
+        }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
@@ -90,7 +86,6 @@ pub(crate) async fn storage_healer(
 
         // Read incoming requests that are already awaiting on the receiver
         // Don't wait for requests unless we have no pending paths left
-        info!("Incoming: {incoming}, receiver len: {}", receiver.len());
         if incoming && (!receiver.is_empty() || pending_paths.is_empty()) {
             info!("Listening for incoming storage heal requests");
             // Fetch incoming requests
