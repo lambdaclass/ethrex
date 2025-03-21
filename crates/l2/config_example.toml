@@ -13,7 +13,7 @@ risc0_contract_verifier = "0x00000000000000000000000000000000000000AA"
 # If set to 0xAA skip proof verification.
 # Only use in dev mode.
 sp1_contract_verifier = "0x00000000000000000000000000000000000000AA"
-sp1_deploy_verifier = false
+sp1_deploy_verifier = true
 # If set to false, the salt will be randomized.
 salt_is_zero = true
 
@@ -54,5 +54,5 @@ listen_port = 3900
 # The prover_server is in charge of verifying the zkProofs.
 verifier_address = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425"
 verifier_private_key = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-dev_mode = true
+dev_mode = false
 dev_interval_ms = 5000
