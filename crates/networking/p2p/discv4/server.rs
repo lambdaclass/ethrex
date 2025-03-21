@@ -98,7 +98,11 @@ impl Discv4Server {
                 .try_add_peer_and_ping(node, self.ctx.table.lock().await)
                 .await
             {
-                tracing::info!("Error while adding bootnode: {} to table: {:?}", node.node_id, e);
+                tracing::info!(
+                    "Error while adding bootnode: {} to table: {:?}",
+                    node.node_id,
+                    e
+                );
             };
         }
     }

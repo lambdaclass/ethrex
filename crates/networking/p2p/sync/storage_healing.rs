@@ -35,9 +35,12 @@ impl StorageHealingMetrics {
         let request_percentage = (100 * self.request) / self.full_time;
         let update_children_and_write_nodes_time_percentage =
             (100 * self.update_children_and_write_nodes_time) / self.full_time;
-        let update_children_percentage = (100 * self.update_children) / self.update_children_and_write_nodes_time;
-        let hash_nodes_percentage = (100 * self.hash_nodes) / self.update_children_and_write_nodes_time;
-        let write_nodes_percentage = (100 * self.write_nodes) / self.update_children_and_write_nodes_time;
+        let update_children_percentage =
+            (100 * self.update_children) / self.update_children_and_write_nodes_time;
+        let hash_nodes_percentage =
+            (100 * self.hash_nodes) / self.update_children_and_write_nodes_time;
+        let write_nodes_percentage =
+            (100 * self.write_nodes) / self.update_children_and_write_nodes_time;
         info!("
             Fetched storage heal batch of len {} in {} ms.
             Time Breakdown:
@@ -189,10 +192,15 @@ async fn heal_storage_batch(
         for (acc_path, paths) in batch.iter_mut() {
             let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
             // Get the corresponding nodes
-            let trie_nodes: Vec<ethrex_trie::Node> = nodes.drain(..paths.len().min(nodes.len())).collect();
+            let trie_nodes: Vec<ethrex_trie::Node> =
+                nodes.drain(..paths.len().min(nodes.len())).collect();
             // Add children to batch
             let child_time = Instant::now();
-            let children = trie_nodes.iter().zip(paths.drain(..paths.len().min(nodes.len()))).map(|(node, path)| node_missing_children(&node, &path, trie.state())).collect::<Result<Vec<_>,_>>()?;
+            let children = trie_nodes
+                .iter()
+                .zip(paths.drain(..paths.len().min(nodes.len())))
+                .map(|(node, path)| node_missing_children(&node, &path, trie.state()))
+                .collect::<Result<Vec<_>, _>>()?;
             paths.extend(children.into_iter().flatten());
             update_children += child_time.elapsed().as_millis();
             // Write nodes to trie
