@@ -1017,6 +1017,17 @@ impl Store {
             .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
     }
 
+    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
+    pub fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
+    }
+
     /// Clears all checkpoint data created during the last snap sync
     pub fn clear_snap_state(&self) -> Result<(), StoreError> {
         self.engine.clear_snap_state()

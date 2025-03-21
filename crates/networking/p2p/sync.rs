@@ -65,8 +65,9 @@ lazy_static::lazy_static! {
     };
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {
+    #[default]
     Full,
     Snap,
 }
@@ -632,6 +633,8 @@ impl SyncManager {
             .await?;
             if stale_pivot {
                 warn!("Stale Pivot, aborting state sync");
+                storage_healer_sender.send(vec![]).await?;
+                storage_healer_handler.await??;
                 return Ok(false);
             }
         }

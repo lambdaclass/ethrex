@@ -48,12 +48,21 @@ use std::{
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tower_http::cors::CorsLayer;
 use tracing::info;
 use types::transaction::SendRawTransactionRequest;
 use utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
     RpcSuccessResponse,
 };
+cfg_if::cfg_if! {
+    if #[cfg(feature = "l2")] {
+        use l2::transaction::SponsoredTx;
+        use ethrex_common::Address;
+        use secp256k1::SecretKey;
+        mod l2;
+    }
+}
 mod admin;
 mod authentication;
 pub mod engine;
@@ -90,6 +99,10 @@ pub struct RpcApiContext {
     gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
     gateway_auth_client: EngineClient,
+    #[cfg(feature = "l2")]
+    valid_delegation_addresses: Vec<Address>,
+    #[cfg(feature = "l2")]
+    sponsor_pk: SecretKey,
 }
 
 /// Describes the client's current sync status:
@@ -162,6 +175,8 @@ pub async fn start_api(
     syncer: SyncManager,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
+    #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
+    #[cfg(feature = "l2")] sponsor_pk: SecretKey,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -178,6 +193,10 @@ pub async fn start_api(
         gateway_eth_client,
         #[cfg(feature = "based")]
         gateway_auth_client,
+        #[cfg(feature = "l2")]
+        valid_delegation_addresses,
+        #[cfg(feature = "l2")]
+        sponsor_pk,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -192,8 +211,15 @@ pub async fn start_api(
         }
     });
 
+    // All request headers allowed.
+    // All methods allowed.
+    // All origins allowed.
+    // All headers exposed.
+    let cors = CorsLayer::permissive();
+
     let http_router = Router::new()
         .route("/", post(handle_http_request))
+        .layer(cors)
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr).await.unwrap();
 
@@ -279,6 +305,8 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
+        #[cfg(feature = "l2")]
+        Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
@@ -435,6 +463,16 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
     }
 }
 
+#[cfg(feature = "l2")]
+pub fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "ethrex_sendTransaction" => SponsoredTx::call(req, context),
+        unknown_ethrex_l2_method => {
+            Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
+        }
+    }
+}
+
 fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Value
 where
     E: Into<RpcErrorMetadata>,
@@ -473,6 +511,8 @@ mod tests {
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
     use bytes::Bytes;
+    #[cfg(feature = "l2")]
+    use secp256k1::rand;
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -501,6 +541,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -593,6 +637,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -630,6 +678,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -699,6 +751,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         // Process request
         let result = map_http_requests(&request, context).await;
