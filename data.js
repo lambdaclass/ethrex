@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742589577392,
+  "lastUpdate": 1742593157866,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -985,6 +985,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 227901888050,
             "range": "± 862870744",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9b0c70f3121eac4dcf86a3fd62220281cfa697cc",
+          "message": "feat(l2): add state reconstruction command (#2204)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe need a way to reconstruct the chain state in case of a failure or\neven if someone want to _trustlessly_ access the state.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nThis PR introduces a new ethrex_l2 CLI command, `stack reconstruct`,\nthat takes downloaded blobs from L1 and reconstruct the blocks based on\nits info, storing the state in a Libmdbx store. The blobs can be\ndownloaded using the `stack blobs-saver` command.\nAt this stage, the command is able to successfully reconstruct the chain\nstate and continue to produce blocks.\nNote that, as we send state diffs and not transactions to L1, some data\n(i.e., transactions history, receipts) will not be accessible in a\nreconstructed network.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #1103\n\n---------\n\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>",
+          "timestamp": "2025-03-21T20:42:37Z",
+          "tree_id": "e5e608acebe033aebc9bcc46324c291a5898ee38",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9b0c70f3121eac4dcf86a3fd62220281cfa697cc"
+        },
+        "date": 1742593156757,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 224024128750,
+            "range": "± 455656359",
             "unit": "ns/iter"
           }
         ]
