@@ -1,18 +1,25 @@
 use std::cmp::max;
 
-use ethrex_common::types::Fork;
+use ethrex_common::{types::Fork, U256};
 
 use crate::{
     constants::{INIT_CODE_MAX_SIZE, TX_BASE_COST, VALID_BLOB_PREFIXES},
-    errors::{InternalError, TxValidationError, VMError},
+    db::cache::remove_account,
+    errors::{InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     utils::{
-        add_intrinsic_gas, eip7702_set_access_code, get_base_fee_per_blob_gas, get_intrinsic_gas,
-        get_valid_jump_destinations, increase_account_balance, increment_account_nonce,
+        add_intrinsic_gas, decrease_account_balance, eip7702_set_access_code, get_account,
+        get_account_mut_vm, get_base_fee_per_blob_gas, get_intrinsic_gas,
+        get_valid_jump_destinations, has_delegation, increase_account_balance,
+        increment_account_nonce,
     },
+    Account,
 };
 
-use super::{default_hook::DefaultHook, hook::Hook};
+use super::{
+    default_hook::{MAX_REFUND_QUOTIENT, MAX_REFUND_QUOTIENT_PRE_LONDON},
+    hook::Hook,
+};
 
 pub struct L2Hook;
 
@@ -22,6 +29,7 @@ impl Hook for L2Hook {
         vm: &mut crate::vm::VM,
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
+        println!("ENTRO ACA");
         let sender_address = vm.env.origin;
 
         if vm.env.config.fork >= Fork::Prague {
@@ -96,10 +104,6 @@ impl Hook for L2Hook {
             &vm.access_list,
             &vm.authorization_list,
         )?;
-
-        // (7) NONCE_IS_MAX
-        increment_account_nonce(&mut vm.cache, vm.db.clone(), sender_address)
-            .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
@@ -227,7 +231,96 @@ impl Hook for L2Hook {
         initial_call_frame: &crate::call_frame::CallFrame,
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
-        let dh = DefaultHook;
-        dh.finalize_execution(vm, initial_call_frame, report)
+        // POST-EXECUTION Changes
+        let sender_address = initial_call_frame.msg_sender;
+        let receiver_address = initial_call_frame.to;
+
+        // 1. Undo value transfer if the transaction has reverted
+        if let TxResult::Revert(_) = report.result {
+            let existing_account = get_account(&mut vm.cache, vm.db.clone(), receiver_address); //TO Account
+
+            if has_delegation(&existing_account.info)? {
+                // This is the case where the "to" address and the
+                // "signer" address are the same. We are setting the code
+                // and sending some balance to the "to"/"signer"
+                // address.
+                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
+
+                // If transaction execution results in failure (any
+                // exceptional condition or code reverting), setting
+                // delegation designations is not rolled back.
+                decrease_account_balance(
+                    &mut vm.cache,
+                    vm.db.clone(),
+                    receiver_address,
+                    initial_call_frame.msg_value,
+                )?;
+            } else {
+                // We remove the receiver account from the cache, like nothing changed in it's state.
+                remove_account(&mut vm.cache, &receiver_address);
+            }
+
+            increase_account_balance(
+                &mut vm.cache,
+                vm.db.clone(),
+                sender_address,
+                initial_call_frame.msg_value,
+            )?;
+        }
+
+        // 2. Return unused gas + gas refunds to the sender.
+        let mut consumed_gas = report.gas_used;
+        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+        let quotient = if vm.env.config.fork < Fork::London {
+            MAX_REFUND_QUOTIENT_PRE_LONDON
+        } else {
+            MAX_REFUND_QUOTIENT
+        };
+        let mut refunded_gas = report.gas_refunded.min(
+            consumed_gas
+                .checked_div(quotient)
+                .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
+        );
+        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+        report.gas_refunded = refunded_gas;
+
+        if vm.env.config.fork >= Fork::Prague {
+            let floor_gas_price = vm.get_floor_gas_price(initial_call_frame)?;
+            let execution_gas_used = consumed_gas.saturating_sub(refunded_gas);
+            if floor_gas_price > execution_gas_used {
+                consumed_gas = floor_gas_price;
+                refunded_gas = 0;
+            }
+        }
+
+        // 3. Pay coinbase fee
+        let coinbase_address = vm.env.coinbase;
+
+        let gas_to_pay_coinbase = consumed_gas
+            .checked_sub(refunded_gas)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
+
+        let priority_fee_per_gas = vm
+            .env
+            .gas_price
+            .checked_sub(vm.env.base_fee_per_gas)
+            .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
+        let coinbase_fee = U256::from(gas_to_pay_coinbase)
+            .checked_mul(priority_fee_per_gas)
+            .ok_or(VMError::BalanceOverflow)?;
+
+        if coinbase_fee != U256::zero() {
+            increase_account_balance(&mut vm.cache, vm.db.clone(), coinbase_address, coinbase_fee)?;
+        };
+
+        // 4. Destruct addresses in vm.estruct set.
+        // In Cancun the only addresses destroyed are contracts created in this transaction
+        let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
+        for address in selfdestruct_set {
+            let account_to_remove = get_account_mut_vm(&mut vm.cache, vm.db.clone(), address)?;
+            *account_to_remove = Account::default();
+        }
+
+        Ok(())
     }
 }

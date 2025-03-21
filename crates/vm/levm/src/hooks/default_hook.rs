@@ -14,8 +14,8 @@ use ethrex_common::{types::Fork, U256};
 
 use std::cmp::max;
 
-const MAX_REFUND_QUOTIENT: u64 = 5;
-const MAX_REFUND_QUOTIENT_PRE_LONDON: u64 = 2;
+pub const MAX_REFUND_QUOTIENT: u64 = 5;
+pub const MAX_REFUND_QUOTIENT_PRE_LONDON: u64 = 2;
 
 pub struct DefaultHook;
 
