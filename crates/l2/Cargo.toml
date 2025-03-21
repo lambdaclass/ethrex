@@ -52,3 +52,4 @@ panic = "deny"
 [features]
 default = []
 metrics = ["ethrex-metrics/l2"]
+levm-l2 = ["ethrex-vm/levm-l2"]

@@ -37,6 +37,7 @@ impl TryFrom<String> for EvmEngine {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Evm {
     REVM {
         state: EvmState,
@@ -66,10 +67,7 @@ impl Evm {
                 state: evm_state(store.clone(), parent_hash),
             },
             EvmEngine::LEVM => Evm::LEVM {
-                store_wrapper: StoreWrapper {
-                    store: store.clone(),
-                    block_hash: parent_hash,
-                },
+                store_wrapper: StoreWrapper::Store(store, parent_hash),
                 block_cache: CacheDB::new(),
             },
         }
@@ -82,13 +80,15 @@ impl Evm {
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
             Evm::REVM { state } => {
-                let mut state =
-                    evm_state(state.database().unwrap().clone(), block.header.parent_hash);
+                let mut state = match state.database().unwrap() {
+                    StoreWrapper::Store(store, _) => {
+                        evm_state(store.clone(), block.header.parent_hash)
+                    }
+                    StoreWrapper::Execution(_, _) => panic!("ExecutionCache not supported"),
+                };
                 REVM::execute_block(block, &mut state)
             }
-            Evm::LEVM { store_wrapper, .. } => {
-                LEVM::execute_block(block, store_wrapper.store.clone())
-            }
+            Evm::LEVM { store_wrapper, .. } => LEVM::execute_block(block, store_wrapper.clone()),
         }
     }
 
@@ -128,9 +128,12 @@ impl Evm {
                 store_wrapper,
                 block_cache,
             } => {
-                store_wrapper.block_hash = block_header.parent_hash; // JIC
-                let store = store_wrapper.store.clone();
-                let chain_config = store.get_chain_config()?;
+                let block_hash = match store_wrapper {
+                    StoreWrapper::Execution(_, block_hash) => block_hash,
+                    StoreWrapper::Store(_, block_hash) => block_hash,
+                };
+                *block_hash = block_header.parent_hash; // JIC
+                let chain_config = store_wrapper.get_chain_config()?;
 
                 let execution_report = LEVM::execute_tx(
                     tx,
@@ -185,17 +188,16 @@ impl Evm {
                 store_wrapper,
                 block_cache,
             } => {
-                let store = store_wrapper.store.clone();
-                let chain_config = store.get_chain_config()?;
+                let chain_config = store_wrapper.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
                 let mut new_state = CacheDB::new();
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    LEVM::beacon_root_contract_call(block_header, &store, &mut new_state)?;
+                    LEVM::beacon_root_contract_call(block_header, store_wrapper, &mut new_state)?;
                 }
 
                 if fork >= Fork::Prague {
-                    LEVM::process_block_hash_history(block_header, &store, &mut new_state)?;
+                    LEVM::process_block_hash_history(block_header, store_wrapper, &mut new_state)?;
                 }
 
                 // Now original_value is going to be the same as the current_value, for the next transaction.
@@ -230,7 +232,11 @@ impl Evm {
                 store_wrapper,
                 block_cache,
             } => {
-                store_wrapper.block_hash = parent_hash;
+                let block_hash = match store_wrapper {
+                    StoreWrapper::Execution(_, block_hash) => block_hash,
+                    StoreWrapper::Store(_, block_hash) => block_hash,
+                };
+                *block_hash = parent_hash;
                 LEVM::get_state_transitions(None, store_wrapper, block_cache)
             }
         }
@@ -251,12 +257,7 @@ impl Evm {
             } => {
                 let parent_hash = block_header.parent_hash;
                 let mut new_state = CacheDB::new();
-                LEVM::process_withdrawals(
-                    &mut new_state,
-                    withdrawals,
-                    &store_wrapper.store,
-                    parent_hash,
-                )?;
+                LEVM::process_withdrawals(&mut new_state, withdrawals, store_wrapper, parent_hash)?;
                 block_cache.extend(new_state);
                 Ok(())
             }
@@ -272,9 +273,7 @@ impl Evm {
             Evm::LEVM {
                 store_wrapper,
                 block_cache,
-            } => {
-                levm::extract_all_requests_levm(receipts, &store_wrapper.store, header, block_cache)
-            }
+            } => levm::extract_all_requests_levm(receipts, store_wrapper, header, block_cache),
             Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
         }
     }

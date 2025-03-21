@@ -378,7 +378,7 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
 mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
-    use ethrex_vm::backends::revm::execution_db::ExecutionDB;
+    use ethrex_vm::db::ExecutionDB;
 
     use super::*;
     use crate::utils::test_data_io;
@@ -395,7 +395,7 @@ mod tests {
         let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_data"));
 
         let chain_file_path = path.join("l2-loadtest.rlp");
-        let genesis_file_path = path.join("genesis-l2.json");
+        let genesis_file_path = path.join("genesis-l2-ci.json");
 
         // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
         let store = Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
@@ -443,7 +443,7 @@ mod tests {
 
             write_state(
                 block.header.number,
-                &StateType::Proof(pico_calldata.clone()),
+                &StateType::Proof(exec_calldata.clone()),
             )?;
 
             write_state(
