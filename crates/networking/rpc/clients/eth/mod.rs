@@ -17,7 +17,7 @@ use eth_sender::Overrides;
 use ethrex_common::{
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
-        PrivilegedL2Transaction, Signable, Transaction, TxKind, TxType, WrappedEIP4844Transaction,
+        PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
     },
     Address, H160, H256, U256,
 };
