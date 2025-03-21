@@ -349,6 +349,7 @@ impl Blockchain {
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        #[cfg(feature = "l2")]
         // Two bytes for the len
         let (mut withdrawals_size, mut deposits_size): (usize, usize) = (2, 2);
 
@@ -422,6 +423,7 @@ impl Blockchain {
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
+                    #[cfg(feature = "l2")]
                     if !Self::check_state_diff_size(
                         &mut withdrawals_size,
                         &mut deposits_size,
