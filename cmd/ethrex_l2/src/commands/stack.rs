@@ -329,7 +329,7 @@ impl Command {
 
                     new_trie = store
                         .apply_account_updates_from_trie(new_trie, &account_updates)
-                        .unwrap();
+                        .expect("Error applying account updates");
 
                     let new_block = BlockHeader {
                         coinbase,
