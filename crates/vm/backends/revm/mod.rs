@@ -149,7 +149,6 @@ impl REVM {
         let chain_config = state.chain_config()?;
         let result = pevm
             .execute_revm_parallel(
-                // this param really does not matter, they use it for testing and mocking purposes only
                 &pevm::chain::PevmEthereum::new(chain_config.chain_id),
                 storage,
                 spec_id,

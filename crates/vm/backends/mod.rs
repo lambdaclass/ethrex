@@ -15,6 +15,7 @@ use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -100,7 +101,15 @@ impl Evm {
             Evm::REVM { state } => {
                 let mut state =
                     evm_state(state.database().unwrap().clone(), block.header.parent_hash);
-                REVM::execute_block_parallel(block, &mut state)
+                let concurrency_level =
+                    std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+                if block.body.transactions.len() < concurrency_level.into()
+                    || block.header.gas_used < 4_000_000
+                {
+                    REVM::execute_block(block, &mut state)
+                } else {
+                    REVM::execute_block_parallel(block, &mut state)
+                }
             }
             Evm::LEVM { .. } => {
                 todo!();
