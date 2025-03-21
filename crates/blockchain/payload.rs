@@ -418,6 +418,7 @@ impl Blockchain {
             // or we want it before the return?
             metrics!(METRICS_TX.inc_tx());
 
+            #[cfg(feature = "l2")]
             let previous_context = context.clone();
 
             // Execute tx

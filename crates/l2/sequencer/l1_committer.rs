@@ -122,9 +122,6 @@ impl Committer {
         let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
         let deposits = self.get_block_deposits(&block_to_commit);
 
-        info!("L1 commiter withdrawals: {:?}", withdrawals);
-        info!("L1 commiter deposits: {:?}", deposits);
-
         let mut withdrawal_hashes = vec![];
 
         for (_, tx) in &withdrawals {
@@ -344,8 +341,6 @@ impl Committer {
     /// Generate the blob bundle necessary for the EIP-4844 transaction.
     fn generate_blobs_bundle(&self, state_diff: &StateDiff) -> Result<BlobsBundle, CommitterError> {
         let blob_data = state_diff.encode().map_err(CommitterError::from)?;
-
-        info!("L1 Commiter: Blob data len: {}", blob_data.len() * 8);
 
         let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
 
