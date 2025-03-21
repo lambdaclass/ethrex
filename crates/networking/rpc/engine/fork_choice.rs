@@ -263,19 +263,26 @@ fn handle_forkchoice(
         Ok(head) => {
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            if let Ok(Some(block)) = context.storage.get_block_by_hash(head.compute_block_hash()) {
-                for tx in &block.body.transactions {
-                    context
-                        .blockchain
-                        .remove_transaction_from_pool(&tx.compute_hash())
-                        .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            match context.storage.get_block_by_hash(head.compute_block_hash()) {
+                Ok(Some(block)) => {
+                    for tx in &block.body.transactions {
+                        context
+                            .blockchain
+                            .remove_transaction_from_pool(&tx.compute_hash())
+                            .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                    }
                 }
-            } else {
-                return Err(RpcErr::Internal(
-                    "Failed to get block by hash to remove transactions from the mempool"
-                        .to_string(),
-                ));
-            }
+                Ok(None) => {
+                    warn!("Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network")
+                }
+                Err(_) => {
+                    return Err(RpcErr::Internal(
+                        "Failed to get block by hash to remove transactions from the mempool"
+                            .to_string(),
+                    ))
+                }
+            };
+
             Ok((
                 Some(head),
                 ForkChoiceResponse::from(PayloadStatus::valid_with_hash(

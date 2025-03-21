@@ -10,11 +10,6 @@ interface IOnChainProposer {
     /// @return The latest committed block number as a uint256.
     function lastCommittedBlock() external view returns (uint256);
 
-    /// @notice The next block number to commit.
-    /// @dev This value should be equal to `lastCommittedBlock() + 1`.
-    /// @return The next block number to commit as a uint256.
-    function nextBlockToCommit() external view returns (uint256);
-
     /// @notice The latest verified block number.
     /// @return The latest verified block number as a uint256.
     function lastVerifiedBlock() external view returns (uint256);
