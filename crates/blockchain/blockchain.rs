@@ -118,27 +118,15 @@ impl Blockchain {
         block: &Block,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
-        // Apply the account updates over the block's parent state and compute the new state root
-        let Some(mut state_trie) = self
+        // Apply the account updates over the last block's state and compute the new state root
+        let new_state_root = self
             .storage
-            .state_trie(block.header.parent_hash)
-            .map_err(ChainError::StoreError)?
-        else {
-            return Err(ChainError::ParentStateNotFound);
-        };
+            .apply_account_updates(block.header.parent_hash, &execution_result.account_updates)?
+            .ok_or(ChainError::ParentStateNotFound)?;
 
-        self.storage
-            .apply_account_updates_to_trie(&execution_result.account_updates, &mut state_trie)
-            .map_err(ChainError::StoreError)?;
-
-        let new_state_root = state_trie.hash_no_commit();
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
-        // Commit to db
-        state_trie
-            .commit()
-            .map_err(|e| ChainError::StoreError(e.into()))?;
         self.storage
             .add_block(block.clone())
             .map_err(ChainError::StoreError)?;
@@ -179,14 +167,6 @@ impl Blockchain {
 
         let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
             return Err((ChainError::Custom("First block not found".into()), None));
-        };
-
-        let Some(mut state_trie) = self
-            .storage
-            .state_trie(first_block_header.parent_hash)
-            .map_err(|e| (e.into(), None))?
-        else {
-            return Err((ChainError::ParentNotFound, None));
         };
 
         let chain_config: ChainConfig = self
@@ -272,21 +252,19 @@ impl Blockchain {
             return Err((ChainError::Custom("Last block not found".into()), None));
         };
 
-        // Compute state trie
-        self.storage
-            .apply_account_updates_to_trie(
+        // Apply the account updates over all blocks and compute the new state root
+        let new_state_root = self
+            .storage
+            .apply_account_updates(
+                first_block_header.parent_hash,
                 &all_account_updates.into_values().collect::<Vec<_>>(),
-                &mut state_trie,
             )
-            .map_err(|e| (e.into(), None))?;
+            .map_err(|e| (e.into(), None))?
+            .ok_or((ChainError::ParentStateNotFound, None))?;
 
-        let root_hash = state_trie.hash_no_commit();
-        validate_state_root(&last_block.header, root_hash).map_err(|err| (err, None))?;
+        // Check state root matches the one in block header
+        validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
-        // Commit to db
-        state_trie
-            .commit()
-            .map_err(|e| (ChainError::StoreError(e.into()), None))?;
         self.storage
             .add_blocks(blocks)
             .map_err(|e| (e.into(), None))?;
