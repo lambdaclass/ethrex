@@ -3,7 +3,7 @@ use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_common::U256;
 use ethrex_l2::utils::config::errors;
-use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
+use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env_file};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
@@ -166,7 +166,7 @@ If running locally, a reasonable value would be CONFIG_FILE=config.toml",
         }
         wr_lines.push(line);
     }
-    write_env(wr_lines).map_err(DeployError::EnvFileError)?;
+    write_env_file(wr_lines).map_err(DeployError::EnvFileError)?;
     Ok(())
 }
 
