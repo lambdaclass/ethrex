@@ -7,9 +7,8 @@ use crate::{
     errors::{InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     utils::{
-        add_intrinsic_gas, eip7702_set_access_code, get_account, get_base_fee_per_blob_gas,
-        get_blob_gas_price, get_intrinsic_gas, get_max_blob_gas_price, get_valid_jump_destinations,
-        has_delegation, increase_account_balance, increment_account_nonce,
+        add_intrinsic_gas, eip7702_set_access_code, get_base_fee_per_blob_gas, get_intrinsic_gas,
+        get_valid_jump_destinations, increase_account_balance, increment_account_nonce,
     },
 };
 
@@ -24,7 +23,6 @@ impl Hook for L2Hook {
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
         let sender_address = vm.env.origin;
-        let sender_account = get_account(&mut vm.cache, vm.db.clone(), sender_address);
 
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
@@ -60,57 +58,6 @@ impl Hook for L2Hook {
             }
         }
 
-        // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
-        let gaslimit_price_product = vm
-            .env
-            .gas_price
-            .checked_mul(vm.env.gas_limit.into())
-            .ok_or(VMError::TxValidation(
-                TxValidationError::GasLimitPriceProductOverflow,
-            ))?;
-
-        // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
-        let value = initial_call_frame.msg_value;
-
-        // blob gas cost = max fee per blob gas * blob gas used
-        // https://eips.ethereum.org/EIPS/eip-4844
-        let max_blob_gas_cost = get_max_blob_gas_price(
-            vm.env.tx_blob_hashes.clone(),
-            vm.env.tx_max_fee_per_blob_gas,
-        )?;
-
-        // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
-        // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
-        let gas_fee_for_valid_tx = vm
-            .env
-            .tx_max_fee_per_gas
-            .unwrap_or(vm.env.gas_price)
-            .checked_mul(vm.env.gas_limit.into())
-            .ok_or(VMError::TxValidation(
-                TxValidationError::GasLimitPriceProductOverflow,
-            ))?;
-
-        let balance_for_valid_tx = gas_fee_for_valid_tx
-            .checked_add(value)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?
-            .checked_add(max_blob_gas_cost)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?;
-        if sender_account.info.balance < balance_for_valid_tx {
-            return Err(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ));
-        }
-
-        let blob_gas_cost = get_blob_gas_price(
-            vm.env.tx_blob_hashes.clone(),
-            vm.env.block_excess_blob_gas,
-            &vm.env.config,
-        )?;
-
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
             if tx_max_fee_per_blob_gas
@@ -121,25 +68,6 @@ impl Hook for L2Hook {
                 ));
             }
         }
-
-        // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
-        let up_front_cost = gaslimit_price_product
-            .checked_add(value)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?
-            .checked_add(blob_gas_cost)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?;
-        // There is no error specified for overflow in up_front_cost
-        // in ef_tests. We went for "InsufficientAccountFunds" simply
-        // because if the upfront cost is bigger than U256, then,
-        // technically, the sender will not be able to pay it.
-
-        // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        // decrease_account_balance(&mut vm.cache, vm.db.clone(), sender_address, up_front_cost)
-        //     .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas {
@@ -173,11 +101,6 @@ impl Hook for L2Hook {
         increment_account_nonce(&mut vm.cache, vm.db.clone(), sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
-        // check for nonce mismatch
-        if sender_account.info.nonce != vm.env.tx_nonce {
-            return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
-        }
-
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             vm.env.tx_max_priority_fee_per_gas,
@@ -188,11 +111,6 @@ impl Hook for L2Hook {
                     TxValidationError::PriorityGreaterThanMaxFeePerGas,
                 ));
             }
-        }
-
-        // (9) SENDER_NOT_EOA
-        if sender_account.has_code() && !has_delegation(&sender_account.info)? {
-            return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 
         // (10) GAS_ALLOWANCE_EXCEEDED

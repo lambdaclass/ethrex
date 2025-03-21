@@ -321,23 +321,25 @@ impl Blockchain {
             }
         }
 
-        let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender)?;
+        if !matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
+            let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender)?;
 
-        if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if tx.nonce() < sender_acc_info.nonce {
-                return Err(MempoolError::InvalidNonce);
-            }
+            if let Some(sender_acc_info) = maybe_sender_acc_info {
+                if tx.nonce() < sender_acc_info.nonce {
+                    return Err(MempoolError::InvalidNonce);
+                }
 
-            let tx_cost = tx
-                .cost_without_base_fee()
-                .ok_or(MempoolError::InvalidTxGasvalues)?;
+                let tx_cost = tx
+                    .cost_without_base_fee()
+                    .ok_or(MempoolError::InvalidTxGasvalues)?;
 
-            if tx_cost > sender_acc_info.balance {
+                if tx_cost > sender_acc_info.balance {
+                    return Err(MempoolError::NotEnoughBalance);
+                }
+            } else {
+                // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
                 return Err(MempoolError::NotEnoughBalance);
             }
-        } else {
-            // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
-            return Err(MempoolError::NotEnoughBalance);
         }
 
         Ok(())

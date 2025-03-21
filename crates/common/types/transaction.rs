@@ -1128,7 +1128,7 @@ impl Transaction {
                 )
             }
             Transaction::PrivilegedL2Transaction(tx) => match tx.to.clone() {
-                TxKind::Call(_) => DEFAULT_ADDRESS,
+                TxKind::Call(to) => to,
                 TxKind::Create => {
                     panic!("This will never happen as the privilege tx is always a call")
                 }
