@@ -1,6 +1,7 @@
 .PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 \
-		restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test init-testnet deploy-l1-testnet
+		restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test init-testnet deploy-l1-testnet \
+		restart-testnet
 
 .DEFAULT_GOAL := help
 
@@ -21,6 +22,10 @@ down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 clean: clean-contract-deps ## 🧹 Cleans the localnet
 
 restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
+
+## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
+restart-testnet:
+	down-l2 down-metrics rm-db-l2 deploy-l1-testnet update-system-contracts init-l2
 
 # CLI
 cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
