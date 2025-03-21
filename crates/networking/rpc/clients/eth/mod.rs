@@ -17,7 +17,7 @@ use eth_sender::Overrides;
 use ethrex_common::{
     types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
-        PrivilegedL2Transaction, Signable, Transaction, TxKind, TxType, WrappedEIP4844Transaction,
+        PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
     },
     Address, H160, H256, U256,
 };
@@ -691,12 +691,6 @@ impl EthClient {
         } else {
             let mut wrapped_tx = WrappedTransaction::EIP1559(tx.clone());
             self.set_gas_for_wrapped_tx(&mut wrapped_tx, from).await?;
-            let WrappedTransaction::EIP1559(unwrapped_tx) = wrapped_tx else {
-                return Err(EthClientError::Custom(
-                    "Failed to unwrap WrappedTransaction::EIP1559".to_owned(),
-                ));
-            };
-            tx = unwrapped_tx.clone();
         }
 
         Ok(tx)
@@ -753,12 +747,6 @@ impl EthClient {
         } else {
             let mut wrapped_tx = WrappedTransaction::EIP4844(wrapped_eip4844.clone());
             self.set_gas_for_wrapped_tx(&mut wrapped_tx, from).await?;
-            let WrappedTransaction::EIP4844(unwrapped_tx) = wrapped_tx else {
-                return Err(EthClientError::Custom(
-                    "Failed to unwrap WrappedTransaction::EIP4844".to_owned(),
-                ));
-            };
-            wrapped_eip4844 = unwrapped_tx.clone();
         }
 
         Ok(wrapped_eip4844)
@@ -810,12 +798,6 @@ impl EthClient {
         } else {
             let mut wrapped_tx = WrappedTransaction::L2(tx.clone());
             self.set_gas_for_wrapped_tx(&mut wrapped_tx, from).await?;
-            let WrappedTransaction::L2(unwrapped_tx) = wrapped_tx else {
-                return Err(EthClientError::Custom(
-                    "Failed to unwrap WrappedTransaction::L2".to_owned(),
-                ));
-            };
-            tx = unwrapped_tx.clone();
         }
 
         Ok(tx)
