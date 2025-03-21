@@ -610,20 +610,7 @@ impl EthClient {
         wrapped_tx: &mut WrappedTransaction,
         from: Address,
     ) -> Result<(), EthClientError> {
-        let mut transaction = match wrapped_tx {
-            WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                GenericTransaction::from(wrapped_eip4844_transaction.clone().tx)
-            }
-            WrappedTransaction::EIP1559(eip1559_transaction) => {
-                GenericTransaction::from(eip1559_transaction.clone())
-            }
-            WrappedTransaction::L2(privileged_l2_transaction) => {
-                GenericTransaction::from(privileged_l2_transaction.clone())
-            }
-        };
-
-        transaction.from = from;
-        let gas_limit = self.estimate_gas(transaction).await?;
+        let gas_limit = self.estimate_gas_for_wrapped_tx(wrapped_tx, from).await?;
         match wrapped_tx {
             WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
                 wrapped_eip4844_transaction.tx.gas = gas_limit;
@@ -705,10 +692,7 @@ impl EthClient {
             tx.gas_limit = overrides_gas_limit;
         } else {
             let mut wrapped_tx = WrappedTransaction::EIP1559(tx.clone());
-            let gas_limit = self
-                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                .await?;
-            tx.gas_limit = gas_limit;
+            self.set_gas_for_wrapped_tx(&mut wrapped_tx, from).await?;
         }
 
         Ok(tx)
@@ -764,10 +748,7 @@ impl EthClient {
             wrapped_eip4844.tx.gas = overrides_gas_limit;
         } else {
             let mut wrapped_tx = WrappedTransaction::EIP4844(wrapped_eip4844.clone());
-            let gas_limit = self
-                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                .await?;
-            wrapped_eip4844.tx.gas = gas_limit;
+            self.set_gas_for_wrapped_tx(&mut wrapped_tx, from).await?;
         }
 
         Ok(wrapped_eip4844)
@@ -818,10 +799,7 @@ impl EthClient {
             tx.gas_limit = overrides_gas_limit;
         } else {
             let mut wrapped_tx = WrappedTransaction::L2(tx.clone());
-            let gas_limit = self
-                .estimate_gas_for_wrapped_tx(&mut wrapped_tx, from)
-                .await?;
-            tx.gas_limit = gas_limit;
+            self.set_gas_for_wrapped_tx(&mut wrapped_tx, from).await?;
         }
 
         Ok(tx)
