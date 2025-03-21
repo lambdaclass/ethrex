@@ -775,6 +775,30 @@ impl StoreEngine for RedBStore {
         write_tx.commit()?;
         Ok(())
     }
+    fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        let write_tx = self.db.begin_write()?;
+        {
+            let mut table = write_tx.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+            for (account_hash, (storage_keys, storage_values)) in account_hashes
+                .into_iter()
+                .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
+            {
+                for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
+                    table.insert(
+                        <H256 as Into<AccountHashRLP>>::into(account_hash),
+                        (key.0, value.to_big_endian()),
+                    )?;
+                }
+            }
+        }
+        write_tx.commit()?;
+        Ok(())
+    }
 
     fn set_state_trie_rebuild_checkpoint(
         &self,

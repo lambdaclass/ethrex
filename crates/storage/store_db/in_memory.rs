@@ -480,6 +480,24 @@ impl StoreEngine for Store {
             .extend(storage_keys.into_iter().zip(storage_values));
         Ok(())
     }
+    fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        for (account_hash, (storage_keys, storage_values)) in account_hashes
+            .into_iter()
+            .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
+        {
+            self.inner()
+                .storage_snapshot
+                .entry(account_hash)
+                .or_default()
+                .extend(storage_keys.into_iter().zip(storage_values));
+        }
+        Ok(())
+    }
 
     fn set_state_trie_rebuild_checkpoint(
         &self,

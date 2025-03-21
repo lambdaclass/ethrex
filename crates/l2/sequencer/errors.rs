@@ -58,6 +58,8 @@ pub enum ProverServerError {
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
+    #[error("ProverServer failed when (de)serializing JSON: {0}")]
+    JsonError(#[from] serde_json::Error)
 }
 
 #[derive(Debug, thiserror::Error)]
