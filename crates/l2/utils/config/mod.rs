@@ -69,11 +69,11 @@ pub fn get_env_file_path() -> PathBuf {
 }
 
 pub fn write_env(lines: Vec<String>) -> Result<(), errors::ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+    let path = get_env_file_path();
     let env_file = match std::fs::OpenOptions::new()
         .write(true)
         .truncate(true)
-        .open(&env_file_name)
+        .open(path)
     {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
