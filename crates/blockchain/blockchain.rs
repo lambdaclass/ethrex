@@ -218,11 +218,7 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
-        let sender = if matches!(transaction, Transaction::PrivilegedL2Transaction(_)) {
-            DEFAULT_ADDRESS_L2
-        } else {
-            transaction.sender()
-        };
+        let sender = transaction.sender();
         // Validate transaction
         self.validate_transaction(&transaction, sender)?;
 
