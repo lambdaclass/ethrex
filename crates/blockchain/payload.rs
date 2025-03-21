@@ -573,6 +573,8 @@ impl Blockchain {
     #[cfg(feature = "l2")]
     const L2_DEPOSIT_SIZE: usize = 20 + 32; // address(H160) + amount(U256).
     #[cfg(feature = "l2")]
+    const HEADER_FIELDS_SIZE: usize = 32 + 32 + 8 + 8 + 8 + 8; // transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64) + base_fee_per_gas(u64).
+    #[cfg(feature = "l2")]
     pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0xff, 0xff,
@@ -597,8 +599,7 @@ impl Blockchain {
         }
         let modified_accounts_size = Self::calc_modified_accounts_size(context)?;
 
-        let current_state_diff_size =
-            1 /* version (u8) */ + *withdrawals_size + *deposits_size + modified_accounts_size;
+        let current_state_diff_size = 1 /* version (u8) */ + Self::HEADER_FIELDS_SIZE + *withdrawals_size + *deposits_size + modified_accounts_size;
 
         if current_state_diff_size > BYTES_PER_BLOB * 31 / 32 {
             // Restore the withdrawals and deposits counters.
