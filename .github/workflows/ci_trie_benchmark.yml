@@ -14,29 +14,38 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.85.0
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - name: Checkout LFS objects
-        run: git lfs checkout
-      - name: Build benchmarks
-        run: |
-          cd crates/common/trie
-          make build-ethrex-bench
-          make build-cita-bench
-      - name: Run benchmarks and save output
-        run: |
-          make compare
-      - name: Create or update comment
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          comment-id: ${{ steps.fc.outputs.comment-id }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          issue-number: ${{ github.event.pull_request.number }}
-          body-path: compare.md
-          edit-mode: replace
+  build-ethrex-trie:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        trie-version: ["head", "main", "cita"]
+        steps:
+          - name: Populate cache
+            uses: actions/cache@v4
+            id: cache
+            with:
+              path: crates/common/trie
+              key: binary-${{ github.event.pull_request[matrix.trie-version].sha }}
+          - name: Checkout
+            uses: actions/checkout@v4
+            with:
+              fetch-depth: 0
+
+          - name: Fetch Rust cache
+            uses: Swatinem/rust-cache@v2
+
+          - name: Install Rust
+            if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+            uses: dtolnay/rust-toolchain@stable
+
+          - name: Build ethrex trie benchmark
+            if: ${{ matrix.trie-version != "cita" }}
+            run: |
+              cd crates/common/trie
+              make build-ethrex-bench
+          - name: Build cita trie benchmark
+            if: ${{ matrix.trie-version == "cita" }}
+            run: |
+              cd crates/common/trie
+              make build-ethrex-bench
