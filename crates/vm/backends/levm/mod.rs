@@ -24,6 +24,7 @@ use ethrex_levm::{
     Account, AccountInfo as LevmAccountInfo, Environment,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use revm_primitives::Bytes;
 use std::cmp::min;
 use std::{collections::HashMap, sync::Arc};
@@ -68,9 +69,18 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for tx in block.body.transactions.iter() {
+        // Calculate tx senders in parallel
+        let transactions: Vec<_> = block
+            .body
+            .transactions
+            .par_iter()
+            .map(|tx| (tx, tx.sender()))
+            .collect();
+
+        for (tx, tx_sender) in transactions {
             let report = Self::execute_tx(
                 tx,
+                tx_sender,
                 block_header,
                 Arc::new(store_wrapper.clone()),
                 block_cache.clone(),
@@ -141,6 +151,8 @@ impl LEVM {
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
         // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
@@ -157,7 +169,7 @@ impl LEVM {
 
         let config = EVMConfig::new_from_chain_config(chain_config, block_header);
         let env = Environment {
-            origin: tx.sender(),
+            origin: tx_sender,
             refunded_gas: 0,
             gas_limit: tx.gas_limit(),
             config,

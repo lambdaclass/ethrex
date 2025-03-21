@@ -3536,6 +3536,7 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "lazy_static",
+ "rayon",
  "revm 19.5.0",
  "revm-inspectors",
  "revm-primitives 15.2.0",

@@ -134,6 +134,7 @@ impl Evm {
 
                 let execution_report = LEVM::execute_tx(
                     tx,
+                    sender,
                     block_header,
                     Arc::new(store_wrapper.clone()),
                     block_cache.clone(),
