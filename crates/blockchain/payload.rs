@@ -534,12 +534,12 @@ impl Blockchain {
     fn calc_modified_accounts_size(context: &mut PayloadBuildContext) -> Result<usize, ChainError> {
         // Starts from modified_accounts_len(u16)
         let mut modified_accounts_size: usize = 16;
-        let account_updates = context
+        let mut temporary_context = context.clone(); // get_state_transitions modifies the context
+        let account_updates = temporary_context
             .vm
             .get_state_transitions(context.payload.header.parent_hash)?;
         for account_update in account_updates {
-            // r#type(u8) + address(H160)
-            modified_accounts_size += 8 + 160;
+            modified_accounts_size += 8 + 160; // r#type(u8) + address(H160)
             if account_update.info.is_some() {
                 modified_accounts_size += 256; // new_balance(U256)
             }
