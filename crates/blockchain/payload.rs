@@ -43,7 +43,7 @@ use crate::{
     Blockchain,
 };
 
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -489,12 +489,13 @@ impl Blockchain {
             *deposits_size += Self::L2_DEPOSIT_SIZE;
         }
         let modified_accounts_size = Self::calc_modified_accounts_size(context)?;
-        let current_state_diff_size = *withdrawals_size + *deposits_size + modified_accounts_size;
+        let current_state_diff_size =
+            8 /* version (u8) */ + *withdrawals_size + *deposits_size + modified_accounts_size;
         dbg!(current_state_diff_size);
         dbg!(&withdrawals_size);
         dbg!(&deposits_size);
         dbg!(modified_accounts_size);
-        if *withdrawals_size + *deposits_size + modified_accounts_size > 3000 {
+        if *withdrawals_size + *deposits_size + modified_accounts_size > 5000 {
             // if *withdrawals_size + *deposits_size + modified_accounts_size > BYTES_PER_BLOB * 31 / 32 {
             if Self::is_withdrawal_l2(&tx, receipt) {
                 *withdrawals_size -= Self::L2_WITHDRAWAL_SIZE;

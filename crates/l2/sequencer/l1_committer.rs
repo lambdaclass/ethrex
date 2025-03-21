@@ -122,8 +122,8 @@ impl Committer {
         let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
         let deposits = self.get_block_deposits(&block_to_commit);
 
-        info!("L1 commiter: {:?}", withdrawals);
-        info!("L1 commiter: {:?}", deposits);
+        info!("L1 commiter withdrawals: {:?}", withdrawals);
+        info!("L1 commiter deposits: {:?}", deposits);
 
         let mut withdrawal_hashes = vec![];
 
@@ -153,7 +153,7 @@ impl Committer {
             }
         };
 
-        info!("L1 commiter: {:?}", account_updates);
+        info!("L1 commiter account updates: {:?}", account_updates);
 
         let state_diff = self.prepare_state_diff(
             &block_to_commit,
@@ -345,7 +345,7 @@ impl Committer {
     fn generate_blobs_bundle(&self, state_diff: &StateDiff) -> Result<BlobsBundle, CommitterError> {
         let blob_data = state_diff.encode().map_err(CommitterError::from)?;
 
-        info!("L1 Commiter: Blob data len: {}", blob_data.len());
+        info!("L1 Commiter: Blob data len: {}", blob_data.len() * 8);
 
         let blob = blobs_bundle::blob_from_bytes(blob_data).map_err(CommitterError::from)?;
 

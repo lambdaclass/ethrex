@@ -123,6 +123,10 @@ impl BlockProducer {
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
+        info!(
+            "Storing account_updates from block_producer: {:?}",
+            execution_result.account_updates
+        );
         // Cache execution result
         execution_cache.push(block.hash(), execution_result.account_updates)?;
 
