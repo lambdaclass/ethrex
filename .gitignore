@@ -63,4 +63,3 @@ cmd/ef_tests/state/levm_perfgraphs
 *.svg
 prof_*.json
 prof.json
-
