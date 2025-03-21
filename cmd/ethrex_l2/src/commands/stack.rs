@@ -24,6 +24,7 @@ use std::{
 
 pub const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum Command {
     #[clap(
@@ -305,14 +306,12 @@ impl Command {
                     genesis.to_str().expect("Invalid genesis path"),
                 )?;
 
-                let genesis_header = store
-                    .get_block_header(0)?
-                    .ok_or_eyre("Genesis block not found")?;
+                let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
                 let genesis_block_hash = genesis_header.compute_block_hash();
 
                 let mut new_trie = store
                     .state_trie(genesis_block_hash)?
-                    .ok_or_eyre("Cannot open state trie")?;
+                    .expect("Cannot open state trie");
                 let mut last_number = 0;
                 let mut last_hash = genesis_block_hash;
 
@@ -330,7 +329,7 @@ impl Command {
 
                     new_trie = store
                         .apply_account_updates_from_trie(new_trie, &account_updates)
-                        .unwrap();
+                        .expect("Error applying account updates");
 
                     let new_block = BlockHeader {
                         coinbase,

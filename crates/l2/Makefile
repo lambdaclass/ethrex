@@ -1,7 +1,7 @@
 .PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 \
 		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 \
 		init-l2-no-metrics down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test \
-		init-testnet deploy-l1-testnet
+		init-testnet deploy-l1-testnet restart-testnet
 
 .DEFAULT_GOAL := help
 
@@ -22,6 +22,10 @@ down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 clean: clean-contract-deps ## 🧹 Cleans the localnet
 
 restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
+
+## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
+restart-testnet:
+	down-l2 down-metrics rm-db-l2 deploy-l1-testnet update-system-contracts init-l2
 
 # CLI
 cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
@@ -94,7 +98,7 @@ down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
 	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH} down
 	docker compose -f docker-compose-l2.yaml down
 
-restart-local-l1: down-local-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
+restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
 
 rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX}
@@ -144,7 +148,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pkill -f ethrex || exit 0
 
-restart-l2: down-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
+restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
 init-prover: ## 🚀 Initializes the Prover
 	@if [ -z "$$T" ]; then \
