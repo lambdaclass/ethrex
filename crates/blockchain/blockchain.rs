@@ -288,7 +288,7 @@ impl Blockchain {
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks(&self, blocks: &[Block]) {
+    pub fn import_blocks(&self, blocks: &Vec<Block>) {
         let size = blocks.len();
         for block in blocks {
             let hash = block.hash();
@@ -316,58 +316,25 @@ impl Blockchain {
                 .is_err()
             {
                 error!(
-                        "Fatal: added block {} but could not set it as canonical -- aborting block import",
-                        block.header.number
-                    );
+                    "Fatal: added block {} but could not set it as canonical -- aborting block import",
+                    block.header.number
+                );
                 break;
             };
         }
-
         if let Some(last_block) = blocks.last() {
-            self.apply_fork_choice_after_import(last_block.hash());
-        }
-
-        info!("Added {size} blocks to blockchain");
-    }
-
-    //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks_in_batch(&self, blocks: &[Block]) {
-        let size = blocks.len();
-        let last_block = blocks.last().unwrap().header.clone();
-        if let Err((err, _)) = self.add_blocks_in_batch(blocks) {
-            warn!("Failed to add blocks: {:?}.", err);
-        }
-        if let Err(err) = self.storage.update_latest_block_number(last_block.number) {
-            error!("Fatal: added block {} but could not update the block number, err {:?} -- aborting block import", last_block.number, err);
-            return;
-        };
-
-        self.apply_fork_choice_after_import(last_block.compute_block_hash());
-
-        info!("Added {size} blocks to blockchain");
-    }
-
-    fn apply_fork_choice_after_import(&self, last_block_hash: H256) {
-        match self.evm_engine {
-            EvmEngine::LEVM => {
-                // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                let _ = apply_fork_choice(
-                    &self.storage,
-                    last_block_hash,
-                    last_block_hash,
-                    last_block_hash,
-                );
-            }
-            EvmEngine::REVM => {
-                apply_fork_choice(
-                    &self.storage,
-                    last_block_hash,
-                    last_block_hash,
-                    last_block_hash,
-                )
-                .unwrap();
+            let hash = last_block.hash();
+            match self.evm_engine {
+                EvmEngine::LEVM => {
+                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
+                    let _ = apply_fork_choice(&self.storage, hash, hash, hash);
+                }
+                EvmEngine::REVM => {
+                    apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
+                }
             }
         }
+        info!("Added {size} blocks to blockchain");
     }
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
