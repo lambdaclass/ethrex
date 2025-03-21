@@ -10,8 +10,11 @@ pub mod prover_server;
 
 pub mod errors;
 
+pub const CARGO_MANIFEST_DIR: &str = std::env!("CARGO_MANIFEST_DIR");
+
 pub fn read_env_file() -> Result<(), errors::ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+    let env_file_name =
+        std::env::var("ENV_FILE").unwrap_or(CARGO_MANIFEST_DIR.to_string() + "/.env");
     let env_file_path = open_readable(env_file_name)?;
     let reader = std::io::BufReader::new(env_file_path);
 
