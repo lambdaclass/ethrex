@@ -426,7 +426,7 @@ impl Store {
     }
 
     pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        self.engine.add_block(block)
+        self.add_blocks(&[block])
     }
 
     pub fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {

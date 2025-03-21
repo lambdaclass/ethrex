@@ -126,10 +126,6 @@ impl StoreEngine for Store {
         self.write::<Bodies>(block_hash.into(), block_body.into())
     }
 
-    fn add_block(&self, block: Block) -> std::result::Result<(), StoreError> {
-        self.add_blocks(&[block])
-    }
-
     fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let tx = self
             .db

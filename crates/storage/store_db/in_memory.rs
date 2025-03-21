@@ -143,10 +143,6 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        self.add_blocks(&[block])
-    }
-
     fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         for block in blocks {
             let header = block.header.clone();

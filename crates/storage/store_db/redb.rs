@@ -253,10 +253,6 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        self.add_blocks(&[block])
-    }
-
     fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let write_txn = self.db.begin_write()?;
 
