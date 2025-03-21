@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742567832947,
+  "lastUpdate": 1742572216634,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -925,6 +925,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 232806520727,
             "range": "± 1000563047",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ab751f0470192a2120b27f9ef207ff5e06c4676f",
+          "message": "feat(l1): write multiple account's storage batches in the same db txn (#2270)\n\n**Motivation**\nWhen measuring time taken by each task during snap sync I noticed that a\nlot of time was spent writing the storage ranges obtained from peers to\nthe DB snapshot. It would take anywhere from 3 to over 10 seconds to\nwrite all the ranges to the DB (around 300 storage ranges per request).\nThis PR modifies the insertion logic to write all 300 ranges in the same\nDB transaction, reducing the time taken to write all the ranges to the\nDB to 10 milliseconds or less\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `write_storage_snapshot_batches` method to `Store`, which can\nwrite multiple batches from different accounts on the same txn\n* Write all storage ranges received from peers in a single DB txn using\nthe method above on the storage fetcher (snap sync)\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses: None, but helps speed up snap sync",
+          "timestamp": "2025-03-21T14:54:55Z",
+          "tree_id": "8b597efa81f871d126ab9b85f32aa9034fe83bf5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ab751f0470192a2120b27f9ef207ff5e06c4676f"
+        },
+        "date": 1742572214466,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 227965982892,
+            "range": "± 509390539",
             "unit": "ns/iter"
           }
         ]
