@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742593157866,
+  "lastUpdate": 1742594650541,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1015,6 +1015,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 224024128750,
             "range": "± 455656359",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "92cd758fd30447b82b6fffa13351772b50d6a165",
+          "message": "fix(l2): use absolute path for `.env` file (#2295)\n\n**Motivation**\n\nRunning the stack outside of `crates/l2` fails because the `.env` file\npath is set to its relative form.\n\n**Description**\n\nUse the `.env` file absolute path.",
+          "timestamp": "2025-03-21T21:09:42Z",
+          "tree_id": "2b74de1133b3bb608b8d2f7dbca638d55b6d227d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/92cd758fd30447b82b6fffa13351772b50d6a165"
+        },
+        "date": 1742594648536,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 222976173527,
+            "range": "± 1235507741",
             "unit": "ns/iter"
           }
         ]
