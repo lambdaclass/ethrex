@@ -80,7 +80,7 @@ impl From<AccountStateDiffType> for u8 {
 impl AccountStateDiffType {
     // Checks if the type is present in the given value
     pub fn is_in(&self, value: u8) -> bool {
-        value & (*self as u8) == *self as u8
+        value & u8::from(*self) == u8::from(*self)
     }
 }
 
