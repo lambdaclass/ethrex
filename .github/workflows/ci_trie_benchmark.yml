@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: ["**"]
     paths:
-      - "crates/l2/**"
+      - "crates/common/trie"
 
 permissions:
   # deployments permission to deploy GitHub pages website
