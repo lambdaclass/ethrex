@@ -143,11 +143,11 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
-init-prover: ## 🚀 Initializes the Prover
-	@if [ -z "$$T" ]; then \
-		echo "Error: ProverType (T) is missing."; \
+build-prover:
+	@if [ -z "$$PROVER" ]; then \
+		echo "Error: ProverType (PROVER) is missing."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover T=<prover_type: (risc0, sp1)> <G=true>."; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1, pico, exec)> <G=true>"; \
 		echo "The prover can also be run with GPU (G)"; \
 		exit 1; \
 	fi; \
@@ -157,7 +157,8 @@ init-prover: ## 🚀 Initializes the Prover
 	else \
 		GPU=",gpu"; \
 	fi; \
-	cargo run --release --features "$$T$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
+
+	RUSTFLAGS='-C target-cpu=native' cargo build --release --features "$$PROVER$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover; \
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
