@@ -4,6 +4,10 @@ use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_vm::backends::EvmEngine;
+use hex::FromHexError;
+#[cfg(feature = "l2")]
+use secp256k1::SecretKey;
 use std::{
     fs::File,
     io,
@@ -53,6 +57,20 @@ pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
     decode::genesis_file(genesis_file).expect("Failed to decode genesis file")
 }
 
+pub fn parse_evm_engine(s: &str) -> eyre::Result<EvmEngine> {
+    EvmEngine::try_from(s.to_owned()).map_err(|e| eyre::eyre!("{e}"))
+}
+
+pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
+    match s {
+        "full" => Ok(SyncMode::Full),
+        "snap" => Ok(SyncMode::Snap),
+        other => Err(eyre::eyre!(
+            "Invalid syncmode {other:?} expected either snap or full",
+        )),
+    }
+}
+
 pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
     // NOTE: this blocks until hostname can be resolved
     format!("{addr}:{port}")
@@ -62,15 +80,6 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
             io::ErrorKind::NotFound,
             "Failed to parse socket address",
         ))
-}
-
-pub fn sync_mode(matches: &clap::ArgMatches) -> SyncMode {
-    let syncmode = matches.get_one::<String>("syncmode");
-    match syncmode {
-        Some(mode) if mode == "full" => SyncMode::Full,
-        Some(mode) if mode == "snap" => SyncMode::Snap,
-        other => panic!("Invalid syncmode {:?} expected either snap or full", other),
-    }
 }
 
 pub fn set_datadir(datadir: &str) -> String {
@@ -111,4 +120,16 @@ pub fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Err
     };
 
     serde_json::from_reader(file)
+}
+
+#[cfg(feature = "l2")]
+pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
+    Ok(SecretKey::from_slice(&parse_hex(s)?)?)
+}
+
+pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
+    match s.strip_prefix("0x") {
+        Some(s) => hex::decode(s).map(Into::into),
+        None => hex::decode(s).map(Into::into),
+    }
 }

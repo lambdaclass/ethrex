@@ -56,6 +56,8 @@ pub enum ProverServerError {
     SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("ProverServer failed when (de)serializing JSON: {0}")]
+    JsonError(#[from] serde_json::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
