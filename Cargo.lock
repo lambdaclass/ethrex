@@ -2036,6 +2036,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 
 [[package]]
+name = "cmake"
+version = "0.1.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6707,7 +6716,7 @@ dependencies = [
 [[package]]
 name = "pevm"
 version = "0.1.0"
-source = "git+https://github.com/risechain/pevm.git?rev=4e8ff98e54c76af2c52072ca19b0d96eb5c6b6e9#4e8ff98e54c76af2c52072ca19b0d96eb5c6b6e9"
+source = "git+https://github.com/MarcosNicolau/pevm.git?branch=main#303e40f6396de678a55fe1c0c1205c8e956e4b83"
 dependencies = [
  "alloy-consensus 0.9.2",
  "alloy-primitives 0.8.21",
@@ -6720,10 +6729,13 @@ dependencies = [
  "dashmap 6.1.0",
  "hashbrown 0.15.2",
  "revm 19.2.0",
+ "rpmalloc",
  "rustc-hash 2.1.1",
  "serde",
  "smallvec",
+ "snmalloc-rs",
  "thiserror 2.0.11",
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -8215,6 +8227,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpmalloc"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86179c13cdc0bcedbb60e63c1aebe3bac82162ddfa746320de6dcea31ebe2b06"
+dependencies = [
+ "rpmalloc-sys",
+]
+
+[[package]]
+name = "rpmalloc-sys"
+version = "0.2.3+b097fd0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d4b7d5e225a53887ee57fcec492eaf114b8e290f7072d035adc6ddd6810b67b"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "rrs-lib"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8895,6 +8927,24 @@ name = "snap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
+
+[[package]]
+name = "snmalloc-rs"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb317153089fdfa4d8a2eec059d40a5a23c3bde43995ea23b19121c3f621e74a"
+dependencies = [
+ "snmalloc-sys",
+]
+
+[[package]]
+name = "snmalloc-sys"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "065fea53d32bb77bc36cca466cb191f2e5216ebfd0ed360b1d64889ee6e559ea"
+dependencies = [
+ "cmake",
+]
 
 [[package]]
 name = "snowbridge-amcl"
@@ -9769,6 +9819,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
 dependencies = [
  "num_cpus",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.6.0+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd3c60906412afa9c2b5b5a48ca6a5abe5736aec9eb48ad05037a677e52e4e2d"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cec5ff18518d81584f477e9bfdf957f5bb0979b0bac3af4ca30b5b3ae2d2865"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]
