@@ -2036,6 +2036,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 
 [[package]]
+name = "cmake"
+version = "0.1.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2048,7 +2057,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -3126,7 +3135,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3536,6 +3545,8 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "lazy_static",
+ "pevm",
+ "revm 19.2.0",
  "revm 19.5.0",
  "revm-inspectors",
  "revm-primitives 15.2.0",
@@ -4827,7 +4838,7 @@ checksum = "e19b23d53f35ce9f56aebc7d1bb4e6ac1e9c0db7ac85c8d1760c04379edced37"
 dependencies = [
  "hermit-abi 0.4.0",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5059,7 +5070,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -6708,6 +6719,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "pevm"
+version = "0.1.0"
+source = "git+https://github.com/MarcosNicolau/pevm.git?branch=main#303e40f6396de678a55fe1c0c1205c8e956e4b83"
+dependencies = [
+ "alloy-consensus 0.9.2",
+ "alloy-primitives 0.8.21",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-types-eth 0.9.2",
+ "alloy-trie",
+ "bitflags 2.8.0",
+ "bitvec",
+ "dashmap 6.1.0",
+ "hashbrown 0.15.2",
+ "revm 19.2.0",
+ "rpmalloc",
+ "rustc-hash 2.1.1",
+ "serde",
+ "smallvec",
+ "snmalloc-rs",
+ "thiserror 2.0.11",
+ "tikv-jemallocator",
+]
+
+[[package]]
 name = "phf"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7265,7 +7301,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7570,6 +7606,20 @@ dependencies = [
 
 [[package]]
 name = "revm"
+version = "19.2.0"
+source = "git+https://github.com/risechain/revm?rev=ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c#ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c"
+dependencies = [
+ "auto_impl",
+ "cfg-if",
+ "dyn-clone",
+ "revm-interpreter 15.0.0",
+ "revm-precompile 16.0.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "revm"
 version = "19.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfc5bef3c95fadf3b6a24a253600348380c169ef285f9780a793bb7090c8990d"
@@ -7613,6 +7663,15 @@ dependencies = [
 
 [[package]]
 name = "revm-interpreter"
+version = "15.0.0"
+source = "git+https://github.com/risechain/revm?rev=ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c#ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c"
+dependencies = [
+ "revm-primitives 15.1.0",
+ "serde",
+]
+
+[[package]]
+name = "revm-interpreter"
 version = "15.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dcab7ef2064057acfc84731205f4bc77f4ec1b35630800b26ff6a185731c5ab"
@@ -7633,6 +7692,24 @@ dependencies = [
  "k256",
  "once_cell",
  "revm-primitives 4.0.0",
+ "ripemd",
+ "secp256k1",
+ "sha2 0.10.8",
+ "substrate-bn",
+]
+
+[[package]]
+name = "revm-precompile"
+version = "16.0.0"
+source = "git+https://github.com/risechain/revm?rev=ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c#ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c"
+dependencies = [
+ "aurora-engine-modexp",
+ "blst",
+ "c-kzg",
+ "cfg-if",
+ "k256",
+ "once_cell",
+ "revm-primitives 15.1.0",
  "ripemd",
  "secp256k1",
  "sha2 0.10.8",
@@ -7691,6 +7768,25 @@ dependencies = [
  "auto_impl",
  "bitflags 2.8.0",
  "bitvec",
+ "cfg-if",
+ "dyn-clone",
+ "enumn",
+ "hex",
+ "serde",
+]
+
+[[package]]
+name = "revm-primitives"
+version = "15.1.0"
+source = "git+https://github.com/risechain/revm?rev=ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c#ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c"
+dependencies = [
+ "alloy-eip2930",
+ "alloy-eip7702 0.5.0",
+ "alloy-primitives 0.8.21",
+ "auto_impl",
+ "bitflags 2.8.0",
+ "bitvec",
+ "c-kzg",
  "cfg-if",
  "dyn-clone",
  "enumn",
@@ -8136,6 +8232,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpmalloc"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86179c13cdc0bcedbb60e63c1aebe3bac82162ddfa746320de6dcea31ebe2b06"
+dependencies = [
+ "rpmalloc-sys",
+]
+
+[[package]]
+name = "rpmalloc-sys"
+version = "0.2.3+b097fd0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d4b7d5e225a53887ee57fcec492eaf114b8e290f7072d035adc6ddd6810b67b"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "rrs-lib"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8240,7 +8356,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8816,6 +8932,24 @@ name = "snap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b6b67fb9a61334225b5b790716f609cd58395f895b3fe8b328786812a40bc3b"
+
+[[package]]
+name = "snmalloc-rs"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb317153089fdfa4d8a2eec059d40a5a23c3bde43995ea23b19121c3f621e74a"
+dependencies = [
+ "snmalloc-sys",
+]
+
+[[package]]
+name = "snmalloc-sys"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "065fea53d32bb77bc36cca466cb191f2e5216ebfd0ed360b1d64889ee6e559ea"
+dependencies = [
+ "cmake",
+]
 
 [[package]]
 name = "snowbridge-amcl"
@@ -9569,7 +9703,7 @@ dependencies = [
  "getrandom 0.3.1",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9690,6 +9824,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
 dependencies = [
  "num_cpus",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.6.0+5.3.0-1-ge13ca993e8ccb9ba9847cc330696e02839f328f7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd3c60906412afa9c2b5b5a48ca6a5abe5736aec9eb48ad05037a677e52e4e2d"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cec5ff18518d81584f477e9bfdf957f5bb0979b0bac3af4ca30b5b3ae2d2865"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]
@@ -10619,7 +10773,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

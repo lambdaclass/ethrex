@@ -3,6 +3,7 @@ pub mod execution_db;
 pub mod helpers;
 #[cfg(feature = "l2")]
 mod mods;
+mod pevm_utils;
 
 use super::BlockExecutionResult;
 use crate::constants::{
@@ -13,8 +14,8 @@ use crate::execution_result::ExecutionResult;
 use crate::spec_id;
 use crate::EvmError;
 use db::EvmState;
-use ethrex_common::types::AccountInfo;
-use ethrex_common::{BigEndianHash, H256, U256};
+use ethrex_common::types::{AccountInfo, Log};
+use ethrex_common::{BigEndianHash, H160, H256, U256};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
 use revm::db::states::bundle_state::BundleRetention;
@@ -41,6 +42,8 @@ use revm_primitives::{
     TxKind as RevmTxKind, U256 as RevmU256,
 };
 use std::cmp::min;
+use std::collections::HashMap;
+use std::num::NonZeroUsize;
 
 #[derive(Debug)]
 pub struct REVM;
@@ -102,6 +105,133 @@ impl REVM {
             receipts,
             requests,
             account_updates,
+        })
+    }
+
+    pub fn execute_block_parallel(
+        block: &Block,
+        state: &mut EvmState,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        let block_header = &block.header;
+        let spec_id: revm_pevm::primitives::SpecId =
+            pevm_utils::spec_id(&state.chain_config()?, block_header.timestamp);
+        cfg_if::cfg_if! {
+            if #[cfg(not(feature = "l2"))] {
+                if block_header.parent_beacon_block_root.is_some() && spec_id >= revm_pevm::primitives::SpecId::CANCUN {
+                    Self::beacon_root_contract_call(block_header, state)?;
+                }
+
+                //eip 2935: stores parent block hash in system contract
+                if spec_id >= revm_pevm::primitives::SpecId::PRAGUE {
+                    Self::process_block_hash_history(block_header, state)?;
+                }
+            }
+        }
+
+        let block_env = pevm_utils::block_env(&block.header, spec_id);
+        let mut pevm = pevm::Pevm::default();
+        let txs = block
+            .body
+            .transactions
+            .iter()
+            .map(|t| pevm_utils::tx_env(t, t.sender()))
+            .collect::<Vec<revm_pevm::primitives::TxEnv>>();
+
+        let concurrency_level = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+
+        let storage = match &state {
+            EvmState::Store(inner) => &inner.database,
+            // this functions is always called with an evm_state == Store
+            // so it really can't fall in here
+            _ => return Err(StoreError::MissingStore.into()),
+        };
+
+        let chain_config = state.chain_config()?;
+        let result = pevm
+            .execute_revm_parallel(
+                &pevm::chain::PevmEthereum::new(chain_config.chain_id),
+                storage,
+                spec_id,
+                block_env,
+                txs,
+                concurrency_level,
+            )
+            .map_err(EvmError::Pevm)?;
+
+        let mut receipts = vec![];
+        let mut account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
+
+        for (i, tx_result) in result.into_iter().enumerate() {
+            let receipt = tx_result.receipt;
+            // build receipt
+            let receipt = Receipt::new(
+                block.body.transactions[i].tx_type(),
+                receipt.status.coerce_status(),
+                receipt.cumulative_gas_used,
+                receipt
+                    .logs
+                    .into_iter()
+                    .map(|e| Log {
+                        address: H160::from(e.address.0 .0),
+                        topics: e
+                            .topics()
+                            .into_iter()
+                            .map(|e| H256::from(e.0))
+                            .collect::<Vec<H256>>(),
+                        data: e.data.data.0,
+                    })
+                    .collect(),
+            );
+            receipts.push(receipt);
+
+            // build account update
+            for (address, account) in tx_result.state.into_iter() {
+                let update = pevm_utils::map_account_update_to_ethrex_type(address, account);
+                // check if we have already update this account
+                let Some(cache) = account_updates.get_mut(&update.address) else {
+                    account_updates.insert(H160::from_slice(address.0.as_ref()), update);
+                    continue;
+                };
+                for (k, v) in update.added_storage {
+                    cache.added_storage.insert(k, v);
+                }
+                cache.info = update.info;
+                cache.code = update.code;
+                cache.removed = cache.removed;
+            }
+        }
+
+        cfg_if::cfg_if! {
+            if #[cfg(not(feature = "l2"))] {
+                let requests = extract_all_requests(&receipts, state, block_header)?;
+            } else {
+                let requests = Default::default();
+            }
+        }
+
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(state, withdrawals)?;
+        }
+
+        // get the withdrawals updates
+        let account_updates_withdrawals = Self::get_state_transitions(state);
+        for update in account_updates_withdrawals {
+            let Some(account) = account_updates.get_mut(&update.address) else {
+                account_updates.insert(update.address, update);
+                continue;
+            };
+            if let Some(info) = &mut account.info {
+                info.balance += update.info.clone().unwrap().balance;
+                info.nonce += update.info.unwrap().nonce;
+            } else {
+                account.info = update.info;
+            }
+        }
+
+        Ok(BlockExecutionResult {
+            receipts,
+            requests,
+            account_updates: account_updates.into_values().collect(),
         })
     }
 
