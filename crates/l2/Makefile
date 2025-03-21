@@ -143,11 +143,11 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
-init-prover: ## 🚀 Initializes the Prover
-	@if [ -z "$$T" ]; then \
-		echo "Error: ProverType (T) is missing."; \
+build-prover:
+	@if [ -z "$$PROVER" ]; then \
+		echo "Error: ProverType (PROVER) is missing."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover T=<prover_type: (risc0, sp1)> <G=true>."; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1, pico, exec)> <G=true>"; \
 		echo "The prover can also be run with GPU (G)"; \
 		exit 1; \
 	fi; \
@@ -157,7 +157,8 @@ init-prover: ## 🚀 Initializes the Prover
 	else \
 		GPU=",gpu"; \
 	fi; \
-	cargo run --release --features "$$T$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
+
+	RUSTFLAGS='-C target-cpu=native' cargo build --release --features "$$PROVER$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover; \
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
@@ -180,6 +181,11 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	CONFIG_FILE=config.toml cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
+test-tmux: down rm-db-l1 rm-db-l2 init-local-l1 deploy-l1 update-system-contracts
+	tmux new-session -d -s 'ethrex-l2' make init-l2 \; set -w remain-on-exit on
+	tmux split-window -h 'make init-prover;bash -i'
+	tmux split-window -v 'cargo test l2 --release -- --nocapture --test-threads=1'
+	tmux attach
 
 # Purge L2's state
 UNAME_S:=$(shell uname -s)
