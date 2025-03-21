@@ -93,11 +93,12 @@ impl Discv4Server {
 
     async fn load_bootnodes(&self, bootnodes: Vec<Node>) {
         for node in bootnodes {
+            tracing::info!("Loading bootnode: {}", node.node_id);
             if let Err(e) = self
                 .try_add_peer_and_ping(node, self.ctx.table.lock().await)
                 .await
             {
-                debug!("Error while adding bootnode to table: {:?}", e);
+                tracing::info!("Error while adding bootnode: {} to table: {:?}", node.node_id, e);
             };
         }
     }
