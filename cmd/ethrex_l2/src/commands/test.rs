@@ -22,10 +22,7 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
-use tokio::{
-    task::JoinSet,
-    time::sleep,
-};
+use tokio::{task::JoinSet, time::sleep};
 
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
