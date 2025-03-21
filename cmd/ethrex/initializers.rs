@@ -35,7 +35,11 @@ use ::{ethrex_common::Address, ethrex_l2::utils::config::read_env_file, secp256k
 #[cfg(feature = "based")]
 use crate::cli::BasedOptions;
 #[cfg(feature = "based")]
+use ethrex_common::Public;
+#[cfg(feature = "based")]
 use ethrex_rpc::{EngineClient, EthClient};
+#[cfg(feature = "based")]
+use std::str::FromStr;
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
@@ -124,6 +128,8 @@ pub fn init_rpc_api(
         get_gateway_http_client(based_ops),
         #[cfg(feature = "based")]
         get_gateway_auth_client(based_ops),
+        #[cfg(feature = "based")]
+        get_gateway_public_key(based_ops),
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
@@ -151,6 +157,11 @@ fn get_gateway_auth_client(opts: &BasedOptions) -> EngineClient {
     let gateway_jwtsecret = read_jwtsecret_file(&opts.gateway_jwtsecret);
 
     EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret)
+}
+
+#[cfg(feature = "based")]
+fn get_gateway_public_key(based_opts: &BasedOptions) -> Public {
+    Public::from_str(&based_opts.gateway_pubkey).expect("Failed to parse gateway pubkey")
 }
 
 #[allow(clippy::too_many_arguments)]
