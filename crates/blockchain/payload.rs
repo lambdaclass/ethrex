@@ -43,7 +43,7 @@ use crate::{
     Blockchain,
 };
 
-use tracing::debug;
+use tracing::{debug, warn};
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -422,7 +422,7 @@ impl Blockchain {
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
-                    if Self::check_state_diff_size(
+                    if !Self::check_state_diff_size(
                         &mut withdrawals_size,
                         &mut deposits_size,
                         head_tx.clone().into(),
@@ -480,8 +480,8 @@ impl Blockchain {
         deposits_size: &mut usize,
         tx: Transaction,
         receipt: &Receipt,
-        context: &PayloadBuildContext,
-    ) -> Result<bool, StoreError> {
+        context: &mut PayloadBuildContext,
+    ) -> Result<bool, ChainError> {
         if Self::is_withdrawal_l2(&tx, receipt) {
             *withdrawals_size += Self::L2_WITHDRAWAL_SIZE;
         }
@@ -489,7 +489,20 @@ impl Blockchain {
             *deposits_size += Self::L2_DEPOSIT_SIZE;
         }
         let modified_accounts_size = Self::calc_modified_accounts_size(context)?;
-        if *withdrawals_size + *deposits_size + modified_accounts_size > BYTES_PER_BLOB * 31 / 32 {
+        let current_state_diff_size = *withdrawals_size + *deposits_size + modified_accounts_size;
+        dbg!(current_state_diff_size);
+        dbg!(&withdrawals_size);
+        dbg!(&deposits_size);
+        dbg!(modified_accounts_size);
+        if *withdrawals_size + *deposits_size + modified_accounts_size > 3000 {
+            // if *withdrawals_size + *deposits_size + modified_accounts_size > BYTES_PER_BLOB * 31 / 32 {
+            if Self::is_withdrawal_l2(&tx, receipt) {
+                *withdrawals_size -= Self::L2_WITHDRAWAL_SIZE;
+            }
+            if Self::is_deposit_l2(&tx) {
+                *deposits_size -= Self::L2_DEPOSIT_SIZE;
+            }
+            warn!("Exceeded blob size");
             return Ok(false);
         }
         Ok(true)
@@ -517,16 +530,19 @@ impl Blockchain {
         matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
     }
 
-    fn calc_modified_accounts_size(context: &PayloadBuildContext) -> Result<usize, StoreError> {
+    fn calc_modified_accounts_size(context: &mut PayloadBuildContext) -> Result<usize, ChainError> {
         // Starts from modified_accounts_len(u16)
         let mut modified_accounts_size: usize = 16;
-        for account_update in &context.account_updates {
+        let account_updates = context
+            .vm
+            .get_state_transitions(context.payload.header.parent_hash)?;
+        for account_update in account_updates {
             // r#type(u8) + address(H160)
             modified_accounts_size += 8 + 160;
             if account_update.info.is_some() {
                 modified_accounts_size += 256; // new_balance(U256)
             }
-            if Self::has_new_nonce(account_update, context)? {
+            if Self::has_new_nonce(&account_update, context)? {
                 modified_accounts_size += 16; // nonce_diff(u16)
             }
             if !account_update.added_storage.is_empty() {
