@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742572216634,
+  "lastUpdate": 1742589577392,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -955,6 +955,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 227965982892,
             "range": "± 509390539",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d481d7f17c8843b51651e5ba46390f5444498998",
+          "message": "feat(l2): `restart-testnet` target (#2293)\n\n**Motivation**\n\nHaving a target for restarting the L2 deployment on a testnet.",
+          "timestamp": "2025-03-21T19:42:06Z",
+          "tree_id": "fdbd75a5f2efcdeb68d8aa47188d17f89626be61",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d481d7f17c8843b51651e5ba46390f5444498998"
+        },
+        "date": 1742589574979,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 227901888050,
+            "range": "± 862870744",
             "unit": "ns/iter"
           }
         ]
