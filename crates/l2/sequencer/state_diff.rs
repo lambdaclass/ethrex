@@ -18,6 +18,7 @@ pub struct AccountStateDiff {
     pub bytecode_hash: Option<H256>,
 }
 
+#[derive(Clone, Copy)]
 pub enum AccountStateDiffType {
     NewBalance = 1,
     NonceDiff = 2,
@@ -76,13 +77,10 @@ impl From<AccountStateDiffType> for u8 {
     }
 }
 
-pub trait AccountStateDiffCmp {
-    fn is(&self, r#type: AccountStateDiffType) -> bool;
-}
-
-impl AccountStateDiffCmp for u8 {
-    fn is(&self, r#type: AccountStateDiffType) -> bool {
-        self & r#type as u8 != 0
+impl AccountStateDiffType {
+    // Checks if the type is present in the given value
+    pub fn is_in(&self, value: u8) -> bool {
+        value & (*self as u8) == *self as u8
     }
 }
 
@@ -334,20 +332,20 @@ impl AccountStateDiff {
 
         let address = decoder.get_address()?;
 
-        let new_balance = if update_type.is(AccountStateDiffType::NewBalance) {
+        let new_balance = if AccountStateDiffType::NewBalance.is_in(update_type) {
             Some(decoder.get_u256()?)
         } else {
             None
         };
 
-        let nonce_diff = if update_type.is(AccountStateDiffType::NonceDiff) {
+        let nonce_diff = if AccountStateDiffType::NonceDiff.is_in(update_type) {
             Some(decoder.get_u16()?)
         } else {
             None
         };
 
         let mut storage_diff = HashMap::new();
-        if update_type.is(AccountStateDiffType::Storage) {
+        if AccountStateDiffType::Storage.is_in(update_type) {
             let storage_slots_updated = decoder.get_u16()?;
             storage_diff.reserve(storage_slots_updated.into());
 
@@ -359,14 +357,14 @@ impl AccountStateDiff {
             }
         }
 
-        let bytecode = if update_type.is(AccountStateDiffType::Bytecode) {
+        let bytecode = if AccountStateDiffType::Bytecode.is_in(update_type) {
             let bytecode_len = decoder.get_u16()?;
             Some(decoder.get_bytes(bytecode_len.into())?)
         } else {
             None
         };
 
-        let bytecode_hash = if update_type.is(AccountStateDiffType::BytecodeHash) {
+        let bytecode_hash = if AccountStateDiffType::BytecodeHash.is_in(update_type) {
             Some(decoder.get_h256()?)
         } else {
             None
