@@ -41,14 +41,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build ethrex trie benchmark
-        if: ${{ matrix.trie-version != "cita" }}
+        if: ${{ matrix.trie-version != 'cita' }}
         run: |
           cd crates/common/trie
           make build-ethrex-bench
           make ethrex-bench
 
       - name: Build cita trie benchmark
-        if: ${{ matrix.trie-version == "cita" }}
+        if: ${{ matrix.trie-version == 'cita' }}
         run: |
           cd crates/common/trie
           make build-cita-bench
