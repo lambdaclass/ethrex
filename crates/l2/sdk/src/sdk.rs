@@ -5,7 +5,7 @@ use ethrex_common::types::{GenericTransaction, Transaction, TxKind};
 use ethrex_rpc::clients::eth::{
     errors::{EthClientError, GetTransactionReceiptError},
     eth_sender::Overrides,
-    EthClient, WrappedTransaction,
+    EthClient,
 };
 use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
 use itertools::Itertools;

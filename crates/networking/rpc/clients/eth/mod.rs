@@ -1,7 +1,4 @@
-use std::{
-    cmp::{max, min},
-    fmt,
-};
+use std::fmt;
 
 use crate::{
     types::{
@@ -186,13 +183,9 @@ impl EthClient {
             let mut receipt = self.get_transaction_receipt(tx_hash).await?;
 
             let mut attempt = 1;
-            let attempts_to_wait_in_seconds = max(
-                min(
-                    BACKOFF_FACTOR.pow(number_of_retries as u32),
-                    MAX_RETRY_DELAY,
-                ),
-                MIN_RETRY_DELAY,
-            );
+            let attempts_to_wait_in_seconds = BACKOFF_FACTOR
+                .pow(number_of_retries as u32)
+                .clamp(MIN_RETRY_DELAY, MAX_RETRY_DELAY);
             while receipt.is_none() {
                 if attempt >= (attempts_to_wait_in_seconds / 2) {
                     // We waited long enough for the receipt but did not find it, bump gas
