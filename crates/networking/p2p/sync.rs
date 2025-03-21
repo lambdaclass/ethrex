@@ -6,9 +6,11 @@ mod storage_healing;
 mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::{error::ChainError, Blockchain};
+use ethrex_blockchain::{
+    error::ChainError, BatchBlockProcessingFailure, Blockchain, STATE_TRIES_TO_KEEP,
+};
 use ethrex_common::{
-    types::{Block, BlockHash},
+    types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::error::RLPDecodeError;
@@ -31,10 +33,8 @@ use trie_rebuild::TrieRebuilder;
 
 use crate::{
     kademlia::KademliaTable,
-    peer_handler::{
-        BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST,
-        MAX_BLOCK_HEADERS_TO_REQUEST,
-    },
+    peer_handler::{BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST},
+    rlpx::eth::blocks::BLOCK_HEADER_LIMIT,
 };
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
@@ -188,12 +188,7 @@ impl SyncManager {
 
         loop {
             debug!("Requesting Block Headers from {search_head}");
-            let block_header_limit = match self.sync_mode {
-                SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
-                // In Full sync mode, request the same number of block bodies as headers,
-                // since they are processed together at the same rate.
-                SyncMode::Full => MAX_BLOCK_BODIES_TO_REQUEST,
-            } as u64;
+            let block_header_limit = BLOCK_HEADER_LIMIT;
 
             let Some(mut block_headers) = self
                 .peers
@@ -283,11 +278,18 @@ impl SyncManager {
             block_headers.remove(0);
             // Store headers and save hashes for full block retrieval
             all_block_hashes.extend_from_slice(&block_hashes[..]);
-            store.add_block_headers(block_hashes.clone(), block_headers)?;
+            store.add_block_headers(block_hashes.clone(), block_headers.clone())?;
 
             if self.sync_mode == SyncMode::Full {
-                self.download_and_run_blocks(&mut block_hashes, sync_head, store.clone())
-                    .await?;
+                self.download_and_run_blocks(
+                    &block_hashes,
+                    &block_headers,
+                    sync_head,
+                    &mut current_head,
+                    &mut search_head,
+                    store.clone(),
+                )
+                .await?;
             }
 
             if sync_head_found {
@@ -329,9 +331,10 @@ impl SyncManager {
                     let block = store
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
+                    let block_number = block.header.number;
                     self.blockchain.add_block(&block)?;
-                    store.set_canonical_block(block.header.number, *hash)?;
-                    store.update_latest_block_number(block.header.number)?;
+                    store.set_canonical_block(block_number, *hash)?;
+                    store.update_latest_block_number(block_number)?;
                 }
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
@@ -349,77 +352,178 @@ impl SyncManager {
     /// Returns an error if there was a problem while executing or validating the blocks
     async fn download_and_run_blocks(
         &mut self,
-        block_hashes: &mut [BlockHash],
+        block_hashes: &[BlockHash],
+        block_headers: &[BlockHeader],
         sync_head: BlockHash,
+        current_head: &mut H256,
+        search_head: &mut H256,
         store: Store,
     ) -> Result<(), SyncError> {
-        let mut last_valid_hash = H256::default();
-
         let mut current_chunk_idx = 0;
-        let chunks: Vec<Vec<BlockHash>> = block_hashes
+        let block_hashes_chunks: Vec<Vec<BlockHash>> = block_hashes
             .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
             .map(|chunk| chunk.to_vec())
             .collect();
 
-        let mut chunk = match chunks.get(current_chunk_idx) {
+        let mut current_block_hashes_chunk = match block_hashes_chunks.get(current_chunk_idx) {
             Some(res) => res.clone(),
             None => return Ok(()),
         };
+        let mut headers_iter = block_headers.iter();
+        let mut blocks: Vec<Block> = vec![];
 
+        let max_tries = 10;
+        let mut tries = 0;
+
+        let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
-            if let Some(block_bodies) = self.peers.request_block_bodies(chunk.clone()).await {
+            if let Some(block_bodies) = self
+                .peers
+                .request_block_bodies(current_block_hashes_chunk.clone())
+                .await
+            {
                 let block_bodies_len = block_bodies.len();
 
-                let first_block_hash = chunk.first().map_or(H256::default(), |a| *a);
-                let first_block_header_number = store
-                    .get_block_header_by_hash(first_block_hash)?
-                    .map_or(0, |h| h.number);
+                let first_block_hash = current_block_hashes_chunk
+                    .first()
+                    .map_or(H256::default(), |a| *a);
 
                 debug!(
-                    "Received {} Block Bodies, starting from block hash {:?} with number: {}",
-                    block_bodies_len, first_block_hash, first_block_header_number
+                    "Received {} Block Bodies, starting from block hash {:?}",
+                    block_bodies_len, first_block_hash
                 );
 
-                // Execute and store blocks
-                for (hash, body) in chunk
+                // Push blocks
+                for (_, body) in current_block_hashes_chunk
                     .drain(..block_bodies_len)
-                    .zip(block_bodies.into_iter())
+                    .zip(block_bodies)
                 {
-                    let header = store
-                        .get_block_header_by_hash(hash)?
-                        .ok_or(SyncError::CorruptDB)?;
-                    let number = header.number;
-                    let block = Block::new(header, body);
-                    if let Err(error) = self.blockchain.add_block(&block) {
-                        warn!("Failed to add block during FullSync: {error}");
-                        self.invalid_ancestors.insert(hash, last_valid_hash);
-
-                        // TODO(#2127): Just marking the failing ancestor and the sync head is enough
-                        // to fix the Missing Ancestors hive test, we want to look at a more robust
-                        // solution in the future if needed.
-                        self.invalid_ancestors.insert(sync_head, last_valid_hash);
-
-                        return Err(error.into());
-                    }
-                    store.set_canonical_block(number, hash)?;
-                    store.update_latest_block_number(number)?;
-                    last_valid_hash = hash;
-                    debug!(
-                        "Executed and stored block number {} with hash {}",
-                        number, hash
-                    );
+                    let header = headers_iter.next().ok_or(SyncError::BodiesNotFound)?;
+                    let block = Block::new(header.clone(), body);
+                    blocks.push(block);
                 }
-                debug!("Executed & stored {} blocks", block_bodies_len);
 
-                if chunk.is_empty() {
+                if current_block_hashes_chunk.is_empty() {
                     current_chunk_idx += 1;
-                    chunk = match chunks.get(current_chunk_idx) {
+                    current_block_hashes_chunk = match block_hashes_chunks.get(current_chunk_idx) {
                         Some(res) => res.clone(),
-                        None => return Ok(()),
+                        None => break,
                     };
                 };
+            } else {
+                tries += 1;
+                // If we fail to retrieve block bodies, increment the retry counter.
+                // This failure could be due to missing bodies for some headers, possibly because:
+                // - Some headers belong to a sidechain, and not all peers have the corresponding bodies.
+                // - We are not verifying headers before requesting the bodies so they might be invalid
+                //
+                // To mitigate this, we update `current_head` and `search_head` to the last successfully processed block.
+                // This makes sure that the next header request starts from the last confirmed block (see below).
+                //
+                // TODO: validate headers before downloading the bodies
+                if tries >= max_tries {
+                    break;
+                }
             }
+        }
+
+        let blocks_len = blocks.len();
+        debug!(
+            "Starting to execute and validate {} blocks in batch",
+            blocks_len
+        );
+        let Some(first_block) = blocks.first().cloned() else {
+            return Err(SyncError::BodiesNotFound);
+        };
+        let Some(last_block) = blocks.last().cloned() else {
+            return Err(SyncError::BodiesNotFound);
+        };
+        *current_head = last_block.hash();
+        *search_head = last_block.hash();
+
+        // To ensure proper execution, we set the chain as canonical before processing the blocks.
+        // Some opcodes rely on previous block hashes, and due to our current setup, we only support a single chain (no sidechains).
+        // As a result, we must set the chain upfront to writing to the database during execution.
+        // Each write operation introduces overhead no matter how small.
+        //
+        // For more details, refer to the `get_block_hash` function in [`LevmDatabase`] and the [`revm::Database`].
+        store
+            .mark_chain_as_canonical(&blocks)
+            .map_err(SyncError::Store)?;
+
+        if let Err((error, failure)) = self.add_blocks(&blocks, store.clone()) {
+            warn!("Failed to add block during FullSync: {error}");
+            if let Some(BatchBlockProcessingFailure {
+                failed_block_hash,
+                last_valid_hash,
+            }) = failure
+            {
+                self.invalid_ancestors
+                    .insert(failed_block_hash, last_valid_hash);
+
+                // TODO(#2127): Just marking the failing ancestor and the sync head is enough
+                // to fix the Missing Ancestors hive test, we want to look at a more robust
+                // solution in the future if needed.
+                self.invalid_ancestors.insert(sync_head, last_valid_hash);
+            }
+
+            return Err(error.into());
+        }
+
+        store.update_latest_block_number(last_block.header.number)?;
+        let elapsed_secs: f64 = since.elapsed().as_millis() as f64 / 1000.0;
+
+        let blocks_per_second = blocks_len as f64 / elapsed_secs;
+
+        info!(
+            "[SYNCING] Requested, stored, and executed {} blocks in {:.3} seconds.\n\
+            Started at block with hash {} (number {}).\n\
+            Finished at block with hash {} (number {}).\n\
+            Blocks per second: {:.3}",
+            blocks_len,
+            elapsed_secs,
+            first_block.hash(),
+            first_block.header.number,
+            last_block.hash(),
+            last_block.header.number,
+            blocks_per_second
+        );
+
+        Ok(())
+    }
+
+    fn add_blocks(
+        &self,
+        blocks: &[Block],
+        store: Store,
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+        let last_block = blocks.last().unwrap().clone();
+        let latest_block_number = store
+            .get_latest_block_number()
+            .map_err(|e| (e.into(), None))?;
+
+        // If the difference between the last block's number and the latest block number is within
+        // STATE_TRIES_TO_KEEP, process the blocks sequentially so that the state of all blocks is stored.
+        if last_block.header.number.saturating_sub(latest_block_number)
+            <= STATE_TRIES_TO_KEEP as u64
+        {
+            let mut last_valid_hash = H256::default();
+            for block in blocks {
+                self.blockchain.add_block(block).map_err(|e| {
+                    (
+                        e,
+                        Some(BatchBlockProcessingFailure {
+                            last_valid_hash,
+                            failed_block_hash: block.hash(),
+                        }),
+                    )
+                })?;
+                last_valid_hash = block.hash();
+            }
+            Ok(())
+        } else {
+            self.blockchain.add_blocks_in_batch(blocks)
         }
     }
 }
@@ -621,4 +725,6 @@ enum SyncError {
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]
     CorruptDB,
+    #[error("No bodies were found for the given headers")]
+    BodiesNotFound,
 }
