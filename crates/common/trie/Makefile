@@ -17,5 +17,5 @@ bench-all: ethrex-bench cita-bench
 compare: build-ethrex-bench build-cita-bench
 	@$(MAKE) ethrex-bench | grep -v 'make\|cargo\|Entering\|Leaving' > ethrex.txt
 	@$(MAKE) cita-bench | grep -v 'make\|cargo\|Entering\|Leaving' > cita.txt
-	@bash ./benches/formatter.sh ethrex.txt cita.txt > compare.md
+	@bash ../../../.github/scripts/formatter.sh ethrex.txt cita.txt > compare.md
 	@cat compare.md
