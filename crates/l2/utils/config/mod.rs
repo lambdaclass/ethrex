@@ -1,4 +1,7 @@
-use std::io::{BufRead, Write};
+use std::{
+    io::{BufRead, Write},
+    path::PathBuf,
+};
 
 use tracing::{debug, info};
 pub mod block_producer;
@@ -13,10 +16,12 @@ pub mod errors;
 pub const CARGO_MANIFEST_DIR: &str = std::env!("CARGO_MANIFEST_DIR");
 
 pub fn read_env_file() -> Result<(), errors::ConfigError> {
-    let env_file_name =
-        std::env::var("ENV_FILE").unwrap_or(CARGO_MANIFEST_DIR.to_string() + "/.env");
-    let env_file_path = open_readable(env_file_name)?;
-    let reader = std::io::BufReader::new(env_file_path);
+    let env_file_path = match std::env::var("ENV_FILE") {
+        Ok(env_file_path) => PathBuf::from(env_file_path),
+        Err(_) => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".env"),
+    };
+    let env_file = open_readable(env_file_path)?;
+    let reader = std::io::BufReader::new(env_file);
 
     for line in reader.lines() {
         let line = line?;
@@ -51,7 +56,7 @@ pub fn read_env_as_lines(
     Ok(reader.lines())
 }
 
-fn open_readable(path: String) -> std::io::Result<std::fs::File> {
+fn open_readable(path: PathBuf) -> std::io::Result<std::fs::File> {
     match std::fs::File::open(path) {
         Ok(file) => Ok(file),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
