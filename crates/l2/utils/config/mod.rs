@@ -14,7 +14,7 @@ pub mod prover_server;
 pub mod errors;
 
 pub fn read_env_file() -> Result<(), errors::ConfigError> {
-    let env_file = open_readable()?;
+    let env_file = open_env_file()?;
     let reader = std::io::BufReader::new(env_file);
 
     for line in reader.lines() {
@@ -43,13 +43,13 @@ pub fn read_env_file() -> Result<(), errors::ConfigError> {
 
 pub fn read_env_as_lines(
 ) -> Result<std::io::Lines<std::io::BufReader<std::fs::File>>, errors::ConfigError> {
-    let env_file = open_readable()?;
+    let env_file = open_env_file()?;
     let reader = std::io::BufReader::new(env_file);
 
     Ok(reader.lines())
 }
 
-fn open_readable() -> std::io::Result<std::fs::File> {
+fn open_env_file() -> std::io::Result<std::fs::File> {
     let path = get_env_file_path();
     match std::fs::File::open(path) {
         Ok(file) => Ok(file),
@@ -68,7 +68,7 @@ pub fn get_env_file_path() -> PathBuf {
     }
 }
 
-pub fn write_env(lines: Vec<String>) -> Result<(), errors::ConfigError> {
+pub fn write_env_file(lines: Vec<String>) -> Result<(), errors::ConfigError> {
     let path = get_env_file_path();
     let env_file = match std::fs::OpenOptions::new()
         .write(true)
