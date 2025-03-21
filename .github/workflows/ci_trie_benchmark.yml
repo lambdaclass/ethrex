@@ -26,7 +26,8 @@ jobs:
             id: cache
             with:
               path: crates/common/trie
-              key: binary-${{ github.event.pull_request[matrix.trie-version].sha }}
+              key: trie-${{ github.event.pull_request[matrix.trie-version].sha }}
+
           - name: Checkout
             uses: actions/checkout@v4
             with:
@@ -44,8 +45,11 @@ jobs:
             run: |
               cd crates/common/trie
               make build-ethrex-bench
+              make ethrex-bench
+
           - name: Build cita trie benchmark
             if: ${{ matrix.trie-version == "cita" }}
             run: |
               cd crates/common/trie
-              make build-ethrex-bench
+              make build-cita-bench
+              make cita-bench
