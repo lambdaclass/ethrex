@@ -20,36 +20,36 @@ jobs:
       fail-fast: true
       matrix:
         trie-version: ["head", "main", "cita"]
-        steps:
-          - name: Populate cache
-            uses: actions/cache@v4
-            id: cache
-            with:
-              path: crates/common/trie
-              key: trie-${{ github.event.pull_request[matrix.trie-version].sha }}
+    steps:
+      - name: Populate cache
+        uses: actions/cache@v4
+        id: cache
+        with:
+          path: crates/common/trie
+          key: trie-${{ github.event.pull_request[matrix.trie-version].sha }}
 
-          - name: Checkout
-            uses: actions/checkout@v4
-            with:
-              fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-          - name: Fetch Rust cache
-            uses: Swatinem/rust-cache@v2
+      - name: Fetch Rust cache
+        uses: Swatinem/rust-cache@v2
 
-          - name: Install Rust
-            if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-            uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: dtolnay/rust-toolchain@stable
 
-          - name: Build ethrex trie benchmark
-            if: ${{ matrix.trie-version != "cita" }}
-            run: |
-              cd crates/common/trie
-              make build-ethrex-bench
-              make ethrex-bench
+      - name: Build ethrex trie benchmark
+        if: ${{ matrix.trie-version != "cita" }}
+        run: |
+          cd crates/common/trie
+          make build-ethrex-bench
+          make ethrex-bench
 
-          - name: Build cita trie benchmark
-            if: ${{ matrix.trie-version == "cita" }}
-            run: |
-              cd crates/common/trie
-              make build-cita-bench
-              make cita-bench
+      - name: Build cita trie benchmark
+        if: ${{ matrix.trie-version == "cita" }}
+        run: |
+          cd crates/common/trie
+          make build-cita-bench
+          make cita-bench
