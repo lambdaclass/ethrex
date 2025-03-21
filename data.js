@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742500763622,
+  "lastUpdate": 1742567832947,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -895,6 +895,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 226396001375,
             "range": "± 381946602",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "862fb49e6143e5bdc1f3aa8939a95dff4038e5f2",
+          "message": "fix(l1): fix unending storage healer process in snap sync (#2287)\n\n**Motivation**\nThere is currently a bug in snap sync. When a state sync becomes stale,\nthe snap sync cycle is aborted but the storage healer process is left\nhanging instead if signaling it to end and waiting for it to finish. The\nloop condition of the storage healer is also not properly set, keeping\nit alive even after the end signal if it still has paths to heal. This\nPR fixes both of this problems\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Fix loop condition in storage healer\n* End storage healer if state sync aborts due to stale pivot\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-03-21T13:40:23Z",
+          "tree_id": "53424afc61727988e153fbb7b02a7f2ddc50c7d0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/862fb49e6143e5bdc1f3aa8939a95dff4038e5f2"
+        },
+        "date": 1742567830515,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 232806520727,
+            "range": "± 1000563047",
             "unit": "ns/iter"
           }
         ]
