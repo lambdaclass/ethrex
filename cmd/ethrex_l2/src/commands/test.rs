@@ -168,9 +168,9 @@ async fn transfer_from(
         while let Err(e) = client.send_eip1559_transaction(&tx, &private_key).await {
             println!("Transaction failed (PK: {pk} - Nonce: {}): {e}", tx.nonce);
             retries += 1;
-            sleep(std::time::Duration::from_secs(2));
+            sleep(std::time::Duration::from_secs(2)).await;
         }
-        sleep(Duration::from_millis(3));
+        sleep(Duration::from_millis(3)).await;
     }
 
     retries
@@ -191,7 +191,7 @@ async fn test_connection(cfg: EthrexL2Config) -> Result<(), EthClientError> {
             }
             Err(err) => {
                 println!("Couldn't establish connection to L2: {err}, retrying {retry}/{RETRIES}");
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                sleep(Duration::from_secs(1)).await;
                 retry += 1
             }
         }
@@ -207,7 +207,7 @@ async fn wait_receipt(
     for _ in 0..retries {
         match client.get_transaction_receipt(tx_hash).await {
             Err(_) | Ok(None) => {
-                let _ = tokio::time::sleep(Duration::from_secs(1)).await;
+                let _ = sleep(Duration::from_secs(1)).await;
             }
             Ok(Some(receipt)) => return Ok(receipt),
         };
@@ -331,7 +331,7 @@ async fn erc20_load_test(
                 )
                 .await?;
             let client = client.clone();
-            tokio::time::sleep(Duration::from_micros(800)).await;
+            sleep(Duration::from_micros(800)).await;
             tasks.spawn(async move {
                 let _sent = client
                     .send_eip1559_transaction(&send_tx, &sk)
