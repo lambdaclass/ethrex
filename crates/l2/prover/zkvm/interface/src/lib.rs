@@ -1,18 +1,22 @@
 pub mod methods {
-    #[cfg(any(clippy, not(feature = "build_risc0")))]
+    #[cfg(any(clippy, not(feature = "risc0")))]
     pub const ZKVM_RISC0_PROGRAM_ELF: &[u8] = &[0];
-    #[cfg(any(clippy, not(feature = "build_risc0")))]
+    #[cfg(any(clippy, not(feature = "risc0")))]
     pub const ZKVM_RISC0_PROGRAM_ID: [u32; 8] = [0_u32; 8];
-
-    #[cfg(all(not(clippy), feature = "build_risc0"))]
+    #[cfg(all(not(clippy), feature = "risc0"))]
     include!(concat!(env!("OUT_DIR"), "/methods.rs"));
 
-    #[cfg(all(not(clippy), feature = "build_sp1"))]
+    #[cfg(all(not(clippy), feature = "sp1"))]
     pub const ZKVM_SP1_PROGRAM_ELF: &[u8] =
         include_bytes!("../sp1/elf/riscv32im-succinct-zkvm-elf");
-
-    #[cfg(any(clippy, not(feature = "build_sp1")))]
+    #[cfg(any(clippy, not(feature = "sp1")))]
     pub const ZKVM_SP1_PROGRAM_ELF: &[u8] = &[0];
+
+    #[cfg(all(not(clippy), feature = "pico"))]
+    pub const ZKVM_PICO_PROGRAM_ELF: &[u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/riscv32im-pico-zkvm-elf"));
+    #[cfg(any(clippy, not(feature = "pico")))]
+    pub const ZKVM_PICO_PROGRAM_ELF: &[u8] = &[0];
 }
 
 pub mod io {
@@ -20,7 +24,7 @@ pub mod io {
         types::{Block, BlockHeader},
         H256,
     };
-    use ethrex_vm::execution_db::ExecutionDB;
+    use ethrex_vm::backends::revm::execution_db::ExecutionDB;
     use serde::{de::DeserializeOwned, Deserialize, Serialize};
     use serde_with::{serde_as, DeserializeAs, SerializeAs};
 
@@ -46,6 +50,16 @@ pub mod io {
         pub initial_state_hash: H256,
         /// final state trie root hash
         pub final_state_hash: H256,
+    }
+
+    impl ProgramOutput {
+        pub fn encode(&self) -> Vec<u8> {
+            [
+                self.initial_state_hash.to_fixed_bytes(),
+                self.final_state_hash.to_fixed_bytes(),
+            ]
+            .concat()
+        }
     }
 
     /// Used with [serde_with] to encode a fields into JSON before serializing its bytes. This is
@@ -84,7 +98,7 @@ pub mod trie {
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
     use ethrex_storage::{hash_address, hash_key, AccountUpdate};
     use ethrex_trie::{Trie, TrieError};
-    use ethrex_vm::execution_db::ExecutionDB;
+    use ethrex_vm::backends::revm::execution_db::ExecutionDB;
     use thiserror::Error;
 
     #[derive(Debug, Error)]

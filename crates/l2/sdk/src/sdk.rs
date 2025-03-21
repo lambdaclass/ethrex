@@ -37,7 +37,7 @@ pub enum SdkError {
 
 /// BRIDGE_ADDRESS or 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
 pub fn bridge_address() -> Result<Address, SdkError> {
-    std::env::var("BRIDGE_ADDRESS")
+    std::env::var("L1_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
         .parse()
         .map_err(|_| SdkError::FailedToParseAddressFromHex)

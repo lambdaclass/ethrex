@@ -16,7 +16,7 @@ For more detailed documentation on each part of the system:
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp .env.example .env` &rarr; check if you want to change any config.
+3. `cp config_example.toml config.toml` &rarr; check if you want to change any config.
 4. `make init`
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
@@ -31,7 +31,25 @@ Configuration is done through env vars. A detailed list is available in each par
 
 ## Testing
 
-Load tests are available via L2 CLI. The test take a list of private keys and send a bunch of transactions from each of them to some address. 
+Load tests are available via L2 CLI and Makefile targets.
+
+### Makefile
+
+There are currently three different load tests you can run:
+
+```
+make load-test
+make load-test-fibonacci
+make load-test-io
+```
+
+The first one sends regular transfers between accounts, the second runs an EVM-heavy contract that computes fibonacci numbers, the third a heavy IO contract that writes to 100 storage slots per transaction.
+
+### CLI
+
+To have more control over the load tests and its parameters, you can use the CLI (the Makefile targets use the CLI underneath).
+
+The tests take a list of private keys and send a bunch of transactions from each of them to some address (either the address of some account to send eth to or the address of the contract that we're interacting with). 
 
 The CLI can be installed with the `cli` target:
 

@@ -8,9 +8,9 @@ use std::{
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
-        calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-        compute_transactions_root, compute_withdrawals_root,
-        requests::{compute_requests_hash, EncodedRequests, Requests},
+        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
+        compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+        requests::{compute_requests_hash, EncodedRequests},
         BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
         MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
@@ -19,13 +19,12 @@ use ethrex_common::{
 };
 
 use ethrex_vm::{
-    backends::levm::CacheDB,
-    db::{evm_state, EvmState},
+    backends::{Evm, EvmEngine},
     EvmError,
 };
 
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 
 use sha3::{Digest, Keccak256};
 
@@ -37,7 +36,7 @@ use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRI
 use crate::{
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
-    mempool::{self, PendingTxFilter},
+    mempool::PendingTxFilter,
     Blockchain,
 };
 
@@ -161,36 +160,27 @@ pub fn calc_gas_limit(parent_gas_limit: u64) -> u64 {
     limit
 }
 
-pub fn calc_excess_blob_gas(
-    parent_excess_blob_gas: u64,
-    parent_blob_gas_used: u64,
-    target: u64,
-) -> u64 {
-    let excess_blob_gas = parent_excess_blob_gas + parent_blob_gas_used;
-    let target_blob_gas_per_block = target * GAS_PER_BLOB;
-    if excess_blob_gas < target_blob_gas_per_block {
-        0
-    } else {
-        excess_blob_gas - target_blob_gas_per_block
-    }
-}
-
 pub struct PayloadBuildContext<'a> {
     pub payload: &'a mut Block,
-    pub evm_state: &'a mut EvmState,
-    pub block_cache: CacheDB,
     pub remaining_gas: u64,
     pub receipts: Vec<Receipt>,
-    pub requests: Vec<Requests>,
+    pub requests: Vec<EncodedRequests>,
     pub requests_hash: Option<H256>,
     pub block_value: U256,
     base_fee_per_blob_gas: U256,
     pub blobs_bundle: BlobsBundle,
+    pub store: Store,
+    pub vm: Evm,
+    pub account_updates: Vec<AccountUpdate>,
 }
 
 impl<'a> PayloadBuildContext<'a> {
-    fn new(payload: &'a mut Block, evm_state: &'a mut EvmState) -> Result<Self, EvmError> {
-        let config = evm_state.chain_config()?;
+    fn new(
+        payload: &'a mut Block,
+        evm_engine: EvmEngine,
+        storage: &Store,
+    ) -> Result<Self, EvmError> {
+        let config = storage.get_chain_config()?;
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
             config
@@ -198,6 +188,7 @@ impl<'a> PayloadBuildContext<'a> {
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
+        let vm = Evm::new(evm_engine, storage.clone(), payload.header.parent_hash);
 
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -207,9 +198,10 @@ impl<'a> PayloadBuildContext<'a> {
             block_value: U256::zero(),
             base_fee_per_blob_gas: U256::from(base_fee_per_blob_gas),
             payload,
-            evm_state,
             blobs_bundle: BlobsBundle::default(),
-            block_cache: CacheDB::new(),
+            store: storage.clone(),
+            vm,
+            account_updates: Vec::new(),
         })
     }
 }
@@ -223,12 +215,8 @@ impl<'a> PayloadBuildContext<'a> {
         self.payload.header.number
     }
 
-    fn store(&self) -> Option<&Store> {
-        self.evm_state.database()
-    }
-
     fn chain_config(&self) -> Result<ChainConfig, EvmError> {
-        self.evm_state.chain_config()
+        Ok(self.store.get_chain_config()?)
     }
 
     fn base_fee_per_gas(&self) -> Option<u64> {
@@ -236,15 +224,45 @@ impl<'a> PayloadBuildContext<'a> {
     }
 }
 
+pub struct PayloadBuildResult {
+    pub blobs_bundle: BlobsBundle,
+    pub block_value: U256,
+    pub receipts: Vec<Receipt>,
+    pub requests: Vec<EncodedRequests>,
+    pub account_updates: Vec<AccountUpdate>,
+}
+
+impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
+    fn from(value: PayloadBuildContext) -> Self {
+        let PayloadBuildContext {
+            blobs_bundle,
+            block_value,
+            requests,
+            receipts,
+            account_updates,
+            ..
+        } = value;
+
+        Self {
+            blobs_bundle,
+            block_value,
+            requests,
+            receipts,
+            account_updates,
+        }
+    }
+}
+
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub fn build_payload(&self, payload: &mut Block) -> Result<(BlobsBundle, U256), ChainError> {
+    pub fn build_payload(&self, payload: &mut Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
-        let mut evm_state = evm_state(self.storage.clone(), payload.header.parent_hash);
-        let mut context = PayloadBuildContext::new(payload, &mut evm_state)?;
+        let mut context = PayloadBuildContext::new(payload, self.evm_engine, &self.storage)?;
+
+        #[cfg(not(feature = "l2"))]
         self.apply_system_operations(&mut context)?;
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
@@ -264,10 +282,10 @@ impl Blockchain {
             }
         }
 
-        Ok((context.blobs_bundle, context.block_value))
+        Ok(context.into())
     }
 
-    pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+    fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         let binding = Vec::new();
         let withdrawals = context
             .payload
@@ -275,13 +293,9 @@ impl Blockchain {
             .withdrawals
             .as_ref()
             .unwrap_or(&binding);
-        self.vm
-            .process_withdrawals(
-                withdrawals,
-                context.evm_state,
-                &context.payload.header,
-                &mut context.block_cache,
-            )
+        context
+            .vm
+            .process_withdrawals(withdrawals, &context.payload.header)
             .map_err(EvmError::from)
     }
 
@@ -292,13 +306,7 @@ impl Blockchain {
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(), EvmError> {
-        let chain_config = context.chain_config()?;
-        self.vm.apply_system_calls(
-            context.evm_state,
-            &context.payload.header,
-            &mut context.block_cache,
-            &chain_config,
-        )
+        context.vm.apply_system_calls(&context.payload.header)
     }
 
     /// Fetches suitable transactions from the mempool
@@ -321,18 +329,15 @@ impl Blockchain {
             only_blob_txs: true,
             ..tx_filter
         };
-        let store = context.store().ok_or(StoreError::Custom(
-            "no store in the context (is an ExecutionDB being used?)".to_string(),
-        ))?;
         Ok((
             // Plain txs
             TransactionQueue::new(
-                mempool::filter_transactions(&plain_tx_filter, store)?,
+                self.mempool.filter_transactions(&plain_tx_filter)?,
                 context.base_fee_per_gas(),
             )?,
             // Blob txs
             TransactionQueue::new(
-                mempool::filter_transactions(&blob_tx_filter, store)?,
+                self.mempool.filter_transactions(&blob_tx_filter)?,
                 context.base_fee_per_gas(),
             )?,
         ))
@@ -397,12 +402,7 @@ impl Blockchain {
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
                 txs.pop();
-                mempool::remove_transaction(
-                    &head_tx.tx.compute_hash(),
-                    context
-                        .store()
-                        .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
-                )?;
+                self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
                 continue;
             }
 
@@ -416,12 +416,7 @@ impl Blockchain {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
-                    mempool::remove_transaction(
-                        &head_tx.tx.compute_hash(),
-                        context
-                            .store()
-                            .ok_or(ChainError::StoreError(StoreError::MissingStore))?,
-                    )?;
+                    self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
                     metrics!(METRICS_TX.inc_tx_with_status_and_type(
                         MetricsTxStatus::Succeeded,
@@ -475,12 +470,7 @@ impl Blockchain {
             .get_fork_blob_schedule(context.payload.header.timestamp)
             .map(|schedule| schedule.max)
             .unwrap_or_default() as usize;
-
-        let Some(blobs_bundle) = context
-            .store()
-            .ok_or(ChainError::StoreError(StoreError::MissingStore))?
-            .get_blobs_bundle_from_pool(tx_hash)?
-        else {
+        let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
             // No blob tx should enter the mempool without its blobs bundle so this is an internal error
             return Err(
                 StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),
@@ -506,14 +496,11 @@ impl Blockchain {
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
-        let chain_config = context.chain_config()?;
-        let (report, gas_used) = self.vm.execute_tx(
-            context.evm_state,
+        let (report, gas_used) = context.vm.execute_tx(
             &head.tx,
             &context.payload.header,
-            &mut context.block_cache,
-            &chain_config,
             &mut context.remaining_gas,
+            head.tx.sender(),
         )?;
         context.block_value += U256::from(gas_used) * head.tip;
         Ok(report)
@@ -527,30 +514,22 @@ impl Blockchain {
             return Ok(());
         };
 
-        let requests = self.vm.extract_requests(
-            &context.receipts,
-            context.evm_state,
-            &context.payload.header,
-            &mut context.block_cache,
-        );
-        context.requests = requests?;
-        let encoded_requests: Vec<EncodedRequests> =
-            context.requests.iter().map(|r| r.encode()).collect();
-        context.requests_hash = Some(compute_requests_hash(&encoded_requests));
+        let requests = context
+            .vm
+            .extract_requests(&context.receipts, &context.payload.header)?;
+
+        context.requests = requests.iter().map(|r| r.encode()).collect();
+        context.requests_hash = Some(compute_requests_hash(&context.requests));
 
         Ok(())
     }
 
     fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-        let account_updates = self.vm.get_state_transitions(
-            context.evm_state,
-            context.parent_hash(),
-            &context.block_cache,
-        )?;
+        let parent_hash = context.payload.header.parent_hash;
+        let account_updates = context.vm.get_state_transitions(parent_hash)?;
 
         context.payload.header.state_root = context
-            .store()
-            .ok_or(StoreError::MissingStore)?
+            .store
             .apply_account_updates(context.parent_hash(), &account_updates)?
             .unwrap_or_default();
         context.payload.header.transactions_root =
@@ -558,6 +537,7 @@ impl Blockchain {
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
         context.payload.header.requests_hash = context.requests_hash;
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        context.account_updates = account_updates;
         Ok(())
     }
 }
@@ -576,7 +556,6 @@ struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HeadTransaction {
     tx: MempoolTransaction,
-    sender: Address,
     tip: u64,
 }
 
@@ -601,7 +580,7 @@ impl TransactionQueue {
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
         let mut heads = Vec::new();
-        for (address, txs) in txs.iter_mut() {
+        for (_, txs) in txs.iter_mut() {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element
             let head_tx = txs.remove(0);
@@ -613,7 +592,6 @@ impl TransactionQueue {
                         InvalidBlockError::InvalidTransaction("Attempted to add an invalid transaction to the block. The transaction filter must have failed.".to_owned()),
                     ))?,
                 tx: head_tx,
-                sender: *address,
             });
         }
         // Sort heads by higest tip (and lowest timestamp if tip is equal)
@@ -645,7 +623,7 @@ impl TransactionQueue {
     /// Removes current head transaction and all transactions from the given sender
     fn pop(&mut self) {
         if !self.is_empty() {
-            let sender = self.heads.remove(0).sender;
+            let sender = self.heads.remove(0).tx.sender();
             self.txs.remove(&sender);
         }
     }
@@ -654,7 +632,7 @@ impl TransactionQueue {
     /// Add a tx from the same sender to the head transactions
     fn shift(&mut self) -> Result<(), ChainError> {
         let tx = self.heads.remove(0);
-        if let Some(txs) = self.txs.get_mut(&tx.sender) {
+        if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {
             // Fetch next head
             if !txs.is_empty() {
                 let head_tx = txs.remove(0);
@@ -666,7 +644,6 @@ impl TransactionQueue {
                         ),
                     )?,
                     tx: head_tx,
-                    sender: tx.sender,
                 };
                 // Insert head into heads list while maintaing order
                 let index = match self.heads.binary_search(&head) {

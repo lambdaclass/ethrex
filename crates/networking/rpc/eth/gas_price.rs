@@ -65,14 +65,20 @@ mod tests {
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
     use bytes::Bytes;
+    use ethrex_blockchain::Blockchain;
     use ethrex_p2p::sync::SyncManager;
+    #[cfg(feature = "l2")]
+    use secp256k1::{rand, SecretKey};
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
     fn default_context() -> RpcApiContext {
+        let storage = setup_store();
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         RpcApiContext {
-            storage: setup_store(),
+            storage,
+            blockchain,
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
@@ -82,6 +88,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         }
     }
 

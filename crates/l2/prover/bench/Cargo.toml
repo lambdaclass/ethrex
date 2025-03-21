@@ -36,6 +36,7 @@ revm = { version = "19.0.0", features = [
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
 revm-inspectors = { version = "0.15.0" }
+derive_more = { version = "1.0.0", features = ["full"] }
 revm-primitives = { version = "15.2.0", features = [
   "std",
 ], default-features = false }
@@ -46,8 +47,9 @@ lazy_static = "1.5.0"
 bincode = "1.3.3"
 
 [features]
-risc0 = ["zkvm_interface/build_risc0", "ethrex-prover/build_risc0"]
-sp1 = ["zkvm_interface/build_sp1", "zkvm_interface/build_sp1"]
+pico = ["zkvm_interface/pico", "ethrex-prover/pico"]
+risc0 = ["zkvm_interface/risc0", "ethrex-prover/risc0"]
+sp1 = ["zkvm_interface/sp1", "ethrex-prover/sp1"]
 gpu = ["ethrex-prover/gpu"]
 l2 = ["ethrex-vm/l2", "zkvm_interface/l2"]
 default = ["sp1"]

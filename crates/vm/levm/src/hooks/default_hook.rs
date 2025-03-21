@@ -363,20 +363,29 @@ impl Hook for DefaultHook {
 
         // 2. Return unused gas + gas refunds to the sender.
         let max_gas = vm.env.gas_limit;
-        let consumed_gas = report.gas_used;
+        let mut consumed_gas = report.gas_used;
         // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
         let quotient = if vm.env.config.fork < Fork::London {
             MAX_REFUND_QUOTIENT_PRE_LONDON
         } else {
             MAX_REFUND_QUOTIENT
         };
-        let refunded_gas = report.gas_refunded.min(
+        let mut refunded_gas = report.gas_refunded.min(
             consumed_gas
                 .checked_div(quotient)
                 .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
         );
         // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
         report.gas_refunded = refunded_gas;
+
+        if vm.env.config.fork >= Fork::Prague {
+            let floor_gas_price = vm.get_floor_gas_price(initial_call_frame)?;
+            let execution_gas_used = consumed_gas.saturating_sub(refunded_gas);
+            if floor_gas_price > execution_gas_used {
+                consumed_gas = floor_gas_price;
+                refunded_gas = 0;
+            }
+        }
 
         let gas_to_return = max_gas
             .checked_sub(consumed_gas)

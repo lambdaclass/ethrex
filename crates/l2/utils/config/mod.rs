@@ -1,11 +1,10 @@
 use std::io::{BufRead, Write};
 
 use tracing::{debug, info};
-
+pub mod block_producer;
 pub mod committer;
 pub mod eth;
 pub mod l1_watcher;
-pub mod proposer;
 pub mod prover_client;
 pub mod prover_server;
 
