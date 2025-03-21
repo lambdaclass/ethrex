@@ -8,12 +8,11 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{constants::TX_GAS_COST, Blockchain};
-use ethrex_common::types::{Signable, Transaction};
+use ethrex_common::types::Transaction;
 use ethrex_rpc::clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_storage::Store;
 use keccak_hash::keccak;
-use secp256k1::SecretKey;
 use std::{cmp::min, ops::Mul, sync::Arc, time::Duration};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
@@ -35,7 +34,6 @@ pub struct L1Watcher {
     address: Address,
     max_block_step: U256,
     last_block_fetched: U256,
-    l2_proposer_pk: SecretKey,
     check_interval: Duration,
 }
 
@@ -54,7 +52,6 @@ impl L1Watcher {
             address: watcher_config.bridge_address,
             max_block_step: watcher_config.max_block_step,
             last_block_fetched,
-            l2_proposer_pk: watcher_config.l2_proposer_private_key,
             check_interval: Duration::from_millis(watcher_config.check_interval_ms),
         })
     }
@@ -240,7 +237,7 @@ impl L1Watcher {
                 .try_into()
                 .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
 
-            let mut mint_transaction = self
+            let mint_transaction = self
                 .eth_client
                 .build_privileged_transaction(
                     beneficiary,
@@ -275,7 +272,6 @@ impl L1Watcher {
                     10,
                 )
                 .await?;
-            mint_transaction.sign_inplace(&self.l2_proposer_pk);
 
             match blockchain
                 .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))

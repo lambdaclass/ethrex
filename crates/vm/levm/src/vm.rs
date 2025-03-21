@@ -180,9 +180,33 @@ pub struct VM {
 }
 
 impl VM {
-    // TODO: Refactor this.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        to: TxKind,
+        env: Environment,
+        value: U256,
+        calldata: Bytes,
+        db: Arc<dyn Database>,
+        cache: CacheDB,
+        access_list: AccessList,
+        authorization_list: Option<AuthorizationList>,
+    ) -> Result<Self, VMError> {
+        Self::new_with_hooks(
+            to,
+            env,
+            value,
+            calldata,
+            db,
+            cache,
+            access_list,
+            authorization_list,
+            vec![Arc::new(DefaultHook)],
+        )
+    }
+
+    // TODO: Refactor this.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_hooks(
         to: TxKind,
         env: Environment,
         value: U256,
@@ -191,6 +215,7 @@ impl VM {
         mut cache: CacheDB,
         access_list: AccessList,
         authorization_list: Option<AuthorizationList>,
+        hooks: Vec<Arc<dyn Hook>>,
     ) -> Result<Self, VMError> {
         // Maybe this decision should be made in an upper layer
 
@@ -226,8 +251,6 @@ impl VM {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let default_hook: Arc<dyn Hook> = Arc::new(DefaultHook);
-        let hooks = vec![default_hook];
         match to {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
