@@ -273,6 +273,7 @@ pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec
         .map(Iterator::copied)
         .map(Iterator::collect)
         .unwrap_or_default();
+    dbg!(&bootnodes);
 
     if network == networks::HOLESKY_GENESIS_PATH {
         info!("Adding holesky preset bootnodes");
