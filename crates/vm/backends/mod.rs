@@ -87,7 +87,7 @@ impl Evm {
                 REVM::execute_block(block, &mut state)
             }
             Evm::LEVM { store_wrapper, .. } => {
-                LEVM::execute_block(block, store_wrapper.store.clone())
+                LEVM::execute_block(block, Arc::new(store_wrapper.clone()))
             }
         }
     }
@@ -185,17 +185,24 @@ impl Evm {
                 store_wrapper,
                 block_cache,
             } => {
-                let store = store_wrapper.store.clone();
-                let chain_config = store.get_chain_config()?;
+                let chain_config = store_wrapper.store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
                 let mut new_state = CacheDB::new();
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    LEVM::beacon_root_contract_call(block_header, &store, &mut new_state)?;
+                    LEVM::beacon_root_contract_call(
+                        block_header,
+                        Arc::new(store_wrapper.clone()),
+                        &mut new_state,
+                    )?;
                 }
 
                 if fork >= Fork::Prague {
-                    LEVM::process_block_hash_history(block_header, &store, &mut new_state)?;
+                    LEVM::process_block_hash_history(
+                        block_header,
+                        Arc::new(store_wrapper.clone()),
+                        &mut new_state,
+                    )?;
                 }
 
                 // Now original_value is going to be the same as the current_value, for the next transaction.
@@ -231,7 +238,16 @@ impl Evm {
                 block_cache,
             } => {
                 store_wrapper.block_hash = parent_hash;
-                LEVM::get_state_transitions(None, store_wrapper, block_cache)
+                let block_header = store_wrapper
+                    .store
+                    .get_block_header_by_hash(parent_hash)?
+                    .unwrap();
+                LEVM::get_state_transitions(
+                    None,
+                    Arc::new(store_wrapper.clone()),
+                    &block_header,
+                    block_cache,
+                )
             }
         }
     }
@@ -272,9 +288,12 @@ impl Evm {
             Evm::LEVM {
                 store_wrapper,
                 block_cache,
-            } => {
-                levm::extract_all_requests_levm(receipts, &store_wrapper.store, header, block_cache)
-            }
+            } => levm::extract_all_requests_levm(
+                receipts,
+                Arc::new(store_wrapper.clone()),
+                header,
+                block_cache,
+            ),
             Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
         }
     }
