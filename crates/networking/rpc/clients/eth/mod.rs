@@ -66,6 +66,8 @@ const BACKOFF_FACTOR: u64 = 2;
 const MIN_RETRY_DELAY: u64 = 96;
 const MAX_RETRY_DELAY: u64 = 1800;
 
+const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
+
 // 0x08c379a0 == Error(String)
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
@@ -187,7 +189,7 @@ impl EthClient {
                 .pow(number_of_retries as u32)
                 .clamp(MIN_RETRY_DELAY, MAX_RETRY_DELAY);
             while receipt.is_none() {
-                if attempt >= (attempts_to_wait_in_seconds / 2) {
+                if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                     // We waited long enough for the receipt but did not find it, bump gas
                     // and go to the next one.
                     match wrapped_tx {
@@ -208,7 +210,10 @@ impl EthClient {
 
                 attempt += 1;
 
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(
+                    WAIT_TIME_FOR_RECEIPT_SECONDS,
+                ))
+                .await;
 
                 receipt = self.get_transaction_receipt(tx_hash).await?;
             }

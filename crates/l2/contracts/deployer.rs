@@ -7,6 +7,7 @@ use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
+use ethrex_rpc::clients::eth::WrappedTransaction;
 use ethrex_rpc::clients::eth::{
     errors::{CalldataEncodeError, EthClientError},
     eth_sender::Overrides,
@@ -720,7 +721,7 @@ async fn initialize_bridge(
         )
         .await
         .map_err(DeployError::from)?;
-    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(initialize_tx);
+    let mut wrapped_tx = WrappedTransaction::EIP1559(initialize_tx);
     eth_client
         .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
         .await?;
