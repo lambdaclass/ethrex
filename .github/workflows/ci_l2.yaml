@@ -35,4 +35,4 @@ jobs:
         run: |
           cd crates/l2
           cp config_example.toml config.toml
-          make test-tmux
+          make ci_test
