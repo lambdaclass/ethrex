@@ -314,17 +314,23 @@ impl Evm {
         header: &BlockHeader,
         spec_id: SpecId,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
-        let res = match self {
+        let result = match self {
             Evm::REVM { state } => {
-                self::revm::helpers::create_access_list(tx, header, state, spec_id)
+                self::revm::helpers::create_access_list(tx, header, state, spec_id)?
             }
-            Evm::LEVM {
-                store_wrapper: _,
-                block_cache: _,
-            } => Err(EvmError::Custom("Not implemented".to_string())),
-        }?;
 
-        match res {
+            Evm::LEVM {
+                store_wrapper,
+                block_cache,
+            } => LEVM::create_access_list(
+                tx,
+                header,
+                store_wrapper,
+                &store_wrapper.store.get_chain_config()?,
+                block_cache,
+            )?,
+        };
+        match result {
             (
                 ExecutionResult::Success {
                     gas_used,
