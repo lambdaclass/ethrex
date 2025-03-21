@@ -20,10 +20,12 @@ use std::{
     fs::File,
     io::{self, BufRead},
     path::Path,
-    thread::sleep,
     time::{Duration, Instant},
 };
-use tokio::task::JoinSet;
+use tokio::{
+    task::JoinSet,
+    time::sleep,
+};
 
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
