@@ -85,9 +85,11 @@ impl Committer {
     }
 
     async fn main_logic(&mut self) -> Result<(), CommitterError> {
-        let block_number =
-            EthClient::get_next_block_to_commit(&self.eth_client, self.on_chain_proposer_address)
-                .await?;
+        let block_number = 1 + EthClient::get_last_committed_block(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+        )
+        .await?;
 
         let Some(block_to_commit_body) = self
             .store
@@ -311,6 +313,7 @@ impl Committer {
         let state_diff = StateDiff {
             modified_accounts,
             version: StateDiff::default().version,
+            header: block.header.clone(),
             withdrawal_logs: withdrawals
                 .iter()
                 .map(|(hash, tx)| WithdrawalLog {
