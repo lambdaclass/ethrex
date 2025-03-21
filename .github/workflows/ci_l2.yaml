@@ -31,6 +31,11 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
+      - name: RISC-V SP1 toolchain install
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 4.1.0
+
       - name: Build prover
         run: |
           cd crates/l2
