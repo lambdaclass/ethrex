@@ -298,6 +298,7 @@ pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec
     if bootnodes.is_empty() {
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
+    dbg!(&bootnodes);
 
     let peers_file = PathBuf::from(data_dir.to_owned() + "/peers.json");
 
@@ -307,6 +308,7 @@ pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec
         Ok(ref mut known_peers) => bootnodes.append(known_peers),
         Err(e) => error!("Could not read from peers file: {e}"),
     };
+    dbg!(&bootnodes);
 
     bootnodes
 }

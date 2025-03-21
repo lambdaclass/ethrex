@@ -63,6 +63,7 @@ pub async fn start_network(
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<(), NetworkError> {
+    dbg!(&bootnodes);
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
         tokio::task::Id,
         Arc<RLPxMessage>,
