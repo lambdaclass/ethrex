@@ -181,8 +181,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// we might get an error indicating that the block hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
     function verify(
         uint256 blockNumber,
-        //exec
-        bytes calldata execPublicInputs,
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
