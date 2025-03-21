@@ -2,7 +2,7 @@ use crate::{commands::wallet::balance_in_wei, config::EthrexL2Config};
 use clap::Subcommand;
 use colored::{self, Colorize};
 use ethrex_common::Address;
-use ethrex_rpc::clients::eth::EthClient;
+use ethrex_rpc::clients::eth::{BlockByNumber, EthClient};
 use keccak_hash::H256;
 use std::str::FromStr;
 
@@ -109,11 +109,15 @@ impl Command {
                 account,
             } => {
                 if !l1 || l2 {
-                    let account_balance = rollup_client.get_balance(account).await?;
+                    let account_balance = rollup_client
+                        .get_balance(account, BlockByNumber::Latest)
+                        .await?;
                     println!("{}", balance_in_wei(wei, account_balance));
                 }
                 if l1 {
-                    let account_balance = eth_client.get_balance(account).await?;
+                    let account_balance = eth_client
+                        .get_balance(account, BlockByNumber::Latest)
+                        .await?;
                     println!("{}", balance_in_wei(wei, account_balance));
                 }
             }

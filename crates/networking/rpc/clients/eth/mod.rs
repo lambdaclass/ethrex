@@ -10,8 +10,8 @@ use crate::{
 use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
-    GetBlockByNumberError, GetBlockNumberError, GetGasPriceError, GetLogsError, GetNonceError,
-    GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
+    GetBlockByNumberError, GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError,
+    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethrex_common::{
@@ -54,11 +54,29 @@ pub enum WrappedTransaction {
     L2(PrivilegedL2Transaction),
 }
 
+#[derive(Debug, Clone)]
 pub enum BlockByNumber {
     Number(u64),
     Latest,
     Earliest,
     Pending,
+}
+
+impl From<BlockByNumber> for Value {
+    fn from(value: BlockByNumber) -> Self {
+        match value {
+            BlockByNumber::Number(n) => json!(format!("{n:#x}")),
+            BlockByNumber::Latest => json!("latest"),
+            BlockByNumber::Earliest => json!("earliest"),
+            BlockByNumber::Pending => json!("pending"),
+        }
+    }
+}
+
+impl From<u64> for BlockByNumber {
+    fn from(value: u64) -> Self {
+        BlockByNumber::Number(value)
+    }
 }
 
 // 0x08c379a0 == Error(String)
@@ -445,12 +463,16 @@ impl EthClient {
         }
     }
 
-    pub async fn get_nonce(&self, address: Address) -> Result<u64, EthClientError> {
+    pub async fn get_nonce(
+        &self,
+        address: Address,
+        block: BlockByNumber,
+    ) -> Result<u64, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getTransactionCount".to_string(),
-            params: Some(vec![json!(format!("{address:#x}")), json!("latest")]),
+            params: Some(vec![json!(format!("{address:#x}")), block.into()]),
         };
 
         match self.send_request(request).await {
@@ -516,18 +538,12 @@ impl EthClient {
         &self,
         block: BlockByNumber,
     ) -> Result<RpcBlock, EthClientError> {
-        let r = match block {
-            BlockByNumber::Number(n) => format!("{n:#x}"),
-            BlockByNumber::Latest => "latest".to_owned(),
-            BlockByNumber::Earliest => "earliest".to_owned(),
-            BlockByNumber::Pending => "pending".to_owned(),
-        };
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getBlockByNumber".to_string(),
             // With false it just returns the hash of the transactions.
-            params: Some(vec![json!(r), json!(false)]),
+            params: Some(vec![block.into(), json!(false)]),
         };
 
         match self.send_request(request).await {
@@ -595,12 +611,16 @@ impl EthClient {
         }
     }
 
-    pub async fn get_balance(&self, address: Address) -> Result<U256, EthClientError> {
+    pub async fn get_balance(
+        &self,
+        address: Address,
+        block: BlockByNumber,
+    ) -> Result<U256, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getBalance".to_string(),
-            params: Some(vec![json!(format!("{:#x}", address)), json!("latest")]),
+            params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
         };
 
         match self.send_request(request).await {
@@ -628,6 +648,40 @@ impl EthClient {
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 Err(GetBalanceError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn get_code(
+        &self,
+        address: Address,
+        block: BlockByNumber,
+    ) -> Result<Bytes, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_getCode".to_string(),
+            params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => hex::decode(
+                &serde_json::from_value::<String>(result.result)
+                    .map(|hex_str| {
+                        hex_str
+                            .strip_prefix("0x")
+                            .map(ToString::to_string)
+                            .unwrap_or(hex_str)
+                    })
+                    .map_err(GetCodeError::SerdeJSONError)
+                    .map_err(EthClientError::from)?,
+            )
+            .map(Into::into)
+            .map_err(GetCodeError::NotHexError)
+            .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetCodeError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }
@@ -952,7 +1006,7 @@ impl EthClient {
         if let Some(nonce) = overrides.nonce {
             return Ok(nonce);
         }
-        self.get_nonce(address).await
+        self.get_nonce(address, BlockByNumber::Latest).await
     }
 
     pub async fn get_last_committed_block(

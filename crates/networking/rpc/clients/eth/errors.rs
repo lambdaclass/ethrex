@@ -30,6 +30,8 @@ pub enum EthClientError {
     FailedToSerializeRequestBody(String),
     #[error("Failed to deserialize response body: {0}")]
     GetBalanceError(#[from] GetBalanceError),
+    #[error("Failed to deserialize response body: {0}")]
+    GetCodeError(#[from] GetCodeError),
     #[error("eth_getTransactionByHash request error: {0}")]
     GetTransactionByHashError(#[from] GetTransactionByHashError),
     #[error("Unreachable nonce")]
@@ -168,6 +170,18 @@ pub enum GetBalanceError {
     RPCError(String),
     #[error("{0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GetCodeError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    NotHexError(#[from] hex::FromHexError),
 }
 
 #[derive(Debug, thiserror::Error)]
