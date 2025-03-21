@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 
-use ethrex_common::types::{TxKind, BYTES_PER_BLOB};
+use ethrex_common::types::TxKind;
 use ethrex_common::H160;
 use ethrex_common::{
     constants::GAS_PER_BLOB,
@@ -569,11 +569,11 @@ impl Blockchain {
     }
 
     #[cfg(feature = "l2")]
-    const L2_WITHDRAWAL_SIZE: usize = 20 + 32 + 32; // address(H160) + amount(U256) + tx_hash(H256).
+    const L2_WITHDRAWAL_SIZE: usize = 84; // address(H160) + amount(U256) + tx_hash(H256).
     #[cfg(feature = "l2")]
-    const L2_DEPOSIT_SIZE: usize = 20 + 32; // address(H160) + amount(U256).
+    const L2_DEPOSIT_SIZE: usize = 52; // address(H160) + amount(U256).
     #[cfg(feature = "l2")]
-    const HEADER_FIELDS_SIZE: usize = 32 + 32 + 8 + 8 + 8 + 8; // transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64) + base_fee_per_gas(u64).
+    const HEADER_FIELDS_SIZE: usize = 96; // transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64) + base_fee_per_gas(u64).
     #[cfg(feature = "l2")]
     pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -591,6 +591,8 @@ impl Blockchain {
         receipt: &Receipt,
         context: &mut PayloadBuildContext,
     ) -> Result<bool, ChainError> {
+        use ethrex_common::types::SAFE_BYTES_PER_BLOB;
+
         if Self::is_withdrawal_l2(&tx, receipt) {
             *withdrawals_size += Self::L2_WITHDRAWAL_SIZE;
         }
@@ -601,7 +603,7 @@ impl Blockchain {
 
         let current_state_diff_size = 1 /* version (u8) */ + Self::HEADER_FIELDS_SIZE + *withdrawals_size + *deposits_size + modified_accounts_size;
 
-        if current_state_diff_size > BYTES_PER_BLOB * 31 / 32 {
+        if current_state_diff_size > SAFE_BYTES_PER_BLOB {
             // Restore the withdrawals and deposits counters.
             if Self::is_withdrawal_l2(&tx, receipt) {
                 *withdrawals_size -= Self::L2_WITHDRAWAL_SIZE;

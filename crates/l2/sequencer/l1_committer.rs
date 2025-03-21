@@ -152,8 +152,6 @@ impl Committer {
             }
         };
 
-        info!("L1 commiter account updates: {:?}", account_updates);
-
         let state_diff = self.prepare_state_diff(
             &block_to_commit,
             self.store.clone(),
