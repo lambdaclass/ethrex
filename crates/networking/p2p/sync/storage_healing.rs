@@ -114,9 +114,14 @@ async fn heal_storage_batch(
         for (acc_path, paths) in batch.iter_mut() {
             let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
             // Get the corresponding nodes
-            let trie_nodes: Vec<ethrex_trie::Node> = nodes.drain(..paths.len().min(nodes.len())).collect();
+            let trie_nodes: Vec<ethrex_trie::Node> =
+                nodes.drain(..paths.len().min(nodes.len())).collect();
             // Add children to batch
-            let children = trie_nodes.iter().zip(paths.drain(..paths.len().min(nodes.len()))).map(|(node, path)| node_missing_children(&node, &path, trie.state())).collect::<Result<Vec<_>,_>>()?;
+            let children = trie_nodes
+                .iter()
+                .zip(paths.drain(..paths.len().min(nodes.len())))
+                .map(|(node, path)| node_missing_children(node, &path, trie.state()))
+                .collect::<Result<Vec<_>, _>>()?;
             paths.extend(children.into_iter().flatten());
             // Write nodes to trie
             let node_hashes = trie_nodes.iter().map(|node| node.compute_hash()).collect();

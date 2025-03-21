@@ -102,10 +102,18 @@ impl TrieState {
     }
 
     /// Writes a node batch directly to the DB bypassing the cache
-    pub fn write_node_batch(&mut self, nodes: Vec<Node>, node_hashes: Vec<NodeHash>) -> Result<(), TrieError> {
+    pub fn write_node_batch(
+        &mut self,
+        nodes: Vec<Node>,
+        node_hashes: Vec<NodeHash>,
+    ) -> Result<(), TrieError> {
         // Don't insert the node if it is already inlined on the parent
-        let key_values = node_hashes.into_iter().zip(nodes).filter(|(hash, _)| matches!(hash, NodeHash::Hashed(_)))
-        .map(|(hash, node)| (hash.into(), node.encode_to_vec())).collect();
+        let key_values = node_hashes
+            .into_iter()
+            .zip(nodes)
+            .filter(|(hash, _)| matches!(hash, NodeHash::Hashed(_)))
+            .map(|(hash, node)| (hash.into(), node.encode_to_vec()))
+            .collect();
         self.db.put_batch(key_values)?;
         Ok(())
     }
