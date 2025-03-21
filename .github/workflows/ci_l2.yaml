@@ -43,7 +43,6 @@ jobs:
 
       - name: Run L2 integration test
         run: |
-          target/release
           cd crates/l2
           cp config_example.toml config.toml
           ../../target/release/ethrex_prover & make ci_test
