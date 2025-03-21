@@ -1,4 +1,4 @@
-use crate::sequencer::errors::{ProverServerError, SigIntError};
+use crate::sequencer::errors::ProverServerError;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -24,18 +24,9 @@ use ethrex_vm::{
 };
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::Debug,
-    net::IpAddr,
-    sync::mpsc::{self, Receiver},
-    time::Duration,
-};
+use std::{fmt::Debug, net::IpAddr, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::{
-    signal::unix::{signal, SignalKind},
-    time::sleep,
-};
 use tracing::{debug, error, info, warn};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
@@ -155,13 +146,13 @@ impl ProverServer {
             let result = if server_config.dev_mode {
                 self.main_logic_dev().await
             } else {
-                self.clone().main_logic(server_config).await
+                self.clone().main_logic().await
             };
 
             match result {
-                Ok(_) => {
+                Ok(()) => {
                     if !server_config.dev_mode {
-                        warn!("Prover Server shutting down");
+                        debug!("Prover Server shutting down");
                         break;
                     }
                 }
@@ -175,72 +166,72 @@ impl ProverServer {
                 }
             }
 
-            sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
     }
 
-    async fn main_logic(
-        mut self,
-        server_config: &ProverServerConfig,
-    ) -> Result<(), ProverServerError> {
-        let (tx, rx) = mpsc::channel();
+    async fn main_logic(self) -> Result<(), ProverServerError> {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
+        tokio::task::spawn(async move {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                error!("Error handling ctrl_c: {e}");
+            };
+            if let Err(e) = shutdown_tx.send(()).await {
+                error!("Error sending shutdown message through the mpsc::channel {e}");
+            };
+        });
 
-        // It should never exit the start() fn, handling errors inside the for loop of the function.
-        let server_handle = tokio::spawn(async move { self.start(rx).await });
-
-        ProverServer::handle_sigint(tx, server_config).await?;
-
-        match server_handle.await {
-            Ok(result) => match result {
-                Ok(_) => (),
-                Err(e) => return Err(e),
-            },
-            Err(e) => return Err(e.into()),
-        };
-
-        Ok(())
-    }
-
-    async fn handle_sigint(
-        tx: mpsc::Sender<()>,
-        config: &ProverServerConfig,
-    ) -> Result<(), ProverServerError> {
-        let mut sigint = signal(SignalKind::interrupt())?;
-        sigint.recv().await.ok_or(SigIntError::Recv)?;
-        tx.send(()).map_err(SigIntError::Send)?;
-        TcpStream::connect(format!("{}:{}", config.listen_ip, config.listen_port))
-            .await?
-            .shutdown()
-            .await
-            .map_err(SigIntError::Shutdown)?;
-
-        Ok(())
-    }
-
-    pub async fn start(&mut self, rx: Receiver<()>) -> Result<(), ProverServerError> {
         let listener = TcpListener::bind(format!("{}:{}", self.ip, self.port)).await?;
 
-        info!("Starting TCP server at {}:{}", self.ip, self.port);
+        let concurent_clients = 3;
+        let sem = tokio::sync::Semaphore::new(concurent_clients);
+        info!(
+            "Starting TCP server at {}:{} accepting {concurent_clients} concurrent clients.",
+            self.ip, self.port
+        );
 
         loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    debug!("Connection established!");
-
-                    if let Ok(()) = rx.try_recv() {
-                        info!("Shutting down Prover Server");
-                        break;
-                    }
-
-                    if let Err(e) = self.handle_connection(stream).await {
-                        error!("Error handling connection: {}", e);
-                    }
+            tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    debug!("Shutting down...");
+                    // It will return from the main_logic() with an `Ok(())`
+                    // And inside the run() function the loop will break
+                    // and the prover_server task will finish gracefully.
+                    break;
                 }
-                Err(e) => {
-                    error!("Failed to accept connection: {}", e);
+                res = listener.accept() => {
+                    match res {
+                        Ok((stream, addr)) => {
+                            // Try to acquire a semaphore slot
+                            if let Ok(_guard) = sem.try_acquire() {
+                                debug!("Connection established!");
+                                // Cloning the ProverServer structure to use the handle_connection() fn
+                                // in every spawned task.
+                                // The important fields are `Store` and `EthClient`
+                                // Both fields are wrapped with an Arc, making it possible to clone
+                                // the entire structure.
+                                let mut self_clone = self.clone();
+                                tokio::task::spawn(async move {
+                                    if let Err(e) = self_clone.handle_connection(stream).await {
+                                        error!("Error handling connection from {addr}: {e}");
+                                    } else {
+                                        warn!("Connection from {addr} handled successfully");
+                                    }
+                                });
+
+                            } else {
+                                warn!("Connection limit reached. Closing connection from {addr}.");
+                                drop(stream);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to accept connection: {e}");
+                        }
+                    }
                 }
             }
         }
+
         Ok(())
     }
 
