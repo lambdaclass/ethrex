@@ -22,6 +22,10 @@ clean: clean-contract-deps ## 🧹 Cleans the localnet
 
 restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
 
+## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
+restart-testnet:
+	down-l2 down-metrics rm-db-l2 deploy-l1-testnet update-system-contracts init-l2
+
 # CLI
 cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
 	cd ${ethrex_PATH}/cmd/ethrex_l2 && \
