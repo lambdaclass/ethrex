@@ -152,7 +152,7 @@ impl ProverServer {
             match result {
                 Ok(()) => {
                     if !server_config.dev_mode {
-                        debug!("Prover Server shutting down");
+                        info!("Prover Server shutting down");
                         break;
                     }
                 }
