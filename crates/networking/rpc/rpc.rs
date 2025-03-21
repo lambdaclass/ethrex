@@ -37,7 +37,7 @@ use eth::{
     },
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
+use ethrex_p2p::{sync_supervisor::SyncSupervisor, types::NodeRecord};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -47,7 +47,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 use types::transaction::SendRawTransactionRequest;
@@ -77,7 +77,7 @@ pub use clients::{EngineClient, EthClient};
 
 use axum::extract::State;
 use ethrex_p2p::types::Node;
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::Store;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -94,7 +94,7 @@ pub struct RpcApiContext {
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     active_filters: ActiveFilters,
-    syncer: Arc<TokioMutex<SyncManager>>,
+    syncer: Arc<SyncSupervisor>,
     #[cfg(feature = "based")]
     gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -103,33 +103,6 @@ pub struct RpcApiContext {
     valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
     sponsor_pk: SecretKey,
-}
-
-/// Describes the client's current sync status:
-/// Inactive: There is no active sync process
-/// Active: The client is currently syncing
-/// Pending: The previous sync process became stale, awaiting restart
-#[derive(Debug)]
-pub enum SyncStatus {
-    Inactive,
-    Active,
-    Pending,
-}
-
-impl RpcApiContext {
-    /// Returns the engine's current sync status, see [SyncStatus]
-    pub fn sync_status(&self) -> Result<SyncStatus, StoreError> {
-        // Try to get hold of the sync manager, if we can't then it means it is currently involved in a sync process
-        Ok(if self.syncer.try_lock().is_err() {
-            SyncStatus::Active
-        // Check if there is a checkpoint left from a previous aborted sync
-        } else if self.storage.get_header_download_checkpoint()?.is_some() {
-            SyncStatus::Pending
-        // No trace of a sync being handled
-        } else {
-            SyncStatus::Inactive
-        })
-    }
 }
 
 trait RpcHandler: Sized {
@@ -172,7 +145,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
-    syncer: SyncManager,
+    syncer: SyncSupervisor,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
@@ -188,7 +161,7 @@ pub async fn start_api(
         local_p2p_node,
         local_node_record,
         active_filters: active_filters.clone(),
-        syncer: Arc::new(TokioMutex::new(syncer)),
+        syncer: Arc::new(syncer),
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
@@ -532,11 +505,11 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
-            storage,
+            storage: storage.clone(),
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncSupervisor::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -632,7 +605,7 @@ mod tests {
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncSupervisor::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -673,7 +646,7 @@ mod tests {
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncSupervisor::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -746,7 +719,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncSupervisor::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]

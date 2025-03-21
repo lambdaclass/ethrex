@@ -7,7 +7,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::node_id_from_signing_key,
-    sync::SyncManager,
+    sync_supervisor::SyncSupervisor,
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
@@ -103,12 +103,13 @@ pub fn init_rpc_api(
     let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, signer)
         .expect("Node record could not be created from local node");
 
-    // Create SyncManager
-    let syncer = SyncManager::new(
+    // Create SyncSupervisor
+    let syncer = SyncSupervisor::new(
         peer_table.clone(),
         opts.syncmode.clone(),
         cancel_token,
         blockchain.clone(),
+        store.clone(),
     );
 
     let rpc_api = ethrex_rpc::start_api(

@@ -274,7 +274,7 @@ pub mod test_utils {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
-        sync::SyncManager,
+        sync_supervisor::SyncSupervisor,
         types::{Node, NodeRecord},
     };
     use ethrex_storage::{EngineType, Store};
@@ -350,7 +350,7 @@ pub mod test_utils {
             jwt_secret,
             local_p2p_node,
             example_local_node_record(),
-            SyncManager::dummy(),
+            SyncSupervisor::dummy(),
             #[cfg(feature = "based")]
             gateway_eth_client,
             #[cfg(feature = "based")]

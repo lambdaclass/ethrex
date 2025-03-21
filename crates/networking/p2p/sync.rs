@@ -16,7 +16,14 @@ use ethrex_storage::{error::StoreError, EngineType, Store, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Node, TrieError, TrieState};
 use state_healing::heal_state_trie;
 use state_sync::state_sync;
-use std::{array, collections::HashMap, sync::Arc};
+use std::{
+    array,
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use storage_healing::storage_healer;
 use tokio::{
     sync::{
@@ -76,7 +83,7 @@ pub enum SyncMode {
 /// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct SyncManager {
-    sync_mode: SyncMode,
+    snap_enabled: Arc<AtomicBool>,
     peers: PeerHandler,
     /// The last block number used as a pivot for snap-sync
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
@@ -99,12 +106,12 @@ pub struct SyncManager {
 impl SyncManager {
     pub fn new(
         peer_table: Arc<Mutex<KademliaTable>>,
-        sync_mode: SyncMode,
+        snap_enabled: Arc<AtomicBool>,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
     ) -> Self {
         Self {
-            sync_mode,
+            snap_enabled,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
             invalid_ancestors: HashMap::new(),
@@ -119,7 +126,7 @@ impl SyncManager {
     pub fn dummy() -> Self {
         let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
-            sync_mode: SyncMode::Full,
+            snap_enabled: Arc::new(AtomicBool::new(false)),
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
             invalid_ancestors: HashMap::new(),
@@ -164,6 +171,12 @@ impl SyncManager {
         sync_head: H256,
         store: Store,
     ) -> Result<(), SyncError> {
+        // Take picture of the current sync mode, we will update the original value when we need to
+        let mut sync_mode = if self.snap_enabled.load(Ordering::Relaxed) {
+            SyncMode::Snap
+        } else {
+            SyncMode::Full
+        };
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
@@ -171,7 +184,7 @@ impl SyncManager {
         // Check if we have some blocks downloaded from a previous sync attempt
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
-        if matches!(self.sync_mode, SyncMode::Snap) {
+        if matches!(sync_mode, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
                 current_head = last_header;
@@ -188,7 +201,7 @@ impl SyncManager {
 
         loop {
             debug!("Requesting Block Headers from {search_head}");
-            let block_header_limit = match self.sync_mode {
+            let block_header_limit = match sync_mode {
                 SyncMode::Snap => MAX_BLOCK_HEADERS_TO_REQUEST,
                 // In Full sync mode, request the same number of block bodies as headers,
                 // since they are processed together at the same rate.
@@ -261,20 +274,21 @@ impl SyncManager {
                 );
                 search_head = last_block_hash;
                 current_head = last_block_hash;
-                if self.sync_mode == SyncMode::Snap {
+                if sync_mode == SyncMode::Snap {
                     store.set_header_download_checkpoint(current_head)?;
                 }
             }
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
-            if self.sync_mode == SyncMode::Snap {
+            if sync_mode == SyncMode::Snap {
                 let latest_block_number = store.get_latest_block_number()?;
                 if last_block_header.number.saturating_sub(latest_block_number)
                     < MIN_FULL_BLOCKS as u64
                 {
                     // Too few blocks for a snap sync, switching to full sync
                     store.clear_snap_state()?;
-                    self.sync_mode = SyncMode::Full
+                    sync_mode = SyncMode::Full;
+                    self.snap_enabled.store(false, Ordering::Relaxed);
                 }
             }
 
@@ -285,7 +299,7 @@ impl SyncManager {
             all_block_hashes.extend_from_slice(&block_hashes[..]);
             store.add_block_headers(block_hashes.clone(), block_headers)?;
 
-            if self.sync_mode == SyncMode::Full {
+            if sync_mode == SyncMode::Full {
                 self.download_and_run_blocks(&mut block_hashes, sync_head, store.clone())
                     .await?;
             }
@@ -294,7 +308,7 @@ impl SyncManager {
                 break;
             };
         }
-        match self.sync_mode {
+        match sync_mode {
             SyncMode::Snap => {
                 // snap-sync: launch tasks to fetch blocks and state in parallel
                 // - Fetch each block's body and its receipt via eth p2p requests
@@ -337,7 +351,7 @@ impl SyncManager {
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
                 store.clear_snap_state()?;
                 // Next sync will be full-sync
-                self.sync_mode = SyncMode::Full;
+                self.snap_enabled.store(false, Ordering::Relaxed);
             }
             // Full sync stores and executes blocks as it asks for the headers
             SyncMode::Full => {}
