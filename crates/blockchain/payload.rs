@@ -468,116 +468,6 @@ impl Blockchain {
         Ok(())
     }
 
-    const L2_WITHDRAWAL_SIZE: usize = 20 + 32 + 32; // address(H160) + amount(U256) + tx_hash(H256).
-    const L2_DEPOSIT_SIZE: usize = 20 + 32; // address(H160) + amount(U256).
-    pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0xff, 0xff,
-    ]);
-
-    fn check_state_diff_size(
-        withdrawals_size: &mut usize,
-        deposits_size: &mut usize,
-        tx: Transaction,
-        receipt: &Receipt,
-        context: &mut PayloadBuildContext,
-    ) -> Result<bool, ChainError> {
-        if Self::is_withdrawal_l2(&tx, receipt) {
-            *withdrawals_size += Self::L2_WITHDRAWAL_SIZE;
-        }
-        if Self::is_deposit_l2(&tx) {
-            *deposits_size += Self::L2_DEPOSIT_SIZE;
-        }
-        let modified_accounts_size = Self::calc_modified_accounts_size(context)?;
-        let current_state_diff_size =
-            1 /* version (u8) */ + *withdrawals_size + *deposits_size + modified_accounts_size;
-        dbg!(current_state_diff_size);
-        dbg!(&withdrawals_size);
-        dbg!(&deposits_size);
-        dbg!(modified_accounts_size);
-        if *withdrawals_size + *deposits_size + modified_accounts_size > BYTES_PER_BLOB * 31 / 32 {
-            if Self::is_withdrawal_l2(&tx, receipt) {
-                *withdrawals_size -= Self::L2_WITHDRAWAL_SIZE;
-            }
-            if Self::is_deposit_l2(&tx) {
-                *deposits_size -= Self::L2_DEPOSIT_SIZE;
-            }
-            warn!("Exceeded blob size");
-            return Ok(false);
-        }
-        Ok(true)
-    }
-
-    fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
-        // WithdrawalInitiated(address,address,uint256)
-        let withdrawal_event_selector: H256 =
-            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
-                .unwrap();
-
-        match tx.to() {
-            TxKind::Call(to) if to == Self::COMMON_BRIDGE_L2_ADDRESS => {
-                return receipt.logs.iter().any(|log| {
-                    log.topics
-                        .iter()
-                        .any(|topic| *topic == withdrawal_event_selector)
-                });
-            }
-            _ => false,
-        }
-    }
-
-    fn is_deposit_l2(tx: &Transaction) -> bool {
-        matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
-    }
-
-    fn calc_modified_accounts_size(context: &mut PayloadBuildContext) -> Result<usize, ChainError> {
-        let mut modified_accounts_size: usize = 2; // modified_accounts_len(u16)
-
-        // We use a temporary_context because revm mutates it in `get_state_transitions`
-        let mut temporary_context = context.clone();
-        let account_updates = temporary_context
-            .vm
-            .get_state_transitions(context.payload.header.parent_hash)?;
-        for account_update in account_updates {
-            modified_accounts_size += 1 + 20; // r#type(u8) + address(H160)
-            if account_update.info.is_some() {
-                modified_accounts_size += 32; // new_balance(U256)
-            }
-            if Self::has_new_nonce(&account_update, context)? {
-                modified_accounts_size += 2; // nonce_diff(u16)
-            }
-            // for each added_storage: key(H256) + value(U256)
-            modified_accounts_size += account_update.added_storage.len() * 2 * 32;
-
-            if let Some(bytecode) = &account_update.code {
-                modified_accounts_size += 2; // bytecode_len(u16)
-                modified_accounts_size += bytecode.len(); // bytecode(Bytes)
-            }
-        }
-        Ok(modified_accounts_size)
-    }
-
-    fn has_new_nonce(
-        account_update: &AccountUpdate,
-        context: &PayloadBuildContext,
-    ) -> Result<bool, StoreError> {
-        let prev_nonce = match context
-            .store
-            .get_account_info(context.block_number() - 1, account_update.address)
-            .map_err(StoreError::from)?
-        {
-            Some(acc) => acc.nonce,
-            None => 0,
-        };
-
-        let new_nonce = if let Some(info) = &account_update.info {
-            info.nonce
-        } else {
-            prev_nonce
-        };
-        Ok(prev_nonce != new_nonce)
-    }
-
     /// Executes the transaction, updates gas-related context values & return the receipt
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
     fn apply_transaction(
@@ -673,6 +563,129 @@ impl Blockchain {
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
         context.account_updates = account_updates;
         Ok(())
+    }
+
+    #[cfg(feature = "l2")]
+    const L2_WITHDRAWAL_SIZE: usize = 20 + 32 + 32; // address(H160) + amount(U256) + tx_hash(H256).
+    #[cfg(feature = "l2")]
+    const L2_DEPOSIT_SIZE: usize = 20 + 32; // address(H160) + amount(U256).
+    #[cfg(feature = "l2")]
+    pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0xff, 0xff,
+    ]);
+
+    #[cfg(feature = "l2")]
+    /// Calculates the size of the current `StateDiff` of the block.
+    /// If the current size exceeds the blob size limit, returns `Ok(false)`.
+    /// If there is still space in the blob, returns `Ok(true)`.
+    fn check_state_diff_size(
+        withdrawals_size: &mut usize,
+        deposits_size: &mut usize,
+        tx: Transaction,
+        receipt: &Receipt,
+        context: &mut PayloadBuildContext,
+    ) -> Result<bool, ChainError> {
+        if Self::is_withdrawal_l2(&tx, receipt) {
+            *withdrawals_size += Self::L2_WITHDRAWAL_SIZE;
+        }
+        if Self::is_deposit_l2(&tx) {
+            *deposits_size += Self::L2_DEPOSIT_SIZE;
+        }
+        let modified_accounts_size = Self::calc_modified_accounts_size(context)?;
+
+        let current_state_diff_size =
+            1 /* version (u8) */ + *withdrawals_size + *deposits_size + modified_accounts_size;
+
+        if current_state_diff_size > BYTES_PER_BLOB * 31 / 32 {
+            // Restore the withdrawals and deposits counters.
+            if Self::is_withdrawal_l2(&tx, receipt) {
+                *withdrawals_size -= Self::L2_WITHDRAWAL_SIZE;
+            }
+            if Self::is_deposit_l2(&tx) {
+                *deposits_size -= Self::L2_DEPOSIT_SIZE;
+            }
+            warn!(
+                "Blob size limit exceeded. current_state_diff_size: {}",
+                current_state_diff_size
+            );
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    #[cfg(feature = "l2")]
+    fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
+        // WithdrawalInitiated(address,address,uint256)
+        let withdrawal_event_selector: H256 =
+            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
+                .unwrap();
+
+        match tx.to() {
+            TxKind::Call(to) if to == Self::COMMON_BRIDGE_L2_ADDRESS => {
+                return receipt.logs.iter().any(|log| {
+                    log.topics
+                        .iter()
+                        .any(|topic| *topic == withdrawal_event_selector)
+                });
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(feature = "l2")]
+    fn is_deposit_l2(tx: &Transaction) -> bool {
+        matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
+    }
+
+    #[cfg(feature = "l2")]
+    fn calc_modified_accounts_size(context: &mut PayloadBuildContext) -> Result<usize, ChainError> {
+        let mut modified_accounts_size: usize = 2; // modified_accounts_len(u16)
+
+        // We use a temporary_context because revm mutates it in `get_state_transitions`
+        let mut temporary_context = context.clone();
+        let account_updates = temporary_context
+            .vm
+            .get_state_transitions(context.payload.header.parent_hash)?;
+        for account_update in account_updates {
+            modified_accounts_size += 1 + 20; // r#type(u8) + address(H160)
+            if account_update.info.is_some() {
+                modified_accounts_size += 32; // new_balance(U256)
+            }
+            if Self::has_new_nonce(&account_update, context)? {
+                modified_accounts_size += 2; // nonce_diff(u16)
+            }
+            // for each added_storage: key(H256) + value(U256)
+            modified_accounts_size += account_update.added_storage.len() * 2 * 32;
+
+            if let Some(bytecode) = &account_update.code {
+                modified_accounts_size += 2; // bytecode_len(u16)
+                modified_accounts_size += bytecode.len(); // bytecode(Bytes)
+            }
+        }
+        Ok(modified_accounts_size)
+    }
+
+    #[cfg(feature = "l2")]
+    fn has_new_nonce(
+        account_update: &AccountUpdate,
+        context: &PayloadBuildContext,
+    ) -> Result<bool, StoreError> {
+        let prev_nonce = match context
+            .store
+            .get_account_info(context.block_number() - 1, account_update.address)
+            .map_err(StoreError::from)?
+        {
+            Some(acc) => acc.nonce,
+            None => 0,
+        };
+
+        let new_nonce = if let Some(info) = &account_update.info {
+            info.nonce
+        } else {
+            prev_nonce
+        };
+        Ok(prev_nonce != new_nonce)
     }
 }
 
