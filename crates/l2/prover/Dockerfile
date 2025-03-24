@@ -19,7 +19,6 @@ ENV PATH="/root/.cargo/bin:$PATH"
 WORKDIR /ethrex
 
 FROM chef AS planner
-ENV RUSTFLAGS=$RUSTFLAGS
 
 COPY . .
 # Determine the crates that need to be built from dependencies
