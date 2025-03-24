@@ -11,7 +11,10 @@ use ethrex_blockchain::{
     Blockchain,
 };
 use ethrex_common::{
-    types::{Block, EIP1559Transaction, Signable, Transaction},
+    types::{
+        calculate_base_fee_per_gas, Block, EIP1559Transaction, Signable, Transaction,
+        INITIAL_BASE_FEE,
+    },
     Address, H160, H256, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -112,7 +115,7 @@ pub fn gen_chain(config: ChainGeneratorConfig) {
                         max_fee_per_gas: 3121115334,
                         max_priority_fee_per_gas: 3000000000,
                         value,
-                        gas_limit: tx_cost * 100,
+                        gas_limit: tx_cost,
                         ..Default::default()
                     })
                 }
@@ -147,6 +150,12 @@ pub fn gen_chain(config: ChainGeneratorConfig) {
         };
         let mut block = create_payload(&payload_args, &store).unwrap();
         block.header.gas_limit = GIGAGAS;
+        block.header.base_fee_per_gas = calculate_base_fee_per_gas(
+            block.header.gas_limit,
+            head_header.gas_limit,
+            head_header.gas_used,
+            head_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+        );
         let payload_build_result = blockchain.build_payload(&mut block).unwrap();
         let execution_result = BlockExecutionResult {
             account_updates: payload_build_result.account_updates,

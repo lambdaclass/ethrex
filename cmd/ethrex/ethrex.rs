@@ -30,7 +30,7 @@ async fn main() -> eyre::Result<()> {
         blocks_gas_target: GIGAGAS,
         genesis_path: "test_data/genesis-1M.json".into(),
         private_keys_path: "test_data/private-keys-1M.txt".into(),
-        num_of_blocks: 100,
+        num_of_blocks: 10,
         txs_to_generate: ChainGeneratorTxs::RawTransfers,
     });
 
