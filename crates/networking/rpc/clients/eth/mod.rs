@@ -510,18 +510,6 @@ impl EthClient {
         }
     }
 
-    pub async fn get_next_block_to_commit(
-        eth_client: &EthClient,
-        on_chain_proposer_address: Address,
-    ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(
-            eth_client,
-            b"nextBlockToCommit()",
-            on_chain_proposer_address,
-        )
-        .await
-    }
-
     /// Fetches a block from the Ethereum blockchain by its number or the latest/earliest/pending block.
     /// If no `block_number` is provided, get the latest.
     pub async fn get_block_by_number(
