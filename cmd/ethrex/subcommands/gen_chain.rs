@@ -46,6 +46,8 @@ pub enum ChainGeneratorTxs {
     RawTransfers,
 }
 
+pub const GIGAGAS: u64 = 1_000_000_000;
+
 pub struct ChainGeneratorConfig {
     pub genesis_path: String,
     pub private_keys_path: String,
@@ -144,6 +146,7 @@ pub fn gen_chain(config: ChainGeneratorConfig) {
             version: 3,
         };
         let mut block = create_payload(&payload_args, &store).unwrap();
+        block.header.gas_limit = GIGAGAS;
         let payload_build_result = blockchain.build_payload(&mut block).unwrap();
         let execution_result = BlockExecutionResult {
             account_updates: payload_build_result.account_updates,
