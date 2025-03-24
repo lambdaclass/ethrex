@@ -13,6 +13,11 @@ help: ## 📚 Show help for each of the Makefile recipes
 
 init: init-local-l1 deploy-l1 update-system-contracts init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
+init-tmux: down rm-db-l1 rm-db-l2 init-local-l1 deploy-l1 update-system-contracts
+	tmux new-session -d -s 'ethrex-l2' make init-l2 \; set -w remain-on-exit on
+	tmux split-window -h 'make init-prover;bash -i'
+	tmux attach
+
 ## Same as init but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 init-testnet: init-local-l1 deploy-l1-testnet update-system-contracts  init-l2
 
