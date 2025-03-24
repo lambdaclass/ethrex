@@ -33,6 +33,7 @@ tokio-util.workspace = true
 redb = { workspace = true, optional = true }
 lazy_static.workspace = true
 secp256k1 = { workspace = true, optional = true }
+keccak-hash.workspace = true
 
 cfg-if = "1.0.0"
 
