@@ -37,7 +37,7 @@ bincode = "1"
 ethereum-types.workspace = true
 
 [lib]
-path = "./vm.rs"
+path = "./lib.rs"
 
 [features]
 default = []

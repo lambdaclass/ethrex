@@ -1,13 +1,6 @@
-pub mod backends;
-mod constants;
-pub mod db;
-pub mod errors;
-pub mod execution_result;
-
-use crate::backends::revm::*;
+// use crate::backends::revm::*;
 
 // Export needed types
-pub use errors::EvmError;
 use ethrex_common::types::{ChainConfig, Fork};
 pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 

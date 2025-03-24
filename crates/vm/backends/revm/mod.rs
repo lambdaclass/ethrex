@@ -10,7 +10,7 @@ use crate::constants::{
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::execution_result::ExecutionResult;
-use crate::spec_id;
+use crate::spec::spec_id;
 use crate::EvmError;
 use db::EvmState;
 use ethrex_common::types::AccountInfo;

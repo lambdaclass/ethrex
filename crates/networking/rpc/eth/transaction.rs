@@ -13,14 +13,16 @@ use crate::{
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
-    types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
+    types::{
+        AccessListEntry, BlockHash, BlockHeader, BlockNumber, Fork, GenericTransaction, TxKind,
+    },
     H256, U256,
 };
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
-use ethrex_vm::{backends::Evm, execution_result::ExecutionResult, SpecId};
+use ethrex_vm::{backends::Evm, execution_result::ExecutionResult};
 use serde::Serialize;
 
 use serde_json::Value;
@@ -114,7 +116,7 @@ impl RpcHandler for CallRequest {
             &header,
             context.storage,
             context.blockchain,
-            SpecId::CANCUN,
+            Fork::Cancun,
         )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -338,7 +340,7 @@ impl RpcHandler for CreateAccessListRequest {
 
         // Run transaction and obtain access list
         let (gas_used, access_list, error) =
-            vm.create_access_list(&self.transaction, &header, SpecId::CANCUN)?;
+            vm.create_access_list(&self.transaction, &header, Fork::Cancun)?;
         let result = AccessListResult {
             access_list: access_list
                 .into_iter()
@@ -439,7 +441,8 @@ impl RpcHandler for EstimateGasRequest {
             }
         };
 
-        let spec_id = ethrex_vm::spec_id(&storage.get_chain_config()?, block_header.timestamp);
+        let chain_config = storage.get_chain_config()?;
+        let fork = chain_config.get_fork(block_header.timestamp);
 
         // If the transaction is a plain value transfer, short circuit estimation.
         if let TxKind::Call(address) = transaction.to {
@@ -453,7 +456,7 @@ impl RpcHandler for EstimateGasRequest {
                     &block_header,
                     storage.clone(),
                     blockchain.clone(),
-                    spec_id,
+                    fork,
                 );
                 if let Ok(ExecutionResult::Success { .. }) = result {
                     return serde_json::to_value(format!("{:#x}", TRANSACTION_GAS))
@@ -485,7 +488,7 @@ impl RpcHandler for EstimateGasRequest {
             &block_header,
             storage.clone(),
             blockchain.clone(),
-            spec_id,
+            fork,
         )?;
 
         let gas_used = result.gas_used();
@@ -514,7 +517,7 @@ impl RpcHandler for EstimateGasRequest {
                 &block_header,
                 storage.clone(),
                 blockchain.clone(),
-                spec_id,
+                fork,
             );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
@@ -549,7 +552,7 @@ fn simulate_tx(
     block_header: &BlockHeader,
     storage: Store,
     blockchain: Arc<Blockchain>,
-    spec_id: SpecId,
+    fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
     let mut vm = Evm::new(
         blockchain.evm_engine,
@@ -557,7 +560,7 @@ fn simulate_tx(
         block_header.compute_block_hash(),
     );
 
-    match vm.simulate_tx_from_generic(transaction, block_header, spec_id)? {
+    match vm.simulate_tx_from_generic(transaction, block_header, fork)? {
         ExecutionResult::Revert {
             gas_used: _,
             output,

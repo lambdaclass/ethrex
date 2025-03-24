@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ethrex_common::{
-    types::{Block, BlockHash},
+    types::{Block, BlockHash, ChainConfig},
     Address as CoreAddress, H256 as CoreH256,
 };
 use ethrex_storage::{error::StoreError, hash_address, hash_key, Store};
@@ -11,7 +11,8 @@ use revm::primitives::{
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 
-use crate::{db::StoreWrapper, errors::ExecutionDBError, spec_id, ChainConfig, EvmError};
+use crate::spec::spec_id;
+use crate::{db::StoreWrapper, errors::ExecutionDBError, EvmError};
 
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
 /// with a [ExecutionDB] in case we only want to store the necessary data for some particular
