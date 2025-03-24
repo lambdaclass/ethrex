@@ -32,7 +32,7 @@ local-ip-address = "0.6"
 tokio-util.workspace = true
 redb = { workspace = true, optional = true }
 lazy_static.workspace = true
-secp256k1 = { workspace = true, optional = true }
+secp256k1.workspace = true
 keccak-hash.workspace = true
 
 cfg-if = "1.0.0"
@@ -66,7 +66,6 @@ l2 = [
     "ethrex-vm/l2",
     "ethrex-blockchain/l2",
     "ethrex-rpc/l2",
-    "dep:secp256k1",
 ]
 based = ["l2", "ethrex-rpc/based"]
 
