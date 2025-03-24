@@ -136,7 +136,7 @@ pub fn gen_chain(config: ChainGeneratorConfig) {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_secs()
-                + 1,
+                + 1 * i as u64,
             fee_recipient: H160::random(),
             random: H256::zero(),
             withdrawals: Default::default(),
