@@ -153,6 +153,8 @@ pub fn gen_chain(config: ChainGeneratorConfig) {
             .apply_account_updates(block.header.parent_hash, &execution_result.account_updates)
             .unwrap();
         blockchain.store_block(&block, execution_result).unwrap();
+        store.update_latest_block_number(block.header.number);
+        store.set_canonical_block(block.header.number, block.hash());
         blocks.push(block);
         info!("Finished building block number {}", i);
     }
