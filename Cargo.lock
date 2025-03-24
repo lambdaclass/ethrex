@@ -11060,6 +11060,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "keccak-hash",
  "pico-cli",
  "risc0-build 1.2.4",
  "serde",
