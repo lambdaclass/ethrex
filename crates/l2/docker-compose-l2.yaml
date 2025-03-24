@@ -55,3 +55,18 @@ services:
     depends_on:
       contract_deployer:
         condition: service_completed_successfully
+
+  ethrex_prover:
+    restart: always
+    container_name: ethrex_prover_client
+    image: "ethrex_prover"
+    build:
+      context: ../../
+      dockerfile: ./crates/l2/prover/Dockerfile
+    environment:
+      RUSTFLAGS: '-C target-cpu=native'
+    volumes:
+      - ./.env:/.env:ro
+    depends_on:
+      contract_deployer:
+        condition: service_completed_successfully

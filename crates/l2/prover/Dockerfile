@@ -1,6 +1,3 @@
-ARG RUSTFLAGS
-ARG PROVER
-
 FROM rust:1.82 AS chef
 
 RUN apt-get update && apt-get install -y \
@@ -15,12 +12,9 @@ RUN apt-get update && apt-get install -y \
   ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
-RUN curl -L https://sp1.succinct.xyz | bash && ~/.sp1/bin/sp1up --version 4.1.0
 
 ENV PATH="/root/.sp1/bin:$PATH"
 ENV PATH="/root/.cargo/bin:$PATH"
-
-RUN cargo prove install-toolchain
 
 WORKDIR /ethrex
 
@@ -35,24 +29,14 @@ FROM chef AS builder
 ENV RUSTFLAGS=$RUSTFLAGS
 COPY --from=planner /ethrex/recipe.json recipe.json
 # Build dependencies only, these remained cached
-RUN cargo chef cook --release --recipe-path recipe.json --manifest-path crates/l2/prover/Cargo.toml --bin ethrex_prover --features sp1
+RUN cargo chef cook --release --recipe-path recipe.json --manifest-path crates/l2/prover/Cargo.toml --bin ethrex_prover --features exec
 
 COPY . .
-RUN cargo build --release --manifest-path crates/l2/prover/Cargo.toml --features sp1
+RUN cargo build --release --manifest-path crates/l2/prover/Cargo.toml --features exec
 
 FROM --platform=${BUILDPLATFORM} ubuntu:24.04
 ENV RUSTFLAGS=$RUSTFLAGS
 WORKDIR /usr/local/bin
-
-# install basic packages
-RUN apt-get update && apt-get -y install curl git
-
-# install rust
-RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Check cargo is visible
-RUN cargo --help
 
 COPY --from=builder ethrex/target/release/ethrex_prover .
 
