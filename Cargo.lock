@@ -3186,6 +3186,7 @@ dependencies = [
  "eyre",
  "hex",
  "k256",
+ "keccak-hash",
  "lazy_static",
  "local-ip-address",
  "rand 0.8.5",

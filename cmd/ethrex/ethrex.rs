@@ -5,6 +5,7 @@ use ethrex::{
         get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_rpc_api,
         init_store, init_tracing,
     },
+    subcommands::gen_chain::{ChainGeneratorConfig, ChainGeneratorTxs},
     utils::{set_datadir, store_known_peers},
 };
 use ethrex_p2p::network::peer_table;
@@ -25,6 +26,15 @@ async fn main() -> eyre::Result<()> {
 
     init_tracing(&opts);
 
+    ethrex::subcommands::gen_chain::gen_chain(ChainGeneratorConfig {
+        blocks_gas_target: 30_000_000,
+        genesis_path: "test_data/genesis-1M.json".into(),
+        private_keys_path: "test_data/private-keys-1M.txt".into(),
+        num_of_blocks: 100,
+        txs_to_generate: ChainGeneratorTxs::RawTransfers,
+    });
+
+    return Ok(());
     if let Some(subcommand) = command {
         return subcommand.run(&opts);
     }
