@@ -11,8 +11,11 @@ use revm::primitives::{
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 
-use crate::spec::spec_id;
-use crate::{db::StoreWrapper, errors::ExecutionDBError, EvmError};
+use crate::helpers::spec_id;
+use crate::{
+    db::StoreWrapper,
+    errors::{EvmError, ExecutionDBError},
+};
 
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
 /// with a [ExecutionDB] in case we only want to store the necessary data for some particular

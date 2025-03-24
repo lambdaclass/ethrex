@@ -5,7 +5,7 @@ use revm::{
 use revm_primitives::{Address, U256};
 use tracing::info;
 
-use crate::DEPOSIT_MAGIC_DATA;
+use super::DEPOSIT_MAGIC_DATA;
 
 pub fn deduct_caller<SPEC: Spec, EXT, DB: Database>(
     context: &mut revm::Context<EXT, DB>,

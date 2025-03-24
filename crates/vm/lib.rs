@@ -1,12 +1,16 @@
-pub mod backends;
 mod constants;
-pub mod db;
-pub mod errors;
-pub mod execution_result;
-pub mod spec;
+mod db;
+mod errors;
+mod execution_result;
+mod helpers;
 
-use crate::backends::revm::*;
+#[cfg(feature = "internal")]
+pub mod backends;
+#[cfg(not(feature = "internal"))]
+mod backends;
 
-// Export needed types
-pub use errors::EvmError;
-pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
+pub use backends::{BlockExecutionResult, Evm, EvmEngine};
+pub use db::StoreWrapper;
+pub use errors::{EvmError, ExecutionDBError};
+pub use execution_result::ExecutionResult;
+pub use helpers::{create_contract_address, fork_to_spec_id, SpecId};

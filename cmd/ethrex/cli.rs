@@ -5,7 +5,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_p2p::{sync::SyncMode, types::Node};
-use ethrex_vm::backends::EvmEngine;
+use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{

@@ -3,7 +3,7 @@ pub mod revm;
 
 use self::revm::db::evm_state;
 use crate::execution_result::ExecutionResult;
-use crate::spec::{fork_to_spec_id, spec_id, SpecId};
+use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
 use crate::{db::StoreWrapper, errors::EvmError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
