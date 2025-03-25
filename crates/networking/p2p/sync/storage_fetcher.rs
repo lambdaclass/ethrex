@@ -133,8 +133,6 @@ async fn fetch_storage_batch(
     large_storage_sender: Sender<Vec<LargeStorageRequest>>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
-    // A list of all completely fetched storages to send to the rebuilder
-    let mut complete_storages = vec![];
     debug!(
         "Requesting storage ranges for addresses {}..{}",
         batch.first().unwrap().0,
@@ -173,12 +171,9 @@ async fn fetch_storage_batch(
         // Store the storage ranges & rebuild the storage trie for each account
         let filled_storages: Vec<(H256, H256)> = batch.drain(..values.len()).collect();
         let account_hashes: Vec<H256> = filled_storages.iter().map(|(hash, _)| *hash).collect();
-        complete_storages.extend(filled_storages);
         store.write_snapshot_storage_batches(account_hashes, keys, values)?;
         // Send complete storages to the rebuilder
-        storage_trie_rebuilder_sender
-            .send(complete_storages)
-            .await?;
+        storage_trie_rebuilder_sender.send(filled_storages).await?;
         // Return remaining code hashes in the batch if we couldn't fetch all of them
         return Ok((batch, false));
     }
