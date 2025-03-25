@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742910556116,
+  "lastUpdate": 1742911721932,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1075,6 +1075,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 230795622445,
             "range": "± 1202144474",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "14406e2d1984a3398945e9db4e29e8948a079995",
+          "message": "fix(l2): remove uses of blocking sleeps from async code (#2296)\n\nThere were still some sleeps blocking the runtime. Found mostly in the\nload test, but in other places as well. Changed them by tokio::sleep\ncalls.",
+          "timestamp": "2025-03-25T13:10:21Z",
+          "tree_id": "48674ee61d71343d1d8f58623ac22b1399d1d511",
+          "url": "https://github.com/lambdaclass/ethrex/commit/14406e2d1984a3398945e9db4e29e8948a079995"
+        },
+        "date": 1742911720109,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 232681672891,
+            "range": "± 591152064",
             "unit": "ns/iter"
           }
         ]
