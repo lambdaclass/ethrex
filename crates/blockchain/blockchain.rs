@@ -24,7 +24,7 @@ use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::Store;
-use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
 

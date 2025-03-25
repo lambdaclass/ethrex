@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 axum.workspace = true
+tower-http = { version = "0.6.2", features = ["cors"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 tokio.workspace = true
@@ -44,4 +45,5 @@ hex-literal = "0.4.1"
 path = "./rpc.rs"
 
 [features]
-based = []
+based = ["l2"]
+l2 = []
