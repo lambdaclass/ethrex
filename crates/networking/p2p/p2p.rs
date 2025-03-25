@@ -9,3 +9,7 @@ pub mod types;
 
 pub use network::periodically_show_peer_stats;
 pub use network::start_network;
+
+pub mod constants {
+    include!(concat!(env!("OUT_DIR"), "/constants.rs"));
+}
