@@ -447,46 +447,6 @@ fn run_evm(
     Ok(tx_result.into())
 }
 
-/// Processes a block's withdrawals, updating the account balances in the state
-pub fn process_withdrawals(
-    state: &mut EvmState,
-    withdrawals: &[Withdrawal],
-) -> Result<(), StoreError> {
-    //balance_increments is a vector of tuples (Address, increment as u128)
-    let balance_increments = withdrawals
-        .iter()
-        .filter(|withdrawal| withdrawal.amount > 0)
-        .map(|withdrawal| {
-            (
-                RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-            )
-        })
-        .collect::<Vec<_>>();
-    match state {
-        EvmState::Store(db) => {
-            db.increment_balances(balance_increments)?;
-        }
-        EvmState::Execution(db) => {
-            for (address, balance) in balance_increments {
-                if balance == 0 {
-                    continue;
-                }
-
-                let account = db
-                    .load_account(address)
-                    .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
-
-                account.info.balance += RevmU256::from(balance);
-                if account.account_state == RevmAccountState::None {
-                    account.account_state = RevmAccountState::Touched;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
     BlockEnv {
         number: RevmU256::from(header.number),
