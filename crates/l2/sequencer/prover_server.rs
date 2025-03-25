@@ -25,8 +25,11 @@ use ethrex_vm::{
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr, time::Duration};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::TryAcquireError,
+};
 use tracing::{debug, error, info, warn};
 
 const VERIFY_FUNCTION_SIGNATURE: &str =
@@ -184,7 +187,7 @@ impl ProverServer {
         let listener = TcpListener::bind(format!("{}:{}", self.ip, self.port)).await?;
 
         let concurent_clients = 3;
-        let sem = tokio::sync::Semaphore::new(concurent_clients);
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurent_clients));
         info!(
             "Starting TCP server at {}:{} accepting {concurent_clients} concurrent clients.",
             self.ip, self.port
@@ -202,28 +205,32 @@ impl ProverServer {
                 res = listener.accept() => {
                     match res {
                         Ok((stream, addr)) => {
-                            // Try to acquire a semaphore slot
-                            if let Ok(_guard) = sem.try_acquire() {
-                                debug!("Connection established!");
-                                // Cloning the ProverServer structure to use the handle_connection() fn
-                                // in every spawned task.
-                                // The important fields are `Store` and `EthClient`
-                                // Both fields are wrapped with an Arc, making it possible to clone
-                                // the entire structure.
-                                let mut self_clone = self.clone();
-                                tokio::task::spawn(async move {
-                                    let _guard = _guard;
-                                    if let Err(e) = self_clone.handle_connection(stream).await {
-                                        error!("Error handling connection from {addr}: {e}");
-                                    } else {
-                                        debug!("Connection from {addr} handled successfully");
-                                    }
-                                });
 
-                            } else {
-                                warn!("Connection limit reached. Closing connection from {addr}.");
-                                drop(stream);
+                            match sem.clone().try_acquire_owned(){
+                                Ok(permit) => {
+                                    // Cloning the ProverServer structure to use the handle_connection() fn
+                                    // in every spawned task.
+                                    // The important fields are `Store` and `EthClient`
+                                    // Both fields are wrapped with an Arc, making it possible to clone
+                                    // the entire structure.
+                                    let mut self_clone = self.clone();
+                                    tokio::task::spawn(async move {
+                                        if let Err(e) = self_clone.handle_connection(stream).await {
+                                            error!("Error handling connection from {addr}: {e}");
+                                        } else {
+                                            debug!("Connection from {addr} handled successfully");
+                                        }
+                                        drop(permit);
+                                    });
+                                },
+                                Err(e) => {
+                                    match e {
+                                        TryAcquireError::Closed => error!("Fatal error the semaphore has been closed: {e}"),
+                                        TryAcquireError::NoPermits => warn!("Connection limit reached. Closing connection from {addr}."),
+                                    }
+                                }
                             }
+
                         }
                         Err(e) => {
                             error!("Failed to accept connection: {e}");
