@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        trie-version: ["head", "main", "cita"]
+        trie-version: ["head", "base", "cita"]
     steps:
       - name: Populate cache
         uses: actions/cache@v4
@@ -30,8 +30,17 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+        if: ${ matrix.trie-version == "cita" || matrix-trie-version == "head" }
         with:
           fetch-depth: 0
+          ref: HEAD
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        if: ${ matrix.trie-version == "base" }
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request[matrix.trie-version].sha }}
 
       - name: Fetch Rust cache
         uses: Swatinem/rust-cache@v2
