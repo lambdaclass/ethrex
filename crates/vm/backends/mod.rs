@@ -87,9 +87,11 @@ impl Evm {
                     evm_state(state.database().unwrap().clone(), block.header.parent_hash);
                 REVM::execute_block(block, &mut state)
             }
-            Evm::LEVM { store_wrapper, .. } => {
-                LEVM::execute_block(block, Arc::new(store_wrapper.clone()))
-            }
+            Evm::LEVM { store_wrapper, .. } => LEVM::execute_block(
+                block,
+                Arc::new(store_wrapper.clone()),
+                store_wrapper.store.get_chain_config()?,
+            ),
         }
     }
 
@@ -193,6 +195,7 @@ impl Evm {
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     LEVM::beacon_root_contract_call(
                         block_header,
+                        chain_config,
                         Arc::new(store_wrapper.clone()),
                         &mut new_state,
                     )?;
@@ -201,6 +204,7 @@ impl Evm {
                 if fork >= Fork::Prague {
                     LEVM::process_block_hash_history(
                         block_header,
+                        chain_config,
                         Arc::new(store_wrapper.clone()),
                         &mut new_state,
                     )?;
@@ -246,6 +250,7 @@ impl Evm {
                 LEVM::get_state_transitions(
                     None,
                     Arc::new(store_wrapper.clone()),
+                    store_wrapper.store.get_chain_config()?,
                     &block_header,
                     block_cache,
                 )
@@ -292,6 +297,7 @@ impl Evm {
             } => levm::extract_all_requests_levm(
                 receipts,
                 Arc::new(store_wrapper.clone()),
+                store_wrapper.store.get_chain_config()?,
                 header,
                 block_cache,
             ),
