@@ -192,12 +192,17 @@ impl REVM {
                     account_updates.insert(H160::from_slice(address.0.as_ref()), update);
                     continue;
                 };
+                if cache.removed {
+                    *cache = AccountUpdate::removed(cache.address);
+                    continue;
+                }
+
                 for (k, v) in update.added_storage {
                     cache.added_storage.insert(k, v);
                 }
                 cache.info = update.info;
                 cache.code = update.code;
-                cache.removed = cache.removed;
+                cache.removed = update.removed;
             }
         }
 

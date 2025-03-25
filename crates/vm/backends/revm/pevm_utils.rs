@@ -160,7 +160,7 @@ pub fn map_account_update_to_ethrex_type(
         storage_changes.insert(key, value);
     }
 
-    return AccountUpdate {
+    AccountUpdate {
         address,
         info: Some(AccountInfo {
             balance: U256(account.balance.as_limbs().clone()),
@@ -170,7 +170,7 @@ pub fn map_account_update_to_ethrex_type(
         code,
         removed: false,
         added_storage: storage_changes,
-    };
+    }
 }
 
 impl pevm::Storage for StoreWrapper {

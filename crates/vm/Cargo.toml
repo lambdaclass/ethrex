@@ -21,7 +21,6 @@ revm = { version = "19.0.0", features = [
 revm_pevm = { git = "https://github.com/risechain/revm", rev = "ac75f1ef59ecae15238f5a2e94e71c3bcc01d45c", features = [
   "serde",
 ], package = "revm" }
-# global-alloc makes it a 25% faster approx but it might crash in arm system
 pevm = { git = "https://github.com/MarcosNicolau/pevm.git", branch = "main", features = ["global-alloc"]}
 
 # These dependencies must be kept up to date with the corresponding revm version, otherwise errors may pop up because of trait implementation mismatches
