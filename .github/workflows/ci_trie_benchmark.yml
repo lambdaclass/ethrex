@@ -35,11 +35,3 @@ jobs:
       - name: Install Rust
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Benchmarks
-        uses: boa-dev/criterion-compare-action@v3
-        with:
-          cwd: "crates/common/trie"
-          benchName: "trie_bench"
-          branchName: ${{ github.base_ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
