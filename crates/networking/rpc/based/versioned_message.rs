@@ -116,18 +116,32 @@ impl SignedMessage {
 
     fn check_signature(&self, expected: &Public) -> Result<(), RpcErr> {
         let message = libsecp256k1::Message::parse(&self.message.tree_hash_root().0);
-        let signature = libsecp256k1::Signature::parse_standard_slice(&self.signature[..64])
+        let signature =
+            libsecp256k1::Signature::parse_standard_slice(self.signature.0.get(..64).ok_or(
+                RpcErr::InvalidBasedMessage(
+                    "Invalid signature: signature is too short".to_string(),
+                ),
+            )?)
             .map_err(|e| RpcErr::InvalidBasedMessage(format!("Invalid signature: {e}")))?;
-        let recovery_id =
-            libsecp256k1::RecoveryId::parse_rpc(self.signature.0[64]).map_err(|err| {
-                RpcErr::InvalidBasedMessage(format!("Invalid signature recovery ID: {err}"))
-            })?;
+        let recovery_id = libsecp256k1::RecoveryId::parse_rpc(*self.signature.0.get(64).ok_or(
+            RpcErr::InvalidBasedMessage("Invalid signature: recovery ID is missing".to_string()),
+        )?)
+        .map_err(|err| {
+            RpcErr::InvalidBasedMessage(format!("Invalid signature recovery ID: {err}"))
+        })?;
 
         let signer = libsecp256k1::recover(&message, &signature, &recovery_id)
             .map_err(|err| RpcErr::InvalidBasedMessage(format!("Invalid signature: {err}")))?;
 
         // First byte is compression flag, which is always 0x04 for uncompressed keys
-        if signer.serialize()[1..] != expected.0 {
+        if signer
+            .serialize()
+            .get(1..)
+            .ok_or(RpcErr::InvalidBasedMessage(
+                "Invalid signer: serialized key is too short".to_string(),
+            ))?
+            != expected.0
+        {
             return Err(RpcErr::InvalidBasedMessage(format!(
                 "Invalid signer: 0x{}",
                 hex::encode(signer.serialize())
