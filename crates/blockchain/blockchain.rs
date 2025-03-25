@@ -121,19 +121,23 @@ impl Blockchain {
         let executed = Instant::now();
         let result = execution_result.and_then(|res| self.store_block(block, res));
         let stored = Instant::now();
+        Self::print_add_block_logs(block, since, executed, stored);
+        result
+    }
 
-        let interval = stored.duration_since(since).as_millis();
-        if interval != 0 {
-            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            let execution_time = executed.duration_since(since).as_millis();
-            let storage_time = stored.duration_since(executed).as_millis();
-            let execution_fraction = (execution_time * 100).div(interval);
-            let storage_fraction = (storage_time * 100).div(interval);
-            let execution_time_per_gigagas = (execution_time as f64 / as_gigas).round() as u64;
-            let storage_time_per_gigagas = (storage_time as f64 / as_gigas).round() as u64;
+    fn print_add_block_logs(block: &Block, since: Instant, executed: Instant, stored: Instant) {
+        let interval = stored.duration_since(since).as_millis() as f64;
+        if interval != 0f64 {
+            let as_gigas = block.header.gas_used as f64 / 10_f64.powf(9_f64);
+            let throughput = as_gigas / interval * 1000_f64;
+            let execution_time = executed.duration_since(since).as_millis() as f64;
+            let storage_time = stored.duration_since(executed).as_millis() as f64;
+            let execution_fraction = (execution_time * 100_f64 / interval).round() as u64;
+            let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
+            let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
+            let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
             let n_txs = block.body.transactions.len();
-            let base_log = format!("[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {interval} ms. #Txs: {n_txs}.", throughput);
+            let base_log = format!("[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.", throughput, interval, n_txs);
             let extra_log = if as_gigas > 0.0 {
                 format!(
                     " exec/Ggas: {} ms ({}%), st/Ggas: {} ms ({}%)",
@@ -147,8 +151,6 @@ impl Blockchain {
             };
             info!("{}{}", base_log, extra_log);
         }
-
-        result
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
