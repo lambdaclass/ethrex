@@ -36,9 +36,8 @@ pub struct Blockchain {
     pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
+    test: u16,
 }
-
-// test loc pr.
 
 impl Blockchain {
     pub fn new(evm_engine: EvmEngine, store: Store) -> Self {
@@ -46,6 +45,7 @@ impl Blockchain {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
+            test: 1,
         }
     }
 
@@ -54,6 +54,7 @@ impl Blockchain {
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
+            test: 1,
         }
     }
 
