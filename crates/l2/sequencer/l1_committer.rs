@@ -1,9 +1,12 @@
 use crate::{
     sequencer::{
         errors::CommitterError,
-        state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
+        state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
+    utils::{
+        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
+        helpers::is_withdrawal_l2,
+    },
 };
 
 use ethrex_common::{
@@ -15,15 +18,15 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize, COMMON_BRIDGE_L2_ADDRESS};
+use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize};
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::backends::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
@@ -186,26 +189,13 @@ impl Committer {
         &self,
         txs_and_receipts: &[(Transaction, Receipt)],
     ) -> Result<Vec<(H256, Transaction)>, CommitterError> {
-        // WithdrawalInitiated(address,address,uint256)
-        let withdrawal_event_selector: H256 =
-            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2").map_err(|_| CommitterError::InternalError("Failed to convert WithdrawalInitiated event selector to H256. This should never happen.".to_owned()))?;
         let mut ret = vec![];
 
         for (tx, receipt) in txs_and_receipts {
-            match tx.to() {
-                TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => {
-                    if receipt.logs.iter().any(|log| {
-                        log.topics
-                            .iter()
-                            .any(|topic| *topic == withdrawal_event_selector)
-                    }) {
-                        ret.push((tx.compute_hash(), tx.clone()))
-                    }
-                }
-                _ => continue,
+            if is_withdrawal_l2(tx, receipt) {
+                ret.push((tx.compute_hash(), tx.clone()))
             }
         }
-
         Ok(ret)
     }
 
@@ -275,32 +265,17 @@ impl Committer {
 
         let mut modified_accounts = HashMap::new();
         for account_update in account_updates {
-            let prev_nonce = match store
-                // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
-                // and we may have to keep track of the latestCommittedBlock (last block of the batch),
-                // the batch_size and the latestCommittedBatch in the contract.
-                .get_account_info(block.header.number - 1, account_update.address)
-                .map_err(StoreError::from)?
-            {
-                Some(acc) => acc.nonce,
-                None => 0,
-            };
-
-            let new_nonce = if let Some(info) = &account_update.info {
-                info.nonce
-            } else {
-                prev_nonce
-            };
+            // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
+            // and we may have to keep track of the latestCommittedBlock (last block of the batch),
+            // the batch_size and the latestCommittedBatch in the contract.
+            let nonce_diff = get_nonce_diff(account_update, &store, block.header.number)
+                .map_err(CommitterError::from)?;
 
             modified_accounts.insert(
                 account_update.address,
                 AccountStateDiff {
                     new_balance: account_update.info.clone().map(|info| info.balance),
-                    nonce_diff: new_nonce
-                        .checked_sub(prev_nonce)
-                        .ok_or(CommitterError::FailedToCalculateNonce)?
-                        .try_into()
-                        .map_err(CommitterError::from)?,
+                    nonce_diff,
                     storage: account_update.added_storage.clone().into_iter().collect(),
                     bytecode: account_update.code.clone(),
                     bytecode_hash: None,

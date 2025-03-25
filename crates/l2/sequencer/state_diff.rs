@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{AccountInfo, AccountState, BlockHeader};
+use ethrex_common::types::{AccountInfo, AccountState, BlockHeader, BlockNumber};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{hash_address, AccountUpdate};
+use ethrex_storage::{error::StoreError, hash_address, AccountUpdate, Store};
 use ethrex_trie::Trie;
 
 use super::errors::StateDiffError;
@@ -486,4 +486,30 @@ impl Decoder {
 
         Ok(Bytes::copy_from_slice(res))
     }
+}
+
+pub fn get_nonce_diff(
+    account_update: &AccountUpdate,
+    store: &Store,
+    current_block_number: BlockNumber,
+) -> Result<u16, StateDiffError> {
+    let prev_nonce = match store
+        .get_account_info(current_block_number - 1, account_update.address)
+        .map_err(StoreError::from)?
+    {
+        Some(acc) => acc.nonce,
+        None => 0,
+    };
+
+    let new_nonce = if let Some(info) = account_update.info.clone() {
+        info.nonce
+    } else {
+        prev_nonce
+    };
+    let nonce_diff = new_nonce
+        .checked_sub(prev_nonce)
+        .ok_or(StateDiffError::FailedToCalculateNonce)?
+        .try_into()
+        .map_err(StateDiffError::from)?;
+    Ok(nonce_diff)
 }

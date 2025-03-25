@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use std::{
     cmp::{max, Ordering},
     collections::HashMap,
@@ -6,8 +5,6 @@ use std::{
     time::Instant,
 };
 
-use ethrex_common::types::TxKind;
-use ethrex_common::H160;
 use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
@@ -42,7 +39,7 @@ use crate::{
     Blockchain,
 };
 
-use tracing::{debug, warn};
+use tracing::debug;
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -178,7 +175,7 @@ pub struct PayloadBuildContext {
 }
 
 impl PayloadBuildContext {
-    fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
+    pub fn new(payload: Block, evm_engine: EvmEngine, storage: &Store) -> Result<Self, EvmError> {
         let config = storage.get_chain_config()?;
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
@@ -210,7 +207,7 @@ impl PayloadBuildContext {
         self.payload.header.parent_hash
     }
 
-    fn block_number(&self) -> BlockNumber {
+    pub fn block_number(&self) -> BlockNumber {
         self.payload.header.number
     }
 
@@ -287,7 +284,7 @@ impl Blockchain {
         Ok(context.into())
     }
 
-    fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+    pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         let binding = Vec::new();
         let withdrawals = context
             .payload
@@ -313,7 +310,7 @@ impl Blockchain {
 
     /// Fetches suitable transactions from the mempool
     /// Returns two transaction queues, one for plain and one for blob txs
-    fn fetch_mempool_transactions(
+    pub fn fetch_mempool_transactions(
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
@@ -348,10 +345,6 @@ impl Blockchain {
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-        #[cfg(feature = "l2")]
-        // Two bytes for the len
-        let (mut withdrawals_size, mut deposits_size): (usize, usize) = (2, 2);
-
         let chain_config = context.chain_config()?;
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
@@ -417,29 +410,9 @@ impl Blockchain {
             // or we want it before the return?
             metrics!(METRICS_TX.inc_tx());
 
-            #[cfg(feature = "l2")]
-            let previous_context = context.clone();
-
             // Execute tx
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
-                    #[cfg(feature = "l2")]
-                    if !Self::check_state_diff_size(
-                        &mut withdrawals_size,
-                        &mut deposits_size,
-                        head_tx.clone().into(),
-                        &receipt,
-                        context,
-                    )? {
-                        debug!(
-                            "Skipping transaction: {}, doesn't feet in blob_size",
-                            head_tx.tx.compute_hash()
-                        );
-                        // We don't have enough space in the blob for the transaction, so we skip all txs from this account
-                        txs.pop();
-                        *context = previous_context.clone();
-                        continue;
-                    }
                     txs.shift()?;
                     // Pull transaction from the mempool
                     self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
@@ -472,7 +445,7 @@ impl Blockchain {
 
     /// Executes the transaction, updates gas-related context values & return the receipt
     /// The payload build context should have enough remaining gas to cover the transaction's gas_limit
-    fn apply_transaction(
+    pub fn apply_transaction(
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
@@ -550,7 +523,7 @@ impl Blockchain {
         Ok(())
     }
 
-    fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+    pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let parent_hash = context.payload.header.parent_hash;
         let account_updates = context.vm.get_state_transitions(parent_hash)?;
 
@@ -566,137 +539,11 @@ impl Blockchain {
         context.account_updates = account_updates;
         Ok(())
     }
-
-    #[cfg(feature = "l2")]
-    const L2_WITHDRAWAL_SIZE: usize = 84; // address(H160) + amount(U256) + tx_hash(H256).
-    #[cfg(feature = "l2")]
-    const L2_DEPOSIT_SIZE: usize = 52; // address(H160) + amount(U256).
-    #[cfg(feature = "l2")]
-    const HEADER_FIELDS_SIZE: usize = 96; // transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64) + base_fee_per_gas(u64).
-    #[cfg(feature = "l2")]
-    pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0xff, 0xff,
-    ]);
-
-    #[cfg(feature = "l2")]
-    /// Calculates the size of the current `StateDiff` of the block.
-    /// If the current size exceeds the blob size limit, returns `Ok(false)`.
-    /// If there is still space in the blob, returns `Ok(true)`.
-    fn check_state_diff_size(
-        withdrawals_size: &mut usize,
-        deposits_size: &mut usize,
-        tx: Transaction,
-        receipt: &Receipt,
-        context: &mut PayloadBuildContext,
-    ) -> Result<bool, ChainError> {
-        use ethrex_common::types::SAFE_BYTES_PER_BLOB;
-
-        if Self::is_withdrawal_l2(&tx, receipt) {
-            *withdrawals_size += Self::L2_WITHDRAWAL_SIZE;
-        }
-        if Self::is_deposit_l2(&tx) {
-            *deposits_size += Self::L2_DEPOSIT_SIZE;
-        }
-        let modified_accounts_size = Self::calc_modified_accounts_size(context)?;
-
-        let current_state_diff_size = 1 /* version (u8) */ + Self::HEADER_FIELDS_SIZE + *withdrawals_size + *deposits_size + modified_accounts_size;
-
-        if current_state_diff_size > SAFE_BYTES_PER_BLOB {
-            // Restore the withdrawals and deposits counters.
-            if Self::is_withdrawal_l2(&tx, receipt) {
-                *withdrawals_size -= Self::L2_WITHDRAWAL_SIZE;
-            }
-            if Self::is_deposit_l2(&tx) {
-                *deposits_size -= Self::L2_DEPOSIT_SIZE;
-            }
-            warn!(
-                "Blob size limit exceeded. current_state_diff_size: {}",
-                current_state_diff_size
-            );
-            return Ok(false);
-        }
-        Ok(true)
-    }
-
-    #[cfg(feature = "l2")]
-    fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
-        // WithdrawalInitiated(address,address,uint256)
-        let withdrawal_event_selector: H256 =
-            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
-                .unwrap();
-
-        match tx.to() {
-            TxKind::Call(to) if to == Self::COMMON_BRIDGE_L2_ADDRESS => {
-                return receipt.logs.iter().any(|log| {
-                    log.topics
-                        .iter()
-                        .any(|topic| *topic == withdrawal_event_selector)
-                });
-            }
-            _ => false,
-        }
-    }
-
-    #[cfg(feature = "l2")]
-    fn is_deposit_l2(tx: &Transaction) -> bool {
-        matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
-    }
-
-    #[cfg(feature = "l2")]
-    fn calc_modified_accounts_size(context: &mut PayloadBuildContext) -> Result<usize, ChainError> {
-        let mut modified_accounts_size: usize = 2; // modified_accounts_len(u16)
-
-        // We use a temporary_context because revm mutates it in `get_state_transitions`
-        let mut temporary_context = context.clone();
-        let account_updates = temporary_context
-            .vm
-            .get_state_transitions(context.payload.header.parent_hash)?;
-        for account_update in account_updates {
-            modified_accounts_size += 1 + 20; // r#type(u8) + address(H160)
-            if account_update.info.is_some() {
-                modified_accounts_size += 32; // new_balance(U256)
-            }
-            if Self::has_new_nonce(&account_update, context)? {
-                modified_accounts_size += 2; // nonce_diff(u16)
-            }
-            // for each added_storage: key(H256) + value(U256)
-            modified_accounts_size += account_update.added_storage.len() * 2 * 32;
-
-            if let Some(bytecode) = &account_update.code {
-                modified_accounts_size += 2; // bytecode_len(u16)
-                modified_accounts_size += bytecode.len(); // bytecode(Bytes)
-            }
-        }
-        Ok(modified_accounts_size)
-    }
-
-    #[cfg(feature = "l2")]
-    fn has_new_nonce(
-        account_update: &AccountUpdate,
-        context: &PayloadBuildContext,
-    ) -> Result<bool, StoreError> {
-        let prev_nonce = match context
-            .store
-            .get_account_info(context.block_number() - 1, account_update.address)
-            .map_err(StoreError::from)?
-        {
-            Some(acc) => acc.nonce,
-            None => 0,
-        };
-
-        let new_nonce = if let Some(info) = &account_update.info {
-            info.nonce
-        } else {
-            prev_nonce
-        };
-        Ok(prev_nonce != new_nonce)
-    }
 }
 
 /// A struct representing suitable mempool transactions waiting to be included in a block
 // TODO: Consider using VecDequeue instead of Vec
-struct TransactionQueue {
+pub struct TransactionQueue {
     // The first transaction for each account along with its tip, sorted by highest tip
     heads: Vec<HeadTransaction>,
     // The remaining txs grouped by account and sorted by nonce
@@ -706,8 +553,8 @@ struct TransactionQueue {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct HeadTransaction {
-    tx: MempoolTransaction,
+pub struct HeadTransaction {
+    pub tx: MempoolTransaction,
     tip: u64,
 }
 
@@ -756,24 +603,24 @@ impl TransactionQueue {
     }
 
     /// Remove all transactions from the queue
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.heads.clear();
         self.txs.clear();
     }
 
     /// Returns true if there are no more transactions in the queue
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.heads.is_empty()
     }
 
     /// Returns the head transaction with the highest tip
     /// If there is more than one transaction with the highest tip, return the one with the lowest timestamp
-    fn peek(&self) -> Option<HeadTransaction> {
+    pub fn peek(&self) -> Option<HeadTransaction> {
         self.heads.first().cloned()
     }
 
     /// Removes current head transaction and all transactions from the given sender
-    fn pop(&mut self) {
+    pub fn pop(&mut self) {
         if !self.is_empty() {
             let sender = self.heads.remove(0).tx.sender();
             self.txs.remove(&sender);
@@ -782,7 +629,7 @@ impl TransactionQueue {
 
     /// Remove the top transaction
     /// Add a tx from the same sender to the head transactions
-    fn shift(&mut self) -> Result<(), ChainError> {
+    pub fn shift(&mut self) -> Result<(), ChainError> {
         let tx = self.heads.remove(0);
         if let Some(txs) = self.txs.get_mut(&tx.tx.sender()) {
             // Fetch next head

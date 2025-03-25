@@ -95,6 +95,8 @@ pub enum BlockProducerError {
     FailedToDecodeJWT(#[from] hex::FromHexError),
     #[error("Block Producer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
+    #[error("{0}")]
+    Custom(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -109,8 +111,6 @@ pub enum CommitterError {
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]
     FailedToRetrieveDataFromStorage,
-    #[error("Committer registered a negative nonce in AccountUpdate")]
-    FailedToCalculateNonce,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage")]
@@ -171,6 +171,10 @@ pub enum StateDiffError {
     LengthTooBig(#[from] core::num::TryFromIntError),
     #[error("DB Error: {0}")]
     DbError(#[from] TrieError),
+    #[error("Store Error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("StateDiff registered a negative nonce in AccountUpdate")]
+    FailedToCalculateNonce,
 }
 
 #[derive(Debug, thiserror::Error)]
