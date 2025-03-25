@@ -25,7 +25,6 @@ const DEFAULT_L1_RICH_WALLET_PRIVATE_KEY: H256 = H256([
     0x33, 0xf6, 0x6b, 0x39, 0x60, 0xd9, 0xe6, 0x22, 0x9c, 0x1c, 0xd2, 0x14, 0xed, 0x3b, 0xbe, 0x31,
 ]);
 
-const L1_GAS_COST_MAX_DELTA: U256 = U256([1_000_000_000_000_000, 0, 0, 0]);
 const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 
 /// Test the full flow of depositing, transferring, and withdrawing funds
@@ -90,7 +89,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Waiting for deposit transaction receipt");
 
-    let _deposit_tx_receipt =
+    let deposit_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5).await?;
 
     let recoverable_fees_vault_balance = proposer_client.get_balance(fees_vault()).await?;
@@ -138,10 +137,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "L2 balance should increase with deposit value"
     );
     assert!(
-        (l1_initial_balance - deposit_value).abs_diff(l1_after_deposit_balance)
-            < L1_GAS_COST_MAX_DELTA,
-        "L1 balance should decrease with deposit value + gas costs. Gas costs were {}/{L1_GAS_COST_MAX_DELTA}",
-        (l1_initial_balance - deposit_value).abs_diff(l1_after_deposit_balance)
+        l1_after_deposit_balance == l1_initial_balance - deposit_value - deposit_tx_receipt.tx_info.gas_used * deposit_tx_receipt.tx_info.effective_gas_price,
+        "L1 balance should decrease with deposit value + gas costs. Initial balance: {l1_initial_balance} After Deposit balue: {l1_after_deposit_balance} Deposit Value: {deposit_value} Eth Spent on Gas: {}",
+        deposit_tx_receipt.tx_info.gas_used * deposit_tx_receipt.tx_info.effective_gas_price
     );
 
     let first_deposit_recoverable_fees_vault_balance =
@@ -273,7 +271,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    let _claim_tx_receipt =
+    let claim_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(claim_tx, &eth_client, 15).await?;
 
     // 9. Check balances on L1 and L2
@@ -339,9 +337,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     assert!(
-        (l1_after_withdrawal_balance + withdraw_value).abs_diff(l1_after_claim_balance)
-            < L1_GAS_COST_MAX_DELTA,
-        "L1 balance should have increased with withdraw value + gas costs"
+        l1_after_claim_balance == l1_after_withdrawal_balance + withdraw_value - claim_tx_receipt.tx_info.gas_used * claim_tx_receipt.tx_info.effective_gas_price,
+        "L1 balance should have increased with withdraw value + gas costs. After withdrawal (but before claim) balance: {l1_after_withdrawal_balance} After claim balance: {l1_after_claim_balance} Withdrawal Value: {withdraw_value} Eth Spent on Gas: {}",
+        claim_tx_receipt.tx_info.gas_used * claim_tx_receipt.tx_info.effective_gas_price
     );
     assert_eq!(
         l2_after_withdrawal_balance, l2_after_claim_balance,

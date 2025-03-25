@@ -86,7 +86,7 @@ impl EthClient {
         let mut deploy_overrides = overrides;
         deploy_overrides.to = Some(TxKind::Create);
         let deploy_tx = self
-            .build_eip1559_transaction(Address::zero(), deployer, init_code, deploy_overrides, 10)
+            .build_eip1559_transaction(Address::zero(), deployer, init_code, deploy_overrides)
             .await?;
         let deploy_tx_hash = self
             .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
