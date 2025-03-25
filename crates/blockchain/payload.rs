@@ -22,8 +22,7 @@ use ethrex_common::{
 };
 
 use ethrex_vm::{
-    backends::{Evm, EvmEngine},
-    EvmError,
+    EvmError, {Evm, EvmEngine},
 };
 
 use ethrex_rlp::encode::RLPEncode;
