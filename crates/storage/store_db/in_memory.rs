@@ -143,6 +143,37 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        for block in blocks {
+            let header = block.header.clone();
+            let number = header.number;
+            let hash = header.compute_block_hash();
+            let locations = block
+                .body
+                .transactions
+                .iter()
+                .enumerate()
+                .map(|(i, tx)| (tx.compute_hash(), number, hash, i as u64));
+
+            self.add_transaction_locations(locations.collect())?;
+            self.add_block_body(hash, block.body.clone())?;
+            self.add_block_header(hash, header)?;
+            self.add_block_number(hash, number)?;
+        }
+
+        Ok(())
+    }
+
+    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        for block in blocks {
+            self.inner()
+                .canonical_hashes
+                .insert(block.header.number, block.hash());
+        }
+
+        Ok(())
+    }
+
     fn add_block_number(
         &self,
         block_hash: BlockHash,
@@ -375,6 +406,17 @@ impl StoreEngine for Store {
         for (index, receipt) in receipts.into_iter().enumerate() {
             entry.insert(index as u64, receipt);
         }
+        Ok(())
+    }
+
+    fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError> {
+        for (block_hash, receipts) in receipts.into_iter() {
+            self.add_receipts(block_hash, receipts)?;
+        }
+
         Ok(())
     }
 
