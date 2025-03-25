@@ -1,5 +1,7 @@
 .env*
-# Ignore all .toml files that do not have the _example.toml suffix
-*.toml
+
+# Ignore all config files that doesn't end with _example.toml
+/configs
 !*_example.toml
+
 solc_out
