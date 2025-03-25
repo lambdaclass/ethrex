@@ -157,7 +157,6 @@ async fn transfer_from(
                     gas_limit: Some(TX_GAS_COST * 100),
                     ..Default::default()
                 },
-                10,
             )
             .await
             .unwrap();
@@ -260,7 +259,6 @@ async fn claim_erc20_balances(
                     address_from_pub_key(pk),
                     claim_balance_calldata.into(),
                     Default::default(),
-                    10,
                 )
                 .await
                 .unwrap();
@@ -324,7 +322,6 @@ async fn erc20_load_test(
                         gas_limit: Some(TX_GAS_COST * 100),
                         ..Default::default()
                     },
-                    1,
                 )
                 .await?;
             let client = client.clone();
