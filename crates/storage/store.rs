@@ -312,9 +312,19 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<H256>, StoreError> {
-        let Some(mut state_trie) = self.state_trie(block_hash)? else {
+        let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
+
+        let mut state_trie = self.apply_account_updates_from_trie(state_trie, account_updates)?;
+        Ok(Some(state_trie.hash()?))
+    }
+
+    pub fn apply_account_updates_from_trie(
+        &self,
+        mut state_trie: Trie,
+        account_updates: &[AccountUpdate],
+    ) -> Result<Trie, StoreError> {
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -355,7 +365,8 @@ impl Store {
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
-        Ok(Some(state_trie.hash()?))
+
+        Ok(state_trie)
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -445,7 +456,7 @@ impl Store {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
             } else {
-                panic!("tried to run genesis twice with different blocks");
+                panic!("Tried to run genesis twice with different blocks. Try again after clearing the database. If you're running ethrex as an Ethereum client, run cargo run --release --bin ethrex -- removedb; if you're running ethrex as an L2 run make rm-db-l1 rm-db-l2");
             }
         }
         // Store genesis accounts
@@ -603,7 +614,7 @@ impl Store {
         self.engine.unset_canonical_block(number)
     }
 
-    // Obtain the storage trie for the given block
+    /// Obtain the storage trie for the given block
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
@@ -611,7 +622,7 @@ impl Store {
         Ok(Some(self.engine.open_state_trie(header.state_root)))
     }
 
-    // Obtain the storage trie for the given account on the given block
+    /// Obtain the storage trie for the given account on the given block
     pub fn storage_trie(
         &self,
         block_hash: BlockHash,
@@ -645,11 +656,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        Ok(Some(AccountState::decode(&encoded_state)?))
+        self.get_account_state_from_trie(&state_trie, address)
     }
 
     pub fn get_account_state_by_hash(
@@ -660,6 +667,14 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
+        self.get_account_state_from_trie(&state_trie, address)
+    }
+
+    pub fn get_account_state_from_trie(
+        &self,
+        state_trie: &Trie,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
         let hashed_address = hash_address(&address);
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
@@ -842,16 +857,16 @@ impl Store {
         self.engine.open_state_trie(*EMPTY_TRIE_HASH)
     }
 
-    /// Methods exclusive for trie management during snap-syncing
+    // Methods exclusive for trie management during snap-syncing
 
-    // Obtain a state trie from the given state root
-    // Doesn't check if the state root is valid
+    /// Obtain a state trie from the given state root.
+    /// Doesn't check if the state root is valid
     pub fn open_state_trie(&self, state_root: H256) -> Trie {
         self.engine.open_state_trie(state_root)
     }
 
-    // Obtain a storage trie from the given address and storage_root
-    // Doesn't check if the account is stored
+    /// Obtain a storage trie from the given address and storage_root.
+    /// Doesn't check if the account is stored
     pub fn open_storage_trie(&self, account_hash: H256, storage_root: H256) -> Trie {
         self.engine.open_storage_trie(account_hash, storage_root)
     }
@@ -955,6 +970,17 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine
             .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
+    }
+
+    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
+    pub fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
     }
 
     /// Clears all checkpoint data created during the last snap sync

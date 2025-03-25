@@ -1,4 +1,3 @@
-use ethrex_common::{types::Block, Address, H256};
 use revm::{
     db::CacheDB,
     inspectors::TracerEip3155,
@@ -9,9 +8,6 @@ use revm::{
     Database, DatabaseRef, Evm,
 };
 use revm_primitives::SpecId;
-
-use crate::{block_env, db::ExecutionDB, errors::ExecutionDBError, tx_env};
-
 impl ExecutionDB {
     /// Execute a block and cache all state changes, returns the cache
     pub fn pre_execute<ExtDB: DatabaseRef>(

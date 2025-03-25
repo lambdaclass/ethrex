@@ -9,7 +9,7 @@ jobs:
     if: contains(github.event.pull_request.labels.*.name, 'performance')
     strategy:
       matrix:
-        branch: [base, head]
+        branch: [main, head]
     name: Build ethrex for ${{ matrix.branch }}
     runs-on: ubuntu-22.04
     steps:

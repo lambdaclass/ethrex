@@ -15,7 +15,7 @@ use ethrex_levm::{
     Environment,
 };
 use ethrex_storage::AccountUpdate;
-use ethrex_vm::backends::{self};
+use ethrex_vm::backends;
 use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
