@@ -91,7 +91,7 @@ impl PeerHandler {
 
         peer.set_as_idle();
         peer.scoring = peer.scoring.saturating_sub(1);
-        if peer.scoring <= 0 {
+        if peer.scoring == 0 {
             table_lock.replace_peer(node_id);
         }
     }
@@ -114,9 +114,7 @@ impl PeerHandler {
     ) -> Option<T> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let channels = self.get_peer_channel_with_retry(cap.clone()).await;
-            let Some((channel, node_id)) = channels else {
-                return None;
-            };
+            let (channel, node_id) = channels?;
 
             let mut receiver = channel.receiver.lock().await;
             channel.sender.send(build_request()).await.ok();
@@ -174,12 +172,9 @@ impl PeerHandler {
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             })
         };
-        let Some(response) = self
+        let response = self
             .send_request::<BlockHeaders>(Capability::Eth, request)
-            .await
-        else {
-            return None;
-        };
+            .await?;
 
         match response.id == request_id && !response.block_headers.is_empty() {
             true => Some(response.block_headers),
@@ -200,12 +195,9 @@ impl PeerHandler {
                 block_hashes: block_hashes.clone(),
             })
         };
-        let Some(response) = self
+        let response = self
             .send_request::<BlockBodies>(Capability::Eth, request)
-            .await
-        else {
-            return None;
-        };
+            .await?;
 
         match response.id == request_id
             && !response.block_bodies.is_empty()
@@ -229,12 +221,9 @@ impl PeerHandler {
                 block_hashes: block_hashes.clone(),
             })
         };
-        let Some(response) = self
+        let response = self
             .send_request::<Receipts>(Capability::Eth, request)
-            .await
-        else {
-            return None;
-        };
+            .await?;
 
         match response.id == request_id
             && !response.receipts.is_empty()
@@ -267,11 +256,9 @@ impl PeerHandler {
                 response_bytes: MAX_RESPONSE_BYTES,
             })
         };
-        let Some(response): Option<AccountRange> =
-            self.send_request(Capability::Eth, request).await
-        else {
-            return None;
-        };
+        let response = self
+            .send_request::<AccountRange>(Capability::Eth, request)
+            .await?;
 
         if response.id != request_id {
             return None;
@@ -317,12 +304,9 @@ impl PeerHandler {
             })
         };
 
-        let Some(response): Option<ByteCodes> = self
+        let response = self
             .send_request::<ByteCodes>(Capability::Eth, request)
-            .await
-        else {
-            return None;
-        };
+            .await?;
 
         match response.id == request_id
             && !response.codes.is_empty()
@@ -359,12 +343,9 @@ impl PeerHandler {
             })
         };
 
-        let Some(response) = self
+        let response = self
             .send_request::<StorageRanges>(Capability::Eth, request)
-            .await
-        else {
-            return None;
-        };
+            .await?;
 
         if response.id != request_id {
             return None;
@@ -444,12 +425,9 @@ impl PeerHandler {
             })
         };
 
-        let Some(response) = self
+        let response = self
             .send_request::<TrieNodes>(Capability::Eth, request)
-            .await
-        else {
-            return None;
-        };
+            .await?;
 
         let nodes = response.nodes;
         match response.id == request_id && !nodes.is_empty() && nodes.len() <= expected_nodes {
@@ -496,12 +474,9 @@ impl PeerHandler {
             })
         };
 
-        let Some(response) = self
+        let response = self
             .send_request::<TrieNodes>(Capability::Eth, request)
-            .await
-        else {
-            return None;
-        };
+            .await?;
 
         let nodes = response.nodes;
 
@@ -542,12 +517,9 @@ impl PeerHandler {
             })
         };
 
-        let Some(response) = self
+        let response = self
             .send_request::<StorageRanges>(Capability::Eth, request)
-            .await
-        else {
-            return None;
-        };
+            .await?;
 
         if response.id != request_id {
             return None;
