@@ -6,14 +6,14 @@ use criterion::{criterion_group, criterion_main, Criterion};
 
 use uuid::Uuid;
 
-use ethrex_trie::InMemoryTrieDB;
+use ethrex_trie::InMemoryTrieDB as EthrexMemDB;
 use ethrex_trie::Trie as EthrexTrie;
 
 fn insert_worse_case_benchmark(c: &mut Criterion) {
     let (keys, values) = random_data(1000);
 
     c.bench_function("ethrex-trie insert 1k", |b| {
-        let mut trie = EthrexTrie::new(Box::new(InMemoryTrieDB::new_empty()));
+        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
         b.iter(|| {
             for i in 0..keys.len() {
                 trie.insert(keys[i].clone(), values[i].clone()).unwrap()
@@ -24,7 +24,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
     let (keys, values) = random_data(10000);
 
     c.bench_function("ethrex-trie insert 10k", |b| {
-        let mut trie = EthrexTrie::new(Box::new(InMemoryTrieDB::new_empty()));
+        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
 
         b.iter(|| {
             for i in 0..keys.len() {
