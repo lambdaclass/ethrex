@@ -162,7 +162,7 @@ prover_server_endpoint=<ip-address>:3900
    1. `cd ethrex/crates/l2`
    2. `cp configs/config_example.toml configs/config.toml` and change the addresses and the following fields:
       - [prover_server]
-        `listen_ip=0.0.0.0` &rarr; used to handle the tcp communication with the other server.
+        - `listen_ip=0.0.0.0` &rarr; Used to handle TCP communication with other servers from any network interface.
       - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.
       - [deployer]
         - `salt_is_zero=false` &rarr; set to false to randomize the salt.
