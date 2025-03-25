@@ -16,7 +16,6 @@ use crate::{
     types::block_identifier::{BlockIdentifier, BlockTag},
     utils::{parse_json_hex, RpcErr, RpcRequest},
 };
-use rand::prelude::*;
 use serde_json::{json, Value};
 
 use super::logs::{fetch_logs_with_filter, LogsFilter};
@@ -86,7 +85,7 @@ impl NewFilterRequest {
         }
 
         let last_block_number = storage.get_latest_block_number()?;
-        let id: u64 = random();
+        let id: u64 = rand::random();
         let timestamp = Instant::now();
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
             error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
