@@ -51,3 +51,7 @@ jobs:
 
       - name: Benchmarks
         uses: boa-dev/criterion-compare-action@v3
+        with:
+          cwd: "crates/common/trie"
+          benchName: "trie_bench"
+          token: ${{ secrets.GITHUB_TOKEN }}
