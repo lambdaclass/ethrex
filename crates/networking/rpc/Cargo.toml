@@ -42,7 +42,7 @@ cfg-if.workspace = true
 hex-literal = "0.4.1"
 
 [lib]
-path = "./rpc.rs"
+path = "./lib.rs"
 
 [features]
 based = ["l2"]
