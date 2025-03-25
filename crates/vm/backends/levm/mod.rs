@@ -545,7 +545,7 @@ pub fn generic_system_contract_levm(
             let mut existing_storage = existing_account.storage.clone();
             existing_storage.extend(account.storage.clone());
             account.storage = existing_storage;
-            account.info.balance = existing_account.info.balance;
+            // account.info.balance = existing_account.info.balance;
         }
     }
     new_state.extend(report.new_state.clone());
