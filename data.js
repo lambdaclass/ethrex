@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742911721932,
+  "lastUpdate": 1742929928999,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1105,6 +1105,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 232681672891,
             "range": "± 591152064",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "156438142+fborello-lambda@users.noreply.github.com",
+            "name": "Federico Borello",
+            "username": "fborello-lambda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a8bb355f7fe072474461b29b8e1f68c7bdc75d75",
+          "message": "fix(l2): prover_client with SP1 (#2273)\n\n**Motivation**\n\nWhen we bumped the SP1 version to the latest we didn't test the\n`prover_client` on its own.\nAlso, we had some issues when using CUDA with a `ctrl-c` handler set\ninside the `sp1-cuda` crate.\n \n**Description**\n\n- Fix Makefile Target\n- Bump the contract version\n- Start a single SP1's client with `LazyLock` to fix the CUDA issues\ndescribed above.",
+          "timestamp": "2025-03-25T18:14:11Z",
+          "tree_id": "bf146f62bf307abc955a0c3593207b587fbdc98f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a8bb355f7fe072474461b29b8e1f68c7bdc75d75"
+        },
+        "date": 1742929926890,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 231323537827,
+            "range": "± 840969873",
             "unit": "ns/iter"
           }
         ]
