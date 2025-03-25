@@ -18,7 +18,6 @@ use secp256k1::SecretKey;
 use std::{
     fs::{create_dir_all, read_dir},
     path::{Path, PathBuf},
-    thread::sleep,
     time::Duration,
 };
 
@@ -224,7 +223,7 @@ impl Command {
                 let mut current_block = U256::zero();
                 while current_block < U256::from(64) {
                     current_block = eth_client.get_block_number().await?;
-                    sleep(Duration::from_secs(12));
+                    tokio::time::sleep(Duration::from_secs(12)).await;
                 }
                 current_block = current_block
                     .checked_sub(U256::from(64))
@@ -234,7 +233,7 @@ impl Command {
 
                 loop {
                     // Wait for a block
-                    sleep(Duration::from_secs(12));
+                    tokio::time::sleep(Duration::from_secs(12)).await;
 
                     let logs = eth_client
                         .get_logs(
