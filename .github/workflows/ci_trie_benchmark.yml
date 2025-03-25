@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        trie-version: ["head", "cita"]
+        trie-version: ["head", "base"]
     steps:
       - name: Populate cache
         uses: actions/cache@v4
@@ -49,27 +49,5 @@ jobs:
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build ethrex trie benchmark
-        if: ${{ matrix.trie-version != 'cita' }}
-        run: |
-          set -x
-          cd crates/common/trie
-          ls -lah
-          cargo bench --bench ethrex_trie_bench -- --output-format bencher | tee bench-${{ matrix.trie-version }}.txt
-
-      - name: Build cita trie benchmark
-        if: ${{ matrix.trie-version == 'cita' }}
-        run: |
-          cd crates/common/trie
-          make build-cita-bench
-          cargo bench --bench cita_trie_bench -- --output-format bencher | tee bench-${{ matrix.trie-version }}.txt
-          ls -lah
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          tool: "cargo"
-          name: Trie Benchmark
-          output-file-path: crates/common/trie/bench-${{ matrix.trie-version}}.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          summary-always: true
-          auto-push: true
+      - name: Benchmarks
+        uses: boa-dev/criterion-compare-action@v3

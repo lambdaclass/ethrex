@@ -19,12 +19,8 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("Trie");
 
-    group.bench_function("cita-trie insert 1k", |b| {
-        let mut trie = PatriciaTrie::new(
-            Arc::new(MemoryDB::new(false)),
-            Arc::new(HasherKeccak::new()),
-        );
-
+    group.bench_function("ethrex-trie insert 1k", |b| {
+        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
         b.iter(|| {
             for i in 0..keys.len() {
                 trie.insert(keys[i].clone(), values[i].clone()).unwrap()
@@ -32,8 +28,9 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("ethrex-trie insert 1k", |b| {
+    group.bench_function("ethrex-trie insert 10k", |b| {
         let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
+
         b.iter(|| {
             for i in 0..keys.len() {
                 trie.insert(keys[i].clone(), values[i].clone()).unwrap()
@@ -56,8 +53,11 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("ethrex-trie insert 10k", |b| {
-        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
+    group.bench_function("cita-trie insert 1k", |b| {
+        let mut trie = PatriciaTrie::new(
+            Arc::new(MemoryDB::new(false)),
+            Arc::new(HasherKeccak::new()),
+        );
 
         b.iter(|| {
             for i in 0..keys.len() {
