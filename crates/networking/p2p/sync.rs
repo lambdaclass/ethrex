@@ -278,16 +278,19 @@ impl SyncManager {
             store.add_block_headers(block_hashes.clone(), block_headers.clone())?;
 
             if self.sync_mode == SyncMode::Full {
-                self.download_and_run_blocks(
-                    &block_hashes,
-                    &block_headers,
-                    sync_head,
-                    &mut current_head,
-                    &mut search_head,
-                    sync_head_found,
-                    store.clone(),
-                )
-                .await?;
+                let last_block_hash = self
+                    .download_and_run_blocks(
+                        &block_hashes,
+                        &block_headers,
+                        sync_head,
+                        sync_head_found,
+                        store.clone(),
+                    )
+                    .await?;
+                if let Some(last_block_hash) = last_block_hash {
+                    current_head = last_block_hash;
+                    search_head = current_head;
+                }
             }
 
             if sync_head_found {
@@ -346,18 +349,19 @@ impl SyncManager {
         Ok(())
     }
 
-    /// Requests block bodies from peers via p2p, executes and stores them
-    /// Returns an error if there was a problem while executing or validating the blocks
+    /// Attempts to fetch up to 1024 block bodies from peers via P2P, starting from the sync head.
+    /// Executes and stores the retrieved blocks.
+    ///
+    /// Returns an error if execution or validation fails.
+    /// On success, returns the hash of the last successfully executed block body.
     async fn download_and_run_blocks(
         &mut self,
         block_hashes: &[BlockHash],
         block_headers: &[BlockHeader],
         sync_head: BlockHash,
-        current_head: &mut BlockHash,
-        search_head: &mut BlockHash,
         sync_head_found: bool,
         store: Store,
-    ) -> Result<(), SyncError> {
+    ) -> Result<Option<H256>, SyncError> {
         let mut current_chunk_idx = 0;
         let block_hashes_chunks: Vec<Vec<BlockHash>> = block_hashes
             .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
@@ -366,7 +370,7 @@ impl SyncManager {
 
         let mut current_block_hashes_chunk = match block_hashes_chunks.get(current_chunk_idx) {
             Some(res) => res.clone(),
-            None => return Ok(()),
+            None => return Ok(None),
         };
         let mut headers_iter = block_headers.iter();
         let mut blocks: Vec<Block> = vec![];
@@ -453,8 +457,6 @@ impl SyncManager {
             return Err(error.into());
         }
 
-        *current_head = last_block.hash();
-        *search_head = last_block.hash();
         store.update_latest_block_number(last_block.header.number)?;
 
         let elapsed_secs: f64 = since.elapsed().as_millis() as f64 / 1000.0;
@@ -474,7 +476,7 @@ impl SyncManager {
             blocks_per_second
         );
 
-        Ok(())
+        Ok(Some(last_block.hash()))
     }
 
     fn add_blocks(
