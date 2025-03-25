@@ -221,7 +221,7 @@ impl L1Watcher {
             })?;
 
             let deposit_tx_hash = H256::from_slice(&log.log.data);
-            println!("deposit_tx_hash: {deposit_tx_hash:#x}");
+            info!("deposit_tx_hash: {deposit_tx_hash:#x}");
 
             let value_bytes = mint_value.to_big_endian();
             let id_bytes = deposit_id.to_big_endian();
