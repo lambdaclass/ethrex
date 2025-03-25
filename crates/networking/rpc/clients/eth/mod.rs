@@ -510,18 +510,6 @@ impl EthClient {
         }
     }
 
-    pub async fn get_next_block_to_commit(
-        eth_client: &EthClient,
-        on_chain_proposer_address: Address,
-    ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(
-            eth_client,
-            b"nextBlockToCommit()",
-            on_chain_proposer_address,
-        )
-        .await
-    }
-
     /// Fetches a block from the Ethereum blockchain by its number or the latest/earliest/pending block.
     /// If no `block_number` is provided, get the latest.
     pub async fn get_block_by_number(
@@ -1136,6 +1124,8 @@ pub struct GetTransactionByHashTransaction {
     pub hash: H256,
     #[serde(default, with = "ethrex_common::serde_utils::u64::hex_str")]
     pub transaction_index: u64,
+    #[serde(default)]
+    pub blob_versioned_hashes: Option<Vec<H256>>,
 }
 
 impl fmt::Display for GetTransactionByHashTransaction {
@@ -1143,25 +1133,24 @@ impl fmt::Display for GetTransactionByHashTransaction {
         write!(
             f,
             r#"
-            chain_id: {},
-            nonce: {},
-            max_priority_fee_per_gas: {},
-            max_fee_per_gas: {},
-            gas_limit: {},
-            to: {:#x},
-            value: {},
-            data: {:#?},
-            access_list: {:#?},
-            type: {:?},
-            signature_y_parity: {},
-            signature_r: {:x},
-            signature_s: {:x},
-            block_number: {},
-            block_hash: {:#x},
-            from: {:#x},
-            hash: {:#x},
-            transaction_index: {}
-            "#,
+chain_id: {},
+nonce: {},
+max_priority_fee_per_gas: {},
+max_fee_per_gas: {},
+gas_limit: {},
+to: {:#x},
+value: {},
+data: {:#?},
+access_list: {:#?},
+type: {:?},
+signature_y_parity: {},
+signature_r: {:x},
+signature_s: {:x},
+block_number: {},
+block_hash: {:#x},
+from: {:#x},
+hash: {:#x},
+transaction_index: {}"#,
             self.chain_id,
             self.nonce,
             self.max_priority_fee_per_gas,
@@ -1179,7 +1168,13 @@ impl fmt::Display for GetTransactionByHashTransaction {
             self.block_hash,
             self.from,
             self.hash,
-            self.transaction_index
-        )
+            self.transaction_index,
+        )?;
+
+        if let Some(blob_versioned_hashes) = &self.blob_versioned_hashes {
+            write!(f, "\nblob_versioned_hashes: {blob_versioned_hashes:#?}")?;
+        }
+
+        fmt::Result::Ok(())
     }
 }

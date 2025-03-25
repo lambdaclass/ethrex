@@ -1,0 +1,107 @@
+name: Benchmark Block execution against main
+
+on:
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build-binaries:
+    if: contains(github.event.pull_request.labels.*.name, 'performance')
+    strategy:
+      matrix:
+        branch: [main, head]
+    name: Build ethrex for ${{ matrix.branch }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Populate cache
+        uses: actions/cache@v4
+        id: cache
+        with:
+          path: bin/ethrex-${{ matrix.branch }}
+          key: binary-${{ github.event.pull_request[matrix.branch].sha }}
+
+      - name: Install Rust
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Checkout
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request[matrix.branch].sha }}
+
+      - name: Fetch Rust cache
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build binary
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: |
+          cargo b --release --bin ethrex
+          mkdir bin
+          cp target/release/ethrex bin/ethrex-${{ matrix.branch }}
+
+  run-hyperfine:
+    if: contains(github.event.pull_request.labels.*.name, 'performance')
+    name: Run benchmark against base branch
+    needs: [build-binaries]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          lfs: true
+
+      - name: Checkout LFS objects
+        run: git lfs checkout
+
+      - name: Install Hyperfine
+        uses: taiki-e/install-action@v2
+        with:
+          tool: hyperfine@1.16
+
+      - name: Fetch base binary
+        uses: actions/cache/restore@v3
+        with:
+          path: bin/ethrex-base
+          key: binary-${{ github.event.pull_request.base.sha }}
+
+      - name: Fetch HEAD binary
+        uses: actions/cache/restore@v3
+        with:
+          path: bin/ethrex-head
+          key: binary-${{ github.event.pull_request.head.sha }}
+
+      - name: Benchmark against main
+        id: run-benchmarks
+        run: |
+          sudo swapoff -a
+          BINS="base,head"
+          hyperfine --setup "./bin/ethrex-base removedb" -w 5 -N -r 10 --show-output --export-markdown "bench_pr_comparison.md" \
+          -L bin "$BINS" -n "{bin}" \
+          "./bin/ethrex-{bin} --network test_data/genesis-l2-ci.json import ./test_data/l2-1k-erc20.rlp --removedb"
+          echo -e "## Benchmark Block Execution Results Comparison Against Main\n\n$(cat bench_pr_comparison.md)" > bench_pr_comparison.md
+      - name: Upload PR results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-result
+          path: bench_pr_comparison.md
+
+      - name: Find comment
+        continue-on-error: true
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "Benchmark Block Execution Results Comparison Against Main"
+
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: bench_pr_comparison.md
+          edit-mode: replace

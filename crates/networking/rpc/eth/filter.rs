@@ -275,6 +275,8 @@ mod tests {
     use ethrex_common::types::Genesis;
     use ethrex_p2p::sync::SyncManager;
     use ethrex_storage::{EngineType, Store};
+    #[cfg(feature = "l2")]
+    use secp256k1::{rand, SecretKey};
 
     use serde_json::{json, Value};
     use test_utils::TEST_GENESIS;
@@ -439,7 +441,7 @@ mod tests {
     ) -> u64 {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             storage,
             blockchain,
@@ -452,6 +454,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -505,7 +511,7 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             storage,
             blockchain,
@@ -518,6 +524,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
 
         map_http_requests(&uninstall_filter_req, context)
@@ -536,7 +546,7 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             storage,
             blockchain,
@@ -549,6 +559,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {

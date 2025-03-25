@@ -10,8 +10,8 @@ use engine::{
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
         GetPayloadBodiesByHashV1Request, GetPayloadBodiesByRangeV1Request, GetPayloadV1Request,
-        GetPayloadV2Request, GetPayloadV3Request, NewPayloadV1Request, NewPayloadV2Request,
-        NewPayloadV3Request, NewPayloadV4Request,
+        GetPayloadV2Request, GetPayloadV3Request, GetPayloadV4Request, NewPayloadV1Request,
+        NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
     },
     ExchangeCapabilitiesRequest,
 };
@@ -48,12 +48,21 @@ use std::{
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tower_http::cors::CorsLayer;
 use tracing::info;
 use types::transaction::SendRawTransactionRequest;
 use utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
     RpcSuccessResponse,
 };
+cfg_if::cfg_if! {
+    if #[cfg(feature = "l2")] {
+        use l2::transaction::SponsoredTx;
+        use ethrex_common::Address;
+        use secp256k1::SecretKey;
+        mod l2;
+    }
+}
 mod admin;
 mod authentication;
 pub mod engine;
@@ -80,7 +89,7 @@ enum RpcRequestWrapper {
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
     storage: Store,
-    blockchain: Blockchain,
+    blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -90,6 +99,10 @@ pub struct RpcApiContext {
     gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
     gateway_auth_client: EngineClient,
+    #[cfg(feature = "l2")]
+    valid_delegation_addresses: Vec<Address>,
+    #[cfg(feature = "l2")]
+    sponsor_pk: SecretKey,
 }
 
 /// Describes the client's current sync status:
@@ -155,13 +168,15 @@ pub async fn start_api(
     http_addr: SocketAddr,
     authrpc_addr: SocketAddr,
     storage: Store,
-    blockchain: Blockchain,
+    blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
+    #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
+    #[cfg(feature = "l2")] sponsor_pk: SecretKey,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -178,6 +193,10 @@ pub async fn start_api(
         gateway_eth_client,
         #[cfg(feature = "based")]
         gateway_auth_client,
+        #[cfg(feature = "l2")]
+        valid_delegation_addresses,
+        #[cfg(feature = "l2")]
+        sponsor_pk,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -192,8 +211,15 @@ pub async fn start_api(
         }
     });
 
+    // All request headers allowed.
+    // All methods allowed.
+    // All origins allowed.
+    // All headers exposed.
+    let cors = CorsLayer::permissive();
+
     let http_router = Router::new()
         .route("/", post(handle_http_request))
+        .layer(cors)
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr).await.unwrap();
 
@@ -279,6 +305,8 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
+        #[cfg(feature = "l2")]
+        Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
@@ -392,6 +420,7 @@ pub async fn map_engine_requests(
         "engine_exchangeTransitionConfigurationV1" => {
             ExchangeTransitionConfigV1Req::call(req, context)
         }
+        "engine_getPayloadV4" => GetPayloadV4Request::call(req, context),
         "engine_getPayloadV3" => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "based")] {
@@ -434,6 +463,16 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
     }
 }
 
+#[cfg(feature = "l2")]
+pub fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "ethrex_sendTransaction" => SponsoredTx::call(req, context),
+        unknown_ethrex_l2_method => {
+            Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
+        }
+    }
+}
+
 fn rpc_response<E>(id: RpcRequestId, res: Result<Value, E>) -> Value
 where
     E: Into<RpcErrorMetadata>,
@@ -459,18 +498,21 @@ mod tests {
     use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
     use ethrex_blockchain::Blockchain;
     use ethrex_common::{
-        constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
         types::{ChainConfig, Genesis},
+        H160,
     };
     use ethrex_storage::{EngineType, Store};
     use sha3::{Digest, Keccak256};
     use std::fs::File;
     use std::io::BufReader;
+    use std::str::FromStr;
 
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
     use bytes::Bytes;
+    #[cfg(feature = "l2")]
+    use secp256k1::rand;
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -486,7 +528,7 @@ mod tests {
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage.set_chain_config(&example_chain_config()).unwrap();
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
@@ -499,6 +541,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -546,7 +592,7 @@ mod tests {
                         "terminalTotalDifficulty": 0,
                         "terminalTotalDifficultyPassed": true,
                         "blobSchedule": blob_schedule,
-                        "depositContractAddress": *MAINNET_DEPOSIT_CONTRACT_ADDRESS
+                        "depositContractAddress": H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa").unwrap(),
                     }
                 },
             }
@@ -572,7 +618,7 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let genesis = read_execution_api_genesis_file();
         storage
             .add_initial_state(genesis)
@@ -591,6 +637,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -609,7 +659,7 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let genesis = read_execution_api_genesis_file();
         storage
             .add_initial_state(genesis)
@@ -628,6 +678,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -664,7 +718,8 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
-            deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS),
+            deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
+                .unwrap(),
             ..Default::default()
         }
     }
@@ -677,7 +732,7 @@ mod tests {
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage.set_chain_config(&example_chain_config()).unwrap();
-        let blockchain = Blockchain::default_with_store(storage.clone());
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let chain_id = storage
             .get_chain_config()
             .expect("failed to get chain_id")
@@ -696,6 +751,10 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         // Process request
         let result = map_http_requests(&request, context).await;

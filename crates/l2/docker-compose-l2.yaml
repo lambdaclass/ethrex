@@ -12,16 +12,24 @@ services:
         - BUILDPLATFORM=linux/amd64
       dockerfile: ./crates/l2/contracts/Dockerfile
     volumes:
-      - ./contracts:/contracts
-      - .env:/.env
-    env_file:
-      - .env
+      # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
+      - ./contracts:${CI_ETHREX_WORKDIR}/contracts
+      - ./config.toml:${CI_ETHREX_WORKDIR}/config.toml
+      - ./.env:${CI_ETHREX_WORKDIR}/.env
+      - ../../test_data/genesis-l1-dev.json:${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
+      - ../../test_data/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
-      - DEPLOYER_CONTRACTS_PATH=/contracts
-      - ENV_FILE=/.env
+      # NOTE: The paths in the env variables must match those
+      # specified in the `volumes:` section
+      - DEPLOYER_CONTRACTS_PATH=${CI_ETHREX_WORKDIR}/contracts
+      - ENV_FILE=${CI_ETHREX_WORKDIR}/.env
+      - CONFIG_FILE=${CI_ETHREX_WORKDIR}/config.toml
+      - GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
+      - PRIVATE_KEYS_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
     depends_on:
       - ethrex
+    command: --deposit_rich
     restart: on-failure:3
 
   ethrex_l2:
@@ -41,7 +49,8 @@ services:
       - ENV_FILE=/.env
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
-      - .env:/.env:ro
+      - ./.env:/.env:ro
+      - ./config.toml:/config.toml:ro
     command: --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8552
     depends_on:
       contract_deployer:

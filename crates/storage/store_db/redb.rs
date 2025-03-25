@@ -6,13 +6,16 @@ use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use crate::{
     error::StoreError,
     rlp::{
-        AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP, ReceiptRLP,
-        TupleRLP,
+        AccountCodeHashRLP, AccountCodeRLP, BlockBodyRLP, BlockHashRLP, BlockHeaderRLP,
+        PayloadBundleRLP, ReceiptRLP, TupleRLP,
     },
 };
 use ethrex_common::types::{AccountState, BlockBody};
 use ethrex_common::{
-    types::{BlobsBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index, Receipt},
+    types::{
+        payload::PayloadBundle, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig, Index,
+        Receipt,
+    },
     H256, U256,
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -42,7 +45,7 @@ pub const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 33])
     MultimapTableDefinition::new("StorageTrieNodes");
 const CHAIN_DATA_TABLE: TableDefinition<ChainDataIndex, Vec<u8>> =
     TableDefinition::new("ChainData");
-const PAYLOADS_TABLE: TableDefinition<BlockNumber, Rlp<(Block, U256, BlobsBundle, bool)>> =
+const PAYLOADS_TABLE: TableDefinition<BlockNumber, PayloadBundleRLP> =
     TableDefinition::new("Payloads");
 const PENDING_BLOCKS_TABLE: TableDefinition<BlockHashRLP, BlockRLP> =
     TableDefinition::new("PendingBlocks");
@@ -55,7 +58,7 @@ const SNAP_STATE_TABLE: TableDefinition<SnapStateIndex, Vec<u8>> =
 const STATE_SNAPSHOT_TABLE: TableDefinition<AccountHashRLP, AccountStateRLP> =
     TableDefinition::new("StateSnapshot");
 const STORAGE_SNAPSHOT_TABLE: MultimapTableDefinition<AccountHashRLP, ([u8; 32], [u8; 32])> =
-    MultimapTableDefinition::new("TransactionLocations");
+    MultimapTableDefinition::new("StorageSnapshotTable");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -553,16 +556,11 @@ impl StoreEngine for RedBStore {
         self.write(
             PAYLOADS_TABLE,
             payload_id,
-            <(Block, U256, BlobsBundle, bool) as Into<Rlp<(Block, U256, BlobsBundle, bool)>>>::into(
-                (block, U256::zero(), BlobsBundle::empty(), false),
-            ),
+            <PayloadBundle as Into<PayloadBundleRLP>>::into(PayloadBundle::from_block(block)),
         )
     }
 
-    fn get_payload(
-        &self,
-        payload_id: u64,
-    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
+    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         Ok(self
             .read(PAYLOADS_TABLE, payload_id)?
             .map(|b| b.value().to()))
@@ -611,20 +609,12 @@ impl StoreEngine for RedBStore {
 
         Ok(())
     }
-    fn update_payload(
-        &self,
-        payload_id: u64,
-        block: Block,
-        block_value: U256,
-        blobs_bundle: BlobsBundle,
-        completed: bool,
-    ) -> Result<(), StoreError> {
+
+    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
         self.write(
             PAYLOADS_TABLE,
             payload_id,
-            <(Block, U256, BlobsBundle, bool) as Into<Rlp<(Block, U256, BlobsBundle, bool)>>>::into(
-                (block, block_value, blobs_bundle, completed),
-            ),
+            <PayloadBundle as Into<PayloadBundleRLP>>::into(payload),
         )
     }
 
@@ -780,6 +770,30 @@ impl StoreEngine for RedBStore {
                     <H256 as Into<AccountHashRLP>>::into(account_hash),
                     (key.0, value.to_big_endian()),
                 )?;
+            }
+        }
+        write_tx.commit()?;
+        Ok(())
+    }
+    fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        let write_tx = self.db.begin_write()?;
+        {
+            let mut table = write_tx.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+            for (account_hash, (storage_keys, storage_values)) in account_hashes
+                .into_iter()
+                .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
+            {
+                for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
+                    table.insert(
+                        <H256 as Into<AccountHashRLP>>::into(account_hash),
+                        (key.0, value.to_big_endian()),
+                    )?;
+                }
             }
         }
         write_tx.commit()?;

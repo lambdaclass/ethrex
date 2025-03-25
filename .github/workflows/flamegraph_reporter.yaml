@@ -1,7 +1,7 @@
 name: Flamegraph Reporter
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -15,12 +15,12 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_VERSION: 1.82.0
-  RUST_RETH_VERSION: 1.84.0
+  RUST_VERSION: 1.85.0
+  RUST_RETH_VERSION: 1.85.0
 
 jobs:
   generate-flamegraph-evm:
-    name: Generate Flamegraph LEVM
+    name: Generate Flamegraph
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -157,8 +157,8 @@ jobs:
           path: time_revm.txt
       - name: echo Output
         run: |
-          echo "LevM Time: $(grep "time_levm" time_levm.txt/time_levm.txt | cut -d '=' -f2)"
-          echo "Revm Time: $(grep "time_revm" time_revm.txt/time_revm.txt | cut -d '=' -f2)"
+          echo "LEVM Time: $(grep "time_levm" time_levm.txt | cut -d '=' -f2)"
+          echo "REVM Time: $(grep "time_revm" time_revm.txt | cut -d '=' -f2)"
 
   flamegraph-ethrex:
     name: Generate Flamegraph for Ethrex
@@ -423,87 +423,89 @@ jobs:
   upload-static-page:
     name: Upload artifacts for static page
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     needs: [generate-flamegraph-evm, flamegraph-ethrex, flamegraph-reth]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          ref: gh-pages
 
       - name: Download ethrex flamegraph artifact
         uses: actions/download-artifact@v4
         with:
           name: flamegraph_ethrex.svg
-          path: flamegraph_ethrex.svg
+          path: ./
 
       - name: Download reth flamegraph artifact
         uses: actions/download-artifact@v4
         with:
           name: flamegraph_reth.svg
-          path: flamegraph_reth.svg
+          path: ./
 
       - name: Download levm flamegraph artifact
         uses: actions/download-artifact@v4
         with:
           name: flamegraph_levm.svg
-          path: flamegraph_levm.svg
+          path: ./
 
       - name: Download revm flamegraph artifact
         uses: actions/download-artifact@v4
         with:
           name: flamegraph_revm.svg
-          path: flamegraph_revm.svg
+          path: ./
 
       - name: Download levm time artifact
         uses: actions/download-artifact@v4
         with:
           name: time_levm.txt
-          path: time_levm.txt
+          path: ./
 
       - name: Download revm time artifact
         uses: actions/download-artifact@v4
         with:
           name: time_revm.txt
-          path: time_revm.txt
+          path: ./
 
       - name: Update static page locally with new data
         shell: bash
         run: |
-          cp -r flamegraph_levm.svg pages/
-          cp -r flamegraph_revm.svg pages/
-          cp -r flamegraph_ethrex.svg pages/
-          cp -r flamegraph_reth.svg pages/
+          cp -r flamegraph_levm.svg flamegraphs/
+          cp -r flamegraph_revm.svg flamegraphs/
+          cp -r flamegraph_ethrex.svg flamegraphs/
+          cp -r flamegraph_reth.svg flamegraphs/
 
           # ETHREX HTML
-          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" pages/index.html
-          sed -i "s/{{ETHREX_TIME}}/${{ needs.flamegraph-ethrex.outputs.time }}/g" pages/index.html
-          sed -i "s/{{RETH_TIME}}/${{ needs.flamegraph-reth.outputs.time }}/g" pages/index.html
+          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" templates/index.html
+          sed -i "s/{{ETHREX_TIME}}/${{ needs.flamegraph-ethrex.outputs.time }}/g" templates/index.html
+          sed -i "s/{{RETH_TIME}}/${{ needs.flamegraph-reth.outputs.time }}/g" templates/index.html
 
           # LEVM HTML
-          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" pages/levm.html
-          time_levm=$(grep "time_levm" time_levm.txt/time_levm.txt | cut -d '=' -f2)
+          sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" templates/levm.html
+          time_levm=$(grep "time_levm" time_levm.txt | cut -d '=' -f2)
 
           minutes=$(bc -l <<< "scale=0; $time_levm / 60")
           seconds=$(bc -l <<< "scale=0; $time_levm % 60")
 
           time_levm_str="${minutes} minutes ${seconds} seconds"
-          sed -i "s/{{LEVM_TIME}}/${time_levm_str}/g" pages/levm.html
+          sed -i "s/{{LEVM_TIME}}/${time_levm_str}/g" templates/levm.html
 
-          time_revm=$(grep "time_revm" time_revm.txt/time_revm.txt | cut -d '=' -f2)
+          time_revm=$(grep "time_revm" time_revm.txt | cut -d '=' -f2)
 
           minutes=$(bc -l <<< "scale=0; $time_revm / 60")
           seconds=$(bc -l <<< "scale=0; $time_revm % 60")
 
           time_revm_str="${minutes} minutes ${seconds} seconds"
-          sed -i "s/{{REVM_TIME}}/${time_revm_str}/g" pages/levm.html
+          sed -i "s/{{REVM_TIME}}/${time_revm_str}/g" templates/levm.html
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+          rm flamegraphs/levm.html
+          rm flamegraphs/index.html
+
+          cp templates/levm.html flamegraphs/levm.html
+          cp templates/index.html flamegraphs/index.html
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: "pages/"
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./flamegraphs
+          destination_dir: flamegraphs

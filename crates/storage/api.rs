@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    Index, Receipt, Transaction,
+    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Index, Receipt, Transaction,
 };
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
@@ -210,19 +210,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
 
-    fn get_payload(
-        &self,
-        payload_id: u64,
-    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError>;
+    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
 
-    fn update_payload(
-        &self,
-        payload_id: u64,
-        block: Block,
-        block_value: U256,
-        blobs_bundle: BlobsBundle,
-        completed: bool,
-    ) -> Result<(), StoreError>;
+    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
 
@@ -279,6 +269,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_hash: H256,
         storage_keys: Vec<H256>,
         storage_values: Vec<U256>,
+    ) -> Result<(), StoreError>;
+
+    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
+    fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError>;
 
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment

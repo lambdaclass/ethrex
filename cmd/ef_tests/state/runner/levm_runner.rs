@@ -15,10 +15,7 @@ use ethrex_levm::{
     Environment,
 };
 use ethrex_storage::AccountUpdate;
-use ethrex_vm::{
-    backends::{self},
-    db::StoreWrapper,
-};
+use ethrex_vm::backends;
 use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
@@ -94,11 +91,7 @@ pub fn prepare_vm_for_tx(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<VM, EFTestRunnerError> {
-    let (initial_state, block_hash) = utils::load_initial_state(test);
-    let db = Arc::new(StoreWrapper {
-        store: initial_state.database().unwrap().clone(),
-        block_hash,
-    });
+    let db = Arc::new(utils::load_initial_state_levm(test));
 
     let tx = test
         .transactions
@@ -315,11 +308,10 @@ pub fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let (initial_state, block_hash) = utils::load_initial_state(test);
+                    let store_wrapper = utils::load_initial_state_levm(test);
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                         Some(*fork),
-                        &initial_state,
-                        block_hash,
+                        &store_wrapper,
                         &execution_report.new_state,
                     )
                     .map_err(|_| {

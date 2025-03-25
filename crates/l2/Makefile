@@ -1,21 +1,31 @@
-.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test
+.PHONY: help init down clean restart cli update-cli-contracts init-local-l1 init-l1 down-local-l1 \
+		restart-local-l1 rm-db-l1 clean-contract-deps restart-contract-deps deploy-l1 init-l2 down-l2 \
+		restart-l2 init-prover rm-db-l2 purge_prover_state ci_test test init-testnet deploy-l1-testnet \
+		restart-testnet
 
 .DEFAULT_GOAL := help
 
 L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
-L1_GENESIS_FILE_PATH=../../test_data/genesis-l1.json
+L1_GENESIS_FILE_PATH=../../test_data/genesis-l1-dev.json
 
 # Basic
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-init: init-local-l1 deploy-l1 update-system-contracts  init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+init: init-local-l1 deploy-l1 update-system-contracts init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
+
+## Same as init but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
+init-testnet: init-local-l1 deploy-l1-testnet update-system-contracts  init-l2
 
 down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 
 clean: clean-contract-deps ## 🧹 Cleans the localnet
 
 restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
+
+## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
+restart-testnet:
+	down-l2 down-metrics rm-db-l2 deploy-l1-testnet update-system-contracts init-l2
 
 # CLI
 cli: ## 🛠️ Installs the L2 Lambda ethrex CLI
@@ -41,7 +51,7 @@ ethrex_L2_DOCKER_COMPOSE_PATH=./docker-compose-l2.yaml
 ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics.yaml
 ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l1-dev.overrides.yaml
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l2.overrides.yaml
-
+CI_ETHREX_WORKDIR := /usr/local/bin
 
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
@@ -88,7 +98,7 @@ down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
 	docker compose -f ${ethrex_DEV_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH} down
 	docker compose -f docker-compose-l2.yaml down
 
-restart-local-l1: down-local-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
+restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
 
 rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX}
@@ -101,10 +111,14 @@ clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
 
 deploy-l1: ## 📜 Deploys the L1 contracts
-	DEPLOYER_CONTRACTS_PATH=contracts cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
+	DEPLOYER_CONTRACTS_PATH=contracts CONFIG_FILE=config.toml cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- --deposit_rich
+
+## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
+deploy-l1-testnet: ## 📜 Deploys the L1 contracts
+	DEPLOYER_CONTRACTS_PATH=contracts CONFIG_FILE=config.toml cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
 
 update-system-contracts:
-	DEPLOYER_CONTRACTS_PATH=contracts cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- ${L2_GENESIS_FILE_PATH}
+	DEPLOYER_CONTRACTS_PATH=contracts CONFIG_FILE=config.toml cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- ${L2_GENESIS_FILE_PATH}
 
 # L2
 init-l2: init-metrics ## 🚀 Initializes an L2 Lambda ethrex Client
@@ -132,7 +146,7 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 	pkill -f ethrex || exit 0
 
-restart-l2: down-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
+restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
 init-prover: ## 🚀 Initializes the Prover
 	@if [ -z "$$T" ]; then \
@@ -148,7 +162,7 @@ init-prover: ## 🚀 Initializes the Prover
 	else \
 		GPU=",gpu"; \
 	fi; \
-	cargo run --release --features "build_$$T$$GPU" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
+	cargo run --release --features "$$T$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
@@ -158,13 +172,18 @@ rm-db-l2: ## 🛑 Removes the DB used by the L2
 # Tests are at `crates/l2/tests/tests.rs`
 # https://doc.rust-lang.org/book/ch11-02-running-tests.html#filtering-to-run-multiple-tests
 ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
-	BRIDGE_ADDRESS=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) cargo test l2 --release -- --nocapture --test-threads=1
-	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	@echo "\n\033[0;33mWARNING: \033[0m Running the tests inside docker takes \033[1mA LOT\033[0m of time. If possible (especially when running the tests locally), consider running the tests with the 'make test' directive\n"
+
+	# We create an empty .env file simply because if the file
+	# does not exists, the container fails to write to it.
+	touch .env
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
+	cargo test l2 --release -- --nocapture --test-threads=1
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	BRIDGE_ADDRESS=$$(grep 'L1_WATCHER_BRIDGE_ADDRESS' .env | cut -d= -f2) ON_CHAIN_PROPOSER_ADDRESS=$$(grep 'COMMITTER_ON_CHAIN_PROPOSER_ADDRESS' .env | cut -d= -f2) cargo test l2 --release -- --nocapture --test-threads=1
+	CONFIG_FILE=config.toml cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
 
 # Purge L2's state

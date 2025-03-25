@@ -1,20 +1,21 @@
-use std::io::{BufRead, Write};
+use std::{
+    io::{BufRead, Write},
+    path::PathBuf,
+};
 
 use tracing::{debug, info};
-
+pub mod block_producer;
 pub mod committer;
 pub mod eth;
 pub mod l1_watcher;
-pub mod proposer;
 pub mod prover_client;
 pub mod prover_server;
 
 pub mod errors;
 
 pub fn read_env_file() -> Result<(), errors::ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
-    let env_file_path = open_readable(env_file_name)?;
-    let reader = std::io::BufReader::new(env_file_path);
+    let env_file = open_env_file()?;
+    let reader = std::io::BufReader::new(env_file);
 
     for line in reader.lines() {
         let line = line?;
@@ -42,14 +43,14 @@ pub fn read_env_file() -> Result<(), errors::ConfigError> {
 
 pub fn read_env_as_lines(
 ) -> Result<std::io::Lines<std::io::BufReader<std::fs::File>>, errors::ConfigError> {
-    let env_file_path = std::env::var("ENV_FILE").unwrap_or(".env".to_owned());
-    let env_file = open_readable(env_file_path)?;
+    let env_file = open_env_file()?;
     let reader = std::io::BufReader::new(env_file);
 
     Ok(reader.lines())
 }
 
-fn open_readable(path: String) -> std::io::Result<std::fs::File> {
+fn open_env_file() -> std::io::Result<std::fs::File> {
+    let path = get_env_file_path();
     match std::fs::File::open(path) {
         Ok(file) => Ok(file),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -60,12 +61,19 @@ fn open_readable(path: String) -> std::io::Result<std::fs::File> {
     }
 }
 
-pub fn write_env(lines: Vec<String>) -> Result<(), errors::ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+pub fn get_env_file_path() -> PathBuf {
+    match std::env::var("ENV_FILE") {
+        Ok(env_file_path) => PathBuf::from(env_file_path),
+        Err(_) => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".env"),
+    }
+}
+
+pub fn write_env_file(lines: Vec<String>) -> Result<(), errors::ConfigError> {
+    let path = get_env_file_path();
     let env_file = match std::fs::OpenOptions::new()
         .write(true)
         .truncate(true)
-        .open(&env_file_name)
+        .open(path)
     {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
