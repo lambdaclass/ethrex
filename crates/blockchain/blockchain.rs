@@ -39,6 +39,7 @@ pub struct Blockchain {
     pub mempool: Mempool,
 }
 
+#[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
     pub last_valid_hash: H256,
     pub failed_block_hash: H256,
