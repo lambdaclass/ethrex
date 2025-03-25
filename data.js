@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742942821653,
+  "lastUpdate": 1742944674323,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1225,6 +1225,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 231706874953,
             "range": "± 1486957612",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "579275c0bc6392b7f7ff25f4cf253579cadb2245",
+          "message": "fix(l2): bashism in l2 Makefile (#2301)\n\nThe `[[` builtin is not POSIX, which causes issues in some servers that\ndefault their shell to `sh` (POSIX-compat mode). Specifically, because\nthe builtin does not exist, the L2 always runs in based mode due to the\nerror.\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-03-25T22:20:04Z",
+          "tree_id": "4de2af114f2cec936f4ea95e5e169282d4038fb2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/579275c0bc6392b7f7ff25f4cf253579cadb2245"
+        },
+        "date": 1742944672081,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 230469754658,
+            "range": "± 700649031",
             "unit": "ns/iter"
           }
         ]
