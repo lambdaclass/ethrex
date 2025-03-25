@@ -17,7 +17,11 @@ For more detailed documentation on each part of the system:
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
 3. `cp configs/config_example.toml configs/config.toml` &rarr; check if you want to change any config.
-   - Ideally the `salt_is_zero` can be set to `false` to allow multiple contracts deployments.
+   - The `salt_is_zero` can be set to:
+     - `false` &rarr; randomizes the SALT to allow multiple deployments with random addresses.
+     - `true` &rarr; uses SALT equal to `H256::zero()` to deploy to deterministic addresses.
+     - The `L1` has to be restarted to use the `salt_is_zero = true`. 
+     - Set it to `false` if not using the CI or running a deterministic test.
 4. `make init`
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
