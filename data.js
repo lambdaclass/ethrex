@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742594650541,
+  "lastUpdate": 1742910556116,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1045,6 +1045,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 222976173527,
             "range": "± 1235507741",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d4b056cd387c0db577b6fabd1485013ad11efeb",
+          "message": "refactor(core): do not leak vm specific implementations from vm crate. (#2297)\n\n**Motivation**\nMake progress toward removing abstraction leaks in vm crate. Outside of\nvm, we should not know about revm vs levm.\n\n**Description**\n- Created `internal` feature flag for the crates that still need to\naccess internal apis: state tests and zkvm interfaces. The idea is that\nit will be temporary until we can remove the leaks from those crates.\n- Refactored the code to make the api explicit in `/vm/lib.rs`. Do not\nexpose modules to the outside by default. This is a first step, we're\nstill exposing too much.\n- Encapsulated `SpecId`, which is a internal concept inside vm, from\noutside we use `Fork`\n- Added utility function `create_contract_address` that uses revm. Added\nthat function to vm crate.",
+          "timestamp": "2025-03-25T12:49:21Z",
+          "tree_id": "80141def374bcf58a68aaa928524962bf375247e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7d4b056cd387c0db577b6fabd1485013ad11efeb"
+        },
+        "date": 1742910553704,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 230795622445,
+            "range": "± 1202144474",
             "unit": "ns/iter"
           }
         ]
