@@ -44,9 +44,6 @@ diff {manifest_dir}/configs/*_example.toml {manifest_dir}/configs/*.toml
     )]
     TomlFormat(String),
 
-    #[error(
-        "\x1b[91mCould not write to .env file.\x1b[0m
-"
-    )]
+    #[error("\x1b[91mCould not write to .env file.\x1b[0m {0}")]
     EnvWriteError(String),
 }

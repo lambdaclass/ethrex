@@ -249,7 +249,6 @@ impl L2Config {
 
 fn write_to_env(config: String, mode: ConfigMode) -> Result<(), TomlParserError> {
     let env_file_path = mode.get_env_path_or_default();
-
     let env_file = OpenOptions::new()
         .write(true)
         .create(true)

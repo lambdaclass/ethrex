@@ -5,12 +5,6 @@
 
 .DEFAULT_GOAL := help
 
-# Used to get the SP1_PROVER and RISC0_DEV_MODE
-ifneq (,$(wildcard ./.env.prover))
-    include .env.prover
-    export
-endif
-
 L2_GENESIS_FILE_PATH=../../test_data/genesis-l2.json
 L1_GENESIS_FILE_PATH=../../test_data/genesis-l1-dev.json
 
@@ -76,6 +70,8 @@ L2_AUTH_PORT=8552
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
+
+PROVER_ENV_FILE ?= ".env.prover" 
 
 # Local L1
 init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
@@ -181,11 +177,9 @@ init-prover: ## 🚀 Initializes the Prover
 		GPU=",gpu"; \
 	fi; \
 
-	SP1_PROVER=$(SP1_PROVER) \
-	RISC0_DEV_MODE=$(RISC0_DEV_MODE) \
 	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
 	PROVER_CLIENT_CONFIG_FILE=${ethrex_L2_PROVER_CLIENT_CONFIG_FILE} \
-	PROVER_ENV_FILE=".env.prover" \
+	PROVER_ENV_FILE=${PROVER_ENV_FILE} \
 	cargo run --release --features "$$T$$GPU,l2" \
 	--manifest-path ./prover/Cargo.toml \
 	--bin ethrex_prover -- $$T
