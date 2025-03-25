@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{
-    backends::{Evm, EvmEngine},
-    errors::ExecutionDBError,
-};
+use crate::{backends::Evm, errors::ExecutionDBError};
 use bytes::Bytes;
 use ethrex_common::{
     types::{AccountInfo, Block, BlockHash, ChainConfig},
@@ -50,12 +47,9 @@ impl ExecutionDB {
     /// Gets the Vec<[AccountUpdate]>/StateTransitions obtained after executing a block.
     pub fn get_account_updates(
         block: &Block,
-        evm_engine: EvmEngine,
-        store: Store,
+        evm: &mut Evm,
     ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
         // TODO: perform validation to exit early
-
-        let mut evm = Evm::new(evm_engine, store, block.hash());
 
         evm.execute_block(block)
             .map(|result| result.account_updates)
