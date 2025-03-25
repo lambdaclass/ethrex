@@ -52,7 +52,9 @@ jobs:
       - name: Build ethrex trie benchmark
         if: ${{ matrix.trie-version != 'cita' }}
         run: |
+          set -x
           cd crates/common/trie
+          ls -lah
           make build-ethrex-bench
           make ethrex-bench | tee bench-${{ matrix.trie-version }}.txt
 
