@@ -83,6 +83,8 @@ pub enum SyncMode {
 /// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct SyncManager {
+    /// This is also held by the SyncSupervidor allowing it to track the latest syncmode, without modifying it
+    /// No outside process should modify this value, only being modified by the sync cycle
     snap_enabled: Arc<AtomicBool>,
     peers: PeerHandler,
     /// The last block number used as a pivot for snap-sync

@@ -21,12 +21,11 @@ pub enum SyncStatus {
 
 #[derive(Debug)]
 pub struct SyncSupervisor {
-    // This is also held by the SyncManager and allows tracking it's latest syncmode
-    // It is a READ_ONLY value, as modifications will disrupt the current active sync progress
+    /// This is also held by the SyncManager and allows tracking it's latest syncmode
+    /// It is a READ_ONLY value, as modifications will disrupt the current active sync progress
     snap_enabled: Arc<AtomicBool>,
     syncer: Arc<Mutex<SyncManager>>,
     last_fcu_head: RwLock<H256>,
-    // TODO: move to syncer
     store: Store,
 }
 
