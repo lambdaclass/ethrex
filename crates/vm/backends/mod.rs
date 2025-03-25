@@ -3,7 +3,8 @@ pub mod revm;
 
 use self::revm::db::evm_state;
 use crate::execution_result::ExecutionResult;
-use crate::{db::StoreWrapper, errors::EvmError, spec_id, SpecId};
+use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
+use crate::{db::StoreWrapper, errors::EvmError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
@@ -283,8 +284,10 @@ impl Evm {
         &mut self,
         tx: &GenericTransaction,
         header: &BlockHeader,
-        spec_id: SpecId,
+        fork: Fork,
     ) -> Result<ExecutionResult, EvmError> {
+        let spec_id = fork_to_spec_id(fork);
+
         match self {
             Evm::REVM { state } => {
                 self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
@@ -312,8 +315,10 @@ impl Evm {
         &mut self,
         tx: &GenericTransaction,
         header: &BlockHeader,
-        spec_id: SpecId,
+        fork: Fork,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
+        let spec_id = fork_to_spec_id(fork);
+
         let res = match self {
             Evm::REVM { state } => {
                 self::revm::helpers::create_access_list(tx, header, state, spec_id)
