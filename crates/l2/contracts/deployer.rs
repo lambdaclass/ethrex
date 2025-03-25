@@ -83,7 +83,10 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
-    parse_configs(ConfigMode::Sequencer)?;
+    if let Err(e) = parse_configs(ConfigMode::Sequencer) {
+        eprintln!("{e}");
+        return Err(e.into());
+    }
 
     let setup_result = setup()?;
     download_contract_deps(&setup_result.contracts_path)?;
