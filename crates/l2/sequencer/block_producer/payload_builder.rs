@@ -26,7 +26,7 @@ const L2_DEPOSIT_SIZE: usize = 52; // address(H160) + amount(U256).
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
-/// Same as blockchain::build_payload without applying system operations and using a different method to `fill_transactions`
+/// Same as `blockchain::build_payload` without applying system operations and using a different `fill_transactions`
 pub fn build_payload(
     blockchain: Arc<Blockchain>,
     payload: Block,
@@ -64,7 +64,8 @@ pub fn build_payload(
     Ok(context.into())
 }
 
-/// Same as blockchain::fill_transactions but checks the resulting `StateDiff` size to not exceed Blob size limit
+/// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size  
+/// stays within the blob size limit after processing each transaction.
 pub fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
@@ -143,6 +144,7 @@ pub fn fill_transactions(
         // Execute tx
         let receipt = match blockchain.apply_transaction(&head_tx, context) {
             Ok(receipt) => {
+                // This call is the part that differs from the original `fill_transactions`.
                 if !check_state_diff_size(
                     &mut withdrawals_acc_size,
                     &mut deposits_acc_size,
