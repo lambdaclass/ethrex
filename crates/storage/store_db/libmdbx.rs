@@ -241,7 +241,7 @@ impl StoreEngine for Store {
             Some(bytes) => {
                 let json = String::from_utf8(bytes).map_err(|_| StoreError::DecodeError)?;
                 let chain_config: ChainConfig =
-                    serde_json::from_str(&json).unwrap();
+                    serde_json::from_str(&json).map_err(|_| StoreError::DecodeError)?;
                 Ok(chain_config)
             }
         }
