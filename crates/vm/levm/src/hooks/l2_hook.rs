@@ -11,7 +11,6 @@ use crate::{
         add_intrinsic_gas, decrease_account_balance, eip7702_set_access_code, get_account,
         get_account_mut_vm, get_base_fee_per_blob_gas, get_intrinsic_gas,
         get_valid_jump_destinations, has_delegation, increase_account_balance,
-        increment_account_nonce,
     },
     Account,
 };
@@ -29,9 +28,6 @@ impl Hook for L2Hook {
         vm: &mut crate::vm::VM,
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
-        println!("ENTRO ACA");
-        let sender_address = vm.env.origin;
-
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
             let intrinsic_gas: u64 = get_intrinsic_gas(
