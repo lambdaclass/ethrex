@@ -19,6 +19,7 @@ pub enum SyncStatus {
     Inactive,
 }
 
+/// Abstraction to interact with the active sync process without disturbing it
 #[derive(Debug)]
 pub struct SyncSupervisor {
     /// This is also held by the SyncManager and allows tracking it's latest syncmode
@@ -52,7 +53,7 @@ impl SyncSupervisor {
         }
     }
 
-    /// Creates a dummy SyncManager for tests where syncing is not needed
+    /// Creates a dummy SyncSupervisor for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
     pub fn dummy() -> Self {
         Self {
@@ -71,6 +72,8 @@ impl SyncSupervisor {
         }
     }
 
+    /// Returns the current sync status, either active or inactive and what the current syncmode is in the case of active
+    /// It will also start the next cycle if there is a pending sync
     pub fn status(&self) -> Result<SyncStatus, StoreError> {
         // Check current sync status and act accordingly
         Ok(match self.sync_status_internal()? {
@@ -106,6 +109,7 @@ impl SyncSupervisor {
         });
     }
 
+    /// Returns the internal sync status, either active, inactive, or pending (aka, the current cycle stopped due to staleness but the sync is not yet complete)
     fn sync_status_internal(&self) -> Result<SyncStatusInternal, StoreError> {
         // Try to get hold of the sync manager, if we can't then it means it is currently involved in a sync process
         Ok(if self.syncer.try_lock().is_err() {
@@ -119,6 +123,7 @@ impl SyncSupervisor {
         })
     }
 
+    /// Returns the syncer's current syncmode (either snap or full)
     fn sync_mode(&self) -> SyncMode {
         if self.snap_enabled.load(Ordering::Relaxed) {
             SyncMode::Snap
@@ -128,6 +133,7 @@ impl SyncSupervisor {
     }
 
     /// TODO: Very dirty method that should be removed asap once we move invalid ancestors to the store
+    /// Returns a copy of the invalid ancestors if the syncer is not busy
     pub fn invalid_ancestors(&self) -> Option<std::collections::HashMap<H256, H256>> {
         self.syncer
             .try_lock()
@@ -136,6 +142,7 @@ impl SyncSupervisor {
     }
 
     /// TODO: Very dirty method that should be removed asap once we move invalid ancestors to the store
+    /// Adds a key value pair to invalid ancestors if the syncer is not busy
     pub fn add_invalid_ancestor(&self, k: H256, v: H256) -> bool {
         self.syncer
             .try_lock()
