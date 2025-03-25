@@ -35,7 +35,6 @@ serde.workspace = true
 bincode = "1"
 
 ethereum-types.workspace = true
-rayon = "1.5"
 
 
 [lib]

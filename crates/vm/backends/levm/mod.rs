@@ -24,7 +24,6 @@ use ethrex_levm::{
     Account, AccountInfo as LevmAccountInfo, Environment,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use revm_primitives::Bytes;
 use std::cmp::min;
 use std::{collections::HashMap, sync::Arc};
@@ -69,15 +68,7 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        // Calculate tx senders in parallel
-        let transactions: Vec<_> = block
-            .body
-            .transactions
-            .par_iter()
-            .map(|tx| (tx, tx.sender()))
-            .collect();
-
-        for (tx, tx_sender) in transactions {
+        for (tx, tx_sender) in block.body.get_transactions_with_sender() {
             let report = Self::execute_tx(
                 tx,
                 tx_sender,
