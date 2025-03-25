@@ -7,6 +7,7 @@ use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
+use ethrex_trie::TrieError;
 use ethrex_vm::EvmError;
 use tokio::task::JoinError;
 
@@ -154,6 +155,8 @@ pub enum StateDiffError {
     EmptyAccountDiff,
     #[error("The length of the vector is too big to fit in u16: {0}")]
     LengthTooBig(#[from] core::num::TryFromIntError),
+    #[error("DB Error: {0}")]
+    DbError(#[from] TrieError),
 }
 
 #[derive(Debug, thiserror::Error)]
