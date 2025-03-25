@@ -4,6 +4,7 @@ pub mod revm;
 use self::revm::db::evm_state;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
+use crate::ExecutionDB;
 use crate::{db::StoreWrapper, errors::EvmError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
@@ -74,6 +75,11 @@ impl Evm {
                 block_cache: CacheDB::new(),
             },
         }
+    }
+
+    pub fn from_db(db: ExecutionDB) -> Self {
+        let state = EvmState::from(db);
+        Evm::REVM { state }
     }
 
     pub fn default(store: Store, parent_hash: H256) -> Self {

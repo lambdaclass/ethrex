@@ -1,7 +1,7 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
-use ethrex_vm::backends::revm::{db::EvmState, REVM};
+use ethrex_vm::Evm;
 use tracing::warn;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
@@ -40,11 +40,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_block_header,
         db,
     } = input;
-    let mut state = EvmState::from(db.clone());
-    let chain_config = state.chain_config()?;
-
     // Validate the block
-    validate_block(&block, &parent_block_header, &chain_config)?;
+    validate_block(&block, &parent_block_header, &db.chain_config)?;
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db.get_tries()?;
@@ -58,7 +55,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         return Err("invalid database".to_string().into());
     };
 
-    let result = REVM::execute_block(&block, &mut state)?;
+    let mut vm = Evm::from_db(db.clone());
+    let result = vm.execute_block(&block)?;
     let receipts = result.receipts;
     let account_updates = result.account_updates;
     validate_gas_used(&receipts, &block.header)?;
