@@ -57,6 +57,8 @@ impl From<ExecutionDB> for EvmState {
     }
 }
 
+use crate::{db::ExecutionDB, helpers::spec_id, EvmError, ExecutionDBError, StoreWrapper};
+
 use super::execution_db::ToExecDB;
 
 impl revm::Database for StoreWrapper {
