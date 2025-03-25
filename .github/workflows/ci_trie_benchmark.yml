@@ -69,6 +69,6 @@ jobs:
         with:
           tool: "cargo"
           name: Trie Benchmark
-          output-file-path: bench-${{ matrix.trie-version}}.txt
+          output-file-path: crates/common/trie/bench-${{ matrix.trie-version}}.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
