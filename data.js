@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742929928999,
+  "lastUpdate": 1742934130224,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1135,6 +1135,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 231323537827,
             "range": "± 840969873",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "55d8bd520e032323a83e780986d23156161d66d3",
+          "message": "refactor(l2): rework gas fee bump (#2277)\n\n**Motivation**\n\nThis PR moves all logic related to handling transaction retries and\nbumping gas fees to a single function\n`send_tx_bump_gas_exponential_backoff` (before it was scattered in a few\ndiferent places, hard to follow and with no exponential backoff).\n\nIt also introduces a small randomness to the intervals with which the\nmain processes (l1 commiter, l1 watcher and prover server) execute their\nmain loop, to avoid possible problems related to things running at\ndeterministic intervals.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>",
+          "timestamp": "2025-03-25T19:24:45Z",
+          "tree_id": "c671a1aa88bd75ff93d79bc553c7cd90c4d6b73f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/55d8bd520e032323a83e780986d23156161d66d3"
+        },
+        "date": 1742934128302,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 227892360916,
+            "range": "± 592695565",
             "unit": "ns/iter"
           }
         ]
