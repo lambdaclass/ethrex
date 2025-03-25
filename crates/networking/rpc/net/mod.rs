@@ -1,13 +1,12 @@
+pub mod version;
+
 use serde_json::Value;
 
-use crate::{
-    rpc::RpcApiContext,
-    utils::{RpcErr, RpcRequest},
-};
+use crate::{context::RpcApiContext, errors::RpcErr, router::RpcHandler, rpc_types::RpcRequest};
 
-pub fn version(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-    let chain_spec = context.storage.get_chain_config()?;
-
-    let value = serde_json::to_value(format!("{}", chain_spec.chain_id))?;
-    Ok(value)
+pub fn map_net_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "net_version" => version::Version::call(req, context),
+        unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
+    }
 }

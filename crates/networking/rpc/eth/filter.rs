@@ -11,11 +11,12 @@ use std::{
 };
 use tracing::error;
 
-use crate::rpc::RpcHandler;
 use crate::{
+    router::RpcHandler,
     types::block_identifier::{BlockIdentifier, BlockTag},
-    utils::{parse_json_hex, RpcErr, RpcRequest},
+    utils::parse_json_hex,
 };
+use crate::{RpcErr, RpcRequest};
 use rand::prelude::*;
 use serde_json::{json, Value};
 
@@ -69,7 +70,7 @@ impl NewFilterRequest {
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
         let from = self
             .request_data
             .from_block
@@ -140,7 +141,7 @@ impl DeleteFilterRequest {
         &self,
         _storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
             error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
             **poisoned_guard.get_mut() = HashMap::new();
@@ -157,7 +158,7 @@ impl DeleteFilterRequest {
         req: &RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
         let request = Self::parse(&req.params)?;
         request.handle(storage, filters)
     }
@@ -184,7 +185,7 @@ impl FilterChangesRequest {
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
         let latest_block_num = storage.get_latest_block_number()?;
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
             error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
@@ -238,7 +239,7 @@ impl FilterChangesRequest {
         req: &RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
         let request = Self::parse(&req.params)?;
         request.handle(storage, filters)
     }
@@ -256,17 +257,16 @@ mod tests {
 
     use super::ActiveFilters;
     use crate::{
+        context::{RpcApiContext, FILTER_DURATION},
         eth::{
             filter::PollableFilter,
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
-        rpc::{map_http_requests, RpcApiContext, FILTER_DURATION},
+        router::map_http_requests,
         utils::test_utils::{self, example_local_node_record, start_test_api},
+        RpcRequest,
     };
-    use crate::{
-        types::block_identifier::BlockIdentifier,
-        utils::{test_utils::example_p2p_node, RpcRequest},
-    };
+    use crate::{types::block_identifier::BlockIdentifier, utils::test_utils::example_p2p_node};
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]

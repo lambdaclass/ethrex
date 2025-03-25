@@ -1,4 +1,4 @@
-use crate::utils::RpcRequest;
+use crate::rpc_types::RpcRequest;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EthClientError {

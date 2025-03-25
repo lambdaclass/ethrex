@@ -1,11 +1,11 @@
 use std::{fmt, time::Duration};
 
 use crate::{
+    rpc_types::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
     types::{
         block::RpcBlock,
         receipt::{RpcLog, RpcReceipt},
     },
-    utils::{RpcErrorResponse, RpcRequest, RpcRequestId, RpcSuccessResponse},
 };
 use bytes::Bytes;
 use errors::{

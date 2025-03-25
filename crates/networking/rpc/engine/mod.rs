@@ -1,59 +1,65 @@
+pub mod capabilities;
 pub mod exchange_transition_config;
 pub mod fork_choice;
 pub mod payload;
 
-use crate::{
-    rpc::{RpcApiContext, RpcHandler},
-    utils::RpcErr,
-    utils::RpcRequest,
-};
-use serde_json::{json, Value};
+use crate::{context::RpcApiContext, errors::RpcErr, router::RpcHandler, rpc_types::RpcRequest};
+use serde_json::Value;
 
-pub type ExchangeCapabilitiesRequest = Vec<String>;
+pub use capabilities::ExchangeCapabilitiesRequest;
 
-/// List of capabilities that the execution layer client supports. Add new capabilities here.
-/// More info: https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#engine_exchangecapabilities
-pub const CAPABILITIES: [&str; 14] = [
-    "engine_forkchoiceUpdatedV1",
-    "engine_forkchoiceUpdatedV2",
-    "engine_forkchoiceUpdatedV3",
-    "engine_newPayloadV1",
-    "engine_newPayloadV2",
-    "engine_newPayloadV3",
-    "engine_newPayloadV4",
-    "engine_getPayloadV1",
-    "engine_getPayloadV2",
-    "engine_getPayloadV3",
-    "engine_getPayloadV4",
-    "engine_exchangeTransitionConfigurationV1",
-    "engine_getPayloadBodiesByHashV1",
-    "engine_getPayloadBodiesByRangeV1",
-];
-
-impl From<ExchangeCapabilitiesRequest> for RpcRequest {
-    fn from(val: ExchangeCapabilitiesRequest) -> Self {
-        RpcRequest {
-            method: "engine_exchangeCapabilities".to_string(),
-            params: Some(vec![serde_json::json!(val)]),
-            ..Default::default()
+pub async fn map_engine_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "engine_exchangeCapabilities" => {
+            capabilities::ExchangeCapabilitiesRequest::call(req, context)
         }
-    }
-}
-
-impl RpcHandler for ExchangeCapabilitiesRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?
-            .first()
-            .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))
-            .and_then(|v| {
-                serde_json::from_value(v.clone())
-                    .map_err(|error| RpcErr::BadParams(error.to_string()))
-            })
-    }
-
-    fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        Ok(json!(CAPABILITIES))
+        "engine_forkchoiceUpdatedV1" => fork_choice::ForkChoiceUpdatedV1::call(req, context),
+        "engine_forkchoiceUpdatedV2" => fork_choice::ForkChoiceUpdatedV2::call(req, context),
+        "engine_forkchoiceUpdatedV3" => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "based")] {
+                    fork_choice::ForkChoiceUpdatedV3::relay_to_gateway_or_fallback(req, context).await
+                } else {
+                    fork_choice::ForkChoiceUpdatedV3::call(req, context)
+                }
+            }
+        }
+        "engine_newPayloadV4" => payload::NewPayloadV4Request::call(req, context),
+        "engine_newPayloadV3" => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "based")] {
+                    payload::NewPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
+                } else {
+                    payload::NewPayloadV3Request::call(req, context)
+                }
+            }
+        }
+        "engine_newPayloadV2" => payload::NewPayloadV2Request::call(req, context),
+        "engine_newPayloadV1" => payload::NewPayloadV1Request::call(req, context),
+        "engine_exchangeTransitionConfigurationV1" => {
+            exchange_transition_config::ExchangeTransitionConfigV1Req::call(req, context)
+        }
+        "engine_getPayloadV4" => payload::GetPayloadV4Request::call(req, context),
+        "engine_getPayloadV3" => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "based")] {
+                    payload::GetPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
+                } else {
+                    payload::GetPayloadV3Request::call(req, context)
+                }
+            }
+        }
+        "engine_getPayloadV2" => payload::GetPayloadV2Request::call(req, context),
+        "engine_getPayloadV1" => payload::GetPayloadV1Request::call(req, context),
+        "engine_getPayloadBodiesByHashV1" => {
+            payload::GetPayloadBodiesByHashV1Request::call(req, context)
+        }
+        "engine_getPayloadBodiesByRangeV1" => {
+            payload::GetPayloadBodiesByRangeV1Request::call(req, context)
+        }
+        unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }

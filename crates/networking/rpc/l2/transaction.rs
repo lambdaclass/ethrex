@@ -1,9 +1,10 @@
 use crate::{
     clients::eth::get_address_from_secret_key,
+    context::RpcApiContext,
+    errors::RpcErr,
     eth::{fee_calculator::estimate_gas_tip, gas_price::GasPrice, transaction::EstimateGasRequest},
-    rpc::{RpcApiContext, RpcHandler},
+    router::RpcHandler,
     types::transaction::SendRawTransactionRequest,
-    utils::RpcErr,
 };
 use bytes::Bytes;
 use ethrex_common::{

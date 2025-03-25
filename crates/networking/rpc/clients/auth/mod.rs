@@ -4,11 +4,11 @@ use crate::{
         payload::{GetPayloadV3Request, NewPayloadV3Request},
         ExchangeCapabilitiesRequest,
     },
+    rpc_types::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
         payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus},
     },
-    utils::{RpcErrorResponse, RpcRequest, RpcSuccessResponse},
 };
 use bytes::Bytes;
 use errors::{

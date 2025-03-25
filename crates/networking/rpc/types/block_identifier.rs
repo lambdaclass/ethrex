@@ -5,7 +5,7 @@ use ethrex_storage::{error::StoreError, Store};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::utils::RpcErr;
+use crate::errors::RpcErr;
 
 #[derive(Clone, Debug)]
 pub enum BlockIdentifier {

@@ -10,6 +10,83 @@ pub(crate) mod fee_calculator;
 pub(crate) mod gas_price;
 pub(crate) mod max_priority_fee;
 
+use crate::context::RpcApiContext;
+use crate::errors::RpcErr;
+use crate::router::RpcHandler;
+use crate::rpc_types::RpcRequest;
+use serde_json::Value;
+
+pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "eth_chainId" => client::ChainId::call(req, context),
+        "eth_syncing" => client::Syncing::call(req, context),
+        "eth_getBlockByNumber" => block::GetBlockByNumberRequest::call(req, context),
+        "eth_getBlockByHash" => block::GetBlockByHashRequest::call(req, context),
+        "eth_getBalance" => account::GetBalanceRequest::call(req, context),
+        "eth_getCode" => account::GetCodeRequest::call(req, context),
+        "eth_getStorageAt" => account::GetStorageAtRequest::call(req, context),
+        "eth_getBlockTransactionCountByNumber" => {
+            block::GetBlockTransactionCountRequest::call(req, context)
+        }
+        "eth_getBlockTransactionCountByHash" => {
+            block::GetBlockTransactionCountRequest::call(req, context)
+        }
+        "eth_getTransactionByBlockNumberAndIndex" => {
+            transaction::GetTransactionByBlockNumberAndIndexRequest::call(req, context)
+        }
+        "eth_getTransactionByBlockHashAndIndex" => {
+            transaction::GetTransactionByBlockHashAndIndexRequest::call(req, context)
+        }
+        "eth_getBlockReceipts" => block::GetBlockReceiptsRequest::call(req, context),
+        "eth_getTransactionByHash" => transaction::GetTransactionByHashRequest::call(req, context),
+        "eth_getTransactionReceipt" => {
+            transaction::GetTransactionReceiptRequest::call(req, context)
+        }
+        "eth_createAccessList" => transaction::CreateAccessListRequest::call(req, context),
+        "eth_blockNumber" => block::BlockNumberRequest::call(req, context),
+        "eth_call" => transaction::CallRequest::call(req, context),
+        "eth_blobBaseFee" => block::GetBlobBaseFee::call(req, context),
+        "eth_getTransactionCount" => account::GetTransactionCountRequest::call(req, context),
+        "eth_feeHistory" => fee_market::FeeHistoryRequest::call(req, context),
+        "eth_estimateGas" => transaction::EstimateGasRequest::call(req, context),
+        "eth_getLogs" => logs::LogsFilter::call(req, context),
+        "eth_newFilter" => {
+            filter::NewFilterRequest::stateful_call(req, context.storage, context.active_filters)
+        }
+        "eth_uninstallFilter" => {
+            filter::DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
+        }
+        "eth_getFilterChanges" => filter::FilterChangesRequest::stateful_call(
+            req,
+            context.storage,
+            context.active_filters,
+        ),
+        "eth_sendRawTransaction" => {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "based")] {
+                    crate::types::transaction::SendRawTransactionRequest::relay_to_gateway_or_fallback(req, context).await
+                } else {
+                    crate::types::transaction::SendRawTransactionRequest::call(req, context)
+                }
+            }
+        }
+        "eth_getProof" => account::GetProofRequest::call(req, context),
+        "eth_gasPrice" => gas_price::GasPrice::call(req, context),
+        "eth_maxPriorityFeePerGas" => max_priority_fee::MaxPriorityFee::call(req, context),
+        unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
+    }
+}
+
+pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "debug_getRawHeader" => block::GetRawHeaderRequest::call(req, context),
+        "debug_getRawBlock" => block::GetRawBlockRequest::call(req, context),
+        "debug_getRawTransaction" => transaction::GetRawTransaction::call(req, context),
+        "debug_getRawReceipts" => block::GetRawReceipts::call(req, context),
+        unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
+    }
+}
+
 #[cfg(test)]
 pub mod test_utils {
     use bytes::Bytes;

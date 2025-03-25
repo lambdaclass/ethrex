@@ -11,9 +11,8 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::{
-    rpc::{RpcApiContext, RpcHandler},
-    types::block_identifier::BlockIdentifier,
-    utils::{parse_json_hex, RpcErr},
+    context::RpcApiContext, router::RpcHandler, types::block_identifier::BlockIdentifier,
+    utils::parse_json_hex, RpcErr,
 };
 use ethrex_storage::Store;
 

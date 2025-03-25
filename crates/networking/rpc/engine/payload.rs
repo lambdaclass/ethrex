@@ -7,12 +7,15 @@ use ethrex_common::{H256, U256};
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
-use crate::rpc::{RpcApiContext, RpcHandler, SyncStatus};
+use crate::context::RpcApiContext;
+use crate::context::SyncStatus;
+use crate::errors::RpcErr;
+use crate::router::RpcHandler;
+use crate::rpc_types::RpcRequest;
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
 };
-use crate::utils::RpcErr;
-use crate::utils::{parse_json_hex, RpcRequest};
+use crate::utils::parse_json_hex;
 
 // Must support rquest sizes of at least 32 blocks
 // Chosen an arbitrary x4 value

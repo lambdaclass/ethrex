@@ -3,9 +3,10 @@
 // - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
 use crate::{
-    rpc::{RpcApiContext, RpcHandler},
+    context::RpcApiContext,
+    errors::RpcErr,
+    router::RpcHandler,
     types::{block_identifier::BlockIdentifier, receipt::RpcLog},
-    utils::RpcErr,
 };
 use ethrex_common::{H160, H256};
 use ethrex_storage::Store;

@@ -3,7 +3,7 @@ use crate::{
         errors::{CallError, EthClientError},
         EthClient, RpcResponse,
     },
-    utils::{RpcRequest, RpcRequestId},
+    rpc_types::{RpcRequest, RpcRequestId},
 };
 use bytes::Bytes;
 use ethrex_common::types::{GenericTransaction, TxKind};

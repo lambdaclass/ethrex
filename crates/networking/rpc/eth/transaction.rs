@@ -1,15 +1,16 @@
 use std::sync::Arc;
 
 #[cfg(feature = "based")]
-use crate::utils::RpcRequest;
+use crate::rpc_types::RpcRequest;
 use crate::{
+    context::RpcApiContext,
+    errors::RpcErr,
     eth::block,
-    rpc::{RpcApiContext, RpcHandler},
+    router::RpcHandler,
     types::{
         block_identifier::BlockIdentifier,
         transaction::{RpcTransaction, SendRawTransactionRequest},
     },
-    utils::RpcErr,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{

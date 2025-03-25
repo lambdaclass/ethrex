@@ -1,7 +1,7 @@
 use ethrex_storage::Store;
 use tracing::error;
 
-use crate::utils::RpcErr;
+use crate::errors::RpcErr;
 
 // TODO: Maybe these constants should be some kind of config.
 // How many transactions to take as a price sample from a block.
