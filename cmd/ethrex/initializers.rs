@@ -11,7 +11,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::backends::EvmEngine;
+use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -127,7 +127,7 @@ pub fn init_rpc_api(
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
-        get_sponsor_pk(),
+        get_sponsor_pk(l2_opts),
     )
     .into_future();
 
@@ -360,7 +360,13 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
 }
 
 #[cfg(feature = "l2")]
-pub fn get_sponsor_pk() -> SecretKey {
+pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
+    if let Some(pk) = opts.sponsor_private_key {
+        return pk;
+    }
+
+    warn!("Sponsor private key not provided. Trying to read from the .env file.");
+
     if let Err(e) = read_env_file() {
         panic!("Failed to read .env file: {e}");
     }
