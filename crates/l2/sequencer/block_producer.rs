@@ -13,6 +13,7 @@ use ethrex_common::Address;
 use ethrex_storage::Store;
 use ethrex_vm::backends::BlockExecutionResult;
 use keccak_hash::H256;
+use payload_builder::build_payload;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
@@ -103,7 +104,7 @@ impl BlockProducer {
         let payload = create_payload(&args, &store)?;
 
         // Blockchain builds the payload from mempool txs and executes them
-        let payload_build_result = blockchain.build_payload(payload)?;
+        let payload_build_result = build_payload(blockchain.clone(), payload, &store)?;
         info!(
             "Built payload for new block {}",
             payload_build_result.payload.header.number

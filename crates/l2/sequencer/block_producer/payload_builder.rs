@@ -27,7 +27,7 @@ const L2_DEPOSIT_SIZE: usize = 52; // address(H160) + amount(U256).
 pub fn build_payload(
     blockchain: Arc<Blockchain>,
     payload: Block,
-    store: Store,
+    store: &Store,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -60,7 +60,7 @@ pub fn build_payload(
 pub fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
-    store: Store,
+    store: &Store,
 ) -> Result<(), BlockProducerError> {
     // Two bytes for the len
     let (mut withdrawals_size, mut deposits_size): (usize, usize) = (2, 2);
