@@ -289,9 +289,10 @@ pub async fn map_authrpc_requests(
     req: &RpcRequest,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
+    dbg!(&req);
     match req.namespace() {
-        Ok(RpcNamespace::Engine) => map_engine_requests(req, context).await,
-        Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
+        Ok(RpcNamespace::Engine) => dbg!(map_engine_requests(req, context).await),
+        Ok(RpcNamespace::Eth) => dbg!(map_eth_requests(req, context).await),
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }

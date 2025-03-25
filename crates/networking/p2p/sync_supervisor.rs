@@ -67,6 +67,7 @@ impl SyncSupervisor {
 
     /// Updates the last fcu head. This may be used on the next sync cycle if needed
     pub fn set_head(&self, fcu_head: H256) {
+        tracing::info!("[Sync Supervisor] received new head");
         if let Ok(mut last_fcu_head) = self.last_fcu_head.write() {
             *last_fcu_head = fcu_head
         }
@@ -75,6 +76,7 @@ impl SyncSupervisor {
     /// Returns the current sync status, either active or inactive and what the current syncmode is in the case of active
     /// It will also start the next cycle if there is a pending sync
     pub fn status(&self) -> Result<SyncStatus, StoreError> {
+        tracing::info!("[Sync Supervisor] requesting status");
         // Check current sync status and act accordingly
         Ok(match self.sync_status_internal()? {
             SyncStatusInternal::Inactive => SyncStatus::Inactive,
@@ -90,6 +92,7 @@ impl SyncSupervisor {
     /// Attempts to sync to the last received fcu head
     /// Will do nothing if the syncer is already involved in a sync process
     pub fn start_sync(&self) {
+        tracing::info!("[Sync Supervisor] requested start sync");
         let syncer = self.syncer.clone();
         let Ok(sync_head) = self.last_fcu_head.read() else {
             tracing::error!("Poisoned RwLock, unable to sync");
