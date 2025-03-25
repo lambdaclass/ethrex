@@ -134,20 +134,22 @@ impl Blockchain {
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        let since = Instant::now();
+        tokio::task::spawn_blocking(|| {
+            let since = Instant::now();
 
-        let result = self
-            .execute_block(block)
-            .and_then(|res| self.store_block(block, res));
+            let result = self
+                .execute_block(block)
+                .and_then(|res| self.store_block(block, res));
 
-        let interval = Instant::now().duration_since(since).as_millis();
-        if interval != 0 {
-            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
-        }
+            let interval = Instant::now().duration_since(since).as_millis();
+            if interval != 0 {
+                let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+                let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+                info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+            }
+            result
+        }).await
 
-        result
     }
 
     /// Adds multiple blocks in a batch.
