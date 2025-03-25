@@ -95,12 +95,10 @@ impl SyncSupervisor {
         };
         let sync_head = *sync_head;
         let store = self.store.clone();
-        let Ok(Some(current_head)) = self
-            .store
-            .get_latest_canonical_block_hash() else {
-                tracing::error!("Failed to fecth latest canonical block, unable to sync");
-                return;
-            };
+        let Ok(Some(current_head)) = self.store.get_latest_canonical_block_hash() else {
+            tracing::error!("Failed to fecth latest canonical block, unable to sync");
+            return;
+        };
         tokio::spawn(async move {
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             if let Ok(mut syncer) = syncer.try_lock() {
