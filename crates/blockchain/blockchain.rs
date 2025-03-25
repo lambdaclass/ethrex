@@ -36,7 +36,6 @@ pub struct Blockchain {
     pub evm_engine: EvmEngine,
     storage: Store,
     pub mempool: Mempool,
-    test: u16,
 }
 
 impl Blockchain {
@@ -45,7 +44,6 @@ impl Blockchain {
             evm_engine,
             storage: store,
             mempool: Mempool::new(),
-            test: 1,
         }
     }
 
@@ -54,7 +52,6 @@ impl Blockchain {
             evm_engine: EvmEngine::default(),
             storage: store,
             mempool: Mempool::new(),
-            test: 1,
         }
     }
 
