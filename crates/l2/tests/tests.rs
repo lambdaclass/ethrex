@@ -380,21 +380,25 @@ async fn l2_revert_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Common Bridge initial balance: {common_bridge_initial_balance}");
 
     let tx_dep = proposer_client
-        .build_eip1559_transaction(
+        .build_privileged_transaction(
             l1_rich_wallet_address,
             l1_rich_wallet_address,
             Bytes::new(),
             Overrides {
                 value: Some(U256::from(100000000000000000000u128)),
                 gas_limit: Some(149707178),
+                max_priority_fee_per_gas: Some(10000000000000000),
+                max_fee_per_gas: Some(10000000000),
                 ..Default::default()
             },
             10,
         )
         .await?;
-    proposer_client
-        .send_eip1559_transaction(&tx_dep, &l1_rich_wallet_private_key())
+    let tx_hash = proposer_client
+        .send_privileged_l2_transaction(&tx_dep, &l1_rich_wallet_private_key())
         .await?;
+    let _receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &proposer_client, 10).await?;
 
     Ok(())
 }
