@@ -3,9 +3,9 @@ pub mod client;
 use serde_json::Value;
 
 use crate::context::RpcApiContext;
-use crate::errors::RpcErr;
-use crate::router::RpcHandler;
+use crate::rpc_types::RpcErr;
 use crate::rpc_types::RpcRequest;
+use crate::server::RpcHandler;
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {

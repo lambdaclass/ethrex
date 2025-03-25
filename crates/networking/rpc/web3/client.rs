@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use crate::context::RpcApiContext;
-use crate::errors::RpcErr;
-use crate::router::RpcHandler;
+use crate::rpc_types::RpcErr;
+use crate::server::RpcHandler;
 
 pub struct ClientVersion;
 

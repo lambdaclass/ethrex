@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::{context::RpcApiContext, errors::RpcErr, router::RpcHandler};
+use crate::{context::RpcApiContext, server::RpcHandler, RpcErr};
 
 pub struct Version;
 

@@ -9,9 +9,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::context::RpcApiContext;
 use crate::context::SyncStatus;
-use crate::errors::RpcErr;
-use crate::router::RpcHandler;
+use crate::rpc_types::RpcErr;
 use crate::rpc_types::RpcRequest;
+use crate::server::RpcHandler;
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
 };

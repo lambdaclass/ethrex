@@ -10,9 +10,9 @@ use tracing::{debug, info, warn};
 
 use crate::{
     context::{RpcApiContext, SyncStatus},
-    errors::RpcErr,
-    router::RpcHandler,
+    rpc_types::RpcErr,
     rpc_types::RpcRequest,
+    server::RpcHandler,
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
         payload::PayloadStatus,

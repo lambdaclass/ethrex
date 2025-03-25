@@ -7,8 +7,8 @@ use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 
 use crate::context::RpcApiContext;
-use crate::errors::RpcErr;
-use crate::router::RpcHandler;
+use crate::rpc_types::RpcErr;
+use crate::server::RpcHandler;
 
 #[derive(Serialize, Debug)]
 struct NodeInfo {

@@ -1,7 +1,7 @@
 use serde_json::Value;
 use tracing::info;
 
-use crate::{context::RpcApiContext, errors::RpcErr, router::RpcHandler};
+use crate::{context::RpcApiContext, server::RpcHandler, RpcErr};
 
 pub struct ChainId;
 impl RpcHandler for ChainId {

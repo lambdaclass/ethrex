@@ -4,9 +4,9 @@ use std::sync::Arc;
 use crate::rpc_types::RpcRequest;
 use crate::{
     context::RpcApiContext,
-    errors::RpcErr,
     eth::block,
-    router::RpcHandler,
+    rpc_types::RpcErr,
+    server::RpcHandler,
     types::{
         block_identifier::BlockIdentifier,
         transaction::{RpcTransaction, SendRawTransactionRequest},

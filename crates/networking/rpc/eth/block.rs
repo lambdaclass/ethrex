@@ -5,8 +5,8 @@ use tracing::info;
 
 use crate::{
     context::RpcApiContext,
-    errors::RpcErr,
-    router::RpcHandler,
+    rpc_types::RpcErr,
+    server::RpcHandler,
     types::{
         block::RpcBlock,
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},

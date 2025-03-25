@@ -1,9 +1,9 @@
 use crate::{
     clients::eth::get_address_from_secret_key,
     context::RpcApiContext,
-    errors::RpcErr,
     eth::{fee_calculator::estimate_gas_tip, gas_price::GasPrice, transaction::EstimateGasRequest},
-    router::RpcHandler,
+    rpc_types::RpcErr,
+    server::RpcHandler,
     types::transaction::SendRawTransactionRequest,
 };
 use bytes::Bytes;

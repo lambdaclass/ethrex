@@ -1,4 +1,4 @@
-use crate::{context::RpcApiContext, errors::RpcErr, router::RpcHandler, rpc_types::RpcRequest};
+use crate::{context::RpcApiContext, rpc_types::RpcRequest, server::RpcHandler, RpcErr};
 use serde_json::{json, Value};
 
 pub type ExchangeCapabilitiesRequest = Vec<String>;

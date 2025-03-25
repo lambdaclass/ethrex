@@ -1,8 +1,8 @@
 use crate::eth::fee_calculator::estimate_gas_tip;
 
 use crate::context::RpcApiContext;
-use crate::errors::RpcErr;
-use crate::router::RpcHandler;
+use crate::rpc_types::RpcErr;
+use crate::server::RpcHandler;
 use serde_json::Value;
 
 // TODO: This does not need a struct,
@@ -60,8 +60,8 @@ mod tests {
     use crate::RpcRequest;
     use crate::{
         context::RpcApiContext,
-        router::map_http_requests,
-        router::RpcHandler,
+        server::map_http_requests,
+        server::RpcHandler,
         utils::{parse_json_hex, test_utils::example_p2p_node},
     };
     #[cfg(feature = "based")]

@@ -1,9 +1,9 @@
 pub mod transaction;
 
 use crate::context::RpcApiContext;
-use crate::errors::RpcErr;
-use crate::router::RpcHandler;
+use crate::rpc_types::RpcErr;
 use crate::rpc_types::RpcRequest;
+use crate::server::RpcHandler;
 use serde_json::Value;
 
 pub fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {

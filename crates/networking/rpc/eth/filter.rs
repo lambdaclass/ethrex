@@ -12,7 +12,7 @@ use std::{
 use tracing::error;
 
 use crate::{
-    router::RpcHandler,
+    server::RpcHandler,
     types::block_identifier::{BlockIdentifier, BlockTag},
     utils::parse_json_hex,
 };
@@ -70,7 +70,7 @@ impl NewFilterRequest {
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
+    ) -> Result<serde_json::Value, crate::rpc_types::RpcErr> {
         let from = self
             .request_data
             .from_block
@@ -141,7 +141,7 @@ impl DeleteFilterRequest {
         &self,
         _storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
+    ) -> Result<serde_json::Value, crate::rpc_types::RpcErr> {
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
             error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
             **poisoned_guard.get_mut() = HashMap::new();
@@ -158,7 +158,7 @@ impl DeleteFilterRequest {
         req: &RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
+    ) -> Result<serde_json::Value, crate::rpc_types::RpcErr> {
         let request = Self::parse(&req.params)?;
         request.handle(storage, filters)
     }
@@ -185,7 +185,7 @@ impl FilterChangesRequest {
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
+    ) -> Result<serde_json::Value, crate::rpc_types::RpcErr> {
         let latest_block_num = storage.get_latest_block_number()?;
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
             error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
@@ -239,7 +239,7 @@ impl FilterChangesRequest {
         req: &RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
-    ) -> Result<serde_json::Value, crate::errors::RpcErr> {
+    ) -> Result<serde_json::Value, crate::rpc_types::RpcErr> {
         let request = Self::parse(&req.params)?;
         request.handle(storage, filters)
     }
@@ -262,7 +262,7 @@ mod tests {
             filter::PollableFilter,
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
-        router::map_http_requests,
+        server::map_http_requests,
         utils::test_utils::{self, example_local_node_record, start_test_api},
         RpcRequest,
     };

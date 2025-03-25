@@ -3,7 +3,7 @@ pub mod exchange_transition_config;
 pub mod fork_choice;
 pub mod payload;
 
-use crate::{context::RpcApiContext, errors::RpcErr, router::RpcHandler, rpc_types::RpcRequest};
+use crate::{context::RpcApiContext, rpc_types::RpcRequest, server::RpcHandler, RpcErr};
 use serde_json::Value;
 
 pub use capabilities::ExchangeCapabilitiesRequest;

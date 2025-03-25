@@ -2,8 +2,8 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::context::RpcApiContext;
-use crate::errors::RpcErr;
-use crate::router::RpcHandler;
+use crate::rpc_types::RpcErr;
+use crate::server::RpcHandler;
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use ethrex_common::{Address, BigEndianHash, H256, U256};

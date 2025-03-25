@@ -4,8 +4,8 @@
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
 use crate::{
     context::RpcApiContext,
-    errors::RpcErr,
-    router::RpcHandler,
+    rpc_types::RpcErr,
+    server::RpcHandler,
     types::{block_identifier::BlockIdentifier, receipt::RpcLog},
 };
 use ethrex_common::{H160, H256};
