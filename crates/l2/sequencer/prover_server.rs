@@ -215,7 +215,7 @@ impl ProverServer {
                                     if let Err(e) = self_clone.handle_connection(stream).await {
                                         error!("Error handling connection from {addr}: {e}");
                                     } else {
-                                        warn!("Connection from {addr} handled successfully");
+                                        debug!("Connection from {addr} handled successfully");
                                     }
                                 });
 
