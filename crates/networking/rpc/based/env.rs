@@ -27,7 +27,7 @@ pub struct EnvV0 {
 
 impl EnvV0 {
     pub fn handle(&self, _context: RpcApiContext) -> Result<serde_json::Value, RpcErr> {
-        tracing::info!("handling env");
+        tracing::debug!("handling env");
         Ok(serde_json::Value::Null)
     }
 }

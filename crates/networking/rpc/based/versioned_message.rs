@@ -45,7 +45,7 @@ pub struct SignedMessage {
 
 impl SignedMessage {
     fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
-        tracing::info!("Parsing based message");
+        tracing::debug!("parsing based message");
 
         let Some(params) = params else {
             return Err(RpcErr::InvalidBasedMessage(

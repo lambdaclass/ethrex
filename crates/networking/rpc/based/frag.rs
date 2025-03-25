@@ -25,7 +25,7 @@ pub struct FragV0 {
 
 impl FragV0 {
     pub fn handle(&self, _context: RpcApiContext) -> Result<serde_json::Value, RpcErr> {
-        tracing::info!("handling frag");
+        tracing::debug!("handling frag");
         Ok(serde_json::Value::Null)
     }
 }
