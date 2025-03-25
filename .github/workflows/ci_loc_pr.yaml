@@ -9,12 +9,6 @@ jobs:
     name: Report PR Line Changes
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0 # Fetch all history to allow base comparison
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.82.0
         with:
@@ -23,19 +17,10 @@ jobs:
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Lines of Code Counter for PR
-        run: cd cmd/loc && make loc-detailed
-        # This creates current_detailed_loc_report.json
-
-      - name: Save PR detailed report
-        run: cp cmd/loc/current_detailed_loc_report.json cmd/loc/pr_detailed_loc_report.json
-
-      - name: Checkout base branch commit
-        run: |
-          BASE_REF=${{ github.base_ref }}
-          echo "Base branch: $BASE_REF"
-          git fetch origin $BASE_REF
-          git checkout $(git merge-base HEAD origin/$BASE_REF)
+      - name: Checkout Base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
 
       - name: Run Lines of Code Counter for base
         run: cd cmd/loc && make loc-detailed
@@ -44,13 +29,14 @@ jobs:
       - name: Rename base report to previous_detailed_loc_report.json
         run: mv cmd/loc/current_detailed_loc_report.json cmd/loc/previous_detailed_loc_report.json
 
-      - name: Checkout back to PR branch for comparison
-        env:
-          PR_HEAD_REF: ${{ github.head_ref }}
-        run: git checkout "$PR_HEAD_REF"
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Restore PR detailed report
-        run: mv cmd/loc/pr_detailed_loc_report.json cmd/loc/current_detailed_loc_report.json
+      - name: Run Lines of Code Counter for PR
+        run: cd cmd/loc && make loc-detailed
+        # This creates current_detailed_loc_report.json
 
       - name: Compare Detailed Lines of Code Count
         run: cd cmd/loc && make loc-compare-detailed
