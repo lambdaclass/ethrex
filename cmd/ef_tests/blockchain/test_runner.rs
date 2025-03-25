@@ -8,6 +8,8 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 
+use tokio::runtime::Runtime;
+
 pub fn run_ef_test(test_key: &str, test: &TestUnit) {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
@@ -16,6 +18,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
     assert_eq!(decoded_block.header, genesis_block_header);
 
     let store = build_store_for_test(test);
+    let rt = Runtime::new().unwrap();
 
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
@@ -33,7 +36,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block);
+        let chain_result = rt.block_on(blockchain.add_block(block));
         match chain_result {
             Err(error) => {
                 assert!(

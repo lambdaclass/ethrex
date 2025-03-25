@@ -2937,6 +2937,7 @@ dependencies = [
  "lazy_static",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3247,6 +3248,7 @@ dependencies = [
  "serde_json",
  "sha3",
  "thiserror 2.0.11",
+ "tokio",
  "tracing",
 ]
 

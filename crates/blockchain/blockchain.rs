@@ -133,7 +133,7 @@ impl Blockchain {
             .map_err(ChainError::StoreError)
     }
 
-    pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+    pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
 
         let result = self
@@ -286,7 +286,7 @@ impl Blockchain {
     }
 
     //TODO: Forkchoice Update shouldn't be part of this function
-    pub fn import_blocks(&self, blocks: &Vec<Block>) {
+    pub async fn import_blocks(&self, blocks: &[Block]) {
         let size = blocks.len();
         for block in blocks {
             let hash = block.hash();
@@ -294,7 +294,7 @@ impl Blockchain {
                 "Adding block {} with hash {:#x}.",
                 block.header.number, hash
             );
-            if let Err(error) = self.add_block(block) {
+            if let Err(error) = self.add_block(block).await {
                 warn!(
                     "Failed to add block {} with hash {:#x}: {}.",
                     block.header.number, hash, error

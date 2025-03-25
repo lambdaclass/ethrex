@@ -17,7 +17,7 @@ impl RpcHandler for MaxPriorityFee {
         Ok(MaxPriorityFee {})
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let estimated_gas_tip = estimate_gas_tip(&context.storage)?;
 
         let gas_tip = match estimated_gas_tip {
@@ -80,56 +80,56 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_for_legacy_txs() {
+    #[tokio::test]
+    async fn test_for_legacy_txs() {
         let context = default_context();
 
         add_legacy_tx_blocks(&context.storage, 100, 10);
 
         let gas_price = MaxPriorityFee {};
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
 
-    #[test]
-    fn test_for_eip_1559_txs() {
+    #[tokio::test]
+    async fn test_for_eip_1559_txs() {
         let context = default_context();
 
         add_eip1559_tx_blocks(&context.storage, 100, 10);
 
         let gas_price = MaxPriorityFee {};
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
-    #[test]
-    fn test_with_mixed_transactions() {
+    #[tokio::test]
+    async fn test_with_mixed_transactions() {
         let context = default_context();
 
         add_mixed_tx_blocks(&context.storage, 100, 10);
 
         let gas_price = MaxPriorityFee {};
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
-    #[test]
-    fn test_with_not_enough_blocks_or_transactions() {
+    #[tokio::test]
+    async fn test_with_not_enough_blocks_or_transactions() {
         let context = default_context();
 
         add_mixed_tx_blocks(&context.storage, 100, 0);
 
         let gas_price = MaxPriorityFee {};
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         assert_eq!(response, Value::Null);
     }
-    #[test]
-    fn test_with_no_blocks_but_genesis() {
+    #[tokio::test]
+    async fn test_with_no_blocks_but_genesis() {
         let context = default_context();
         let gas_price = MaxPriorityFee {};
 
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         assert_eq!(response, Value::Null);
     }
     #[tokio::test]

@@ -32,7 +32,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 1)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
@@ -65,7 +65,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 2)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
@@ -153,7 +153,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
         gateway_response.or(client_response)
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 3)?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {

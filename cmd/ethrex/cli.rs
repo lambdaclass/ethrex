@@ -256,6 +256,8 @@ pub fn remove_db(datadir: &str) {
 }
 
 pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
     let data_dir = set_datadir(data_dir);
 
     let store = init_store(&data_dir, network);
@@ -279,5 +281,5 @@ pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) 
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-    blockchain.import_blocks(&blocks);
+    rt.block_on(blockchain.import_blocks(&blocks));
 }

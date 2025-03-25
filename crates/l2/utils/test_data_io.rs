@@ -63,6 +63,8 @@ pub fn generate_program_input(
     chain: Vec<Block>,
     block_number: usize,
 ) -> Result<ProgramInput, ProverInputError> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
     let block = chain
         .get(block_number)
         .ok_or(ProverInputError::InvalidBlockNumber(block_number))?
@@ -74,7 +76,7 @@ pub fn generate_program_input(
     // create blockchain
     let blockchain = Blockchain::default_with_store(store.clone());
     for block in chain {
-        blockchain.add_block(&block)?;
+        rt.block_on(blockchain.add_block(&block))?;
     }
 
     let parent_hash = block.header.parent_hash;

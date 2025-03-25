@@ -396,8 +396,8 @@ mod tests {
     use std::fs::{self};
 
     #[test_casing(2, [EvmEngine::LEVM, EvmEngine::REVM])]
-    #[test]
-    fn test_state_file_integration(
+    #[tokio::test]
+    async fn test_state_file_integration(
         evm_engine: EvmEngine,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = fs::remove_dir_all(default_datadir()?) {
@@ -421,7 +421,7 @@ mod tests {
         // create blockchain
         let blockchain = Blockchain::default_with_store(store.clone());
         for block in &blocks {
-            blockchain.add_block(block).unwrap();
+            blockchain.add_block(block).await.unwrap();
         }
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
