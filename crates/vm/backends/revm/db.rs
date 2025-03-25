@@ -57,7 +57,7 @@ impl From<ExecutionDB> for EvmState {
     }
 }
 
-use crate::{db::ExecutionDB, helpers::spec_id, EvmError, ExecutionDBError, StoreWrapper};
+use crate::{helpers::spec_id, EvmError, ExecutionDB, ExecutionDBError, StoreWrapper};
 
 use super::execution_db::ToExecDB;
 

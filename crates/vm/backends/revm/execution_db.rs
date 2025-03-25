@@ -10,7 +10,7 @@ use revm::{
 };
 use revm_primitives::SpecId;
 
-use crate::{backends::revm::block_env, db::ExecutionDB, ExecutionDBError};
+use crate::{backends::revm::block_env, ExecutionDB, ExecutionDBError};
 
 use super::tx_env;
 impl ExecutionDB {

@@ -380,7 +380,7 @@ mod tests {
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
         backends::{Evm, EvmEngine},
-        db::ExecutionDB,
+        ExecutionDB,
     };
     use test_casing::test_casing;
 
