@@ -465,6 +465,7 @@ mod tests {
         context
             .storage
             .add_initial_state(genesis_config)
+            .await
             .expect("Fatal: could not add test genesis in test");
         let response = map_http_requests(&request, context)
             .await

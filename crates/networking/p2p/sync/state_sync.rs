@@ -71,7 +71,9 @@ pub(crate) async fn state_sync(
         state_trie_checkpoint[index] = last_key;
     }
     // Update state trie checkpoint
-    store.set_state_trie_key_checkpoint(state_trie_checkpoint)?;
+    store
+        .set_state_trie_key_checkpoint(state_trie_checkpoint)
+        .await?;
     Ok(stale_pivot)
 }
 
@@ -180,7 +182,9 @@ async fn state_sync_segment(
                     .await?;
             }
             // Update Snapshot
-            store.write_snapshot_account_batch(account_hashes, accounts)?;
+            store
+                .write_snapshot_account_batch(account_hashes, accounts)
+                .await?;
             // As we are downloading the state trie in segments the `should_continue` flag will mean that there
             // are more accounts to be fetched but these accounts may belong to the next segment
             if !should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number] {

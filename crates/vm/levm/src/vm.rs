@@ -183,7 +183,7 @@ pub struct GeneralizedDatabase {
 }
 
 impl GeneralizedDatabase {
-    pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
+    pub fn new(store: Arc<dyn Database + Send + Sync>, cache: CacheDB) -> Self {
         Self { store, cache }
     }
 }

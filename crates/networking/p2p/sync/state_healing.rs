@@ -82,7 +82,7 @@ pub(crate) async fn heal_state_trie(
     // Save paths for the next cycle
     if !paths.is_empty() {
         debug!("Caching {} paths for the next cycle", paths.len());
-        store.set_state_heal_paths(paths.clone())?;
+        store.set_state_heal_paths(paths.clone()).await?;
     }
     // Send empty batch to signal that no more batches are incoming
     bytecode_sender.send(vec![]).await?;

@@ -15,19 +15,19 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 fn block_import() {
     let data_dir = DEFAULT_DATADIR;
     set_datadir(data_dir);
-
     remove_db(data_dir);
 
     let evm_engine = "revm".to_owned().try_into().unwrap();
 
     let network = "../../test_data/genesis-l2-ci.json";
 
-    import_blocks(
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(import_blocks(
         "../../test_data/l2-1k-erc20.rlp",
         data_dir,
         network,
         evm_engine,
-    );
+    ));
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {

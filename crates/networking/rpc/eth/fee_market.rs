@@ -84,7 +84,7 @@ impl RpcHandler for FeeHistoryRequest {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let config = storage.get_chain_config()?;
         info!(
