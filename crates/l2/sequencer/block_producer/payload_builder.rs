@@ -6,10 +6,10 @@ use ethrex_blockchain::{
     Blockchain,
 };
 use ethrex_common::types::{Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB};
-use ethrex_metrics::{
-    metrics,
-    metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX},
-};
+use ethrex_metrics::metrics;
+
+#[cfg(feature = "metrics")]
+use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX};
 use ethrex_storage::Store;
 use std::ops::Div;
 use tokio::time::Instant;
@@ -72,7 +72,7 @@ pub fn fill_transactions(
     store: &Store,
 ) -> Result<(), BlockProducerError> {
     // Two bytes for the len
-    let (mut withdrawals_acc_size, mut deposits_acc_size): (usize, usize) = (2, 2);
+    let (mut acc_withdrawals_size, mut acc_deposits_size): (usize, usize) = (2, 2);
 
     let chain_config = store.get_chain_config()?;
     let max_blob_number_per_block = chain_config
@@ -146,8 +146,8 @@ pub fn fill_transactions(
             Ok(receipt) => {
                 // This call is the part that differs from the original `fill_transactions`.
                 if !check_state_diff_size(
-                    &mut withdrawals_acc_size,
-                    &mut deposits_acc_size,
+                    &mut acc_withdrawals_size,
+                    &mut acc_deposits_size,
                     head_tx.clone().into(),
                     &receipt,
                     context,
@@ -195,29 +195,29 @@ pub fn fill_transactions(
 /// If the current size exceeds the blob size limit, returns `Ok(false)`.
 /// If there is still space in the blob, returns `Ok(true)`.
 fn check_state_diff_size(
-    withdrawals_size: &mut usize,
-    deposits_size: &mut usize,
+    acc_withdrawals_size: &mut usize,
+    acc_deposits_size: &mut usize,
     tx: Transaction,
     receipt: &Receipt,
     context: &mut PayloadBuildContext,
 ) -> Result<bool, BlockProducerError> {
     if is_withdrawal_l2(&tx, receipt) {
-        *withdrawals_size += L2_WITHDRAWAL_SIZE;
+        *acc_withdrawals_size += L2_WITHDRAWAL_SIZE;
     }
     if is_deposit_l2(&tx) {
-        *deposits_size += L2_DEPOSIT_SIZE;
+        *acc_deposits_size += L2_DEPOSIT_SIZE;
     }
     let modified_accounts_size = calc_modified_accounts_size(context)?;
 
-    let current_state_diff_size = 1 /* version (u8) */ + HEADER_FIELDS_SIZE + *withdrawals_size + *deposits_size + modified_accounts_size;
+    let current_state_diff_size = 1 /* version (u8) */ + HEADER_FIELDS_SIZE + *acc_withdrawals_size + *acc_deposits_size + modified_accounts_size;
 
     if current_state_diff_size > SAFE_BYTES_PER_BLOB {
         // Restore the withdrawals and deposits counters.
         if is_withdrawal_l2(&tx, receipt) {
-            *withdrawals_size -= L2_WITHDRAWAL_SIZE;
+            *acc_withdrawals_size -= L2_WITHDRAWAL_SIZE;
         }
         if is_deposit_l2(&tx) {
-            *deposits_size -= L2_DEPOSIT_SIZE;
+            *acc_deposits_size -= L2_DEPOSIT_SIZE;
         }
         debug!(
             "Blob size limit exceeded. current_state_diff_size: {}",
