@@ -32,6 +32,7 @@ jobs:
       - name: Checkout PR
         uses: actions/checkout@v4
         with:
+          clean: "false" # Don't clean the workspace, so we can keep the previous report
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Run Lines of Code Counter for PR
