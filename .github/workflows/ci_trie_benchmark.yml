@@ -30,14 +30,14 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
-        if: ${{ matrix.trie-version == "cita" || matrix-trie-version == "head" }}
+        if: ${{ matrix.trie-version == 'cita' || matrix-trie-version == 'head' }}
         with:
           fetch-depth: 0
           ref: HEAD
 
       - name: Checkout
         uses: actions/checkout@v4
-        if: ${ matrix.trie-version == "base" }
+        if: ${ matrix.trie-version == 'base' }
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request[matrix.trie-version].sha }}
