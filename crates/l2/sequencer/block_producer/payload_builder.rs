@@ -6,7 +6,10 @@ use ethrex_blockchain::{
     Blockchain,
 };
 use ethrex_common::types::{Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB};
-use ethrex_metrics::metrics;
+use ethrex_metrics::{
+    metrics,
+    metrics_transactions::{MetricsTxStatus, MetricsTxType, METRICS_TX},
+};
 use ethrex_storage::Store;
 use std::ops::Div;
 use tokio::time::Instant;
@@ -33,20 +36,25 @@ pub fn build_payload(
     let gas_limit = payload.header.gas_limit;
 
     debug!("Building payload");
-    let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, &store)?;
+    let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, store)?;
 
     blockchain.apply_withdrawals(&mut context)?;
     fill_transactions(blockchain.clone(), &mut context, store)?;
     blockchain.extract_requests(&mut context)?;
     blockchain.finalize_payload(&mut context)?;
 
-    let interval = Instant::now().duration_since(since).as_millis();
+    let interval: u64 = Instant::now()
+        .duration_since(since)
+        .as_millis()
+        .try_into()?;
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
     if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
-        let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
+        let gas_used = f64::from_ne_bytes(gas_used.to_ne_bytes());
+        let as_gigas = gas_used.div(10_f64.powf(9_f64));
 
         if interval != 0 {
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            let interval = f64::from_ne_bytes(interval.to_ne_bytes());
+            let throughput = (as_gigas) / (interval * 1000_f64);
             tracing::info!(
                 "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
@@ -56,20 +64,21 @@ pub fn build_payload(
     Ok(context.into())
 }
 
-/// Same as blockchain_fill transactions but checks the resulting `StateDiff` size to not exceed
+/// Same as blockchain::fill_transactions but checks the resulting `StateDiff` size to not exceed Blob size limit
 pub fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
 ) -> Result<(), BlockProducerError> {
     // Two bytes for the len
-    let (mut withdrawals_size, mut deposits_size): (usize, usize) = (2, 2);
+    let (mut withdrawals_acc_size, mut deposits_acc_size): (usize, usize) = (2, 2);
 
     let chain_config = store.get_chain_config()?;
     let max_blob_number_per_block = chain_config
         .get_fork_blob_schedule(context.payload.header.timestamp)
         .map(|schedule| schedule.max)
-        .unwrap_or_default() as usize;
+        .unwrap_or_default()
+        .try_into()?;
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
@@ -135,8 +144,8 @@ pub fn fill_transactions(
         let receipt = match blockchain.apply_transaction(&head_tx, context) {
             Ok(receipt) => {
                 if !check_state_diff_size(
-                    &mut withdrawals_size,
-                    &mut deposits_size,
+                    &mut withdrawals_acc_size,
+                    &mut deposits_acc_size,
                     head_tx.clone().into(),
                     &receipt,
                     context,
@@ -223,6 +232,7 @@ fn calc_modified_accounts_size(
     let mut modified_accounts_size: usize = 2; // modified_accounts_len(u16)
 
     // We use a temporary_context because revm mutates it in `get_state_transitions`
+    // TODO: remove when we stop using revm
     let mut temporary_context = context.clone();
     let account_updates = temporary_context
         .vm

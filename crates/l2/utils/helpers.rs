@@ -5,10 +5,12 @@ use ethrex_common::{
 use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 use std::str::FromStr;
 
+#[allow(clippy::expect_used)]
 pub fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
     // WithdrawalInitiated(address,address,uint256)
     let withdrawal_event_selector: H256 =
-        H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2").unwrap();
+        H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
+            .expect("Unable to parse withdrawal_event_selector");
 
     match tx.to() {
         TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => {
