@@ -6,7 +6,7 @@ pub mod cache;
 pub use cache::CacheDB;
 
 pub trait Database {
-    fn get_account_info(&self, address: Address) -> AccountInfo;
+    fn get_account_info(&self, address: Address) -> Option<AccountInfo>;
     fn get_storage_slot(&self, address: Address, key: H256) -> U256;
     fn get_block_hash(&self, block_number: u64) -> Option<H256>;
     fn account_exists(&self, address: Address) -> bool;
@@ -51,12 +51,8 @@ impl Db {
 }
 
 impl Database for Db {
-    fn get_account_info(&self, address: Address) -> AccountInfo {
-        self.accounts
-            .get(&address)
-            .unwrap_or(&Account::default())
-            .info
-            .clone()
+    fn get_account_info(&self, address: Address) -> Option<AccountInfo> {
+        Some(self.accounts.get(&address)?.info.clone())
     }
 
     fn account_exists(&self, address: Address) -> bool {
