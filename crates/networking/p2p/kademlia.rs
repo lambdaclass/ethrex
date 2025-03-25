@@ -328,8 +328,11 @@ impl KademliaTable {
         }
     }
 
-    /// Returns the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
+    /// Returns a mutable reference to the idle peer with an active connection that supports
+    /// the given capability.  
+    ///  
+    /// A peer is considered idle if it is not currently handling an ongoing request (`busy == false`).  
+    /// Among all eligible peers, the one with the highest score is selected.  
     pub fn get_idle_peer_with_capability_mut(
         &mut self,
         capability: Capability,
@@ -341,32 +344,10 @@ impl KademliaTable {
                 && peer.supported_capabilities.contains(&capability)
         };
 
-        let mut peers_sorted_by_score: Vec<&mut PeerData> =
-            self.iter_peers_mut().filter(filter).collect();
-        peers_sorted_by_score.sort_by(|a, b| b.scoring.cmp(&a.scoring));
         // take the peer with the highest score
-        peers_sorted_by_score.into_iter().next()
-    }
-
-    pub fn peer_failed_to_respond(&mut self, node_id: H512) {
-        let Some(peer) = self.get_by_node_id_mut(node_id) else {
-            return;
-        };
-
-        peer.set_as_idle();
-        peer.scoring.saturating_sub(1);
-        if peer.scoring <= 0 {
-            self.replace_peer(node_id);
-        }
-    }
-
-    pub fn peer_responded_successfully(&mut self, node_id: H512, scoring_points: u16) {
-        let Some(peer) = self.get_by_node_id_mut(node_id) else {
-            return;
-        };
-
-        peer.set_as_idle();
-        peer.scoring.saturating_add(scoring_points);
+        self.iter_peers_mut()
+            .filter(filter)
+            .max_by(|a, b| a.scoring.cmp(&b.scoring))
     }
 }
 

@@ -83,6 +83,27 @@ impl PeerHandler {
         None
     }
 
+    pub async fn peer_failed_to_respond(&mut self, node_id: H512) {
+        let Some(peer) = self.peer_table.lock().await.get_by_node_id_mut(node_id) else {
+            return;
+        };
+
+        peer.set_as_idle();
+        peer.scoring.saturating_sub(1);
+        if peer.scoring <= 0 {
+            self.replace_peer(node_id);
+        }
+    }
+
+    pub async fn peer_responded_successfully(&mut self, node_id: H512, scoring_points: u16) {
+        let Some(peer) = self.peer_table.lock().await.get_by_node_id_mut(node_id) else {
+            return;
+        };
+
+        peer.set_as_idle();
+        peer.scoring.saturating_add(scoring_points);
+    }
+
     async fn send_request<T: crate::rlpx::message::RLPxMessage + 'static>(
         &self,
         cap: Capability,
@@ -100,17 +121,11 @@ impl PeerHandler {
             let since = Instant::now();
             let self_clone = self.clone();
             if let Some(response) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(res) => return Some(res),
-                        None => {
-                            self_clone
-                                .peer_table
-                                .lock()
-                                .await
-                                .peer_failed_to_respond(node_id);
-                            return None;
-                        }
+                match receiver.recv().await {
+                    Some(res) => Some(res),
+                    None => {
+                        self_clone.peer_failed_to_respond(node_id);
+                        None
                     }
                 }
             })
@@ -118,18 +133,15 @@ impl PeerHandler {
             .ok()
             .flatten()
             {
-                // we give 1 point for successful response
-                // and 2 for a quick response
+                // Assign 1 point for a successful response.
+                // If the response time is under 300ms, assign 2 additional points for speed.
                 let mut scoring_points = 1;
-                let ttl = since.elapsed().as_millis();
-                if ttl < 300 {
+                let latency = since.elapsed().as_millis();
+                if latency < 300 {
                     scoring_points += 2;
                 }
 
-                self.peer_table
-                    .lock()
-                    .await
-                    .peer_responded_successfully(node_id, scoring_points);
+                self.peer_responded_successfully(node_id, scoring_points);
 
                 let casted_response = response.as_any().downcast::<T>().ok()?;
                 return Some(*casted_response);
