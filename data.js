@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742934130224,
+  "lastUpdate": 1742942719994,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1165,6 +1165,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 227892360916,
             "range": "± 592695565",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4c002213e1aaf16a64d09de3d93741103e73bd02",
+          "message": "feat(l2): add rpc endpoints for based sequencing (#2274)\n\n> [!NOTE]\n> Original PR: https://github.com/lambdaclass/ethrex/pull/2022\n(squeashed because of unsigned commits).\n\n---------\n\nCo-authored-by: Manuel Iñaki Bilbao <bilbaomanuel98@gmail.com>",
+          "timestamp": "2025-03-25T21:47:44Z",
+          "tree_id": "bd700c81bc0bf69843c8d7d44d57d1a2c8abac6a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4c002213e1aaf16a64d09de3d93741103e73bd02"
+        },
+        "date": 1742942718069,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 229725052320,
+            "range": "± 1338873796",
             "unit": "ns/iter"
           }
         ]
