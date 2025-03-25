@@ -135,7 +135,13 @@ impl Blockchain {
             let n_txs = block.body.transactions.len();
             let base_log = format!("[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {interval} ms. #Txs: {n_txs}.", throughput);
             let extra_log = if as_gigas > 0.0 {
-                format!(" exec/Ggas: {} ms ({}%), st/Ggas: {} ms ({}%)", execution_time_per_gigagas, execution_fraction, storage_time_per_gigagas, storage_fraction)
+                format!(
+                    " exec/Ggas: {} ms ({}%), st/Ggas: {} ms ({}%)",
+                    execution_time_per_gigagas,
+                    execution_fraction,
+                    storage_time_per_gigagas,
+                    storage_fraction
+                )
             } else {
                 "".to_string()
             };
