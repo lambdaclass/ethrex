@@ -55,16 +55,14 @@ jobs:
           set -x
           cd crates/common/trie
           ls -lah
-          make build-ethrex-bench
-          make ethrex-bench | tee bench-${{ matrix.trie-version }}.txt
-          ls -lah
+          cargo bench --bench ethrex_trie_bench | tee bench-${{ matrix.trie-version }}.txt
 
       - name: Build cita trie benchmark
         if: ${{ matrix.trie-version == 'cita' }}
         run: |
           cd crates/common/trie
           make build-cita-bench
-          make cita-bench | tee bench-${{ matrix.trie-version }}.txt
+          cargo bench --bench cita_trie_bench | tee bench-${{ matrix.trie-version }}.txt
           ls -lah
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
