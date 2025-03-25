@@ -91,9 +91,6 @@ pub struct SyncManager {
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
     blockchain: Arc<Blockchain>,
-    search_head: H256,
-    current_head: H256,
-    sync_head_found: bool,
 }
 
 impl SyncManager {
@@ -111,9 +108,6 @@ impl SyncManager {
             trie_rebuilder: None,
             cancel_token,
             blockchain,
-            current_head: H256::default(),
-            search_head: H256::default(),
-            sync_head_found: false,
         }
     }
 
@@ -132,9 +126,6 @@ impl SyncManager {
             blockchain: Arc::new(Blockchain::default_with_store(
                 Store::new("", EngineType::InMemory).unwrap(),
             )),
-            current_head: H256::default(),
-            search_head: H256::default(),
-            sync_head_found: false,
         }
     }
 
@@ -149,8 +140,7 @@ impl SyncManager {
     pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
         info!("Syncing from current head {current_head} to sync_head {sync_head}");
         let start_time = Instant::now();
-        self.current_head = current_head;
-        match self.sync_cycle(sync_head, store).await {
+        match self.sync_cycle(current_head, sync_head, store).await {
             Ok(()) => {
                 info!(
                     "Sync cycle finished, time elapsed: {} secs",
@@ -165,7 +155,12 @@ impl SyncManager {
     }
 
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
-    async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
+    async fn sync_cycle(
+        &mut self,
+        mut current_head: H256,
+        sync_head: H256,
+        store: Store,
+    ) -> Result<(), SyncError> {
         // Request all block headers between the current head and the sync head
         // We will begin from the current head so that we download the earliest state first
         // This step is not parallelized
@@ -176,7 +171,7 @@ impl SyncManager {
         if matches!(self.sync_mode, SyncMode::Snap) {
             if let Some(last_header) = store.get_header_download_checkpoint()? {
                 // Set latest downloaded header as current head for header fetching
-                self.current_head = last_header;
+                current_head = last_header;
             }
         }
 
@@ -186,13 +181,14 @@ impl SyncManager {
         };
 
         // TODO(#2126): To avoid modifying the current_head while backtracking we use a separate search_head
-        self.search_head = self.current_head;
+        let mut search_head = current_head;
 
         loop {
-            debug!("Requesting Block Headers from {}", self.search_head);
+            debug!("Requesting Block Headers from {search_head}");
+
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(self.search_head, BlockRequestOrder::OldToNew)
+                .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
@@ -210,12 +206,12 @@ impl SyncManager {
             // TODO(#2126): This is just a temporary solution to avoid a bug where the sync would get stuck
             // on a loop when the target head is not found, i.e. on a reorg with a side-chain.
             if first_block_header == last_block_header
-                && first_block_header.compute_block_hash() == self.search_head
-                && self.search_head != sync_head
+                && first_block_header.compute_block_hash() == search_head
+                && search_head != sync_head
             {
                 // There is no path to the sync head this goes back until it find a common ancerstor
                 warn!("Sync failed to find target block header, going back to the previous parent");
-                self.search_head = first_block_header.parent_hash;
+                search_head = first_block_header.parent_hash;
                 continue;
             }
 
@@ -241,23 +237,23 @@ impl SyncManager {
             }
 
             // Filter out everything after the sync_head
-            self.sync_head_found = false;
+            let mut sync_head_found = false;
             if let Some(index) = block_hashes.iter().position(|&hash| hash == sync_head) {
-                self.sync_head_found = true;
+                sync_head_found = true;
                 block_hashes = block_hashes.iter().take(index + 1).cloned().collect();
             }
 
             // Update current fetch head if needed
             let last_block_hash = last_block_header.compute_block_hash();
-            if !self.sync_head_found {
+            if !sync_head_found {
                 debug!(
                     "Syncing head not found, updated current_head {:?}",
                     last_block_hash
                 );
-                self.search_head = last_block_hash;
-                self.current_head = last_block_hash;
+                search_head = last_block_hash;
+                current_head = last_block_hash;
                 if self.sync_mode == SyncMode::Snap {
-                    store.set_header_download_checkpoint(self.current_head)?;
+                    store.set_header_download_checkpoint(current_head)?;
                 }
             }
 
@@ -286,12 +282,15 @@ impl SyncManager {
                     &block_hashes,
                     &block_headers,
                     sync_head,
+                    &mut current_head,
+                    &mut search_head,
+                    sync_head_found,
                     store.clone(),
                 )
                 .await?;
             }
 
-            if self.sync_head_found {
+            if sync_head_found {
                 break;
             };
         }
@@ -354,6 +353,9 @@ impl SyncManager {
         block_hashes: &[BlockHash],
         block_headers: &[BlockHeader],
         sync_head: BlockHash,
+        current_head: &mut BlockHash,
+        search_head: &mut BlockHash,
+        sync_head_found: bool,
         store: Store,
     ) -> Result<(), SyncError> {
         let mut current_chunk_idx = 0;
@@ -432,7 +434,7 @@ impl SyncManager {
             .mark_chain_as_canonical(&blocks)
             .map_err(SyncError::Store)?;
 
-        if let Err((error, failure)) = self.add_blocks(&blocks) {
+        if let Err((error, failure)) = self.add_blocks(&blocks, sync_head_found) {
             warn!("Failed to add block during FullSync: {error}");
             if let Some(BatchBlockProcessingFailure {
                 failed_block_hash,
@@ -451,8 +453,8 @@ impl SyncManager {
             return Err(error.into());
         }
 
-        self.current_head = last_block.hash();
-        self.search_head = last_block.hash();
+        *current_head = last_block.hash();
+        *search_head = last_block.hash();
         store.update_latest_block_number(last_block.header.number)?;
 
         let elapsed_secs: f64 = since.elapsed().as_millis() as f64 / 1000.0;
@@ -478,9 +480,10 @@ impl SyncManager {
     fn add_blocks(
         &self,
         blocks: &[Block],
+        sync_head_found: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
-        if self.sync_head_found {
+        if sync_head_found {
             let mut last_valid_hash = H256::default();
             for block in blocks {
                 self.blockchain.add_block(block).map_err(|e| {
