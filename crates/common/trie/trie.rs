@@ -144,11 +144,9 @@ impl Trie {
 
     pub fn commit(&mut self) -> Result<(), TrieError> {
         if let Some(ref root) = self.root {
-            self.state.commit(root)
-        } else {
-            // nothing to commit
-            Ok(())
+            self.state.commit(root)?;
         }
+        Ok(())
     }
 
     /// Obtain a merkle proof for the given path.

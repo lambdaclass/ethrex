@@ -14,7 +14,9 @@ use crate::{
     kademlia::{KademliaTable, PeerChannels},
     rlpx::{
         eth::{
-            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders},
+            blocks::{
+                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, BLOCK_HEADER_LIMIT,
+            },
             receipts::{GetReceipts, Receipts},
         },
         message::Message as RLPxMessage,
@@ -82,14 +84,13 @@ impl PeerHandler {
         &self,
         start: H256,
         order: BlockRequestOrder,
-        limit: u64,
     ) -> Option<Vec<BlockHeader>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
                 id: request_id,
                 startblock: start.into(),
-                limit,
+                limit: BLOCK_HEADER_LIMIT,
                 skip: 0,
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             });

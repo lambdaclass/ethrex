@@ -25,12 +25,9 @@ use std::{ops::Div, time::Instant};
 
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::backends::{BlockExecutionResult, Evm, EvmEngine};
+use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
-
-/// The number of latest tries to store in the database (meaning that we would have the state for the last 128 blocks)
-pub const STATE_TRIES_TO_KEEP: usize = 128;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -158,7 +155,7 @@ impl Blockchain {
     /// - The error type ([`ChainError`]).
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
-    /// Note: only the last block state trie is stored in the db
+    /// Note: only the last block's state trie is stored in the db
     pub fn add_blocks_in_batch(
         &self,
         blocks: &[Block],
