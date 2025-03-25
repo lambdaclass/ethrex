@@ -54,4 +54,5 @@ jobs:
         with:
           cwd: "crates/common/trie"
           benchName: "trie_bench"
+          branchName: ${{ github.base_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
