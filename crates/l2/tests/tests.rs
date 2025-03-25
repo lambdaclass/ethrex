@@ -57,7 +57,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     println!("Waiting for L2 to update for initial deposit");
     let mut retries = 0;
     while retries < 30 && l2_initial_balance.is_zero() {
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         println!("[{retries}/30] Waiting for L2 balance to update");
         l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
         retries += 1;
@@ -112,7 +112,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     // tx hash for the user to wait for the receipt.
     let mut retries = 0;
     while retries < 30 && l2_after_deposit_balance < l2_initial_balance + deposit_value {
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         println!("[{retries}/30] Waiting for L2 balance to update after deposit");
         l2_after_deposit_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
         retries += 1;
@@ -260,7 +260,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         < withdraw_tx_receipt.block_info.block_number
     {
         println!("Withdrawal is not verified on L1 yet");
-        std::thread::sleep(Duration::from_secs(2));
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
     let claim_tx = ethrex_l2_sdk::claim_withdraw(

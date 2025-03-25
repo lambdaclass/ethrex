@@ -595,6 +595,28 @@ impl StoreEngine for Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
+    fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        for (account_hash, (storage_keys, storage_values)) in account_hashes
+            .into_iter()
+            .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
+        {
+            for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
+                txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
     fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),

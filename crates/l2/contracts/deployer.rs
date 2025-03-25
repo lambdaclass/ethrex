@@ -4,7 +4,8 @@ use ethereum_types::{Address, H160, H256};
 use ethrex_common::U256;
 use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::config::{
-    read_env_as_lines, read_env_file_by_config, toml_parser::parse_configs, write_env, ConfigMode,
+    read_env_as_lines_by_config, read_env_file_by_config, toml_parser::parse_configs,
+    write_env_file_by_config, ConfigMode,
 };
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
@@ -126,7 +127,8 @@ async fn main() -> Result<(), DeployError> {
         }
     }
 
-    let env_lines = read_env_as_lines().map_err(DeployError::ConfigError)?;
+    let env_lines =
+        read_env_as_lines_by_config(ConfigMode::Sequencer).map_err(DeployError::ConfigError)?;
 
     let mut wr_lines: Vec<String> = Vec::new();
     let mut env_lines_iter = env_lines.into_iter();
@@ -151,7 +153,7 @@ async fn main() -> Result<(), DeployError> {
         }
         wr_lines.push(line);
     }
-    write_env(wr_lines).map_err(DeployError::ConfigError)?;
+    write_env_file_by_config(wr_lines, ConfigMode::Sequencer)?;
     Ok(())
 }
 

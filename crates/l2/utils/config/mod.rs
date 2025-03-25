@@ -1,9 +1,8 @@
 use std::{
     io::{BufRead, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
-use errors::ConfigError;
 use tracing::{debug, info};
 
 pub mod block_producer;
@@ -30,25 +29,17 @@ impl ConfigMode {
     /// Gets the .*config.toml file from the environment, or sets a default value
     /// config.toml         for the sequencer/L2 node
     /// prover_config.toml  for the the prover_client
-    fn get_config_file_path(&self, config_path: &str) -> Result<String, ConfigError> {
+    fn get_config_file_path(&self, config_path: &str) -> PathBuf {
         match self {
             ConfigMode::Sequencer => {
                 let sequencer_config_file_name =
                     std::env::var("SEQUENCER_CONFIG_FILE").unwrap_or("config.toml".to_owned());
-                let binding = Path::new(&config_path).join(sequencer_config_file_name);
-                let path = binding.to_str().ok_or(ConfigError::Custom(
-                    "Couldn't convert to_str().".to_string(),
-                ))?;
-                Ok(path.to_string())
+                Path::new(&config_path).join(sequencer_config_file_name)
             }
             ConfigMode::ProverClient => {
                 let prover_client_config_file_name = std::env::var("PROVER_CLIENT_CONFIG_FILE")
                     .unwrap_or("prover_client_config.toml".to_owned());
-                let binding = Path::new(&config_path).join(prover_client_config_file_name);
-                let path = binding.to_str().ok_or(ConfigError::Custom(
-                    "Couldn't convert to_str().".to_string(),
-                ))?;
-                Ok(path.to_string())
+                Path::new(&config_path).join(prover_client_config_file_name)
             }
         }
     }
@@ -56,12 +47,16 @@ impl ConfigMode {
     /// Gets the .env* file from the environment, or sets a default value
     /// .env        for the sequencer/L2 node
     /// .env.prover for the the prover_client
-    pub fn get_env_path_or_default(&self) -> String {
+    pub fn get_env_path_or_default(&self) -> PathBuf {
+        let cargo_manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
         match self {
-            ConfigMode::Sequencer => std::env::var("ENV_FILE").unwrap_or(".env".to_owned()),
-            ConfigMode::ProverClient => {
-                std::env::var("PROVER_ENV_FILE").unwrap_or(".env.prover".to_owned())
-            }
+            ConfigMode::Sequencer => std::env::var("ENV_FILE")
+                .map(Into::into)
+                .unwrap_or(cargo_manifest_dir.join(".env")),
+            ConfigMode::ProverClient => std::env::var("PROVER_ENV_FILE")
+                .map(Into::into)
+                .unwrap_or(cargo_manifest_dir.join(".env.prover")),
         }
     }
 }
@@ -71,7 +66,7 @@ impl ConfigMode {
 /// .env.prover if running the prover_client
 pub fn read_env_file_by_config(config_mode: ConfigMode) -> Result<(), errors::ConfigError> {
     let env_file_path = config_mode.get_env_path_or_default();
-    let env_file = open_readable(env_file_path)?;
+    let env_file = open_env_file(&env_file_path)?;
     let reader = std::io::BufReader::new(env_file);
 
     for line in reader.lines() {
@@ -98,16 +93,17 @@ pub fn read_env_file_by_config(config_mode: ConfigMode) -> Result<(), errors::Co
     Ok(())
 }
 
-pub fn read_env_as_lines(
+pub fn read_env_as_lines_by_config(
+    config_mode: ConfigMode,
 ) -> Result<std::io::Lines<std::io::BufReader<std::fs::File>>, errors::ConfigError> {
-    let env_file_path = std::env::var("ENV_FILE").unwrap_or(".env".to_owned());
-    let env_file = open_readable(env_file_path)?;
+    let env_file_path = config_mode.get_env_path_or_default();
+    let env_file = open_env_file(&env_file_path)?;
     let reader = std::io::BufReader::new(env_file);
 
     Ok(reader.lines())
 }
 
-fn open_readable(path: String) -> std::io::Result<std::fs::File> {
+fn open_env_file(path: &Path) -> std::io::Result<std::fs::File> {
     match std::fs::File::open(path) {
         Ok(file) => Ok(file),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -118,12 +114,16 @@ fn open_readable(path: String) -> std::io::Result<std::fs::File> {
     }
 }
 
-pub fn write_env(lines: Vec<String>) -> Result<(), errors::ConfigError> {
-    let env_file_path = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+pub fn write_env_file_by_config(
+    lines: Vec<String>,
+    config_mode: ConfigMode,
+) -> Result<(), errors::ConfigError> {
+    let env_file_path = config_mode.get_env_path_or_default();
+
     let env_file = match std::fs::OpenOptions::new()
         .write(true)
         .truncate(true)
-        .open(&env_file_path)
+        .open(env_file_path)
     {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {

@@ -5,7 +5,6 @@ use crate::utils::config::{
 use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
 
 #[derive(Deserialize, Debug)]
 struct Deployer {
@@ -249,13 +248,13 @@ impl L2Config {
 }
 
 fn write_to_env(config: String, mode: ConfigMode) -> Result<(), TomlParserError> {
-    let env_file_name = mode.get_env_path_or_default();
+    let env_file_path = mode.get_env_path_or_default();
 
     let env_file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(env_file_name);
+        .open(env_file_path);
     match env_file {
         Ok(mut file) => {
             file.write_all(&config.into_bytes()).map_err(|_| {
@@ -279,8 +278,8 @@ fn write_to_env(config: String, mode: ConfigMode) -> Result<(), TomlParserError>
 }
 
 fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError> {
-    let toml_path = mode.get_config_file_path(&config_path)?;
-    let toml_file_name = Path::new(&toml_path)
+    let toml_path = mode.get_config_file_path(&config_path);
+    let toml_file_name = toml_path
         .file_name()
         .ok_or(ConfigError::Custom("Invalid CONFIGS_PATH".to_string()))?
         .to_str()

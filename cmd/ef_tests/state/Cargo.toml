@@ -37,7 +37,7 @@ hex = "0.4.3"
 path = "./lib.rs"
 
 [features]
-default = ["c-kzg", "blst"]
+default = ["c-kzg", "blst", "ethrex-vm/internal"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["ethrex-vm/blst"]
 

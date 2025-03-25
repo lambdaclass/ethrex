@@ -11,7 +11,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::backends::EvmEngine;
+use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
