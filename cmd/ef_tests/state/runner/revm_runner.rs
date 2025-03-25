@@ -15,10 +15,11 @@ use ethrex_levm::{
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
+    self,
     backends::{self, revm::db::EvmState},
-    db::StoreWrapper,
-    fork_to_spec_id, RevmAddress, RevmU256,
+    fork_to_spec_id, StoreWrapper,
 };
+pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,

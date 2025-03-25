@@ -6,7 +6,7 @@ use ethrex_common::{types::Genesis, H256, U256};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     backends::revm::db::{evm_state, EvmState},
-    db::StoreWrapper,
+    StoreWrapper,
 };
 use spinoff::Spinner;
 

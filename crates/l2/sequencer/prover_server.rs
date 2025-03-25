@@ -19,8 +19,7 @@ use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransact
 use ethrex_storage::Store;
 use ethrex_vm::{
     backends::revm::execution_db::{ExecutionDB, ToExecDB},
-    db::StoreWrapper,
-    EvmError,
+    EvmError, StoreWrapper,
 };
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};

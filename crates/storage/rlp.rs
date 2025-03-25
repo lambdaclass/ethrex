@@ -29,6 +29,7 @@ pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;
 
 // Receipt types
+#[allow(unused)]
 pub type ReceiptRLP = Rlp<Receipt>;
 
 // Transaction types

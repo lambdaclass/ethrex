@@ -4,7 +4,7 @@ use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_vm::backends::EvmEngine;
+use ethrex_vm::EvmEngine;
 use hex::FromHexError;
 #[cfg(feature = "l2")]
 use secp256k1::SecretKey;
