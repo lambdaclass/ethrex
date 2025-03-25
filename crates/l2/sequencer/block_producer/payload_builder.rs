@@ -13,7 +13,7 @@ use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRI
 use ethrex_storage::Store;
 use std::ops::Div;
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{
     sequencer::{errors::BlockProducerError, state_diff::get_nonce_diff},
@@ -75,11 +75,12 @@ pub fn fill_transactions(
     let (mut acc_withdrawals_size, mut acc_deposits_size): (usize, usize) = (2, 2);
 
     let chain_config = store.get_chain_config()?;
-    let max_blob_number_per_block = chain_config
+    let max_blob_number_per_block: usize = chain_config
         .get_fork_blob_schedule(context.payload.header.timestamp)
         .map(|schedule| schedule.max)
         .unwrap_or_default()
-        .try_into()?;
+        .try_into()
+        .unwrap_or_default();
 
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
@@ -152,7 +153,7 @@ pub fn fill_transactions(
                     &receipt,
                     context,
                 )? {
-                    debug!(
+                    warn!(
                         "Skipping transaction: {}, doesn't feet in blob_size",
                         head_tx.tx.compute_hash()
                     );
