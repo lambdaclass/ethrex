@@ -6,13 +6,22 @@ pragma solidity ^0.8.27;
 /// @notice A CommonBridge contract is a contract that allows L1<->L2 communication
 /// from L1. It both sends messages from L1 to L2 and receives messages from L2.
 interface ICommonBridge {
+    /// @notice Struct with the information of the deposit.
+    /// @dev It is used to store the information of the deposit in the depositLogs.
+    struct DepositInfo {
+        address to;
+        address recipient;
+        bytes data;
+        uint256 gasLimit;
+    }
+
     /// @notice A deposit to L2 has initiated.
     /// @dev Event emitted when a deposit is initiated.
     /// @param amount the amount of tokens being deposited.
     /// @param to the address in L2 to which the tokens will be minted to.
     /// @param l2MintTxHash the hash of the transaction that will finalize the
     /// deposit in L2. Could be used to track the status of the deposit finalization
-    /// on L2. You can use this hash to retrive the tx data.
+    /// on L2. You can use this hash to retrieve the tx data.
     /// It is the result of keccak(abi.encode(transaction)).
     /// @param depositId Id used to differentiate deposits with same amount and recipient.
     event DepositInitiated(
@@ -58,8 +67,8 @@ interface ICommonBridge {
     /// @dev The deposit process starts here by emitting a DepositInitiated
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
-    /// @param to, the address in L2 to which the tokens will be minted to.
-    function deposit(address to) external payable;
+    /// @param depositInfo, Struct with the information of the deposit.
+    function deposit(DepositInfo memory depositInfo) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number` deposit logs.
     /// @param number of deposit logs to retrieve the versioned hash.
@@ -104,7 +113,7 @@ interface ICommonBridge {
     /// @param withdrawalProof the merkle path to the withdrawal log.
     /// @param withdrawalLogIndex the index of the withdrawal log in the block.
     /// This is the index of the withdraw transaction relative to the block's
-    /// withdrawal transctions.
+    /// withdrawal transactions.
     /// A pseudocode would be [tx if tx is withdrawx for tx in block.txs()].index(leaf_tx).
     /// @param l2WithdrawalBlockNumber the block number where the withdrawal log
     /// was emitted.

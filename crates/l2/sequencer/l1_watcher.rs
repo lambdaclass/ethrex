@@ -176,6 +176,10 @@ impl L1Watcher {
         store: &Store,
         blockchain: &Blockchain,
     ) -> Result<Vec<H256>, L1WatcherError> {
+        println!("Processing logs: {:?}", logs.len());
+        println!("Processing logs: {:?}", logs.len());
+        println!("Processing logs: {:?}", logs.len());
+        println!("Processing logs: {:?}", logs.len());
         let mut deposit_txs = Vec::new();
 
         for log in logs {
