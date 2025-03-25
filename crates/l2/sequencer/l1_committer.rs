@@ -26,11 +26,10 @@ use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::backends::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::time::sleep;
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-use super::{errors::BlobEstimationError, execution_cache::ExecutionCache};
+use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
 
@@ -83,7 +82,7 @@ impl Committer {
                 error!("L1 Committer Error: {}", err);
             }
 
-            sleep(Duration::from_millis(self.interval_ms)).await;
+            sleep_random(self.interval_ms).await;
         }
     }
 
@@ -358,7 +357,15 @@ impl Committer {
         .await?
         .to_le_bytes();
 
-        let gas_price_per_blob = Some(U256::from_little_endian(&le_bytes));
+        let gas_price_per_blob = U256::from_little_endian(&le_bytes);
+        let gas_price = self
+            .eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                CommitterError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            })?;
 
         let wrapped_tx = self
             .eth_client
@@ -368,25 +375,25 @@ impl Committer {
                 calldata.into(),
                 Overrides {
                     from: Some(self.l1_address),
-                    gas_price_per_blob,
+                    gas_price_per_blob: Some(gas_price_per_blob),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
                     ..Default::default()
                 },
                 blobs_bundle,
-                10,
             )
             .await
             .map_err(CommitterError::from)?;
 
+        let mut tx = WrappedTransaction::EIP4844(wrapped_tx);
+        self.eth_client
+            .set_gas_for_wrapped_tx(&mut tx, self.l1_address)
+            .await?;
+
         let commit_tx_hash = self
             .eth_client
-            .send_wrapped_transaction_with_retry(
-                &WrappedTransaction::EIP4844(wrapped_tx),
-                &self.l1_private_key,
-                3 * 60, // 3 minutes
-                10,     // 180[secs]/20[retries] -> 18 seconds per retry
-            )
-            .await
-            .map_err(CommitterError::from)?;
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
+            .await?;
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 
