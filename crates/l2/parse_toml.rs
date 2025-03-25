@@ -1,4 +1,4 @@
-use crate::errors::*;
+use crate::{errors::*, utils};
 use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -243,12 +243,12 @@ impl L2Config {
 }
 
 pub fn write_to_env(config: String) -> Result<(), ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+    let env_file_path = utils::config::get_env_file_path();
     let env_file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(env_file_name);
+        .open(env_file_path);
     match env_file {
         Ok(mut file) => {
             file.write_all(&config.into_bytes()).map_err(|_| {
