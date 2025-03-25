@@ -28,6 +28,8 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
+    #[cfg(feature = "based")]
+    InvalidBasedMessage(String),
     #[cfg(feature = "l2")]
     InvalidEthrexL2Message(String),
 }
@@ -129,6 +131,12 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
+            #[cfg(feature = "based")]
+            RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
+                code: -38003,
+                data: None,
+                message: format!("Invalid based message: {context}"),
+            },
             #[cfg(feature = "l2")]
             RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
                 code: -39000,
@@ -165,6 +173,8 @@ pub enum RpcNamespace {
     Net,
     #[cfg(feature = "l2")]
     EthrexL2,
+    #[cfg(feature = "based")]
+    Based,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,6 +205,8 @@ impl RpcRequest {
                 "net" => Ok(RpcNamespace::Net),
                 #[cfg(feature = "l2")]
                 "ethrex" => Ok(RpcNamespace::EthrexL2),
+                #[cfg(feature = "based")]
+                "based" => Ok(RpcNamespace::Based),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {
@@ -355,6 +367,8 @@ pub mod test_utils {
             gateway_eth_client,
             #[cfg(feature = "based")]
             gateway_auth_client,
+            #[cfg(feature = "based")]
+            Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses,
             #[cfg(feature = "l2")]

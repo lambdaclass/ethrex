@@ -79,3 +79,4 @@ secp256k1 = { version = "0.29.1", default-features = false, features = [
 ] }
 keccak-hash = "0.11.0"
 axum = "0.8.1"
+libsecp256k1 = "0.7.2"
