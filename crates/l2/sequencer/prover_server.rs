@@ -211,6 +211,7 @@ impl ProverServer {
                                 // the entire structure.
                                 let mut self_clone = self.clone();
                                 tokio::task::spawn(async move {
+                                    let _guard = _guard;
                                     if let Err(e) = self_clone.handle_connection(stream).await {
                                         error!("Error handling connection from {addr}: {e}");
                                     } else {
