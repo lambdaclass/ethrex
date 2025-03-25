@@ -45,4 +45,5 @@ jobs:
         run: |
           cd crates/l2
           cp config_example.toml config.toml
+          cp .env.example .env
           ../../target/release/ethrex_prover & make ci_test
