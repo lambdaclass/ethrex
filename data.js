@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742942719994,
+  "lastUpdate": 1742942821653,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1195,6 +1195,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 229725052320,
             "range": "± 1338873796",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "76252340+MarcosNicolau@users.noreply.github.com",
+            "name": "Marcos Nicolau",
+            "username": "MarcosNicolau"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cdbfbe904b5742dc6fefb48f2a12c18001264b9d",
+          "message": "feat(l1): process blocks in batches when syncing and importing (#2174)\n\n**Motivation**\nAccelerate syncing!\n\n**Description**\nThis PR introduces block batching during full sync:\n1. Instead of storing and computing the state root for each block\nindividually, we now maintain a single state tree for the entire batch,\ncommitting it only at the end. This results in one state trie per `n`\nblocks instead of one per block (we'll need less storage also).\n2. The new full sync process:\n    - Request 1024 headers\n    - Request 1024 block bodies and collect them\n- Once all blocks are received, process them in batches using a single\nstate trie, which is attached to the last block.\n3. Blocks are now stored in a single transaction.\n4. State root, receipts root, and request root validation are only\nrequired for the last block in the batch.\n5. The new add_blocks_in_batch function includes a flag,\n`should_commit_intermediate_tries`. When set to true, it stores the\ntries for each block. This functionality is added to make the hive test\npass. Currently, this is handled by verifying if the block is within the\n`STATE_TRIES_TO_KEEP` range. In a real syncing scenario, my intuition is\nthat it would be better to wait until we are fully synced and then we\nwould start storing the state of the new blocks and pruning when we\nreach `STATE_TRIES_TO_KEEP`.\n6. Throughput when syncing is now measured per batches.\n7. A new command was added to import blocks in batch\n\nConsiderations:\n1. ~Optimize account updates: Instead of inserting updates into the\nstate trie after each block execution, batch them at the end, merging\nrepeated accounts to reduce insertions and improve performance (see\n#2216)~ Closes #2216.\n2. Improve transaction handling: Avoid committing storage tries to the\ndatabase separately. Instead, create a single transaction for storing\nreceipts, storage tries, and blocks. This would require additional\nabstractions for transaction management (see #2217).\n3. This isn't working for `levm` backend we need it to cache the\nexecutions state and persist it between them, as we don't store anything\nuntil the final of the batch (see #2218).\n4. In #2210 a new ci is added to run a bench comparing main and `head`\nbranch using `import-in-batch`\n\nCloses None\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-03-25T21:48:54Z",
+          "tree_id": "5ee3b5d1c38da882ce4394e5df4f01dbe40c43bf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cdbfbe904b5742dc6fefb48f2a12c18001264b9d"
+        },
+        "date": 1742942819671,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 231706874953,
+            "range": "± 1486957612",
             "unit": "ns/iter"
           }
         ]
