@@ -83,25 +83,27 @@ impl PeerHandler {
         None
     }
 
-    pub async fn peer_failed_to_respond(&mut self, node_id: H512) {
-        let Some(peer) = self.peer_table.lock().await.get_by_node_id_mut(node_id) else {
+    pub async fn peer_failed_to_respond(&self, node_id: H512) {
+        let mut table_lock = self.peer_table.lock().await;
+        let Some(peer) = table_lock.get_by_node_id_mut(node_id) else {
             return;
         };
 
         peer.set_as_idle();
-        peer.scoring.saturating_sub(1);
+        peer.scoring = peer.scoring.saturating_sub(1);
         if peer.scoring <= 0 {
-            self.replace_peer(node_id);
+            table_lock.replace_peer(node_id);
         }
     }
 
-    pub async fn peer_responded_successfully(&mut self, node_id: H512, scoring_points: u16) {
-        let Some(peer) = self.peer_table.lock().await.get_by_node_id_mut(node_id) else {
+    pub async fn peer_responded_successfully(&self, node_id: H512, scoring_points: u16) {
+        let mut table_lock = self.peer_table.lock().await;
+        let Some(peer) = table_lock.get_by_node_id_mut(node_id) else {
             return;
         };
 
         peer.set_as_idle();
-        peer.scoring.saturating_add(scoring_points);
+        peer.scoring = peer.scoring.saturating_add(scoring_points);
     }
 
     async fn send_request<T: crate::rlpx::message::RLPxMessage + 'static>(
@@ -124,7 +126,7 @@ impl PeerHandler {
                 match receiver.recv().await {
                     Some(res) => Some(res),
                     None => {
-                        self_clone.peer_failed_to_respond(node_id);
+                        self_clone.peer_failed_to_respond(node_id).await;
                         None
                     }
                 }
@@ -141,7 +143,8 @@ impl PeerHandler {
                     scoring_points += 2;
                 }
 
-                self.peer_responded_successfully(node_id, scoring_points);
+                self.peer_responded_successfully(node_id, scoring_points)
+                    .await;
 
                 let casted_response = response.as_any().downcast::<T>().ok()?;
                 return Some(*casted_response);

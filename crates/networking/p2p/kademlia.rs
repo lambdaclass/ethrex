@@ -251,18 +251,6 @@ impl KademliaTable {
         self.iter_peers().filter(|peer| filter(peer))
     }
 
-    /// Obtain a random peer from the kademlia table that matches the filter
-    fn get_random_peer_with_filter<'a>(
-        &'a self,
-        filter: &'a dyn Fn(&'a PeerData) -> bool,
-    ) -> Option<&'a PeerData> {
-        let filtered_peers: Vec<&PeerData> = self.filter_peers(filter).collect();
-        let peer_idx = rand::random::<usize>()
-            .checked_rem(filtered_peers.len())
-            .unwrap_or_default();
-        filtered_peers.get(peer_idx).cloned()
-    }
-
     /// Replaces the peer with the given id with the latest replacement stored.
     /// If there are no replacements, it simply remove it
     ///
