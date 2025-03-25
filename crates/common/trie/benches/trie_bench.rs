@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use hasher::HasherKeccak;
 use uuid::Uuid;
@@ -15,15 +15,21 @@ use ethrex_trie::InMemoryTrieDB as EthrexMemDB;
 use ethrex_trie::Trie as EthrexTrie;
 
 fn insert_worse_case_benchmark(c: &mut Criterion) {
-    let (keys, values) = random_data(1000);
+    let (keys_1k, values_1k) = random_data(1000);
+    let (keys_10k, values_10k) = random_data(10000);
 
     let mut group = c.benchmark_group("Trie");
 
     group.bench_function("ethrex-trie insert 1k", |b| {
         let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
         b.iter(|| {
-            for i in 0..keys.len() {
-                trie.insert(keys[i].clone(), values[i].clone()).unwrap()
+            for i in 0..keys_1k.len() {
+                black_box(&mut trie)
+                    .insert(
+                        black_box(keys_1k[i].clone()),
+                        black_box(values_1k[i].clone()),
+                    )
+                    .unwrap()
             }
         });
     });
@@ -32,23 +38,9 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
         let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
 
         b.iter(|| {
-            for i in 0..keys.len() {
-                trie.insert(keys[i].clone(), values[i].clone()).unwrap()
-            }
-        });
-    });
-
-    let (keys, values) = random_data(10000);
-
-    group.bench_function("cita-trie insert 10k", |b| {
-        let mut trie = PatriciaTrie::new(
-            Arc::new(MemoryDB::new(false)),
-            Arc::new(HasherKeccak::new()),
-        );
-
-        b.iter(|| {
-            for i in 0..keys.len() {
-                trie.insert(keys[i].clone(), values[i].clone()).unwrap()
+            for i in 0..keys_10k.len() {
+                trie.insert(keys_10k[i].clone(), values_10k[i].clone())
+                    .unwrap()
             }
         });
     });
@@ -60,8 +52,27 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
         );
 
         b.iter(|| {
-            for i in 0..keys.len() {
-                trie.insert(keys[i].clone(), values[i].clone()).unwrap()
+            for i in 0..keys_1k.len() {
+                black_box(&mut trie)
+                    .insert(
+                        black_box(keys_1k[i].clone()),
+                        black_box(values_1k[i].clone()),
+                    )
+                    .unwrap()
+            }
+        });
+    });
+
+    group.bench_function("cita-trie insert 10k", |b| {
+        let mut trie = PatriciaTrie::new(
+            Arc::new(MemoryDB::new(false)),
+            Arc::new(HasherKeccak::new()),
+        );
+
+        b.iter(|| {
+            for i in 0..keys_10k.len() {
+                trie.insert(keys_10k[i].clone(), values_10k[i].clone())
+                    .unwrap()
             }
         });
     });
