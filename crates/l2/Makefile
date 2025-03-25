@@ -179,12 +179,6 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	CONFIG_FILE=config.toml cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
-test-tmux: down rm-db-l1 rm-db-l2 init-local-l1 deploy-l1 update-system-contracts
-	tmux new-session -d -s 'ethrex-l2' make init-l2 \; set -w remain-on-exit on
-	tmux split-window -h 'make init-prover;bash -i'
-	tmux split-window -v 'cargo test l2 --release -- --nocapture --test-threads=1'
-	tmux attach
-
 # Purge L2's state
 UNAME_S:=$(shell uname -s)
 # This directory is set by crates/l2/utils/prover/save_state.rs -> const DEFAULT_DATADIR
