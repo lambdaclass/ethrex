@@ -6,8 +6,8 @@ use crate::constants::{
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::db::StoreWrapper;
+use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use crate::EvmError;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE};
 use ethrex_common::{

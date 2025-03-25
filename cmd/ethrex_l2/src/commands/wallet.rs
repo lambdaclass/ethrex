@@ -361,7 +361,6 @@ impl Command {
                             from: Some(cfg.wallet.address),
                             ..Default::default()
                         },
-                        10,
                     )
                     .await?;
                 let tx_hash = eth_client
@@ -406,7 +405,6 @@ impl Command {
                             gas_limit: Some(21000 * 100),
                             ..Default::default()
                         },
-                        10,
                     )
                     .await?;
 
@@ -447,7 +445,6 @@ impl Command {
                             max_fee_per_gas: Some(800000000),
                             ..Default::default()
                         },
-                        10,
                     )
                     .await?;
 
@@ -509,7 +506,6 @@ impl Command {
                             from: Some(cfg.wallet.address),
                             ..Default::default()
                         },
-                        10,
                     )
                     .await?;
                 let tx_hash = client

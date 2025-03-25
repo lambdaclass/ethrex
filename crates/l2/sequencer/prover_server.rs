@@ -1,4 +1,5 @@
 use crate::sequencer::errors::{ProverServerError, SigIntError};
+use crate::sequencer::utils::sleep_random;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -19,8 +20,7 @@ use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransact
 use ethrex_storage::Store;
 use ethrex_vm::{
     backends::revm::execution_db::{ExecutionDB, ToExecDB},
-    db::StoreWrapper,
-    EvmError,
+    EvmError, StoreWrapper,
 };
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
@@ -471,25 +471,34 @@ impl ProverServer {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+        let gas_price = self
+            .eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                ProverServerError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            })?;
+
         let verify_tx = self
             .eth_client
             .build_eip1559_transaction(
                 self.on_chain_proposer_address,
                 self.verifier_address,
                 calldata.into(),
-                Overrides::default(),
-                10,
+                Overrides {
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
             )
             .await?;
 
+        let mut tx = WrappedTransaction::EIP1559(verify_tx);
+
         let verify_tx_hash = self
             .eth_client
-            .send_wrapped_transaction_with_retry(
-                &WrappedTransaction::EIP1559(verify_tx),
-                &self.verifier_private_key,
-                3 * 60,
-                10,
-            )
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
             .await?;
 
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
@@ -499,8 +508,6 @@ impl ProverServer {
 
     pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
         loop {
-            tokio::time::sleep(Duration::from_millis(self.dev_interval_ms)).await;
-
             let last_committed_block = EthClient::get_last_committed_block(
                 &self.eth_client,
                 self.on_chain_proposer_address,
@@ -547,6 +554,17 @@ impl ProverServer {
 
             let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+            let gas_price = self
+                .eth_client
+                .get_gas_price_with_extra(20)
+                .await?
+                .try_into()
+                .map_err(|_| {
+                    ProverServerError::InternalError(
+                        "Failed to convert gas_price to a u64".to_owned(),
+                    )
+                })?;
+
             let verify_tx = self
                 .eth_client
                 .build_eip1559_transaction(
@@ -554,22 +572,23 @@ impl ProverServer {
                     self.verifier_address,
                     calldata.into(),
                     Overrides {
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
                         ..Default::default()
                     },
-                    10,
                 )
                 .await?;
 
             info!("Sending verify transaction.");
 
+            let mut tx = WrappedTransaction::EIP1559(verify_tx);
+            self.eth_client
+                .set_gas_for_wrapped_tx(&mut tx, self.verifier_address)
+                .await?;
+
             let verify_tx_hash = self
                 .eth_client
-                .send_wrapped_transaction_with_retry(
-                    &WrappedTransaction::EIP1559(verify_tx),
-                    &self.verifier_private_key,
-                    3 * 60,
-                    10,
-                )
+                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
                 .await?;
 
             info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");
@@ -578,6 +597,8 @@ impl ProverServer {
                 "Mocked verify transaction sent for block {}",
                 last_verified_block + 1
             );
+
+            sleep_random(self.dev_interval_ms).await;
         }
     }
 }

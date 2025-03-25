@@ -40,6 +40,10 @@ pub enum EthClientError {
     Custom(String),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Max number of retries reached when trying to send transaction")]
+    TimeoutError,
+    #[error("Internal Error. This is most likely a bug: {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
