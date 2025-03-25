@@ -117,16 +117,29 @@ impl Blockchain {
 
     pub fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
+        let execution_result = self.execute_block(block);
+        let executed = Instant::now();
+        let result = execution_result.and_then(|res| self.store_block(block, res));
+        let stored = Instant::now();
 
-        let result = self
-            .execute_block(block)
-            .and_then(|res| self.store_block(block, res));
-
-        let interval = Instant::now().duration_since(since).as_millis();
+        let interval = stored.duration_since(since).as_millis();
         if interval != 0 {
             let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+            let execution_time = executed.duration_since(since).as_millis();
+            let storage_time = stored.duration_since(executed).as_millis();
+            let execution_fraction = (execution_time * 100).div(interval);
+            let storage_fraction = (storage_time * 100).div(interval);
+            let execution_time_per_gigagas = (execution_time as f64 / as_gigas).round() as u64;
+            let storage_time_per_gigagas = (storage_time as f64 / as_gigas).round() as u64;
+            let n_txs = block.body.transactions.len();
+            let base_log = format!("[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {interval} ms. #Txs: {n_txs}.", throughput);
+            let extra_log = if as_gigas > 0.0 {
+                format!(" exec/Ggas: {} ms ({}%), st/Ggas: {} ms ({}%)", execution_time_per_gigagas, execution_fraction, storage_time_per_gigagas, storage_fraction)
+            } else {
+                "".to_string()
+            };
+            info!("{}{}", base_log, extra_log);
         }
 
         result
