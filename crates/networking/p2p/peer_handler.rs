@@ -347,8 +347,9 @@ impl PeerHandler {
         };
         let validation = |response: &StorageRanges| {
             // Check we got a reasonable amount of storage ranges
-            response.id == request_id && response.slots.len() > storage_roots.len()
-                || response.slots.is_empty()
+            response.id == request_id
+                && !response.slots.is_empty()
+                && response.slots.len() <= storage_roots.len()
         };
 
         let response = self
@@ -523,7 +524,7 @@ impl PeerHandler {
         };
 
         let validation =
-            |response: &StorageRanges| response.id == request_id && response.slots.len() != 1;
+            |response: &StorageRanges| response.id == request_id && response.slots.len() == 1;
 
         let response = self
             .send_request::<StorageRanges>(Capability::Eth, request, validation)
