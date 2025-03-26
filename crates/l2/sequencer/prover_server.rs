@@ -174,13 +174,13 @@ impl ProverServer {
     }
 
     async fn main_logic(self) -> Result<(), ProverServerError> {
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         tokio::task::spawn(async move {
             if let Err(e) = tokio::signal::ctrl_c().await {
                 error!("Error handling ctrl_c: {e}");
             };
-            if let Err(e) = shutdown_tx.send(()).await {
-                error!("Error sending shutdown message through the mpsc::channel {e}");
+            if let Err(e) = shutdown_tx.send(0) {
+                error!("Error sending shutdown message through the oneshot::channel {e}");
             };
         });
 
@@ -195,7 +195,7 @@ impl ProverServer {
 
         loop {
             tokio::select! {
-                _ = shutdown_rx.recv() => {
+                _ = &mut shutdown_rx  => {
                     debug!("Shutting down...");
                     // It will return from the main_logic() with an `Ok(())`
                     // And inside the run() function the loop will break
