@@ -1,0 +1,58 @@
+[deployer]
+address = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b"
+private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
+# If set to 0xAA skip proof verification.
+# Only use in dev mode.
+pico_contract_verifier = "0x00000000000000000000000000000000000000AA"
+pico_deploy_verifier = false
+# If set to 0xAA skip proof verification.
+# Only use in dev mode.
+risc0_contract_verifier = "0x00000000000000000000000000000000000000AA"
+# Risc0Groth16Verifier Address
+# risc0_contract_verifier = "0xAC292cF957Dd5BA174cdA13b05C16aFC71700327"
+# If set to 0xAA skip proof verification.
+# Only use in dev mode.
+sp1_contract_verifier = "0x00000000000000000000000000000000000000AA"
+sp1_deploy_verifier = false
+# If set to false, the salt will be randomized.
+salt_is_zero = true
+
+[eth]
+rpc_url = "http://localhost:8545"
+
+[engine]
+rpc_url = "http://localhost:8552"
+jwt_path = "./jwt.hex"
+
+[watcher]
+bridge_address = "0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440"
+check_interval_ms = 1000
+max_block_step = 5000
+l2_proposer_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
+
+[proposer]
+interval_ms = 5000
+coinbase_address = "0x0007a881CD95B1484fca47615B64803dad620C8d"
+
+[committer]
+on_chain_proposer_address = "0x52178cfc3db571f60016d43adf47d61c2009fa72"
+l1_address = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b"
+l1_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
+interval_ms = 5000
+# 1 Gwei
+arbitrary_base_blob_gas_price = 1000000000
+
+[prover.client]
+prover_server_endpoint = "localhost:3900"
+interval_ms = 5000
+
+[prover.server]
+listen_ip = "0.0.0.0"
+listen_port = 3900
+# Not the same account as the [committer] l1 Account
+# The proposer is in charge of blob commitments.
+# The prover_server is in charge of verifying the zkProofs.
+verifier_address = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425"
+verifier_private_key = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
+dev_mode = false
+dev_interval_ms = 1000
