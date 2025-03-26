@@ -241,10 +241,7 @@ async fn state_sync_segment(
 
             // As we are downloading the state trie in segments the `should_continue` flag will mean that there
             // are more accounts to be fetched but these accounts may belong to the next segment
-            if stale
-                || (!should_continue
-                    || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number])
-            {
+            if !should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number] {
                 // All accounts fetched!
                 break;
             }
@@ -260,8 +257,10 @@ async fn state_sync_segment(
         segment_number,
     ));
     // Send empty batch to signal that no more batches are incoming
+    info!("[Segment {segment_number}]: Signaling storage and bytecode fetchers");
     storage_sender.send(vec![]).await?;
     bytecode_sender.send(vec![]).await?;
+    info!("[Segment {segment_number}]: storage and bytecode fetchers signaled");
     storage_fetcher_handle.await??;
     info!("[Segment {segment_number}]: Storage fetcher finished");
     bytecode_fetcher_handle.await??;
