@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, time::Duration};
+use std::{collections::HashMap, fmt};
 
 use crate::{
     types::{
@@ -979,12 +979,9 @@ impl EthClient {
         let hex_string =
             Self::_generic_call(eth_client, selector, on_chain_proposer_address).await?;
 
-        let hex_str = &hex_string
-            .strip_prefix("0x")
-            .ok_or(EthClientError::Custom(
-                "Couldn't strip prefix from request.".to_owned(),
-            ))?
-            .to_owned()[24..]; // Get the needed bytes
+        let hex_str = &hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
+            "Couldn't strip prefix from request.".to_owned(),
+        ))?[24..]; // Get the needed bytes
 
         let value = Address::from_str(hex_str)
             .map_err(|_| EthClientError::Custom("Failed to convert from_str()".to_owned()))?;
