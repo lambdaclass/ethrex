@@ -5,13 +5,10 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
-
 on:
-  push:
-    branches: ["main"]
+  # re-enable this when fixing the workflow
+  # push:
+  #   branches: ["main"]
   workflow_dispatch:
 
 env:
