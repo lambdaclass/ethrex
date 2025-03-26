@@ -39,5 +39,5 @@ jobs:
       - name: Run L2 integration test
         run: |
           cd crates/l2
-          cp config_example_docker.toml config.toml
+          cp configs/config_example_docker.toml configs/config_docker.toml
           make ci_test
