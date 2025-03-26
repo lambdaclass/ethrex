@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743006651601,
+  "lastUpdate": 1743007198077,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1345,6 +1345,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 225655939542,
             "range": "± 664288582",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "206c56e2e02c569b00fd6ce73e3106432e811793",
+          "message": "ci(core): remove rust version since it's already specified in toolchain (#2311)\n\n**Motivation**\nYou can see this message in the CI:\n`info: note that the toolchain '1.82.0-x86_64-unknown-linux-gnu' is\ncurrently in use (overridden by\n'/home/runner/work/ethrex/ethrex/rust-toolchain.toml')`",
+          "timestamp": "2025-03-26T15:42:13Z",
+          "tree_id": "fe462380636577aa82af2df8210b069231cfd8a5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/206c56e2e02c569b00fd6ce73e3106432e811793"
+        },
+        "date": 1743007195511,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 229594303409,
+            "range": "± 2536574230",
             "unit": "ns/iter"
           }
         ]
