@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743007198077,
+  "lastUpdate": 1743007283346,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1375,6 +1375,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 229594303409,
             "range": "± 2536574230",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4583997f02f572e6587abbd9239994f0c368080b",
+          "message": "chore(core): improve ci loc job (#2304)\n\n**Motivation**\nThe job doesn't seem to work well with forks (external contributions).\nThis aims to fix it",
+          "timestamp": "2025-03-26T15:43:52Z",
+          "tree_id": "4bd3553342079f6567bfb4bf0dc62d9354a54f37",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4583997f02f572e6587abbd9239994f0c368080b"
+        },
+        "date": 1743007281368,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 229822436417,
+            "range": "± 575467306",
             "unit": "ns/iter"
           }
         ]
