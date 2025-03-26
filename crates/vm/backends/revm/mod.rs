@@ -417,7 +417,7 @@ impl REVM {
                             if account.is_contract_changed() {
                                 // Update code in db
                                 if let Some(code) = new_acc_info.code {
-                                    account_update.code = Some(code.original_bytes().clone().0);
+                                    account_update.code = Some(code.original_bytes().0);
                                 }
                             }
                         }

@@ -19,7 +19,7 @@ use revm::REVM;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum EvmEngine {
     #[default]
     REVM,
@@ -90,6 +90,19 @@ impl Evm {
             }
             Evm::LEVM { store_wrapper, .. } => {
                 LEVM::execute_block(block, store_wrapper.store.clone())
+            }
+        }
+    }
+
+    pub fn execute_block_without_clearing_state(
+        &mut self,
+        block: &Block,
+    ) -> Result<BlockExecutionResult, EvmError> {
+        match self {
+            Evm::REVM { state } => REVM::execute_block(block, state),
+            Evm::LEVM { .. } => {
+                // TODO(#2218): LEVM does not support a way  persist the state between block executions
+                todo!();
             }
         }
     }
