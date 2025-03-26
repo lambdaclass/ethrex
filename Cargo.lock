@@ -3323,7 +3323,7 @@ dependencies = [
  "serde",
  "serde_json",
  "test-casing",
- "thiserror 2.0.12",
+ "thiserror 2.0.11",
  "tokio",
  "tokio-util",
  "toml 0.8.20",
@@ -9709,7 +9709,7 @@ checksum = "f9b53c7124dd88026d5d98a1eb1fd062a578b7d783017c9298825526c7fb6427"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn 2.0.98",
 ]
 
 [[package]]
