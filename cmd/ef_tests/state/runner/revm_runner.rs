@@ -15,10 +15,11 @@ use ethrex_levm::{
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
+    self,
     backends::{self, revm::db::EvmState},
-    db::StoreWrapper,
-    fork_to_spec_id, RevmAddress, RevmU256,
+    fork_to_spec_id, StoreWrapper,
 };
+pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -339,6 +340,12 @@ pub fn ensure_post_state(
             let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                 Some(*fork),
                 Arc::new(store_wrapper.clone()),
+                store_wrapper.store.get_chain_config().map_err(|e| {
+                    EFTestRunnerError::VMInitializationFailed(format!(
+                        "Error at LEVM::get_state_transitions in ensure_post_state(): {}",
+                        e
+                    ))
+                })?,
                 &block_header,
                 &levm_execution_report.new_state,
             )

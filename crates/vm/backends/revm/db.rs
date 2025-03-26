@@ -5,11 +5,7 @@ use revm::primitives::{
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 
-use crate::{
-    db::{ExecutionDB, StoreWrapper},
-    ChainConfig, EvmError,
-};
-
+use crate::{ChainConfig, EvmError, ExecutionDB, StoreWrapper};
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
 /// with a [ExecutionDB] in case we only want to store the necessary data for some particular
 /// execution, for example when proving in L2 mode.

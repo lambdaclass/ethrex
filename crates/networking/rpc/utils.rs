@@ -17,12 +17,21 @@ pub enum RpcErr {
     UnsuportedFork(String),
     Internal(String),
     Vm(String),
-    Revert { data: String },
-    Halt { reason: String, gas_used: u64 },
+    Revert {
+        data: String,
+    },
+    Halt {
+        reason: String,
+        gas_used: u64,
+    },
     AuthenticationError(AuthenticationError),
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
+    #[cfg(feature = "based")]
+    InvalidBasedMessage(String),
+    #[cfg(feature = "l2")]
+    InvalidEthrexL2Message(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -122,6 +131,18 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
+            #[cfg(feature = "based")]
+            RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
+                code: -38003,
+                data: None,
+                message: format!("Invalid based message: {context}"),
+            },
+            #[cfg(feature = "l2")]
+            RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
+                code: -39000,
+                data: None,
+                message: format!("Invalid Ethex L2 message: {reason}",),
+            },
         }
     }
 }
@@ -150,6 +171,10 @@ pub enum RpcNamespace {
     Debug,
     Web3,
     Net,
+    #[cfg(feature = "l2")]
+    EthrexL2,
+    #[cfg(feature = "based")]
+    Based,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -178,6 +203,10 @@ impl RpcRequest {
                 "debug" => Ok(RpcNamespace::Debug),
                 "web3" => Ok(RpcNamespace::Web3),
                 "net" => Ok(RpcNamespace::Net),
+                #[cfg(feature = "l2")]
+                "ethrex" => Ok(RpcNamespace::EthrexL2),
+                #[cfg(feature = "based")]
+                "based" => Ok(RpcNamespace::Based),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {
@@ -268,6 +297,8 @@ pub mod test_utils {
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
     use bytes::Bytes;
+    #[cfg(feature = "l2")]
+    use secp256k1::{rand, SecretKey};
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
     pub fn example_p2p_node() -> Node {
@@ -319,6 +350,10 @@ pub mod test_utils {
         let gateway_eth_client = EthClient::new("");
         #[cfg(feature = "based")]
         let gateway_auth_client = EngineClient::new("", Bytes::default());
+        #[cfg(feature = "l2")]
+        let valid_delegation_addresses = Vec::new();
+        #[cfg(feature = "l2")]
+        let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
         start_api(
             http_addr,
             authrpc_addr,
@@ -332,6 +367,12 @@ pub mod test_utils {
             gateway_eth_client,
             #[cfg(feature = "based")]
             gateway_auth_client,
+            #[cfg(feature = "based")]
+            Default::default(),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses,
+            #[cfg(feature = "l2")]
+            sponsor_pk,
         )
         .await;
     }

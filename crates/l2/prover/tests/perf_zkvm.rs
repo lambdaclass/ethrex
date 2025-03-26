@@ -8,7 +8,7 @@ use ethrex_storage::{EngineType, Store};
 use ethrex_vm::backends::revm::db::evm_state;
 use ethrex_vm::backends::Evm;
 #[cfg(feature = "levm-l2")]
-use ethrex_vm::db::StoreWrapper;
+use ethrex_vm::StoreWrapper;
 use std::path::Path;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;

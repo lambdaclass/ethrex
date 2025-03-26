@@ -7,7 +7,7 @@ use revm::{
     DatabaseRef,
 };
 
-use crate::{db::ExecutionDB, errors::ExecutionDBError};
+use crate::{errors::ExecutionDBError, ExecutionDB};
 
 impl DatabaseRef for ExecutionDB {
     /// The database error type.

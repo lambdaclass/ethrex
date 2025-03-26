@@ -18,6 +18,7 @@ ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain = { workspace = true, features = ["l2"] }
 ethrex-storage.workspace = true
+ethrex-trie.workspace = true
 ethrex-vm = { workspace = true, features = ["l2"] }
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
@@ -28,6 +29,7 @@ jsonwebtoken.workspace = true
 secp256k1.workspace = true
 keccak-hash.workspace = true
 envy = "0.4.2"
+rand.workspace = true
 thiserror.workspace = true
 directories = "5.0.1"
 toml = { version = "0.8.19", features = ["parse"] }

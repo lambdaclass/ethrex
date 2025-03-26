@@ -14,3 +14,6 @@ pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01; // Defined in [EIP-4844](https:
 pub const BYTES_PER_FIELD_ELEMENT: usize = 32;
 pub const FIELD_ELEMENTS_PER_BLOB: usize = 4096;
 pub const BYTES_PER_BLOB: usize = BYTES_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB;
+/// The maximum number of bytes that can be "safely" stored in a blob. This is, prepend
+/// a zero byte for every 32 bytes of data to ensure they not exceed the field modulus.
+pub const SAFE_BYTES_PER_BLOB: usize = BYTES_PER_BLOB * 31 / 32;

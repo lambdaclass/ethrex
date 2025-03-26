@@ -16,7 +16,6 @@ use crate::{
     types::block_identifier::{BlockIdentifier, BlockTag},
     utils::{parse_json_hex, RpcErr, RpcRequest},
 };
-use rand::prelude::*;
 use serde_json::{json, Value};
 
 use super::logs::{fetch_logs_with_filter, LogsFilter};
@@ -86,7 +85,7 @@ impl NewFilterRequest {
         }
 
         let last_block_number = storage.get_latest_block_number()?;
-        let id: u64 = random();
+        let id: u64 = rand::random();
         let timestamp = Instant::now();
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
             error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
@@ -275,6 +274,8 @@ mod tests {
     use ethrex_common::types::Genesis;
     use ethrex_p2p::sync::SyncManager;
     use ethrex_storage::{EngineType, Store};
+    #[cfg(feature = "l2")]
+    use secp256k1::{rand, SecretKey};
 
     use serde_json::{json, Value};
     use test_utils::TEST_GENESIS;
@@ -452,6 +453,12 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -518,6 +525,12 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
 
         map_http_requests(&uninstall_filter_req, context)
@@ -549,6 +562,12 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
         };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
