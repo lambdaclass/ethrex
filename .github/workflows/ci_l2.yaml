@@ -11,9 +11,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
-env:
-  RUST_VERSION: 1.82.0
-
 jobs:
   test:
     # "Integration Test" is a required check, don't change the name
@@ -25,8 +22,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Caching
         uses: Swatinem/rust-cache@v2

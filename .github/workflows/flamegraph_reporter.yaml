@@ -15,7 +15,6 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_VERSION: 1.85.0
   RUST_RETH_VERSION: 1.85.0
 
 jobs:
@@ -41,7 +40,7 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/flamegraph
             ${{ env.HOME }}/.cargo/bin/inferno-*
             ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/state/vectors
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+          key: ${{ runner.os }}-extra-binaries
 
       - name: Change perf settings
         run: |
@@ -173,8 +172,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
@@ -187,14 +184,14 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/addr2line
             ${{ env.HOME }}/.cargo/bin/flamegraph
             ${{ env.HOME }}/.cargo/bin/inferno-*
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+          key: ${{ runner.os }}-extra-binaries
 
       - name: Cache ethrex_l2
         id: cache-ethrex-l2
         uses: actions/cache@v4
         with:
           path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
+          key: ${{ runner.os }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
 
       - name: Change perf settings
         run: |
@@ -320,14 +317,14 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/addr2line
             ${{ env.HOME }}/.cargo/bin/flamegraph
             ${{ env.HOME }}/.cargo/bin/inferno-*
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+          key: ${{ runner.os }}-extra-binaries
 
       - name: Cache ethrex_l2
         id: cache-ethrex-l2
         uses: actions/cache@v4
         with:
           path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
+          key: ${{ runner.os }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
 
       - name: Change perf settings
         run: |
