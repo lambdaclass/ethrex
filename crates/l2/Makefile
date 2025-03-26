@@ -132,6 +132,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 		echo "Running ethrex L2 with based"; \
 	fi; \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
+	l2 init \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr 0.0.0.0 \
@@ -167,7 +168,7 @@ init-prover: ## 🚀 Initializes the Prover
 	cargo run --release --features "$$T$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover -- $$T
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
 
 # Testing
 # cargo test l2 will match tests that has l2 in the function.
