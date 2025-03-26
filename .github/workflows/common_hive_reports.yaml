@@ -14,7 +14,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.82.0
 
 jobs:
   run-hive:
@@ -84,8 +83,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Download all results
         uses: actions/download-artifact@v4
