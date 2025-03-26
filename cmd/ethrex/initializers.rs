@@ -11,7 +11,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::backends::EvmEngine;
+use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -35,7 +35,11 @@ use ::{ethrex_common::Address, ethrex_l2::utils::config::read_env_file, secp256k
 #[cfg(feature = "based")]
 use crate::cli::BasedOptions;
 #[cfg(feature = "based")]
+use ethrex_common::Public;
+#[cfg(feature = "based")]
 use ethrex_rpc::{EngineClient, EthClient};
+#[cfg(feature = "based")]
+use std::str::FromStr;
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
@@ -124,10 +128,12 @@ pub fn init_rpc_api(
         get_gateway_http_client(based_ops),
         #[cfg(feature = "based")]
         get_gateway_auth_client(based_ops),
+        #[cfg(feature = "based")]
+        get_gateway_public_key(based_ops),
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
-        get_sponsor_pk(),
+        get_sponsor_pk(l2_opts),
     )
     .into_future();
 
@@ -151,6 +157,11 @@ fn get_gateway_auth_client(opts: &BasedOptions) -> EngineClient {
     let gateway_jwtsecret = read_jwtsecret_file(&opts.gateway_jwtsecret);
 
     EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret)
+}
+
+#[cfg(feature = "based")]
+fn get_gateway_public_key(based_opts: &BasedOptions) -> Public {
+    Public::from_str(&based_opts.gateway_pubkey).expect("Failed to parse gateway pubkey")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -360,7 +371,13 @@ pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
 }
 
 #[cfg(feature = "l2")]
-pub fn get_sponsor_pk() -> SecretKey {
+pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
+    if let Some(pk) = opts.sponsor_private_key {
+        return pk;
+    }
+
+    warn!("Sponsor private key not provided. Trying to read from the .env file.");
+
     if let Err(e) = read_env_file() {
         panic!("Failed to read .env file: {e}");
     }

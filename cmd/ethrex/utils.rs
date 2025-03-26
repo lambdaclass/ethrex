@@ -4,7 +4,10 @@ use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_vm::backends::EvmEngine;
+use ethrex_vm::EvmEngine;
+use hex::FromHexError;
+#[cfg(feature = "l2")]
+use secp256k1::SecretKey;
 use std::{
     fs::File,
     io,
@@ -117,4 +120,16 @@ pub fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Err
     };
 
     serde_json::from_reader(file)
+}
+
+#[cfg(feature = "l2")]
+pub fn parse_private_key(s: &str) -> eyre::Result<SecretKey> {
+    Ok(SecretKey::from_slice(&parse_hex(s)?)?)
+}
+
+pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
+    match s.strip_prefix("0x") {
+        Some(s) => hex::decode(s).map(Into::into),
+        None => hex::decode(s).map(Into::into),
+    }
 }
