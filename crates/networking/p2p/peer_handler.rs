@@ -111,6 +111,7 @@ impl PeerHandler {
         cap: Capability,
         // using a function to not derive Clone in RLPxMessage
         build_request: impl Fn() -> RLPxMessage,
+        validate_response: impl Fn(T) -> bool,
     ) -> Option<T> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let channels = self.get_peer_channel_with_retry(cap.clone()).await;
@@ -133,6 +134,13 @@ impl PeerHandler {
             .ok()
             .flatten()
             {
+                let response = response.inner()?;
+                let validation = validate_response(response);
+                if !validation {
+                    self.peer_failed_to_respond(node_id);
+                    return None;
+                }
+
                 // Assign 1 point for a successful response.
                 // If the response time is under 300ms, assign 2 additional points for speed.
                 let mut scoring_points = 1;
@@ -172,7 +180,7 @@ impl PeerHandler {
             })
         };
         let response = self
-            .send_request::<BlockHeaders>(Capability::Eth, request)
+            .send_request::<BlockHeaders>(Capability::Eth, request, validation)
             .await?;
 
         match response.id == request_id && !response.block_headers.is_empty() {
@@ -194,22 +202,13 @@ impl PeerHandler {
                 block_hashes: block_hashes.clone(),
             })
         };
-        // let validation = |response| {
-        //     response.id == request_id
-        //         && !response.block_bodies.is_empty()
-        //         && response.block_bodies.len() <= block_hashes_len
-        // };
-        let response = self
-            .send_request::<BlockBodies>(Capability::Eth, request)
-            .await?;
-
-        match response.id == request_id
-            && !response.block_bodies.is_empty()
-            && response.block_bodies.len() <= block_hashes_len
-        {
-            true => Some(response.block_bodies),
-            false => None,
-        }
+        let validation = |response| {
+            response.id == request_id
+                && !response.block_bodies.is_empty()
+                && response.block_bodies.len() <= block_hashes_len
+        };
+        self.send_request::<BlockBodies>(Capability::Eth, request, validation)
+            .await
     }
 
     /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
@@ -225,17 +224,13 @@ impl PeerHandler {
                 block_hashes: block_hashes.clone(),
             })
         };
-        let response = self
-            .send_request::<Receipts>(Capability::Eth, request)
-            .await?;
-
-        match response.id == request_id
-            && !response.receipts.is_empty()
-            && response.receipts.len() <= block_hashes_len
-        {
-            true => Some(response.receipts),
-            false => None,
-        }
+        let validation = |response| {
+            response.id == request_id
+                && !response.receipts.is_empty()
+                && response.receipts.len() <= block_hashes_len
+        };
+        self.send_request::<Receipts>(Capability::Eth, request, validation)
+            .await
     }
 
     /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
@@ -260,13 +255,11 @@ impl PeerHandler {
                 response_bytes: MAX_RESPONSE_BYTES,
             })
         };
-        let response = self
-            .send_request::<AccountRange>(Capability::Eth, request)
-            .await?;
+        let validation = |response| response.id == request_id;
 
-        if response.id != request_id {
-            return None;
-        };
+        let response = self
+            .send_request::<AccountRange>(Capability::Eth, request, validation)
+            .await?;
 
         let (accounts, proof) = (response.accounts, response.proof);
 
@@ -307,18 +300,14 @@ impl PeerHandler {
                 bytes: MAX_RESPONSE_BYTES,
             })
         };
+        let validation = |response| {
+            response.id == request_id
+                && !response.codes.is_empty()
+                && response.codes.len() <= hashes_len
+        };
 
-        let response = self
-            .send_request::<ByteCodes>(Capability::Eth, request)
-            .await?;
-
-        match response.id == request_id
-            && !response.codes.is_empty()
-            && response.codes.len() <= hashes_len
-        {
-            true => Some(response.codes),
-            false => None,
-        }
+        self.send_request::<ByteCodes>(Capability::Eth, request, validation)
+            .await
     }
 
     /// Requests storage ranges for accounts given their hashed address and storage roots, and the root of their state trie
@@ -346,14 +335,14 @@ impl PeerHandler {
                 response_bytes: MAX_RESPONSE_BYTES,
             })
         };
+        let validation = |response| {
+            // Check we got a reasonable amount of storage ranges
+            response.id == request_id && slots.len() > storage_roots.len() || slots.is_empty()
+        };
 
         let response = self
-            .send_request::<StorageRanges>(Capability::Eth, request)
+            .send_request::<StorageRanges>(Capability::Eth, request, validation)
             .await?;
-
-        if response.id != request_id {
-            return None;
-        }
 
         let (mut slots, proof) = (response.slots, response.proof);
 
@@ -402,7 +391,8 @@ impl PeerHandler {
             storage_keys.push(hashed_keys);
             storage_values.push(values);
         }
-        return Some((storage_keys, storage_values, should_continue));
+
+        Some((storage_keys, storage_values, should_continue))
     }
 
     /// Requests state trie nodes given the root of the trie where they are contained and their path (be them full or partial)
@@ -429,19 +419,19 @@ impl PeerHandler {
             })
         };
 
+        let validation = |response| {
+            response.id == request_id && !nodes.is_empty() && nodes.len() <= expected_nodes
+        };
+
         let response = self
-            .send_request::<TrieNodes>(Capability::Eth, request)
+            .send_request::<TrieNodes>(Capability::Eth, request, validation)
             .await?;
 
-        let nodes = response.nodes;
-        match response.id == request_id && !nodes.is_empty() && nodes.len() <= expected_nodes {
-            true => nodes
-                .iter()
-                .map(|node| Node::decode_raw(node))
-                .collect::<Result<Vec<_>, _>>()
-                .ok(),
-            false => None,
-        }
+        nodes
+            .iter()
+            .map(|node| Node::decode_raw(node))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()
     }
 
     /// Requests storage trie nodes given the root of the state trie where they are contained and
@@ -478,20 +468,15 @@ impl PeerHandler {
             })
         };
 
+        let validation = |response| {
+            response.id == request_id && !nodes.is_empty() && nodes.len() <= expected_nodes
+        };
+
         let response = self
-            .send_request::<TrieNodes>(Capability::Eth, request)
+            .send_request::<TrieNodes>(Capability::Eth, request, validation)
             .await?;
 
-        let nodes = response.nodes;
-
-        match response.id != request_id && !nodes.is_empty() && nodes.len() <= expected_nodes {
-            true => nodes
-                .iter()
-                .map(|node| Node::decode_raw(node))
-                .collect::<Result<Vec<_>, _>>()
-                .ok(),
-            false => None,
-        }
+        response.nodes
     }
 
     /// Requests a single storage range for an accouns given its hashed address and storage root, and the root of its state trie
@@ -521,19 +506,14 @@ impl PeerHandler {
             })
         };
 
-        let response = self
-            .send_request::<StorageRanges>(Capability::Eth, request)
-            .await?;
+        let validation = |response| response.id == request_id && slots.len() != 1;
 
-        if response.id != request_id {
-            return None;
-        }
+        let response = self
+            .send_request::<StorageRanges>(Capability::Eth, request, validation)
+            .await?;
 
         let (mut slots, proof) = (response.slots, response.proof);
 
-        if slots.len() != 1 {
-            return None;
-        }
         // Unzip & validate response
         let proof = encodable_to_proof(&proof);
         let (storage_keys, storage_values): (Vec<H256>, Vec<U256>) = slots
