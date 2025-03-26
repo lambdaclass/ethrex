@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743000930697,
+  "lastUpdate": 1743005328281,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1285,6 +1285,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 231415392619,
             "range": "± 1028060620",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d1faf8b4658bc3f36c35159717303fa3af384fd2",
+          "message": "test(l2): add state reconstruction test to the CI (#2255)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe want to check that the state diff reconstruction doesn't break on\nPRs.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nAdded some tests that reconstruct the state from 3 blobs, which include\nbalance and nonce diffs, and an ERC20 contract \"deployment\" with balance\ndiffs.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Federico Borello <156438142+fborello-lambda@users.noreply.github.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>",
+          "timestamp": "2025-03-26T15:11:43Z",
+          "tree_id": "79801ab99fd69dda90bb28100f2f5c991cd76480",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d1faf8b4658bc3f36c35159717303fa3af384fd2"
+        },
+        "date": 1743005326164,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 226755411287,
+            "range": "± 357419523",
             "unit": "ns/iter"
           }
         ]
