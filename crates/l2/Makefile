@@ -200,7 +200,7 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	# Integration tests
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
-	../../target/release/ethrex_prover & cargo test l2 --release -- --nocapture --test-threads=1
+	RUST_LOG=info,ethrex_prover=debug ../../target/release/ethrex_prover & cargo test l2 --release -- --nocapture --test-threads=1
 
 	# State reconstruction tests
 	# rm -rf $$PWD/store
