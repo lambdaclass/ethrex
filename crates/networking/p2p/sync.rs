@@ -438,7 +438,18 @@ impl SyncManager {
             .mark_chain_as_canonical(&blocks)
             .map_err(SyncError::Store)?;
 
-        if let Err((error, failure)) = self.add_blocks(&blocks, sync_head_found) {
+        // Executing blocks is a CPU heavy operation
+        // Spawn a blocking task to not block the tokio runtime
+        let res: Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> = {
+            let blockchain = self.blockchain.clone();
+            tokio::task::spawn_blocking(move || {
+                Self::add_blocks(blockchain, &blocks, sync_head_found)
+            })
+            .await
+            .map_err(SyncError::JoinHandle)
+        }?;
+
+        if let Err((error, failure)) = res {
             warn!("Failed to add block during FullSync: {error}");
             if let Some(BatchBlockProcessingFailure {
                 failed_block_hash,
@@ -480,7 +491,7 @@ impl SyncManager {
     }
 
     fn add_blocks(
-        &self,
+        blockchain: Arc<Blockchain>,
         blocks: &[Block],
         sync_head_found: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
@@ -488,7 +499,7 @@ impl SyncManager {
         if sync_head_found {
             let mut last_valid_hash = H256::default();
             for block in blocks {
-                self.blockchain.add_block(block).map_err(|e| {
+                blockchain.add_block(block).map_err(|e| {
                     (
                         e,
                         Some(BatchBlockProcessingFailure {
@@ -501,7 +512,7 @@ impl SyncManager {
             }
             Ok(())
         } else {
-            self.blockchain.add_blocks_in_batch(blocks)
+            blockchain.add_blocks_in_batch(blocks)
         }
     }
 }
