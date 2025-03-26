@@ -5,7 +5,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_p2p::{sync::SyncMode, types::Node};
-use ethrex_vm::backends::EvmEngine;
+use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
@@ -13,6 +13,9 @@ use crate::{
     utils::{self, set_datadir},
     DEFAULT_DATADIR,
 };
+
+#[cfg(feature = "l2")]
+use secp256k1::SecretKey;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
@@ -180,6 +183,7 @@ impl Default for Options {
     }
 }
 
+#[cfg(feature = "l2")]
 #[derive(ClapParser)]
 pub struct L2Options {
     #[arg(
@@ -189,6 +193,8 @@ pub struct L2Options {
         help_heading = "L2 options"
     )]
     pub sponsorable_addresses_file_path: Option<String>,
+    #[arg(long, value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
+    pub sponsor_private_key: Option<SecretKey>,
 }
 
 #[cfg(feature = "based")]
@@ -198,6 +204,7 @@ pub struct BasedOptions {
         long = "gateway.addr",
         default_value = "0.0.0.0",
         value_name = "GATEWAY_ADDRESS",
+        env = "GATEWAY_ADDRESS",
         help_heading = "Based options"
     )]
     pub gateway_addr: String,
@@ -205,6 +212,7 @@ pub struct BasedOptions {
         long = "gateway.eth_port",
         default_value = "8546",
         value_name = "GATEWAY_ETH_PORT",
+        env = "GATEWAY_ETH_PORT",
         help_heading = "Based options"
     )]
     pub gateway_eth_port: String,
@@ -212,6 +220,7 @@ pub struct BasedOptions {
         long = "gateway.auth_port",
         default_value = "8553",
         value_name = "GATEWAY_AUTH_PORT",
+        env = "GATEWAY_AUTH_PORT",
         help_heading = "Based options"
     )]
     pub gateway_auth_port: String,
@@ -219,9 +228,17 @@ pub struct BasedOptions {
         long = "gateway.jwtsecret",
         default_value = "jwt.hex",
         value_name = "GATEWAY_JWTSECRET_PATH",
+        env = "GATEWAY_JWTSECRET_PATH",
         help_heading = "Based options"
     )]
     pub gateway_jwtsecret: String,
+    #[arg(
+        long = "gateway.pubkey",
+        value_name = "GATEWAY_PUBKEY",
+        env = "GATEWAY_PUBKEY",
+        help_heading = "Based options"
+    )]
+    pub gateway_pubkey: String,
 }
 
 #[derive(ClapSubcommand)]
