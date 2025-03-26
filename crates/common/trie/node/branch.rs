@@ -212,7 +212,7 @@ impl BranchNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
-        let mut buf = vec![];
+        let mut buf = Vec::with_capacity(40);
         let mut encoder = Encoder::new(&mut buf);
         for child in self.choices.iter() {
             match child {

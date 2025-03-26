@@ -141,7 +141,7 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 /// }
 ///
 /// impl RLPEncode for Simple {
-///     fn encode(&self, buf: &mut dyn BufMut) {
+///     fn encode(&self, buf: &mut Vec<u8>) {
 ///         // The fields are encoded in the order given here
 ///         Encoder::new(buf)
 ///             .encode_field(&self.a)
@@ -157,7 +157,7 @@ fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeErro
 /// ```
 #[must_use = "`Encoder` must be consumed with `finish` to perform the encoding"]
 pub struct Encoder<'a> {
-    buf: &'a mut dyn BufMut,
+    buf: &'a mut Vec<u8>,
     temp_buf: Vec<u8>,
 }
 
@@ -173,12 +173,12 @@ impl core::fmt::Debug for Encoder<'_> {
 
 impl<'a> Encoder<'a> {
     /// Creates a new encoder that writes to the given buffer.
-    pub fn new(buf: &'a mut dyn BufMut) -> Self {
+    pub fn new(buf: &'a mut Vec<u8>) -> Self {
         // PERF: we could pre-allocate the buffer or switch to `ArrayVec`` if we could
         // bound the size of the encoded data.
         Self {
             buf,
-            temp_buf: Default::default(),
+            temp_buf: Vec::with_capacity(40),
         }
     }
 
@@ -208,8 +208,8 @@ impl<'a> Encoder<'a> {
     }
 
     /// Finishes encoding the struct and writes the result to the buffer.
-    pub fn finish(self) {
-        encode_length(self.temp_buf.len(), self.buf);
+    pub fn finish(&mut self) {
+        encode_length(self.temp_buf.len(), &mut self.buf);
         self.buf.put_slice(&self.temp_buf);
     }
 

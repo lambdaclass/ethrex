@@ -27,7 +27,7 @@ impl NodeType {
 }
 
 impl RLPEncode for BranchNode {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         // TODO: choices encoded as vec due to conflicting trait impls for [T;N] & [u8;N], check if we can fix this later
         Encoder::new(buf)
             .encode_field(&self.choices.to_vec())
@@ -37,7 +37,7 @@ impl RLPEncode for BranchNode {
 }
 
 impl RLPEncode for ExtensionNode {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.prefix)
             .encode_field(&self.child)
@@ -46,7 +46,7 @@ impl RLPEncode for ExtensionNode {
 }
 
 impl RLPEncode for LeafNode {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         Encoder::new(buf)
             .encode_field(&self.partial)
             .encode_field(&self.value)
@@ -87,13 +87,14 @@ impl RLPDecode for LeafNode {
 }
 
 impl RLPEncode for Node {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         let node_type = match self {
             Node::Branch(_) => NodeType::Branch,
             Node::Extension(_) => NodeType::Extension,
             Node::Leaf(_) => NodeType::Leaf,
         };
-        buf.put_u8(node_type as u8);
+        // buf.put_u8(node_type as u8);
+        buf.push(node_type as u8);
         match self {
             Node::Branch(n) => n.encode(buf),
             Node::Extension(n) => n.encode(buf),
