@@ -42,11 +42,8 @@ interval_ms = 5000
 # 1 Gwei
 arbitrary_base_blob_gas_price = 1000000000
 
-[prover.client]
-prover_server_endpoint = "localhost:3900"
-interval_ms = 5000
-
-[prover.server]
+[prover_server]
+# set it to 0.0.0.0 to allow connections from other machines
 listen_ip = "127.0.0.1"
 listen_port = 3900
 # Not the same account as the [committer] l1 Account

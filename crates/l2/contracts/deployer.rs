@@ -3,7 +3,10 @@ use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_common::U256;
 use ethrex_l2::utils::config::errors;
-use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env_file};
+use ethrex_l2::utils::config::{
+    read_env_as_lines_by_config, read_env_file_by_config, toml_parser::parse_configs,
+    write_env_file_by_config, ConfigMode,
+};
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
@@ -59,8 +62,8 @@ pub enum DeployError {
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
     DecodingError(String),
-    #[error("Failed to interact with .env file, error: {0}")]
-    EnvFileError(#[from] errors::ConfigError),
+    #[error("Config error: {0}")]
+    ConfigError(#[from] errors::ConfigError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
 }
@@ -82,24 +85,10 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
-    #[allow(clippy::expect_fun_call, clippy::expect_used)]
-    let toml_config = std::env::var("CONFIG_FILE").expect(
-        format!(
-            "CONFIG_FILE environment variable not defined. Expected in {}, line: {}
-If running locally, a reasonable value would be CONFIG_FILE=config.toml",
-            file!(),
-            line!()
-        )
-        .as_str(),
-    );
-
-    match ethrex_l2::parse_toml::read_toml(toml_config) {
-        Ok(_) => (),
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
-    };
+    if let Err(e) = parse_configs(ConfigMode::Sequencer) {
+        eprintln!("{e}");
+        return Err(e.into());
+    }
 
     let setup_result = setup()?;
     download_contract_deps(&setup_result.contracts_path)?;
@@ -143,7 +132,8 @@ If running locally, a reasonable value would be CONFIG_FILE=config.toml",
         }
     }
 
-    let env_lines = read_env_as_lines().map_err(DeployError::EnvFileError)?;
+    let env_lines =
+        read_env_as_lines_by_config(ConfigMode::Sequencer).map_err(DeployError::ConfigError)?;
 
     let mut wr_lines: Vec<String> = Vec::new();
     let mut env_lines_iter = env_lines.into_iter();
@@ -168,12 +158,12 @@ If running locally, a reasonable value would be CONFIG_FILE=config.toml",
         }
         wr_lines.push(line);
     }
-    write_env_file(wr_lines).map_err(DeployError::EnvFileError)?;
+    write_env_file_by_config(wr_lines, ConfigMode::Sequencer)?;
     Ok(())
 }
 
 fn setup() -> Result<SetupResult, DeployError> {
-    read_env_file()?;
+    read_env_file_by_config(ConfigMode::Sequencer)?;
 
     let eth_client = EthClient::new(&read_env_var("ETH_RPC_URL")?);
 

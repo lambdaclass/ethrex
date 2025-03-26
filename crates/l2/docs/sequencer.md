@@ -1,10 +1,11 @@
-# ethrex L2 Proposer
+# ethrex L2 Sequencer
 
 ## ToC
 
-- [ethrex L2 Proposer](#ethrex-l2-proposer)
+- [ethrex L2 Sequencer](#ethrex-l2-sequencer)
   - [ToC](#toc)
   - [Components](#components)
+    - [Block Producer](#block-producer)
     - [L1 Watcher](#l1-watcher)
     - [L1 Transaction Sender](#l1-transaction-sender)
     - [Prover Server](#prover-server)
@@ -13,6 +14,10 @@
 ## Components
 
 The L2 Proposer is composed of the following components:
+
+### Block Producer
+
+Creates Blocks with a connection to the `auth.rpc` port.
 
 ### L1 Watcher
 
@@ -36,18 +41,24 @@ For more information about the Prover Server, the [Prover Docs](./prover.md) pro
 
 ## Configuration
 
-Configuration is done through environment variables. The easiest way to configure the Proposer is by creating a `config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
+Configuration is done through environment variables. The easiest way to configure the Sequencer is by creating a `config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
 
-The following environment variables are available to configure the Proposer (consider looking at the provided [config_example.toml](../config_example.toml):
+> [!NOTE]
+> The deployer.rs is in charge of parsing the `.toml` and creating/updating the `.env`
+> If you don't deploy files, the `.toml` will not be parsed.
 
-<!-- NOTE: Mantain the sections in the same order as present in [config_example.toml](../config_example.toml). -->
+The following environment variables are available to configure the Proposer consider looking at the provided [config_example.toml](../configs/config_example.toml):
+
+<!-- NOTE: Mantain the sections in the same order as present in [config_example.toml](../configs/config_example.toml). -->
 
 - Under the [deployer] section:
     - `address`: L1 account which will deploy the common bridge contracts in L1.
     - `private key`: Its private key.
     - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
     - `sp1_contract_verifier`: Address which will verify the `sp1` proofs.
-    - `sp1_deploy_verifier`: Whether to deploy the sp1 verifier
+    - `sp1_deploy_verifier`: Whether to deploy the `sp1` verifier contract or not. 
+    - `pico_contract_verifier`: Address which will verify the `pico` proofs.
+    - `pico_deploy_verifier`: Whether to deploy the `pico` verifier contract or not.
     - `salt_is_zero`: Whether a 0 value salt will be used. Keep as true for deterministic `create2` operations.
 
 - Under the [eth] section:
@@ -72,11 +83,7 @@ Under the [committer] section:
     - `l1_private_key`: Private key of the L1 committer.
     - `on_chain_proposer_address`: Address of the on-chain committer.
 
-- Under the [prover.client] section:
-    - `prover_server_endpoint`: Endpoint for the prover server.
-    - `interval_ms`: Interval in milliseconds to prove new blocks (Currently unused).
-
-- Under the [prover.server] section:
+- Under the [prover_server] section:
     - `listen_ip`: IP to listen for proof data requests.
     - `listen_port`: Port to listen for proof data requests.
     - `verifier_address`: Address of the account that sends verify transaction to L1.
@@ -84,4 +91,6 @@ Under the [committer] section:
     - `dev_mode`: whether `dev_mode` is activated.
 
 
-If you want to use a different configuration file, you can set the `CONFIG_FILE` environment variable to the path of the file.
+If you want to use a different configuration file, you can set the:
+- `CONFIGS_PATH`: The path where the `SEQUENCER_CONFIG_FILE` is located at.
+- `SEQUENCER_CONFIG_FILE`: The `.toml` that contains the config for the `sequencer`.
