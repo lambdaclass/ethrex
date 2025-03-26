@@ -150,6 +150,23 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
+init-prover:
+	@if [ -z "$$PROVER" ]; then \
+		echo "Error: ProverType (PROVER) is missing."; \
+		echo "Please provide it as an argument:"; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1, pico, exec)> <G=true>"; \
+		echo "The prover can also be run with GPU (G)"; \
+		exit 1; \
+	fi; \
+
+	@if [ -z "$$G" ]; then \
+		GPU=""; \
+	else \
+		GPU=",gpu"; \
+	fi; \
+
+	RUSTFLAGS='-C target-cpu=native' cargo run --release --features "$$PROVER$$GPU,l2" --manifest-path ./prover/Cargo.toml --bin ethrex_prover; \
+
 build-prover:
 	@if [ -z "$$PROVER" ]; then \
 		echo "Error: ProverType (PROVER) is missing."; \
