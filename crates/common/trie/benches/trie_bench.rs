@@ -82,8 +82,8 @@ fn random_data(n: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     let mut keys = Vec::with_capacity(n);
     let mut values = Vec::with_capacity(n);
     for _ in 0..n {
-        let key = Uuid::new_v4().as_bytes().to_vec();
-        let value = Uuid::new_v4().as_bytes().to_vec();
+        let key = H256::random().to_fixed_bytes().into();
+        let value = H256::random().to_fixed_bytes().into();
         keys.push(key);
         values.push(value);
     }

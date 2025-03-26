@@ -33,7 +33,6 @@ cita_trie = "4.0.0"          # used for proptest comparisons
 hasher = "0.1.4"             # cita_trie needs this
 criterion = "0.5.1"
 rand.workspace = true
-uuid = { version = "1.16.0", features = ["v4"] }
 
 [lib]
 path = "./trie.rs"
