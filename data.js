@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743015554319,
+  "lastUpdate": 1743018682593,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1435,6 +1435,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 229831357611,
             "range": "± 477453820",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "956537fb88e932f4bbc629ae82116e05f91ec894",
+          "message": "fix(l1, l2): fix load tests (#2323)\n\n**Motivation**\n\nLoad tests were broken for two reasons:\n\n- We were not correctly passing the nonce as an override and thus were\nrelying on the RPC endpoint to get it, which was not correct (since we\nwant to pre-send transactions with higher nonces)\n- We were hardcoding gas fees; this is because when we first wrote the\nload tests, the gas price endpoint on ethrex did not work properly. Now\nthat it does, we can remove the hardcoded values and just rely on the\nendpoint (the default behaviour if you do not pass an `Override` to the\n`build_eip1559_transaction` function).\n\nI also changed the `debug!` log when a mempool transaction failed to be\nexecuted while building a block to be an `error!`, because I noticed\nit's quite a common occurrence when we run load tests due to some nonce\nissue, and I think it's worth investigating (it's the reason why\nsometimes we get empty blocks when running load tests).\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: JereSalo <jeresalo17@gmail.com>",
+          "timestamp": "2025-03-26T18:52:46Z",
+          "tree_id": "539ef04a6f159f38f5ab44220b15d82d09094181",
+          "url": "https://github.com/lambdaclass/ethrex/commit/956537fb88e932f4bbc629ae82116e05f91ec894"
+        },
+        "date": 1743018680788,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 230749596243,
+            "range": "± 1764496588",
             "unit": "ns/iter"
           }
         ]
