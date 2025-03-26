@@ -1,7 +1,0 @@
-{
-    "SYNC_CONFIG": {
-        "MAX_PARALLEL_FETCHES": 2,
-        "BATCH_SIZE": 300,
-        "NODE_BATCH_SIZE": 900
-    }
-}

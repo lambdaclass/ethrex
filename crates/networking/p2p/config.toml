@@ -1,0 +1,12 @@
+# Sync-related constants
+[sync-config]
+# Max size of a bach to start a fetch request in queues
+BATCH_SIZE = 300
+# Max size of a bach to start a fetch request in queues for nodes
+NODE_BATCH_SIZE = 900
+# Maximum amount of concurrent paralell fetches for a queue
+MAX_PARALLEL_FETCHES = 10
+# Maximum amount of messages in a channel
+MAX_CHANNEL_MESSAGES = 500
+# Maximum amount of messages to read from a channel at once
+MAX_CHANNEL_READS = 200

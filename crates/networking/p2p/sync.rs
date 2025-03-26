@@ -37,22 +37,13 @@ use crate::{
     },
 };
 
-// Constants defined in the crate's config file `config.json`
-use crate::constants::{BATCH_SIZE, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
+// Constants defined in the crate's config file `config.toml`
+use crate::constants::{
+    BATCH_SIZE, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE,
+};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
-/// Max size of a bach to start a fetch request in queues
-//const BATCH_SIZE: usize = 300;
-/// Max size of a bach to start a fetch request in queues for nodes
-//const NODE_BATCH_SIZE: usize = 900;
-// / Maximum amount of concurrent paralell fetches for a queue
-// const MAX_PARALLEL_FETCHES: usize = 10;
-/// Maximum amount of messages in a channel
-const MAX_CHANNEL_MESSAGES: usize = 500;
-/// Maximum amount of messages to read from a channel at once
-const MAX_CHANNEL_READS: usize = 200;
-/// Pace at which progress is shown via info tracing
 const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(30);
 
 lazy_static::lazy_static! {
