@@ -144,8 +144,7 @@ impl PeerHandler {
                 self.peer_responded_successfully(node_id, scoring_points)
                     .await;
 
-                let casted_response = response.as_any().downcast::<T>().ok()?;
-                return Some(*casted_response);
+                return response.inner::<T>();
             }
         }
 
@@ -195,6 +194,11 @@ impl PeerHandler {
                 block_hashes: block_hashes.clone(),
             })
         };
+        // let validation = |response| {
+        //     response.id == request_id
+        //         && !response.block_bodies.is_empty()
+        //         && response.block_bodies.len() <= block_hashes_len
+        // };
         let response = self
             .send_request::<BlockBodies>(Capability::Eth, request)
             .await?;

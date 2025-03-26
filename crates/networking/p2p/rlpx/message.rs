@@ -196,8 +196,41 @@ impl Message {
         }
     }
 
-    pub fn as_any(self) -> Box<dyn Any> {
-        Box::new(self)
+    pub fn inner<T: 'static>(self) -> Option<T> {
+        match self {
+            Message::Hello(inner) => cast_msg(inner),
+            Message::Disconnect(inner) => cast_msg(inner),
+            Message::Ping(inner) => cast_msg(inner),
+            Message::Pong(inner) => cast_msg(inner),
+            Message::Status(inner) => cast_msg(inner),
+            Message::GetBlockHeaders(inner) => cast_msg(inner),
+            Message::BlockHeaders(inner) => cast_msg(inner),
+            Message::Transactions(inner) => cast_msg(inner),
+            Message::GetBlockBodies(inner) => cast_msg(inner),
+            Message::BlockBodies(inner) => cast_msg(inner),
+            Message::GetReceipts(inner) => cast_msg(inner),
+            Message::Receipts(inner) => cast_msg(inner),
+            Message::NewPooledTransactionHashes(inner) => cast_msg(inner),
+            Message::GetPooledTransactions(inner) => cast_msg(inner),
+            Message::PooledTransactions(inner) => cast_msg(inner),
+            Message::GetAccountRange(inner) => cast_msg(inner),
+            Message::AccountRange(inner) => cast_msg(inner),
+            Message::GetStorageRanges(inner) => cast_msg(inner),
+            Message::StorageRanges(inner) => cast_msg(inner),
+            Message::GetByteCodes(inner) => cast_msg(inner),
+            Message::ByteCodes(inner) => cast_msg(inner),
+            Message::GetTrieNodes(inner) => cast_msg(inner),
+            Message::TrieNodes(inner) => cast_msg(inner),
+        }
+    }
+}
+
+fn cast_msg<T: 'static, U: 'static>(inner: U) -> Option<T> {
+    let inner: Box<dyn std::any::Any> = Box::new(inner);
+    if let Ok(inner) = inner.downcast::<T>() {
+        Some(*inner)
+    } else {
+        None
     }
 }
 
