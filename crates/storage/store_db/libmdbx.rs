@@ -27,6 +27,7 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -123,6 +124,49 @@ impl StoreEngine for Store {
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
         self.write::<Bodies>(block_hash.into(), block_body.into())
+    }
+
+    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        let tx = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+
+        for block in blocks {
+            let number = block.header.number;
+            let hash = block.hash();
+
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                tx.upsert::<TransactionLocations>(
+                    transaction.compute_hash().into(),
+                    (number, hash, index as u64).into(),
+                )
+                .map_err(StoreError::LibmdbxError)?;
+            }
+
+            tx.upsert::<Bodies>(
+                hash.into(),
+                BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            tx.upsert::<Headers>(
+                hash.into(),
+                BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
+            )
+            .map_err(StoreError::LibmdbxError)?;
+
+            tx.upsert::<BlockNumbers>(hash.into(), number)
+                .map_err(StoreError::LibmdbxError)?;
+        }
+
+        tx.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        let key_values = blocks.iter().map(|e| (e.header.number, e.hash().into()));
+
+        self.write_batch::<CanonicalBlockHashes>(key_values)
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
@@ -457,6 +501,27 @@ impl StoreEngine for Store {
         self.write_batch::<Receipts>(key_values.into_iter())
     }
 
+    fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError> {
+        let mut key_values = vec![];
+
+        for (block_hash, receipts) in receipts.into_iter() {
+            for (index, receipt) in receipts.into_iter().enumerate() {
+                let key = (block_hash, index as u64).into();
+                let receipt_rlp = receipt.encode_to_vec();
+                let Some(mut entries) = IndexedChunk::from::<Receipts>(key, &receipt_rlp) else {
+                    continue;
+                };
+
+                key_values.append(&mut entries);
+            }
+        }
+
+        self.write_batch::<Receipts>(key_values.into_iter())
+    }
+
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
         let mut receipt_index = 0;
@@ -592,6 +657,28 @@ impl StoreEngine for Store {
                 .map_err(StoreError::LibmdbxError)?;
         }
 
+        txn.commit().map_err(StoreError::LibmdbxError)
+    }
+
+    fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        let txn = self
+            .db
+            .begin_readwrite()
+            .map_err(StoreError::LibmdbxError)?;
+        for (account_hash, (storage_keys, storage_values)) in account_hashes
+            .into_iter()
+            .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
+        {
+            for (key, value) in storage_keys.into_iter().zip(storage_values.into_iter()) {
+                txn.upsert::<StorageSnapShot>(account_hash.into(), (key.into(), value.into()))
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+        }
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
