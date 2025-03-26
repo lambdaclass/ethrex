@@ -195,7 +195,7 @@ impl ProverServer {
 
         loop {
             tokio::select! {
-                _ = &mut shutdown_rx  => {
+                _ = &mut shutdown_rx => {
                     debug!("Shutting down...");
                     // It will return from the main_logic() with an `Ok(())`
                     // And inside the run() function the loop will break
