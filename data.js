@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743005328281,
+  "lastUpdate": 1743006651601,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1315,6 +1315,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 226755411287,
             "range": "± 357419523",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "76252340+MarcosNicolau@users.noreply.github.com",
+            "name": "Marcos Nicolau",
+            "username": "MarcosNicolau"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f8f9552b9c9c8755e8156752e051a347c1feb169",
+          "message": "fix(l1): blocking tokio scheduler while syncing (#2314)\n\n**Motivation**\nSyncing.\n\n**Description**\nExecuting blocks is a CPU-intensive task. During syncing, this process\nwas blocking the Tokio runtime, causing other tasks to stop working. A\nmajor issue was that our node stopped responding to p2p requests,\nleading to abrupt disconnections.\n\nThis fix resolves the problem by spawning the block execution with tokio\n`spawn_blocking`, which runs tasks in a separate thread pool optimized\nfor CPU-heavy operations. This prevents the scheduler from being\nblocked, fixing the networking issue.\n\nCloses None",
+          "timestamp": "2025-03-26T15:31:19Z",
+          "tree_id": "a1e35a5c8219b0f5d0261788d6f5dfa994803e62",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f8f9552b9c9c8755e8156752e051a347c1feb169"
+        },
+        "date": 1743006649776,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 225655939542,
+            "range": "± 664288582",
             "unit": "ns/iter"
           }
         ]
