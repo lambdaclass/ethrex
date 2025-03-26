@@ -5,6 +5,7 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::merkle_tree::merkle_proof;
 use ethrex_l2_sdk::{get_withdrawal_hash, COMMON_BRIDGE_L2_ADDRESS, L2_WITHDRAW_SIGNATURE};
+use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
 use ethrex_rpc::types::block::BlockBodyWrapper;
 use eyre::OptionExt;
@@ -261,14 +262,17 @@ impl Command {
                     todo!("Handle ERC20 balances")
                 }
                 if !l1 || l2 {
-                    let account_balance = rollup_client.get_balance(from).await?;
+                    let account_balance = rollup_client
+                        .get_balance(from, BlockByNumber::Latest)
+                        .await?;
                     println!(
                         "[L2] Account balance: {}",
                         balance_in_wei(wei, account_balance)
                     );
                 }
                 if l1 {
-                    let account_balance = eth_client.get_balance(from).await?;
+                    let account_balance =
+                        eth_client.get_balance(from, BlockByNumber::Latest).await?;
                     println!(
                         "[L1] Account balance: {}",
                         balance_in_wei(wei, account_balance)
