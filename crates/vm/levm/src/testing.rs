@@ -1,6 +1,6 @@
 use crate::{
     account::{Account, AccountInfo},
-    db::{cache, CacheDB, Db},
+    db::{cache, CacheDB, Database, Db},
     environment::Environment,
     errors::{InternalError, VMError},
     operations::Operation,
@@ -21,7 +21,7 @@ pub fn ops_to_bytecode(operations: &[Operation]) -> Result<Bytes, VMError> {
     Ok(bytecode.into())
 }
 
-pub fn new_vm_with_bytecode(bytecode: Bytes) -> Result<VM, VMError> {
+pub fn new_vm_with_bytecode(bytecode: Bytes) -> Result<VM<'static, T: Database>, VMError> {
     new_vm_with_ops_addr_bal_db(
         bytecode,
         Address::from_low_u64_be(100),

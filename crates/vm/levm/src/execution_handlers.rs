@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::*,
-    db::CacheDB,
+    db::{CacheDB, Database},
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
@@ -13,7 +13,7 @@ use ethrex_common::types::Fork;
 
 use bytes::Bytes;
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,

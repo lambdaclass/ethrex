@@ -91,7 +91,7 @@ pub fn prepare_vm_for_tx(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<VM, EFTestRunnerError> {
-    let db = Arc::new(utils::load_initial_state_levm(test));
+    let db = utils::load_initial_state_levm(test);
 
     let tx = test
         .transactions
@@ -152,7 +152,7 @@ pub fn prepare_vm_for_tx(
         },
         tx.value,
         tx.data.clone(),
-        db,
+        &db,
         CacheDB::default(),
         access_lists,
         authorization_list,
@@ -316,7 +316,7 @@ pub fn ensure_post_state(
                         .unwrap();
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                         Some(*fork),
-                        Arc::new(store_wrapper.clone()),
+                        &store_wrapper,
                         store_wrapper.store.get_chain_config().map_err(|e| {
                             EFTestRunnerError::VMInitializationFailed(format!(
                                 "Error at LEVM::get_state_transitions in ensure_post_state(): {}",

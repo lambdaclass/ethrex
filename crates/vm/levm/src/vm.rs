@@ -163,7 +163,7 @@ impl Default for EVMConfig {
     }
 }
 
-pub struct VM {
+pub struct VM<'a, T: Database> {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
     /// Information that is acted upon immediately following the
@@ -171,7 +171,7 @@ pub struct VM {
     pub accrued_substate: Substate,
     /// Mapping between addresses (160-bit identifiers) and account
     /// states.
-    pub db: Arc<dyn Database>,
+    pub db: &'a T,
     pub cache: CacheDB,
     pub tx_kind: TxKind,
     pub access_list: AccessList,
@@ -179,7 +179,7 @@ pub struct VM {
     pub hooks: Vec<Arc<dyn Hook>>,
 }
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // TODO: Refactor this.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -187,7 +187,7 @@ impl VM {
         env: Environment,
         value: U256,
         calldata: Bytes,
-        db: Arc<dyn Database>,
+        db: &'a T,
         mut cache: CacheDB,
         access_list: AccessList,
         authorization_list: Option<AuthorizationList>,
@@ -272,7 +272,7 @@ impl VM {
             TxKind::Create => {
                 // CREATE tx
 
-                let sender_nonce = get_account(&mut cache, db.clone(), env.origin).info.nonce;
+                let sender_nonce = get_account(&mut cache, db, env.origin).info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -543,7 +543,12 @@ impl VM {
         // (in theory) _at least_ the default finalize execution should
         // run
         for hook in self.hooks.clone() {
-            hook.finalize_execution(self, initial_call_frame, report)?;
+            if let Some(hook) = hook
+                .as_any()
+                .downcast_ref::<hooks::default_hook::DefaultHook>()
+            {
+                hook.finalize_execution(self, initial_call_frame, report)?;
+            }
         }
 
         Ok(())

@@ -1,5 +1,6 @@
 use crate::{
     call_frame::CallFrame,
+    db::Database,
     errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
@@ -8,7 +9,7 @@ use crate::{
 // Exchange Operations (16)
 // Opcodes: SWAP1 ... SWAP16
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // SWAP operation
     pub fn op_swap(
         &mut self,

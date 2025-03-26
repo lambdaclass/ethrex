@@ -1,5 +1,6 @@
 use crate::{
     call_frame::CallFrame,
+    db::Database,
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
@@ -12,7 +13,7 @@ use keccak_hash::keccak;
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // ADDRESS operation
     pub fn op_address(
         &mut self,

@@ -1,5 +1,6 @@
 use crate::{
     call_frame::CallFrame,
+    db::Database,
     errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
@@ -8,7 +9,7 @@ use crate::{
 // Duplication Operation (16)
 // Opcodes: DUP1 ... DUP16
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // DUP operation
     pub fn op_dup(
         &mut self,

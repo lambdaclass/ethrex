@@ -1,5 +1,6 @@
 use crate::{
     call_frame::CallFrame,
+    db::Database,
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     opcode_handlers::bitwise_comparison::checked_shift_left,
@@ -12,7 +13,7 @@ use super::bitwise_comparison::checked_shift_right;
 // Arithmetic Operations (11)
 // Opcodes: ADD, SUB, MUL, DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP, SIGNEXTEND
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // ADD operation
     pub fn op_add(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         current_call_frame.increase_consumed_gas(gas_cost::ADD)?;

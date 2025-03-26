@@ -1,5 +1,6 @@
 use crate::{
     call_frame::CallFrame,
+    db::Database,
     errors::{OpcodeResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
@@ -11,7 +12,7 @@ use ethrex_common::{types::Log, H256};
 // Logging Operations (5)
 // Opcodes: LOG0 ... LOG4
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // LOG operation
     pub fn op_log(
         &mut self,

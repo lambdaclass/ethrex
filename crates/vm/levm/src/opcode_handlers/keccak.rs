@@ -1,5 +1,6 @@
 use crate::{
     call_frame::CallFrame,
+    db::Database,
     errors::{OpcodeResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
@@ -11,7 +12,7 @@ use sha3::{Digest, Keccak256};
 // KECCAK256 (1)
 // Opcodes: KECCAK256
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     pub fn op_keccak256(
         &mut self,
         current_call_frame: &mut CallFrame,

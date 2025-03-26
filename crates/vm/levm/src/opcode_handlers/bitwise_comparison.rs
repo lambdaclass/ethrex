@@ -1,6 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::WORD_SIZE,
+    db::Database,
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
@@ -33,7 +34,7 @@ static SHL_PRECALC: LazyLock<HashMap<u8, U256>> = LazyLock::new(|| {
     m
 });
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // LT operation
     pub fn op_lt(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         current_call_frame.increase_consumed_gas(gas_cost::LT)?;

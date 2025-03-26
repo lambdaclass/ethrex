@@ -1,6 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
+    db::Database,
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     utils::*,
@@ -14,7 +15,7 @@ use ethrex_common::{
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // BLOCKHASH operation
     pub fn op_blockhash(
         &mut self,

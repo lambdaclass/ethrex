@@ -2,7 +2,7 @@ use crate::{
     account::Account,
     call_frame::CallFrame,
     constants::*,
-    db::cache::remove_account,
+    db::{cache::remove_account, Database},
     errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
@@ -28,9 +28,9 @@ impl Hook for DefaultHook {
     /// - It adds value to receiver balance.
     /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
     ///   See 'docs' for more information about validations.
-    fn prepare_execution(
+    fn prepare_execution<'a>(
         &self,
-        vm: &mut VM,
+        vm: &mut VM<'a, impl Database>,
         initial_call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
@@ -318,9 +318,9 @@ impl Hook for DefaultHook {
     /// 2. Return unused gas + gas refunds to the sender.
     /// 3. Pay coinbase fee
     /// 4. Destruct addresses in selfdestruct set.
-    fn finalize_execution(
+    fn finalize_execution<'a>(
         &self,
-        vm: &mut VM,
+        vm: &mut VM<'a, impl Database>,
         initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {

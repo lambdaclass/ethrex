@@ -25,10 +25,7 @@ use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
 use libsecp256k1::{Message, RecoveryId, Signature};
 use sha3::{Digest, Keccak256};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -129,7 +126,7 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
 // ================== Account related functions =====================
 /// Gets account, first checking the cache and then the database
 /// (caching in the second case)
-pub fn get_account(cache: &mut CacheDB, db: Arc<dyn Database>, address: Address) -> Account {
+pub fn get_account<T: Database>(cache: &mut CacheDB, db: &T, address: Address) -> Account {
     match cache::get_account(cache, &address) {
         Some(acc) => acc.clone(),
         None => {
@@ -144,9 +141,9 @@ pub fn get_account(cache: &mut CacheDB, db: Arc<dyn Database>, address: Address)
     }
 }
 
-pub fn get_account_no_push_cache(
+pub fn get_account_no_push_cache<T: Database>(
     cache: &CacheDB,
-    db: Arc<dyn Database>,
+    db: &T,
     address: Address,
 ) -> Account {
     match cache::get_account(cache, &address) {
@@ -161,11 +158,11 @@ pub fn get_account_no_push_cache(
     }
 }
 
-pub fn get_account_mut_vm(
-    cache: &mut CacheDB,
-    db: Arc<dyn Database>,
+pub fn get_account_mut_vm<'a, T: Database>(
+    cache: &'a mut CacheDB,
+    db: &'a T,
     address: Address,
-) -> Result<&mut Account, VMError> {
+) -> Result<&'a mut Account, VMError> {
     if !cache::is_account_cached(cache, &address) {
         let account_info = db.get_account_info(address);
         let account = Account {
@@ -177,9 +174,9 @@ pub fn get_account_mut_vm(
     cache::get_account_mut(cache, &address).ok_or(VMError::Internal(InternalError::AccountNotFound))
 }
 
-pub fn increase_account_balance(
+pub fn increase_account_balance<T: Database>(
     cache: &mut CacheDB,
-    db: Arc<dyn Database>,
+    db: &T,
     address: Address,
     increase: U256,
 ) -> Result<(), VMError> {
@@ -192,9 +189,9 @@ pub fn increase_account_balance(
     Ok(())
 }
 
-pub fn decrease_account_balance(
+pub fn decrease_account_balance<T: Database>(
     cache: &mut CacheDB,
-    db: Arc<dyn Database>,
+    db: &T,
     address: Address,
     decrease: U256,
 ) -> Result<(), VMError> {
@@ -212,9 +209,9 @@ pub fn decrease_account_balance(
 /// Accessed accounts are stored in the `touched_accounts` set.
 /// Accessed accounts take place in some gas cost computation.
 #[must_use]
-pub fn access_account(
+pub fn access_account<T: Database>(
     cache: &mut CacheDB,
-    db: Arc<dyn Database>,
+    db: &T,
     accrued_substate: &mut Substate,
     address: Address,
 ) -> (AccountInfo, bool) {
@@ -227,9 +224,9 @@ pub fn access_account(
 }
 
 // ================== Bytecode related functions =====================
-pub fn update_account_bytecode(
+pub fn update_account_bytecode<T: Database>(
     cache: &mut CacheDB,
-    db: Arc<dyn Database>,
+    db: &T,
     address: Address,
     new_bytecode: Bytes,
 ) -> Result<(), VMError> {
@@ -429,9 +426,9 @@ pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
 }
 
 // =================== Nonce related functions ======================
-pub fn increment_account_nonce(
+pub fn increment_account_nonce<T: Database>(
     cache: &mut CacheDB,
-    db: Arc<dyn Database>,
+    db: &T,
     address: Address,
 ) -> Result<u64, VMError> {
     let account = get_account_mut_vm(cache, db, address)?;
@@ -443,9 +440,9 @@ pub fn increment_account_nonce(
     Ok(account.info.nonce)
 }
 
-pub fn decrement_account_nonce(
+pub fn decrement_account_nonce<T: Database>(
     cache: &mut CacheDB,
-    db: Arc<dyn Database>,
+    db: &T,
     address: Address,
 ) -> Result<(), VMError> {
     let account = get_account_mut_vm(cache, db, address)?;
@@ -500,9 +497,9 @@ pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VME
 }
 
 /// Sets the account code as the EIP7702 determines.
-pub fn eip7702_set_access_code(
+pub fn eip7702_set_access_code<T: Database>(
     cache: &mut CacheDB,
-    db: Arc<dyn Database>,
+    db: &T,
     chain_id: U256,
     accrued_substate: &mut Substate,
     authorization_list: Option<AuthorizationList>,
@@ -512,7 +509,6 @@ pub fn eip7702_set_access_code(
     // IMPORTANT:
     // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
     // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
-    let db_ref = db.clone();
     for auth_tuple in authorization_list.unwrap_or_default() {
         let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != chain_id;
         let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
@@ -536,8 +532,7 @@ pub fn eip7702_set_access_code(
 
         // 4. Add authority to accessed_addresses (as defined in EIP-2929).
         accrued_substate.touched_accounts.insert(authority_address);
-        let authority_account_info =
-            get_account_no_push_cache(cache, db_ref.clone(), authority_address).info;
+        let authority_account_info = get_account_no_push_cache(cache, db, authority_address).info;
 
         // 5. Verify the code of authority is either empty or already delegated.
         let empty_or_delegated =
@@ -555,7 +550,7 @@ pub fn eip7702_set_access_code(
 
         // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
         if cache::is_account_cached(cache, &authority_address)
-            || db_ref.account_exists(authority_address)
+            || db.account_exists(authority_address)
         {
             let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
             refunded_gas = refunded_gas
@@ -577,8 +572,8 @@ pub fn eip7702_set_access_code(
             None => {
                 // This is to add the account to the cache
                 // NOTE: Refactor in the future
-                get_account(cache, db.clone(), authority_address);
-                get_account_mut_vm(cache, db.clone(), authority_address)?
+                get_account(cache, db, authority_address);
+                get_account_mut_vm(cache, db, authority_address)?
             }
         };
 
@@ -705,14 +700,14 @@ pub fn eip7702_recover_address(
 ///
 /// The idea of this function comes from ethereum/execution-specs:
 /// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
-pub fn eip7702_get_code(
+pub fn eip7702_get_code<T: Database>(
     cache: &mut CacheDB,
-    db: Arc<dyn Database>,
+    db: &T,
     accrued_substate: &mut Substate,
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = get_account_no_push_cache(cache, db.clone(), address);
+    let account = get_account_no_push_cache(cache, db, address);
     let bytecode = account.info.bytecode.clone();
 
     // If the Address doesn't have a delegation code
@@ -734,7 +729,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = get_account(cache, db.clone(), auth_address).info.bytecode;
+    let authorized_bytecode = get_account(cache, db, auth_address).info.bytecode;
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }

@@ -1,6 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
+    db::Database,
     errors::{OpcodeResult, OutOfGasError, VMError},
     gas_cost::{self, SSTORE_STIPEND},
     memory::{self, calculate_memory_size},
@@ -11,7 +12,7 @@ use ethrex_common::{types::Fork, H256, U256};
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // POP operation
     pub fn op_pop(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         current_call_frame.increase_consumed_gas(gas_cost::POP)?;

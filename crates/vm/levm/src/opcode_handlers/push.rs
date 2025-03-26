@@ -1,6 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::WORD_SIZE,
+    db::Database,
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,
     vm::VM,
@@ -10,7 +11,7 @@ use ethrex_common::{types::Fork, U256};
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // PUSH operation
     pub fn op_push(
         &mut self,

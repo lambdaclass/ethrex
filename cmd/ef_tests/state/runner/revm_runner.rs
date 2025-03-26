@@ -339,7 +339,7 @@ pub fn ensure_post_state(
                 .unwrap();
             let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                 Some(*fork),
-                Arc::new(store_wrapper.clone()),
+                &store_wrapper,
                 store_wrapper.store.get_chain_config().map_err(|e| {
                     EFTestRunnerError::VMInitializationFailed(format!(
                         "Error at LEVM::get_state_transitions in ensure_post_state(): {}",

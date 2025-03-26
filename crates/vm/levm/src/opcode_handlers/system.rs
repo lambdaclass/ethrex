@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
-    db::cache,
+    db::{cache, Database},
     errors::{InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
     memory::{self, calculate_memory_size},
@@ -15,7 +15,7 @@ use ethrex_common::{types::Fork, Address, U256};
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
 
-impl VM {
+impl<'a, T: Database> VM<'a, T> {
     // CALL operation
     pub fn op_call(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         let gas = current_call_frame.stack.pop()?;
