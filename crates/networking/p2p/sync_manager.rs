@@ -12,7 +12,7 @@ use tracing::warn;
 
 use crate::{
     kademlia::KademliaTable,
-    sync::{SyncManager, SyncMode},
+    sync::{SyncMode, Syncer},
 };
 
 pub enum SyncStatus {
@@ -22,16 +22,16 @@ pub enum SyncStatus {
 
 /// Abstraction to interact with the active sync process without disturbing it
 #[derive(Debug)]
-pub struct SyncSupervisor {
-    /// This is also held by the SyncManager and allows tracking it's latest syncmode
+pub struct SyncManager {
+    /// This is also held by the Syncer and allows tracking it's latest syncmode
     /// It is a READ_ONLY value, as modifications will disrupt the current active sync progress
     snap_enabled: Arc<AtomicBool>,
-    syncer: Arc<Mutex<SyncManager>>,
+    syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
 }
 
-impl SyncSupervisor {
+impl SyncManager {
     pub fn new(
         peer_table: Arc<Mutex<KademliaTable>>,
         sync_mode: SyncMode,
@@ -40,7 +40,7 @@ impl SyncSupervisor {
         store: Store,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
-        let syncer = Arc::new(Mutex::new(SyncManager::new(
+        let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_table,
             snap_enabled.clone(),
             cancel_token,
@@ -54,12 +54,12 @@ impl SyncSupervisor {
         }
     }
 
-    /// Creates a dummy SyncSupervisor for tests where syncing is not needed
+    /// Creates a dummy SyncManager for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
     pub fn dummy() -> Self {
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
-            syncer: Arc::new(Mutex::new(SyncManager::dummy())),
+            syncer: Arc::new(Mutex::new(Syncer::dummy())),
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: Store::new("temp.db", ethrex_storage::EngineType::InMemory)
                 .expect("Failed to create test DB"),

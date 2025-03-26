@@ -4,7 +4,7 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
-use ethrex_p2p::sync_supervisor::SyncStatus;
+use ethrex_p2p::sync_manager::SyncStatus;
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 

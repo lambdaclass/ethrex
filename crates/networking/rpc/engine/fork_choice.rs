@@ -5,7 +5,7 @@ use ethrex_blockchain::{
     payload::{create_payload, BuildPayloadArgs},
 };
 use ethrex_common::types::BlockHeader;
-use ethrex_p2p::sync_supervisor::SyncStatus;
+use ethrex_p2p::sync_manager::SyncStatus;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 

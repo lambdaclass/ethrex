@@ -82,7 +82,7 @@ pub enum SyncMode {
 /// Manager in charge the sync process
 /// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
-pub struct SyncManager {
+pub struct Syncer {
     /// This is also held by the SyncSupervidor allowing it to track the latest syncmode, without modifying it
     /// No outside process should modify this value, only being modified by the sync cycle
     snap_enabled: Arc<AtomicBool>,
@@ -105,7 +105,7 @@ pub struct SyncManager {
     blockchain: Arc<Blockchain>,
 }
 
-impl SyncManager {
+impl Syncer {
     pub fn new(
         peer_table: Arc<Mutex<KademliaTable>>,
         snap_enabled: Arc<AtomicBool>,
@@ -123,7 +123,7 @@ impl SyncManager {
         }
     }
 
-    /// Creates a dummy SyncManager for tests where syncing is not needed
+    /// Creates a dummy Syncer for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
     pub fn dummy() -> Self {
         let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
@@ -491,7 +491,7 @@ async fn store_receipts(
     Ok(())
 }
 
-impl SyncManager {
+impl Syncer {
     // Downloads the latest state trie and all associated storage tries & bytecodes from peers
     // Rebuilds the state trie and all storage tries based on the downloaded data
     // Performs state healing in order to fix all inconsistencies with the downloaded state

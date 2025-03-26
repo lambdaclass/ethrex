@@ -37,7 +37,7 @@ use eth::{
     },
 };
 use ethrex_blockchain::Blockchain;
-use ethrex_p2p::{sync_supervisor::SyncSupervisor, types::NodeRecord};
+use ethrex_p2p::{sync_manager::SyncManager, types::NodeRecord};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -94,7 +94,7 @@ pub struct RpcApiContext {
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     active_filters: ActiveFilters,
-    syncer: Arc<SyncSupervisor>,
+    syncer: Arc<SyncManager>,
     #[cfg(feature = "based")]
     gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -145,7 +145,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
-    syncer: SyncSupervisor,
+    syncer: SyncManager,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
@@ -509,7 +509,7 @@ mod tests {
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(SyncSupervisor::dummy()),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -605,7 +605,7 @@ mod tests {
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(SyncSupervisor::dummy()),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -646,7 +646,7 @@ mod tests {
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(SyncSupervisor::dummy()),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -719,7 +719,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(SyncSupervisor::dummy()),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]

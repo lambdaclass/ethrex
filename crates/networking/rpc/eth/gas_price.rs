@@ -66,7 +66,7 @@ mod tests {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     use ethrex_blockchain::Blockchain;
-    use ethrex_p2p::sync_supervisor::SyncSupervisor;
+    use ethrex_p2p::sync_manager::SyncManager;
     #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
     use serde_json::json;
@@ -82,7 +82,7 @@ mod tests {
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
             active_filters: Default::default(),
-            syncer: Arc::new(SyncSupervisor::dummy()),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
