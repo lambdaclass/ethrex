@@ -697,6 +697,7 @@ impl LEVM {
             let mut cache = HashMap::new();
             crate::backends::levm::LEVM::beacon_root_contract_call(
                 &block.header,
+                store_wrapper.store.get_chain_config()?,
                 Arc::new(db.clone()),
                 &mut cache,
             )
@@ -704,6 +705,7 @@ impl LEVM {
             let account_updates_beacon = crate::backends::levm::LEVM::get_state_transitions(
                 None,
                 Arc::new(db.clone()),
+                store_wrapper.store.get_chain_config()?,
                 &block.header,
                 &cache,
             )
