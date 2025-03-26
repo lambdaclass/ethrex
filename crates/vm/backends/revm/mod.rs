@@ -175,7 +175,7 @@ impl REVM {
                         address: H160::from(e.address.0 .0),
                         topics: e
                             .topics()
-                            .into_iter()
+                            .iter()
                             .map(|e| H256::from(e.0))
                             .collect::<Vec<H256>>(),
                         data: e.data.data.0,

@@ -163,7 +163,7 @@ pub fn map_account_update_to_ethrex_type(
     AccountUpdate {
         address,
         info: Some(AccountInfo {
-            balance: U256(account.balance.as_limbs().clone()),
+            balance: U256(*account.balance.as_limbs()),
             nonce: account.nonce,
             code_hash: H256::from(account.code_hash.unwrap_or(KECCAK_EMPTY).0),
         }),
@@ -218,11 +218,7 @@ impl pevm::Storage for StoreWrapper {
             .map(|b| Bytecode::new_raw(RevmBytes(b)));
 
         match code {
-            Some(code) => {
-                let evm_code: pevm::EvmCode =
-                    code.try_into().map_err(|_| StoreError::DecodeError)?;
-                Ok(Some(evm_code))
-            }
+            Some(code) => Ok(Some(code.into())),
             None => Ok(None),
         }
     }
