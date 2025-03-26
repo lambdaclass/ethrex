@@ -7,7 +7,7 @@ use ethrex_common::H160;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::{
     clients::{
-        eth::{eth_sender::Overrides, EthClient},
+        eth::{eth_sender::Overrides, BlockByNumber, EthClient},
         EthClientError,
     },
     types::receipt::RpcReceipt,
@@ -131,7 +131,10 @@ async fn transfer_from(
     let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
 
     let address = Address::from(address_bytes);
-    let nonce = client.get_nonce(address).await.unwrap();
+    let nonce = client
+        .get_nonce(address, BlockByNumber::Latest)
+        .await
+        .unwrap();
 
     let mut retries = 0;
 
@@ -157,7 +160,6 @@ async fn transfer_from(
                     gas_limit: Some(TX_GAS_COST * 100),
                     ..Default::default()
                 },
-                10,
             )
             .await
             .unwrap();
@@ -260,7 +262,6 @@ async fn claim_erc20_balances(
                     address_from_pub_key(pk),
                     claim_balance_calldata.into(),
                     Default::default(),
-                    10,
                 )
                 .await
                 .unwrap();
@@ -304,7 +305,10 @@ async fn erc20_load_test(
         .map(|pk| (*pk, pk.public_key(secp256k1::SECP256K1)))
         .collect_vec();
     for (sk, pk) in accounts {
-        let nonce = client.get_nonce(address_from_pub_key(pk)).await.unwrap();
+        let nonce = client
+            .get_nonce(address_from_pub_key(pk), BlockByNumber::Latest)
+            .await
+            .unwrap();
         for i in 0..tx_amount {
             let send_calldata = calldata::encode_calldata(
                 "transfer(address,uint256)",
@@ -324,7 +328,6 @@ async fn erc20_load_test(
                         gas_limit: Some(TX_GAS_COST * 100),
                         ..Default::default()
                     },
-                    1,
                 )
                 .await?;
             let client = client.clone();
