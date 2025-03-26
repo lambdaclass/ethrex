@@ -124,7 +124,7 @@ update-system-contracts:
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
-	if [[ -z "$$BASED" ]]; then \
+	if [ -z "$$BASED" ]; then \
 		FEATURES="l2,metrics"; \
 		echo "Running ethrex L2 vanilla"; \
 	else \
