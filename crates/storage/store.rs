@@ -286,6 +286,7 @@ impl Store {
         let account_state = AccountState::decode(&encoded_state)?;
         self.get_account_code(account_state.code_hash)
     }
+
     pub fn get_nonce_by_account_address(
         &self,
         block_number: BlockNumber,
@@ -420,6 +421,13 @@ impl Store {
         self.engine.add_receipts(block_hash, receipts)
     }
 
+    pub fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError> {
+        self.engine.add_receipts_for_blocks(receipts)
+    }
+
     pub fn get_receipt(
         &self,
         block_number: BlockNumber,
@@ -429,14 +437,15 @@ impl Store {
     }
 
     pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        // TODO Maybe add both in a single tx?
-        let header = block.header;
-        let number = header.number;
-        let hash = header.compute_block_hash();
-        self.add_transaction_locations(&block.body.transactions, number, hash)?;
-        self.add_block_body(hash, block.body)?;
-        self.add_block_header(hash, header)?;
-        self.add_block_number(hash, number)
+        self.add_blocks(&[block])
+    }
+
+    pub fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        self.engine.add_blocks(blocks)
+    }
+
+    pub fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        self.engine.mark_chain_as_canonical(blocks)
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {

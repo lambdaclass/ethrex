@@ -7,6 +7,8 @@ use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env_file}
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
+use ethrex_rpc::clients::eth::BlockByNumber;
+use ethrex_rpc::clients::eth::WrappedTransaction;
 use ethrex_rpc::clients::eth::{
     errors::{CalldataEncodeError, EthClientError},
     eth_sender::Overrides,
@@ -331,7 +333,7 @@ fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
     compile_contract(contracts_path, "src/l1/CommonBridge.sol", false)?;
     compile_contract(
         contracts_path,
-        "lib/sp1-contracts/contracts/src/v3.0.0/SP1VerifierGroth16.sol",
+        "lib/sp1-contracts/contracts/src/v4.0.0-rc.3/SP1VerifierGroth16.sol",
         false,
     )?;
     compile_contract(
@@ -510,18 +512,33 @@ async fn create2_deploy(
         init_code,
     ]
     .concat();
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
     let deploy_tx = eth_client
         .build_eip1559_transaction(
             DETERMINISTIC_CREATE2_ADDRESS,
             deployer,
             calldata.into(),
-            Overrides::default(),
-            10,
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?;
 
+    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(deploy_tx);
+    eth_client
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
+        .await?;
     let deploy_tx_hash = eth_client
-        .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
         .await?;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client)
@@ -642,20 +659,34 @@ async fn initialize_on_chain_proposer(
     let on_chain_proposer_initialization_calldata =
         encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;
 
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
     let initialize_tx = eth_client
         .build_eip1559_transaction(
             on_chain_proposer,
             deployer,
             on_chain_proposer_initialization_calldata.into(),
-            Overrides::default(),
-            10,
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await?;
+    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(initialize_tx);
+    eth_client
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
+        .await?;
     let initialize_tx_hash = eth_client
-        .send_eip1559_transaction(&initialize_tx, &deployer_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
         .await?;
 
-    wait_for_transaction_receipt(initialize_tx_hash, eth_client).await?;
     Ok(initialize_tx_hash)
 }
 
@@ -670,24 +701,34 @@ async fn initialize_bridge(
     let bridge_initialization_calldata =
         encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
     let initialize_tx = eth_client
         .build_eip1559_transaction(
             bridge,
             deployer,
             bridge_initialization_calldata.into(),
-            Overrides::default(),
-            10,
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
         )
         .await
         .map_err(DeployError::from)?;
+    let mut wrapped_tx = WrappedTransaction::EIP1559(initialize_tx);
+    eth_client
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
+        .await?;
     let initialize_tx_hash = eth_client
-        .send_eip1559_transaction(&initialize_tx, &deployer_private_key)
-        .await
-        .map_err(DeployError::from)?;
-
-    wait_for_transaction_receipt(initialize_tx_hash, eth_client)
-        .await
-        .map_err(DeployError::from)?;
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
+        .await?;
 
     Ok(initialize_tx_hash)
 }
@@ -734,19 +775,28 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
             continue;
         };
 
-        let get_balance = eth_client.get_balance(address).await?;
+        let get_balance = eth_client
+            .get_balance(address, BlockByNumber::Latest)
+            .await?;
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
+
+        let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
             gas_limit: Some(21000 * 5),
+            max_fee_per_gas: Some(gas_price),
+            max_priority_fee_per_gas: Some(gas_price),
             ..Overrides::default()
         };
 
         let build = eth_client
-            .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides, 1)
+            .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides)
             .await?;
 
         match eth_client
