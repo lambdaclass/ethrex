@@ -35,15 +35,17 @@ use crate::{
         BlockRequestOrder, PeerHandler, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST,
         MAX_BLOCK_HEADERS_TO_REQUEST,
     },
-    constants::MAX_PARALLEL_FETCHES
 };
+
+// Constants defined in the crate's config file `config.json`
+use crate::constants::{BATCH_SIZE, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
 
 /// The minimum amount of blocks from the head that we want to full sync during a snap sync
 const MIN_FULL_BLOCKS: usize = 64;
 /// Max size of a bach to start a fetch request in queues
-const BATCH_SIZE: usize = 300;
+//const BATCH_SIZE: usize = 300;
 /// Max size of a bach to start a fetch request in queues for nodes
-const NODE_BATCH_SIZE: usize = 900;
+//const NODE_BATCH_SIZE: usize = 900;
 // / Maximum amount of concurrent paralell fetches for a queue
 // const MAX_PARALLEL_FETCHES: usize = 10;
 /// Maximum amount of messages in a channel
