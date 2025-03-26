@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743018682593,
+  "lastUpdate": 1743022014651,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1465,6 +1465,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 230749596243,
             "range": "± 1764496588",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "156438142+fborello-lambda@users.noreply.github.com",
+            "name": "Federico Borello",
+            "username": "fborello-lambda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9c0b365bef18c5639aa02a94445e4030ce43ba1d",
+          "message": "refactor(l2): handle ctrl_c internally and multiple connections (#2294)\n\n**Motivation**\n\nWe should `spawn` a new task every new connection received in the\n`prover_server`.\nAlso, the ctrl_c handler was wired through the TCP layer.\n\n**Description**\n\n- Create a new task per connection\n- Handle the ctrl_c internally with the help of `select!` and a\n`tokio::mpsc`\n- Add a `Semaphore` to cap the amount of concurrent tasks.\n\nCloses #2283\nCloses #2284\n\n---------\n\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>",
+          "timestamp": "2025-03-26T19:48:39Z",
+          "tree_id": "fe6e16cbc963211db4c469210bd0a846f1e96361",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9c0b365bef18c5639aa02a94445e4030ce43ba1d"
+        },
+        "date": 1743022012383,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 233358784894,
+            "range": "± 475162402",
             "unit": "ns/iter"
           }
         ]
