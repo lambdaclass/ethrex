@@ -55,7 +55,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let mut l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
     println!("Waiting for L2 to update for initial deposit");
     let mut retries = 0;
-    while retries < 30 && l2_initial_balance.is_zero() {
+    while retries < 30 && !l2_initial_balance.is_zero() {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         println!("[{retries}/30] Waiting for L2 balance to update");
         l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
@@ -381,15 +381,15 @@ async fn l2_revert_test() -> Result<(), Box<dyn std::error::Error>> {
         .build_privileged_transaction(
             l1_rich_wallet_address,
             l1_rich_wallet_address,
+            l1_rich_wallet_address,
             Bytes::new(),
             Overrides {
                 value: Some(U256::from(100000000000000000000u128)),
-                gas_limit: Some(149707178),
+                gas_limit: Some(149707177),
                 max_priority_fee_per_gas: Some(10000000000000000),
                 max_fee_per_gas: Some(10000000000),
                 ..Default::default()
             },
-            10,
         )
         .await?;
     let tx_hash = proposer_client

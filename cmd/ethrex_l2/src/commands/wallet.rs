@@ -428,6 +428,7 @@ impl Command {
                 let withdraw_transaction = rollup_client
                     .build_privileged_transaction(
                         to.unwrap_or(cfg.wallet.address),
+                        to.unwrap_or(cfg.wallet.address),
                         COMMON_BRIDGE_L2_ADDRESS,
                         Bytes::from(encode_calldata(
                             L2_WITHDRAW_SIGNATURE,

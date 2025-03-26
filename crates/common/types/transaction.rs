@@ -563,6 +563,7 @@ impl RLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.gas_limit)
             .encode_field(&self.to)
+            .encode_field(&self.recipient)
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
@@ -674,6 +675,7 @@ impl PayloadRLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.gas_limit)
             .encode_field(&self.to)
+            .encode_field(&self.recipient)
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
@@ -1834,6 +1836,7 @@ mod serde_impl {
             struct_serializer.serialize_field("type", &TxType::Privileged)?;
             struct_serializer.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
             struct_serializer.serialize_field("to", &self.to)?;
+            struct_serializer.serialize_field("recipient", &format!("{:x}", &self.recipient))?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
             struct_serializer.serialize_field("value", &self.value)?;
             struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;

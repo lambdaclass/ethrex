@@ -248,6 +248,7 @@ impl L1Watcher {
                 .build_privileged_transaction(
                     beneficiary,
                     beneficiary,
+                    beneficiary,
                     Bytes::new(),
                     Overrides {
                         chain_id: Some(
