@@ -718,8 +718,12 @@ impl LEVM {
         }
 
         // execute block
-        let report = crate::backends::levm::LEVM::execute_block(block, Arc::new(db.clone()))
-            .map_err(Box::new)?;
+        let report = crate::backends::levm::LEVM::execute_block(
+            block,
+            Arc::new(db.clone()),
+            store_wrapper.store.get_chain_config()?,
+        )
+        .map_err(Box::new)?;
         account_updates.extend(report.account_updates);
 
         Ok((account_updates, db))

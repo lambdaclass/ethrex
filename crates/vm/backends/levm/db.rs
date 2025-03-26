@@ -110,9 +110,6 @@ impl LevmDatabase for BlockLogger {
             .insert(block_number, block_hash.unwrap());
         block_hash
     }
-    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        self.db.get_chain_config()
-    }
     fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
         self.db.get_storage_slot(address, key)
     }

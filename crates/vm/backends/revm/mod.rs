@@ -12,7 +12,7 @@ use crate::constants::{
 use crate::errors::ExecutionDBError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
-use crate::{get_potential_child_nodes, ExecutionDB, StoreWrapper};
+use crate::{get_potential_child_nodes, EvmError, ExecutionDB, StoreWrapper};
 use db::EvmState;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};

@@ -1,11 +1,14 @@
-use ethrex_common::{types::BlockHash, Address as CoreAddress, H256 as CoreH256};
+use ethrex_common::{
+    types::{BlockHash, ChainConfig},
+    Address as CoreAddress, H256 as CoreH256,
+};
 use ethrex_storage::{error::StoreError, Store};
 use revm::primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 
-use crate::{ChainConfig, EvmError, ExecutionDB, StoreWrapper};
+use crate::{EvmError, ExecutionDB, StoreWrapper};
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
 /// with a [ExecutionDB] in case we only want to store the necessary data for some particular
 /// execution, for example when proving in L2 mode.
