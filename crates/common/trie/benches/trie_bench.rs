@@ -6,13 +6,12 @@ use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use hasher::HasherKeccak;
-use uuid::Uuid;
-
 use cita_trie::MemoryDB;
 use cita_trie::{PatriciaTrie, Trie};
+use ethereum_types::H256;
 use ethrex_trie::InMemoryTrieDB as EthrexMemDB;
 use ethrex_trie::Trie as EthrexTrie;
+use hasher::HasherKeccak;
 
 fn insert_worse_case_benchmark(c: &mut Criterion) {
     let (keys_1k, values_1k) = random_data(1000);
@@ -20,7 +19,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("Trie");
 
-    group.bench_function("ethrex-trie insert 1k", |b| {
+    group.bench_function("ethrex-trie insert 1k key-values", |b| {
         let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
         b.iter(|| {
             for i in 0..keys_1k.len() {
@@ -34,7 +33,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("ethrex-trie insert 10k", |b| {
+    group.bench_function("ethrex-trie insert 10k key-values", |b| {
         let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
 
         b.iter(|| {
@@ -45,7 +44,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("cita-trie insert 1k", |b| {
+    group.bench_function("cita-trie insert 1k key-values", |b| {
         let mut trie = PatriciaTrie::new(
             Arc::new(MemoryDB::new(false)),
             Arc::new(HasherKeccak::new()),
@@ -63,7 +62,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("cita-trie insert 10k", |b| {
+    group.bench_function("cita-trie insert 10k key-values", |b| {
         let mut trie = PatriciaTrie::new(
             Arc::new(MemoryDB::new(false)),
             Arc::new(HasherKeccak::new()),
@@ -82,8 +81,8 @@ fn random_data(n: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     let mut keys = Vec::with_capacity(n);
     let mut values = Vec::with_capacity(n);
     for _ in 0..n {
-        let key = Uuid::new_v4().as_bytes().to_vec();
-        let value = Uuid::new_v4().as_bytes().to_vec();
+        let key = H256::random().to_fixed_bytes().into();
+        let value = H256::random().to_fixed_bytes().into();
         keys.push(key);
         values.push(value);
     }
