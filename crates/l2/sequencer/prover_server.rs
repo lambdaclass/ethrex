@@ -1,4 +1,5 @@
 use crate::sequencer::errors::{ProverServerError, SigIntError};
+use crate::sequencer::utils::sleep_random;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -19,18 +20,18 @@ use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransact
 use ethrex_storage::Store;
 use ethrex_vm::{
     backends::revm::execution_db::{ExecutionDB, ToExecDB},
-    db::StoreWrapper,
-    EvmError,
+    EvmError, StoreWrapper,
 };
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::Debug,
-    io::{BufReader, BufWriter, Write},
-    net::{IpAddr, Shutdown, TcpListener, TcpStream},
+    net::IpAddr,
     sync::mpsc::{self, Receiver},
     time::Duration,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::{
     signal::unix::{signal, SignalKind},
     time::sleep,
@@ -207,21 +208,23 @@ impl ProverServer {
         let mut sigint = signal(SignalKind::interrupt())?;
         sigint.recv().await.ok_or(SigIntError::Recv)?;
         tx.send(()).map_err(SigIntError::Send)?;
-        TcpStream::connect(format!("{}:{}", config.listen_ip, config.listen_port))?
-            .shutdown(Shutdown::Both)
+        TcpStream::connect(format!("{}:{}", config.listen_ip, config.listen_port))
+            .await?
+            .shutdown()
+            .await
             .map_err(SigIntError::Shutdown)?;
 
         Ok(())
     }
 
     pub async fn start(&mut self, rx: Receiver<()>) -> Result<(), ProverServerError> {
-        let listener = TcpListener::bind(format!("{}:{}", self.ip, self.port))?;
+        let listener = TcpListener::bind(format!("{}:{}", self.ip, self.port)).await?;
 
         info!("Starting TCP server at {}:{}", self.ip, self.port);
 
-        for stream in listener.incoming() {
-            match stream {
-                Ok(stream) => {
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
                     debug!("Connection established!");
 
                     if let Ok(()) = rx.try_recv() {
@@ -242,7 +245,8 @@ impl ProverServer {
     }
 
     async fn handle_connection(&mut self, mut stream: TcpStream) -> Result<(), ProverServerError> {
-        let buf_reader = BufReader::new(&stream);
+        let mut buffer = Vec::new();
+        stream.read_to_end(&mut buffer).await?;
 
         let last_verified_block =
             EthClient::get_last_verified_block(&self.eth_client, self.on_chain_proposer_address)
@@ -274,11 +278,11 @@ impl ProverServer {
             tx_submitted = true;
         }
 
-        let data: Result<ProofData, _> = serde_json::de::from_reader(buf_reader);
+        let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
         match data {
             Ok(ProofData::Request) => {
                 if let Err(e) = self
-                    .handle_request(&stream, block_to_verify, tx_submitted)
+                    .handle_request(&mut stream, block_to_verify, tx_submitted)
                     .await
                 {
                     warn!("Failed to handle request: {e}");
@@ -288,7 +292,7 @@ impl ProverServer {
                 block_number,
                 calldata,
             }) => {
-                self.handle_submit(&mut stream, block_number)?;
+                self.handle_submit(&mut stream, block_number).await?;
 
                 // Avoid storing a proof of a future block_number
                 // CHECK: maybe we would like to store all the proofs given the case in which
@@ -338,7 +342,7 @@ impl ProverServer {
 
     async fn handle_request(
         &self,
-        stream: &TcpStream,
+        stream: &mut TcpStream,
         block_number: u64,
         tx_submitted: bool,
     ) -> Result<(), ProverServerError> {
@@ -361,12 +365,15 @@ impl ProverServer {
             response
         };
 
-        let writer = BufWriter::new(stream);
-        serde_json::to_writer(writer, &response)
-            .map_err(|e| ProverServerError::ConnectionError(e.into()))
+        let buffer = serde_json::to_vec(&response)?;
+        stream
+            .write_all(&buffer)
+            .await
+            .map_err(ProverServerError::ConnectionError)?;
+        Ok(())
     }
 
-    fn handle_submit(
+    async fn handle_submit(
         &self,
         stream: &mut TcpStream,
         block_number: u64,
@@ -374,12 +381,12 @@ impl ProverServer {
         debug!("Submit received for BlockNumber: {block_number}");
 
         let response = ProofData::submit_ack(block_number);
-        let json_string = serde_json::to_string(&response)
-            .map_err(|e| ProverServerError::Custom(format!("serde_json::to_string(): {e}")))?;
-        stream
-            .write_all(json_string.as_bytes())
-            .map_err(ProverServerError::ConnectionError)?;
 
+        let buffer = serde_json::to_vec(&response)?;
+        stream
+            .write_all(&buffer)
+            .await
+            .map_err(ProverServerError::ConnectionError)?;
         Ok(())
     }
 
@@ -464,25 +471,34 @@ impl ProverServer {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+        let gas_price = self
+            .eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                ProverServerError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            })?;
+
         let verify_tx = self
             .eth_client
             .build_eip1559_transaction(
                 self.on_chain_proposer_address,
                 self.verifier_address,
                 calldata.into(),
-                Overrides::default(),
-                10,
+                Overrides {
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
             )
             .await?;
 
+        let mut tx = WrappedTransaction::EIP1559(verify_tx);
+
         let verify_tx_hash = self
             .eth_client
-            .send_wrapped_transaction_with_retry(
-                &WrappedTransaction::EIP1559(verify_tx),
-                &self.verifier_private_key,
-                3 * 60,
-                10,
-            )
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
             .await?;
 
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
@@ -492,8 +508,6 @@ impl ProverServer {
 
     pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
         loop {
-            tokio::time::sleep(Duration::from_millis(self.dev_interval_ms)).await;
-
             let last_committed_block = EthClient::get_last_committed_block(
                 &self.eth_client,
                 self.on_chain_proposer_address,
@@ -540,6 +554,17 @@ impl ProverServer {
 
             let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+            let gas_price = self
+                .eth_client
+                .get_gas_price_with_extra(20)
+                .await?
+                .try_into()
+                .map_err(|_| {
+                    ProverServerError::InternalError(
+                        "Failed to convert gas_price to a u64".to_owned(),
+                    )
+                })?;
+
             let verify_tx = self
                 .eth_client
                 .build_eip1559_transaction(
@@ -547,22 +572,23 @@ impl ProverServer {
                     self.verifier_address,
                     calldata.into(),
                     Overrides {
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
                         ..Default::default()
                     },
-                    10,
                 )
                 .await?;
 
             info!("Sending verify transaction.");
 
+            let mut tx = WrappedTransaction::EIP1559(verify_tx);
+            self.eth_client
+                .set_gas_for_wrapped_tx(&mut tx, self.verifier_address)
+                .await?;
+
             let verify_tx_hash = self
                 .eth_client
-                .send_wrapped_transaction_with_retry(
-                    &WrappedTransaction::EIP1559(verify_tx),
-                    &self.verifier_private_key,
-                    3 * 60,
-                    10,
-                )
+                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
                 .await?;
 
             info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");
@@ -571,6 +597,8 @@ impl ProverServer {
                 "Mocked verify transaction sent for block {}",
                 last_verified_block + 1
             );
+
+            sleep_random(self.dev_interval_ms).await;
         }
     }
 }
