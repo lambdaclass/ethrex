@@ -5,11 +5,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-#[cfg(not(feature = "levm-l2"))]
-use ethrex_vm::backends::revm::db::evm_state;
-use ethrex_vm::backends::Evm;
-#[cfg(feature = "levm-l2")]
-use ethrex_vm::StoreWrapper;
+use ethrex_vm::{backends::Evm, EvmEngine};
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -87,17 +83,10 @@ pub fn generate_program_input(
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
 
     #[cfg(feature = "levm-l2")]
-    let mut evm = Evm::LEVM {
-        store_wrapper: StoreWrapper {
-            store: store.clone(),
-            block_hash: parent_hash,
-        },
-        block_cache: Default::default(),
-    };
+    let evm_engine = EvmEngine::LEVM;
     #[cfg(not(feature = "levm-l2"))]
-    let mut evm = Evm::REVM {
-        state: evm_state(store.clone(), parent_hash),
-    };
+    let evm_engine = EvmEngine::REVM;
+    let mut evm = Evm::new(evm_engine, store.clone(), parent_hash);
     let db = evm
         .to_exec_db(&block)
         .map_err(ProverInputError::ExecutionDBError)?;
