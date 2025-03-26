@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743007283346,
+  "lastUpdate": 1743015554319,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1405,6 +1405,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 229822436417,
             "range": "± 575467306",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d03ec50019df7c02dadcf39ba5e08d4c7086a67a",
+          "message": "refactor(l2): use levm for sp1 prover using a trait (#2250)\n\n**Motivation**\n\nThis PR exists to use LEVM as the EVM for executing SP1 prover\n\n**Description**\n\n- Implement the trait `LevmDatabase` for the `ExecutionDb`.\n- Now the LEVM backend can execute blocks or transactions on any\ndatabase that implements the `LevmDatabase` trait.\n- Move the `ExecutionDb` to a common place and remove from some of REVM\ndependencies. But, there are some left to be removed in the next PR.\n- Add a feature flag `levm-l2` for choosing whether to execute the\nProver and the ExecutionDb with LEVM or not.\n\n**Status**\n\n- This a second implementation for the same purpose as #2231 . Only one\nshould be maintained.\n- ExecutionDb isn't fully decoupled yet.\n\nLinks to #2225",
+          "timestamp": "2025-03-26T18:01:21Z",
+          "tree_id": "8bb3c3b10eea3148b2c9cfd302bb1009cf65b2b3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d03ec50019df7c02dadcf39ba5e08d4c7086a67a"
+        },
+        "date": 1743015552445,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 229831357611,
+            "range": "± 477453820",
             "unit": "ns/iter"
           }
         ]
