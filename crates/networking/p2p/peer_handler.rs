@@ -32,7 +32,7 @@ use crate::{
     },
     snap::encodable_to_proof,
 };
-use tracing::info;
+use tracing::{info, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
@@ -93,7 +93,10 @@ impl PeerHandler {
         peer.set_as_idle();
         peer.scoring = peer.scoring.saturating_sub(1);
         if peer.scoring == 0 {
-            table_lock.replace_peer(node_id);
+            warn!(
+                "Peer {:?} is being replaced. Reason: scoring reached zero.",
+                table_lock.replace_peer(node_id)
+            )
         }
     }
 
