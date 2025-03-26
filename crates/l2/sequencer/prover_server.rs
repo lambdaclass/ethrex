@@ -196,11 +196,7 @@ impl ProverServer {
 
     pub async fn run(&mut self, server_config: &ProverServerConfig) {
         loop {
-            let result = if server_config.dev_mode {
-                self.main_logic_dev().await
-            } else {
-                self.clone().main_logic(server_config).await
-            };
+            let result = self.clone().main_logic(server_config).await;
 
             match result {
                 Ok(_) => {
@@ -284,7 +280,6 @@ impl ProverServer {
                     error!("Failed to accept connection: {}", e);
                 }
             }
-            warn!("end incoming");
         }
         Ok(())
     }
@@ -593,99 +588,5 @@ impl ProverServer {
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
 
         Ok(verify_tx_hash)
-    }
-
-    pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
-        loop {
-            let last_committed_block = EthClient::get_last_committed_block(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
-
-            let last_verified_block = EthClient::get_last_verified_block(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
-
-            if last_committed_block == last_verified_block {
-                debug!("No new blocks to prove");
-                continue;
-            }
-
-            info!("Last committed: {last_committed_block} - Last verified: {last_verified_block}");
-
-            let calldata_values = vec![
-                // blockNumber
-                Value::Uint(U256::from(last_verified_block + 1)),
-                // risc0BlockProof
-                Value::Bytes(vec![].into()),
-                // risc0ImageId
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // risco0JournalDigest
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // sp1ProgramVKey
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // sp1PublicValues
-                Value::Bytes(vec![].into()),
-                // sp1Bytes
-                Value::Bytes(vec![].into()),
-                // picoRiscvVkey
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // picoPublicValues
-                Value::Bytes(vec![].into()),
-                // picoProof
-                Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
-            ];
-
-            let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
-
-            let gas_price = self
-                .eth_client
-                .get_gas_price_with_extra(20)
-                .await?
-                .try_into()
-                .map_err(|_| {
-                    ProverServerError::InternalError(
-                        "Failed to convert gas_price to a u64".to_owned(),
-                    )
-                })?;
-
-            let verify_tx = self
-                .eth_client
-                .build_eip1559_transaction(
-                    self.on_chain_proposer_address,
-                    self.verifier_address,
-                    calldata.into(),
-                    Overrides {
-                        max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-
-            info!("Sending verify transaction.");
-
-            let mut tx = WrappedTransaction::EIP1559(verify_tx);
-            self.eth_client
-                .set_gas_for_wrapped_tx(&mut tx, self.verifier_address)
-                .await?;
-
-            let verify_tx_hash = self
-                .eth_client
-                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
-                .await?;
-
-            info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");
-
-            info!(
-                "Mocked verify transaction sent for block {}",
-                last_verified_block + 1
-            );
-
-            sleep_random(self.dev_interval_ms).await;
-        }
     }
 }
