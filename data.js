@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1742944674323,
+  "lastUpdate": 1743000930697,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1255,6 +1255,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 230469754658,
             "range": "± 700649031",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "65ac1fdd7fbb86a7b56992dbd6a6a822713b8405",
+          "message": "ci(core): disable flamegraph report until it is fixed. (#2312)\n\n**Motivation**\nThis job is broken. Disabling it until it gets fixed.",
+          "timestamp": "2025-03-26T13:57:20Z",
+          "tree_id": "9569055f5bca151e1d6111556907cd23ff096cd2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/65ac1fdd7fbb86a7b56992dbd6a6a822713b8405"
+        },
+        "date": 1743000927874,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 231415392619,
+            "range": "± 1028060620",
             "unit": "ns/iter"
           }
         ]
