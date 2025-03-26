@@ -347,16 +347,23 @@ pub fn block_number_has_state_file(
     Ok(false)
 }
 
-/// CHECK if the given block_number has all the proofs needed
-/// This function will check if the path: ../../../<block_number>/ contains the proofs
-/// Make sure to add all new proving_systems in the [ProverType::all] function
-pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateError> {
+/// Check if the given block_number has all the proofs needed
+/// This function will check if the path: ../../../<block_number>/
+/// contains the needed_proof_types passed as parameter.
+pub fn block_number_has_all_needed_proofs(
+    block_number: u64,
+    needed_proof_types: &[ProverType],
+) -> Result<bool, SaveStateError> {
+    if needed_proof_types.is_empty() {
+        return Ok(true);
+    }
+
     let block_state_path = get_block_state_path(block_number)?;
 
     let mut has_all_proofs = true;
-    for prover_type in ProverType::all() {
+    for prover_type in needed_proof_types {
         let file_name_to_seek: OsString =
-            get_state_file_name(block_number, &StateFileType::Proof(prover_type)).into();
+            get_state_file_name(block_number, &StateFileType::Proof(*prover_type)).into();
 
         // Check if the proof exists
         let proof_exists = std::fs::read_dir(&block_state_path)?

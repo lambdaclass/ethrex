@@ -13,7 +13,7 @@ use crate::utils::{
 };
 use ethrex_common::{
     types::{Block, BlockHeader},
-    Address, H256, U256,
+    Address, H160, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
@@ -30,8 +30,17 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+// These constants have to match with the OnChainProposer.sol contract
+const R0VERIFIER: &str = "R0VERIFIER()";
+const SP1VERIFIER: &str = "SP1VERIFIER()";
+const PICOVERIFIER: &str = "PICOVERIFIER()";
+const VERIFIER_CONTRACTS: [&str; 3] = [R0VERIFIER, SP1VERIFIER, PICOVERIFIER];
+const DEV_MODE_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0xAA,
+]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verify(uint256,bytes,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -50,6 +59,7 @@ struct ProverServer {
     verifier_address: Address,
     verifier_private_key: SecretKey,
     dev_interval_ms: u64,
+    needed_proof_types: Vec<ProverType>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -115,7 +125,7 @@ pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
     let proposer_config = CommitterConfig::from_env()?;
     let mut prover_server =
         ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
-            .await;
+            .await?;
     prover_server.run(&server_config).await;
     Ok(())
 }
@@ -126,11 +136,42 @@ impl ProverServer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
-    ) -> Self {
+    ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
-        Self {
+        let verifier_contracts = EthClient::get_verifier_contracts(
+            &eth_client,
+            &VERIFIER_CONTRACTS,
+            on_chain_proposer_address,
+        )
+        .await?;
+
+        let mut needed_proof_types = vec![];
+
+        for (key, addr) in verifier_contracts {
+            if addr == DEV_MODE_ADDRESS {
+                continue;
+            } else {
+                match key.as_str() {
+                    R0VERIFIER => {
+                        info!("RISC0 proof needed");
+                        needed_proof_types.push(ProverType::RISC0);
+                    }
+                    SP1VERIFIER => {
+                        info!("SP1 proof needed");
+                        needed_proof_types.push(ProverType::SP1);
+                    }
+                    PICOVERIFIER => {
+                        info!("PICO proof needed");
+                        needed_proof_types.push(ProverType::Pico);
+                    }
+                    _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
+                }
+            }
+        }
+
+        Ok(Self {
             ip: config.listen_ip,
             port: config.listen_port,
             store,
@@ -138,8 +179,10 @@ impl ProverServer {
             on_chain_proposer_address,
             verifier_address: config.verifier_address,
             verifier_private_key: config.verifier_private_key,
+            needed_proof_types,
+
             dev_interval_ms: config.dev_interval_ms,
-        }
+        })
     }
 
     pub async fn run(&mut self, server_config: &ProverServerConfig) {
@@ -254,24 +297,38 @@ impl ProverServer {
         let mut tx_submitted = false;
 
         // If we have all the proofs send a transaction to verify them on chain
-
-        let send_tx = match block_number_has_all_proofs(block_to_verify) {
-            Ok(has_all_proofs) => has_all_proofs,
-            Err(e) => {
-                if let SaveStateError::IOError(ref error) = e {
-                    if error.kind() != std::io::ErrorKind::NotFound {
+        let send_tx =
+            match block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types) {
+                Ok(has_all_proofs) => has_all_proofs,
+                Err(e) => {
+                    if let SaveStateError::IOError(ref error) = e {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            return Err(e.into());
+                        }
+                    } else {
                         return Err(e.into());
                     }
-                } else {
-                    return Err(e.into());
+                    false
                 }
-                false
-            }
-        };
+            };
+
         if send_tx {
             self.handle_proof_submission(block_to_verify).await?;
+
             // Remove the Proofs for that block_number
-            prune_state(block_to_verify)?;
+            match prune_state(block_to_verify) {
+                Ok(_) => (),
+                Err(e) => {
+                    if let SaveStateError::IOError(ref error) = e {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            return Err(e.into());
+                        }
+                    } else {
+                        return Err(e.into());
+                    }
+                }
+            }
+
             tx_submitted = true;
         }
 
@@ -304,23 +361,26 @@ impl ProverServer {
                     return Ok(());
                 }
 
-                // Check if we have the proof for that ProverType
-                // If we don't have it, insert it.
-                let has_proof = match block_number_has_state_file(
-                    StateFileType::Proof(calldata.prover_type),
-                    block_number,
-                ) {
-                    Ok(has_proof) => has_proof,
-                    Err(e) => {
-                        let error = format!("{e}");
-                        if !error.contains("No such file or directory") {
-                            return Err(e.into());
+                // The ProverType::Exec doesn't generate a real proof, we don't need to save it.
+                if calldata.prover_type != ProverType::Exec {
+                    // Check if we have the proof for that ProverType
+                    let has_proof = match block_number_has_state_file(
+                        StateFileType::Proof(calldata.prover_type),
+                        block_number,
+                    ) {
+                        Ok(has_proof) => has_proof,
+                        Err(e) => {
+                            let error = format!("{e}");
+                            if !error.contains("No such file or directory") {
+                                return Err(e.into());
+                            }
+                            false
                         }
-                        false
+                    };
+                    // If we don't have it, insert it.
+                    if !has_proof {
+                        write_state(block_number, &StateType::Proof(calldata))?;
                     }
-                };
-                if !has_proof {
-                    write_state(block_number, &StateType::Proof(calldata))?;
                 }
 
                 // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
@@ -424,47 +484,63 @@ impl ProverServer {
         &self,
         block_number: u64,
     ) -> Result<H256, ProverServerError> {
-        // TODO change error
-        let exec_proof = read_proof(block_number, StateFileType::Proof(ProverType::Exec))?;
-        if exec_proof.prover_type != ProverType::Exec {
-            return Err(ProverServerError::Custom(
-                "Exec Proof isn't present".to_string(),
-            ));
-        }
+        // TODO: change error
+        // TODO: If the proof is not needed, a default calldata is used,
+        // the structure has to match the one defined in the OnChainProposer.sol contract.
+        // It may cause some issues, but the ethrex_prover_lib cannot be imported,
+        // this approach is straight-forward for now.
+        let risc0_proof = {
+            if self.needed_proof_types.contains(&ProverType::RISC0) {
+                let risc0_proof =
+                    read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
+                if risc0_proof.prover_type != ProverType::RISC0 {
+                    return Err(ProverServerError::Custom(
+                        "RISC0 Proof isn't present".to_string(),
+                    ));
+                }
+                risc0_proof.calldata
+            } else {
+                ProverType::RISC0.empty_calldata()
+            }
+        };
 
-        let risc0_proof = read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
-        if risc0_proof.prover_type != ProverType::RISC0 {
-            return Err(ProverServerError::Custom(
-                "RISC0 Proof isn't present".to_string(),
-            ));
-        }
+        let sp1_proof = {
+            if self.needed_proof_types.contains(&ProverType::SP1) {
+                let sp1_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
+                if sp1_proof.prover_type != ProverType::SP1 {
+                    return Err(ProverServerError::Custom(
+                        "SP1 Proof isn't present".to_string(),
+                    ));
+                }
+                sp1_proof.calldata
+            } else {
+                ProverType::SP1.empty_calldata()
+            }
+        };
 
-        let sp1_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
-        if sp1_proof.prover_type != ProverType::SP1 {
-            return Err(ProverServerError::Custom(
-                "SP1 Proof isn't present".to_string(),
-            ));
-        }
+        let pico_proof = {
+            if self.needed_proof_types.contains(&ProverType::Pico) {
+                let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::Pico))?;
+                if pico_proof.prover_type != ProverType::Pico {
+                    return Err(ProverServerError::Custom(
+                        "Pico Proof isn't present".to_string(),
+                    ));
+                }
+                pico_proof.calldata
+            } else {
+                ProverType::Pico.empty_calldata()
+            }
+        };
 
-        let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::Pico))?;
-        if pico_proof.prover_type != ProverType::Pico {
-            return Err(ProverServerError::Custom(
-                "Pico Proof isn't present".to_string(),
-            ));
-        }
-
-        debug!("Sending proof for {block_number}");
+        debug!("Sending proof for block number: {block_number}");
 
         let calldata_values = [
             &[Value::Uint(U256::from(block_number))],
-            exec_proof.calldata.as_slice(),
-            risc0_proof.calldata.as_slice(),
-            sp1_proof.calldata.as_slice(),
-            pico_proof.calldata.as_slice(),
+            risc0_proof.as_slice(),
+            sp1_proof.as_slice(),
+            pico_proof.as_slice(),
         ]
         .concat();
-
-        warn!("calldata value len: {}", calldata_values.len());
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
@@ -527,8 +603,6 @@ impl ProverServer {
             let calldata_values = vec![
                 // blockNumber
                 Value::Uint(U256::from(last_verified_block + 1)),
-                // execPublicInputs
-                Value::Bytes(vec![].into()),
                 // risc0BlockProof
                 Value::Bytes(vec![].into()),
                 // risc0ImageId
