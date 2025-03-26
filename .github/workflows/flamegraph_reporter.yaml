@@ -173,6 +173,9 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
+      - name: Set Rust toolchain
+        run: rustup override set ${{ env.RUST_VERSION }}
+
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
@@ -295,6 +298,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_RETH_VERSION }}
+
+      - name: Set Rust toolchain
+        run: rustup override set ${{ env.RUST_RETH_VERSION }}
 
       - name: Checkout reth
         uses: actions/checkout@v4

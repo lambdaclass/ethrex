@@ -1,0 +1,8 @@
+Couldn't establish connection to L2: reqwest error: error sending request for url (http://localhost:1729/), retrying 1/5
+Couldn't establish connection to L2: reqwest error: error sending request for url (http://localhost:1729/), retrying 2/5
+Couldn't establish connection to L2: reqwest error: error sending request for url (http://localhost:1729/), retrying 3/5
+Couldn't establish connection to L2: reqwest error: error sending request for url (http://localhost:1729/), retrying 4/5
+[2m2025-03-26T13:55:33.218523Z[0m [31mERROR[0m [2methrex_l2[0m[2m:[0m Couldn't establish connection to L2: reqwest error: error sending request for url (http://localhost:1729/)
+
+Location:
+    /Users/jeremias/ethrex/cmd/ethrex_l2/src/commands/test.rs:357:21
