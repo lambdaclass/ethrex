@@ -205,16 +205,7 @@ impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         match self {
             Subcommand::RemoveDB { datadir } => {
-                let data_dir = set_datadir(&datadir);
-
-                let path = Path::new(&data_dir);
-
-                if path.exists() {
-                    std::fs::remove_dir_all(path).expect("Failed to remove data directory");
-                    info!("Successfully removed database at {data_dir}");
-                } else {
-                    warn!("Data directory does not exist: {data_dir}");
-                }
+                remove_db(&datadir);
             }
             Subcommand::Import { path, removedb } => {
                 if removedb {
@@ -233,34 +224,51 @@ impl Subcommand {
                     .as_ref()
                     .expect("--network is required and it was not provided");
 
-                let data_dir = set_datadir(&opts.datadir);
-
-                let store = init_store(&data_dir, network);
-
-                let blockchain = init_blockchain(opts.evm, store);
-
-                let path_metadata = metadata(&path).expect("Failed to read path");
-                let blocks = if path_metadata.is_dir() {
-                    let mut blocks = vec![];
-                    let dir_reader = read_dir(&path).expect("Failed to read blocks directory");
-                    for file_res in dir_reader {
-                        let file = file_res.expect("Failed to open file in directory");
-                        let path = file.path();
-                        let s = path
-                            .to_str()
-                            .expect("Path could not be converted into string");
-                        blocks.push(utils::read_block_file(s));
-                    }
-                    blocks
-                } else {
-                    info!("Importing blocks from chain file: {path}");
-                    utils::read_chain_file(&path)
-                };
-                blockchain.import_blocks(&blocks);
+                import_blocks(&path, &opts.datadir, network, opts.evm);
             }
             #[cfg(any(feature = "l2", feature = "based"))]
             Subcommand::L2(command) => command.run().await?,
         }
         Ok(())
     }
+}
+
+pub fn remove_db(datadir: &str) {
+    let data_dir = set_datadir(datadir);
+
+    let path = Path::new(&data_dir);
+
+    if path.exists() {
+        std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+        info!("Successfully removed database at {data_dir}");
+    } else {
+        warn!("Data directory does not exist: {data_dir}");
+    }
+}
+
+pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
+    let data_dir = set_datadir(data_dir);
+
+    let store = init_store(&data_dir, network);
+
+    let blockchain = init_blockchain(evm, store);
+
+    let path_metadata = metadata(path).expect("Failed to read path");
+    let blocks = if path_metadata.is_dir() {
+        let mut blocks = vec![];
+        let dir_reader = read_dir(path).expect("Failed to read blocks directory");
+        for file_res in dir_reader {
+            let file = file_res.expect("Failed to open file in directory");
+            let path = file.path();
+            let s = path
+                .to_str()
+                .expect("Path could not be converted into string");
+            blocks.push(utils::read_block_file(s));
+        }
+        blocks
+    } else {
+        info!("Importing blocks from chain file: {path}");
+        utils::read_chain_file(path)
+    };
+    blockchain.import_blocks(&blocks);
 }
