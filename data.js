@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743022014651,
+  "lastUpdate": 1743025707795,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1495,6 +1495,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 233358784894,
             "range": "± 475162402",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "156438142+fborello-lambda@users.noreply.github.com",
+            "name": "Federico Borello",
+            "username": "fborello-lambda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dc392087828781e0c0d1d10008fc38543a2f02eb",
+          "message": "feat(l2): omit unneeded proofs (#2235)\n\n**Motivation**\n\nWe had to wait for all prover backends' proofs in order to send the\n`verify` transaction and continue with the desired behavior of\n`commitment` &rarr; then `verification`.\n\nNow, we can make use of only one backend.\n\n**Description**\n\n- Check the `Verification` contract address querying the contract\n  - If it is `0xAA` we don't wait for that backend's proof.\n\n---------\n\nCo-authored-by: Estéfano Bargas <estefano.bargas@fing.edu.uy>",
+          "timestamp": "2025-03-26T20:50:41Z",
+          "tree_id": "368f634d7ae6c24a3d89414dc4b78b0499257299",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dc392087828781e0c0d1d10008fc38543a2f02eb"
+        },
+        "date": 1743025705932,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 230748524994,
+            "range": "± 543494546",
             "unit": "ns/iter"
           }
         ]
