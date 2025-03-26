@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
 	libc6 \
 	libssl-dev \
 	ca-certificates \
+	cmake \
 	&& rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef
 
