@@ -153,7 +153,7 @@ async fn transfer_from(
                         None
                     },
                     gas_limit: Some(TX_GAS_COST * 100),
-                    nonce: Some(nonce + i),
+                    nonce: Some(i),
                     ..Default::default()
                 },
             )
