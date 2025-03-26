@@ -46,7 +46,7 @@ impl LEVM {
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 let block_header = &block.header;
-                let fork = config.fork(block_header.timestamp);
+                let fork = chain_config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     Self::beacon_root_contract_call(block_header, chain_config, db.clone(), &mut block_cache)?;
                 }
