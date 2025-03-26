@@ -1836,7 +1836,8 @@ mod serde_impl {
             struct_serializer.serialize_field("type", &TxType::Privileged)?;
             struct_serializer.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
             struct_serializer.serialize_field("to", &self.to)?;
-            struct_serializer.serialize_field("recipient", &format!("{:x}", &self.recipient))?;
+            struct_serializer
+                .serialize_field("recipient", &dbg!(format!("{:x}", &self.recipient)))?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
             struct_serializer.serialize_field("value", &self.value)?;
             struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
