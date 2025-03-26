@@ -1,6 +1,5 @@
 use bytes::BufMut;
 use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
-use std::any::Any;
 use std::fmt::Display;
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
