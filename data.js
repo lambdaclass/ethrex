@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743025707795,
+  "lastUpdate": 1743027021231,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1525,6 +1525,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 230748524994,
             "range": "± 543494546",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "156438142+fborello-lambda@users.noreply.github.com",
+            "name": "Federico Borello",
+            "username": "fborello-lambda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "170308afefe78c08b13bcda3111ec5e4158e87a5",
+          "message": "refactor(l2): separated configs for prover_client and sequencer (#2269)\n\n**Motivation**\n\nWhen running the prover_client as a standalone component the\n`config.toml` wasn't being parsed.\nIdeally we should parse it before we run the prover_client.\n\n**Description**\n\n- The `ConfigMode` enum is proposed to parse the .toml for the\n`Sequencer` or the `ProverClient`\n- The prover_client parses the `prover_client_config.toml` and creates a\n`.env.prover` file\n- Created new envars to set the:\n  - `CONFIGS_PATH` \n  - `SEQUENCER_CONFIG_FILE`\n  - `PROVER_CLIENT_CONFIG_FILE`\n  - The references were updated in the Makefile\n\nThis change also enables us to change the `SEQUENCER_CONFIG_FILE` easily\nkeeping it in the `configs` dir and switching the `Makefile`'s variable.\n(Useful when testing locally and with a testnet).\n\nCloses #2053\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-03-26T21:12:57Z",
+          "tree_id": "031ff061bacfb206344cc64371c74742f0423ba5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/170308afefe78c08b13bcda3111ec5e4158e87a5"
+        },
+        "date": 1743027019113,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 228971430179,
+            "range": "± 936604869",
             "unit": "ns/iter"
           }
         ]
