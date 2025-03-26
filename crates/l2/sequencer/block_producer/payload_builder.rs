@@ -13,7 +13,7 @@ use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRI
 use ethrex_storage::Store;
 use std::ops::Div;
 use tokio::time::Instant;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::{
     sequencer::{errors::BlockProducerError, state_diff::get_nonce_diff},
@@ -43,18 +43,14 @@ pub fn build_payload(
     blockchain.extract_requests(&mut context)?;
     blockchain.finalize_payload(&mut context)?;
 
-    let interval: u64 = Instant::now()
-        .duration_since(since)
-        .as_millis()
-        .try_into()?;
+    let interval = Instant::now().duration_since(since).as_millis();
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
+    #[allow(clippy::as_conversions)]
     if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
-        let gas_used = f64::from_ne_bytes(gas_used.to_ne_bytes());
-        let as_gigas = gas_used.div(10_f64.powf(9_f64));
+        let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
         if interval != 0 {
-            let interval = f64::from_ne_bytes(interval.to_ne_bytes());
-            let throughput = (as_gigas) / (interval * 1000_f64);
+            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
             tracing::info!(
                 "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
@@ -153,7 +149,7 @@ pub fn fill_transactions(
                     &receipt,
                     context,
                 )? {
-                    warn!(
+                    debug!(
                         "Skipping transaction: {}, doesn't feet in blob_size",
                         head_tx.tx.compute_hash()
                     );
