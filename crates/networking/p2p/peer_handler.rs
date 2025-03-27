@@ -62,9 +62,11 @@ impl PeerHandler {
     pub fn new(peer_table: Arc<Mutex<KademliaTable>>) -> PeerHandler {
         Self { peer_table }
     }
-    /// Returns the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    /// If no peer is found, this method will try again after 10 seconds
+
+    /// Returns the channel ends to an active peer connection that supports the given capability.  
+    ///
+    /// The peer is selected based on its scoring and if it is not currently busy. If no suitable peer is found, this method retries  
+    /// after 10 seconds.
     async fn get_peer_channel_with_retry(
         &self,
         capability: Capability,
@@ -110,11 +112,22 @@ impl PeerHandler {
         peer.scoring = peer.scoring.saturating_add(scoring_points);
     }
 
+    /// Sends a request to a peer with the specified capability.
+    ///
+    /// ### Params
+    /// - `request_msg`: A callback function that constructs the request message. This avoids the need to derive `Clone` for `RLPxMessage`,
+    ///   as each request attempt takes ownership of the message. This is beneficial because some `RLPxMessage` structures can be expensive to clone.
+    /// - `validate_response`: A function that validates the received response. If the response is successful, it is returned.
+    ///
+    /// The request is retried up to [`REQUEST_RETRY_ATTEMPTS`] times if necessary.
+    ///
+    /// ### Scoring
+    /// Additionally, peers receive points for successful validations and low-latency responses,
+    /// so that we prioritize the selection of peers when sending messages.
     async fn send_request<T: crate::rlpx::message::RLPxMessage + 'static>(
         &self,
         cap: Capability,
-        // using a function to not derive Clone in RLPxMessage
-        build_request: impl Fn() -> RLPxMessage,
+        request_msg: impl Fn() -> RLPxMessage,
         validate_response: impl Fn(&T) -> bool,
     ) -> Option<T> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
@@ -122,42 +135,42 @@ impl PeerHandler {
             let (channel, node_id) = channels?;
 
             let mut receiver = channel.receiver.lock().await;
-            channel.sender.send(build_request()).await.ok();
+            channel.sender.send(request_msg()).await.ok();
             let since = Instant::now();
-            let self_clone = self.clone();
-            if let Some(response) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            let response = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 match receiver.recv().await {
                     Some(res) => Some(res),
-                    None => {
-                        self_clone.peer_failed_to_respond(node_id).await;
-                        None
-                    }
+                    None => None,
                 }
             })
             .await
             .ok()
-            .flatten()
-            {
-                let response = response.inner()?;
-                let validation = validate_response(&response);
-                if !validation {
-                    self.peer_failed_to_respond(node_id).await;
-                    return None;
-                }
+            .flatten();
 
-                // Assign 1 point for a successful response.
-                // If the response time is under 300ms, assign 2 additional points for speed.
-                let mut scoring_points = 1;
-                let latency = since.elapsed().as_millis();
-                if latency < 300 {
-                    scoring_points += 2;
-                }
+            let Some(response) = response else {
+                self.peer_failed_to_respond(node_id).await;
+                continue;
+            };
 
-                self.peer_responded_successfully(node_id, scoring_points)
-                    .await;
-
-                return Some(response);
+            let response: T = response.inner()?;
+            let validation = validate_response(&response);
+            if !validation {
+                self.peer_failed_to_respond(node_id).await;
+                return None;
             }
+
+            // Assign 1 point for a successful response.
+            // If the response time is under 100ms, assign 1 additional points for speed.
+            let mut scoring_points = 1;
+            let latency = since.elapsed().as_millis();
+            if latency < 100 {
+                scoring_points += 1;
+            }
+
+            self.peer_responded_successfully(node_id, scoring_points)
+                .await;
+
+            return Some(response);
         }
 
         None
