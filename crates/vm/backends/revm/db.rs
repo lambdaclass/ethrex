@@ -11,12 +11,6 @@ use revm::primitives::{
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
 };
 
-use crate::helpers::spec_id;
-use crate::{
-    db::StoreWrapper,
-    errors::{EvmError, ExecutionDBError},
-};
-
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
 /// with a [ExecutionDB] in case we only want to store the necessary data for some particular
 /// execution, for example when proving in L2 mode.
@@ -83,7 +77,9 @@ impl From<ExecutionDB> for EvmState {
     }
 }
 
-use super::execution_db::{ExecutionDB, ToExecDB};
+use crate::{helpers::spec_id, EvmError, ExecutionDB, ExecutionDBError, StoreWrapper};
+
+use super::execution_db::ToExecDB;
 
 impl revm::Database for StoreWrapper {
     type Error = StoreError;

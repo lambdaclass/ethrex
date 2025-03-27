@@ -7,6 +7,7 @@ use ethrex_l2::utils::config::{read_env_as_lines, read_env_file, write_env_file}
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
+use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::clients::eth::WrappedTransaction;
 use ethrex_rpc::clients::eth::{
     errors::{CalldataEncodeError, EthClientError},
@@ -774,7 +775,9 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
             continue;
         };
 
-        let get_balance = eth_client.get_balance(address).await?;
+        let get_balance = eth_client
+            .get_balance(address, BlockByNumber::Latest)
+            .await?;
         let value_to_deposit = get_balance
             .checked_div(U256::from_str("2").unwrap_or(U256::zero()))
             .unwrap_or(U256::zero());
