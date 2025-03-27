@@ -42,7 +42,7 @@ jobs:
           cd crates/l2
           make build-prover T=sp1
 
-      - name: Run L2 integration prover_client
+      - name: Setup L2 integration prover_client
         run: |
           cd crates/l2
           cp configs/config_example.toml configs/config.toml
@@ -50,5 +50,13 @@ jobs:
           sed -i 's/sp1_deploy_verifier = false/sp1_deploy_verifier = true/' configs/config.toml
           sed -i 's/dev_mode = true/dev_mode = false/' configs/config_example.toml
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          sed -i 's/sp1_prover = "cuda"/sp1_prover = "cpu"/' configs/prover_client_config.toml
-          make ci_test_prover_client
+          sed -i 's/sp1_prover = "mock"/sp1_prover = "cpu"/' configs/prover_client_config.toml
+
+      - name: Display configs/config.toml
+        run: cat configs/config.toml
+
+      - name: Display cat configs/prover_client_config.toml
+        run: cat configs/prover_client_config.toml
+
+      - name: Run L2 integration prover_client
+        run: make ci_test_prover_client
