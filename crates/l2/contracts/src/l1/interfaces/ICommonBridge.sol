@@ -61,10 +61,12 @@ interface ICommonBridge {
     /// @param to, the address in L2 to which the tokens will be minted to.
     /// @param recipient, the address in L1 that will receive the tokens.
     /// @param gasLimit, the gas limit for the deposit transaction.
+    /// @param data, the calldata for the deposit transaction.
     function deposit(
         address to,
         address recipient,
-        uint256 gasLimit
+        uint256 gasLimit,
+        bytes calldata data
     ) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number` deposit logs.

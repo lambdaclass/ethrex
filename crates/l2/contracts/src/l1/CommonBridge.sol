@@ -71,12 +71,12 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         return depositLogs;
     }
 
-    /// @inheritdoc ICommonBridge
-    function deposit(
+    function _deposit(
         address to,
         address recipient,
-        uint256 gasLimit
-    ) public payable {
+        uint256 gasLimit,
+        bytes memory data
+    ) private {
         require(msg.value > 0, "CommonBridge: amount to deposit is zero");
 
         bytes32 l2MintTxHash = keccak256(
@@ -86,7 +86,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
                 recipient, // recipient
                 msg.value, // value
                 gasLimit, // gasLimit
-                depositId // nonce
+                depositId, // nonce
+                data // data
             )
         );
 
@@ -103,8 +104,23 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         depositId += 1;
     }
 
+    /// @inheritdoc ICommonBridge
+    function deposit(
+        address to,
+        address recipient,
+        uint256 gasLimit,
+        bytes calldata data
+    ) public payable {
+        _deposit(to, recipient, gasLimit, data);
+    }
+
+    fallback() external payable {
+        deposit(msg.sender, msg.sender, 21000 * 5, msg.data);
+    }
+
     receive() external payable {
-        deposit(msg.sender, msg.sender, 21000 * 5);
+        bytes memory data = bytes("");
+        _deposit(msg.sender, msg.sender, 21000 * 5, data);
     }
 
     /// @inheritdoc ICommonBridge

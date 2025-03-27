@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
 use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
-use ethrex_l2_sdk::calldata;
+use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, from_hex_string_to_u256, BlockByNumber, EthClient,
 };
@@ -389,56 +389,89 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// #[tokio::test]
-// async fn l2_revert_test() -> Result<(), Box<dyn std::error::Error>> {
-//     let eth_client = eth_client();
-//     let proposer_client = proposer_client();
+/// In this test we deploy a contract on L2 and call it from L1 using the CommonBridge contract.
+/// We call the contract by making a deposit from L1 to L2 with the recipient being the rich account.
+/// The deposit will trigger the call to the contract.
+#[tokio::test]
+async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error>> {
+    let eth_client = eth_client();
+    let proposer_client = proposer_client();
 
-//     read_env_file()?;
+    read_env_file_by_config(ConfigMode::Sequencer)?;
 
-//     println!("Checking initial balances on L1 and L2");
-//     let l1_rich_wallet_address = l1_rich_wallet_address();
+    // 1. Check balances on L1 and L2
 
-//     let l1_initial_balance = eth_client.get_balance(l1_rich_wallet_address).await?;
-//     let mut l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
-//     println!("Waiting for L2 to update for initial deposit");
-//     let mut retries = 0;
-//     while retries < 30 && l2_initial_balance.is_zero() {
-//         std::thread::sleep(std::time::Duration::from_secs(2));
-//         println!("[{retries}/30] Waiting for L2 balance to update");
-//         l2_initial_balance = proposer_client.get_balance(l1_rich_wallet_address).await?;
-//         retries += 1;
-//     }
-//     assert_ne!(retries, 30, "L2 balance is zero");
-//     let common_bridge_initial_balance = eth_client.get_balance(common_bridge_address()).await?;
+    println!("Checking initial balances on L1 and L2");
+    let l1_rich_wallet_address = l1_rich_wallet_address();
 
-//     println!("L1 initial balance: {l1_initial_balance}");
-//     println!("L2 initial balance: {l2_initial_balance}");
-//     println!("Common Bridge initial balance: {common_bridge_initial_balance}");
+    let l1_initial_balance = eth_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    let mut l2_initial_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    println!("Waiting for L2 to update for initial deposit");
+    let mut retries = 0;
+    while retries < 30 && l2_initial_balance.is_zero() {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        println!("[{retries}/30] Waiting for L2 balance to update");
+        l2_initial_balance = proposer_client
+            .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+            .await?;
+        retries += 1;
+    }
+    assert_ne!(retries, 30, "L2 balance is zero");
+    let common_bridge_initial_balance = eth_client
+        .get_balance(common_bridge_address(), BlockByNumber::Latest)
+        .await?;
 
-//     let tx_dep = proposer_client
-//         .build_privileged_transaction(
-//             l1_rich_wallet_address,
-//             l1_rich_wallet_address,
-//             l1_rich_wallet_address,
-//             Bytes::new(),
-//             Overrides {
-//                 value: Some(U256::from(100000000000000000000u128)),
-//                 gas_limit: Some(149707178),
-//                 max_priority_fee_per_gas: Some(10000000000000000),
-//                 max_fee_per_gas: Some(10000000000),
-//                 ..Default::default()
-//             },
-//         )
-//         .await?;
-//     let tx_hash = proposer_client
-//         .send_privileged_l2_transaction(&tx_dep, &l1_rich_wallet_private_key())
-//         .await?;
-//     let _receipt =
-//         ethrex_l2_sdk::wait_for_transaction_receipt(tx_hash, &proposer_client, 10).await?;
+    println!("L1 initial balance: {l1_initial_balance}");
+    println!("L2 initial balance: {l2_initial_balance}");
+    println!("Common Bridge initial balance: {common_bridge_initial_balance}");
 
-//     Ok(())
-// }
+    println!("Deploying contract on L2...");
+
+    //pragma solidity ^0.8.27;
+    //contract Test {
+    //    uint256 public constant number = 37;
+    //}
+    let init_code = hex::decode("6080604052348015600e575f5ffd5b5060ac80601a5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c80638381f58a14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b602581565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea2646970667358221220a6516c1bfca94ad11d1315b32cd08f115c050e098a0631d58ee55923e70bc36364736f6c634300081c0033")?;
+
+    let (_, contract_address) = proposer_client
+        .deploy(
+            l1_rich_wallet_address,
+            l1_rich_wallet_private_key(),
+            init_code.into(),
+            Overrides::default(),
+        )
+        .await?;
+
+    println!("Contract deployed on L2: {contract_address:?}");
+
+    let values = vec![
+        Value::Address(contract_address),       // to
+        Value::Address(l1_rich_wallet_address), // recipient
+        Value::Uint(U256::from(21000 * 5)),     // gasLimit
+    ];
+
+    let calldata = calldata::encode_calldata("deposit(address,address,uint256)", &values)?.into();
+
+    let deposit_tx = eth_client
+        .build_eip1559_transaction(
+            common_bridge_address(),
+            l1_rich_wallet_address,
+            calldata,
+            Overrides {
+                value: Some(U256::from(100000000000000000000u128)),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    println!("Deposit tx: {deposit_tx:?}");
+
+    Ok(())
+}
 
 #[tokio::test]
 async fn l2_sdk_deploy() -> Result<(), Box<dyn std::error::Error>> {
