@@ -26,7 +26,7 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fmt::Debug,
     sync::Arc,
 };
@@ -36,7 +36,7 @@ pub type Storage = HashMap<U256, H256>;
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
-    pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
+    pub touched_storage_slots: HashMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
 }
 
@@ -227,12 +227,12 @@ impl VM {
             default_touched_accounts.insert(env.coinbase);
         }
 
-        let mut default_touched_storage_slots: HashMap<Address, HashSet<H256>> = HashMap::new();
+        let mut default_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
 
         // Add access lists contents to cache
         for (address, keys) in access_list.clone() {
             default_touched_accounts.insert(address);
-            let mut warm_slots = HashSet::new();
+            let mut warm_slots = BTreeSet::new();
             for slot in keys {
                 warm_slots.insert(slot);
             }
