@@ -11,7 +11,7 @@
 use ethrex_common::{H256, U256};
 use ethrex_storage::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -122,7 +122,7 @@ async fn fetch_storage_batch(
         .request_storage_ranges(state_root, batch_roots, batch_hahses, H256::zero())
         .await
     {
-        debug!("Received {} storage ranges", keys.len(),);
+        info!("Received {} storage ranges", keys.len(),);
         // Handle incomplete ranges
         if incomplete {
             // An incomplete range cannot be empty
