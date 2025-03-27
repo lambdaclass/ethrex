@@ -124,8 +124,7 @@ async fn heal_storage_batch(
                 .collect::<Result<Vec<_>, _>>()?;
             paths.extend(children.into_iter().flatten());
             // Write nodes to trie
-            let node_hashes = trie_nodes.iter().map(|node| node.compute_hash()).collect();
-            trie.state_mut().write_node_batch(trie_nodes, node_hashes)?;
+            trie.state_mut().write_node_batch(&nodes)?;
             if nodes.is_empty() {
                 break;
             }
