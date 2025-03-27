@@ -3487,6 +3487,7 @@ dependencies = [
  "keccak-hash",
  "lazy_static",
  "once_cell",
+ "rayon",
  "secp256k1",
  "serde",
  "serde_json",
@@ -3543,6 +3544,7 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
+ "test-casing",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
@@ -10149,6 +10151,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "test-casing"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4d233764420cbfe244e6a50177798a01b20184df210eb626898cd1b20c06633"
+dependencies = [
+ "test-casing-macro",
+]
+
+[[package]]
+name = "test-casing-macro"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9b53c7124dd88026d5d98a1eb1fd062a578b7d783017c9298825526c7fb6427"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]
