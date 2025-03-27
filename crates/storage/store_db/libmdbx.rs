@@ -86,8 +86,9 @@ impl Store {
     }
 }
 
+#[async_trait::async_trait]
 impl StoreEngine for Store {
-    fn add_block_header(
+    async fn add_block_header(
         &self,
         block_hash: BlockHash,
         block_header: BlockHeader,
@@ -95,7 +96,7 @@ impl StoreEngine for Store {
         self.write::<Headers>(block_hash.into(), block_header.into())
     }
 
-    fn add_block_headers(
+    async fn add_block_headers(
         &self,
         block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
@@ -118,7 +119,7 @@ impl StoreEngine for Store {
         }
     }
 
-    fn add_block_body(
+    async fn add_block_body(
         &self,
         block_hash: BlockHash,
         block_body: BlockBody,
@@ -126,7 +127,7 @@ impl StoreEngine for Store {
         self.write::<Bodies>(block_hash.into(), block_body.into())
     }
 
-    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    async fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let tx = self
             .db
             .begin_readwrite()
@@ -163,7 +164,7 @@ impl StoreEngine for Store {
         tx.commit().map_err(StoreError::LibmdbxError)
     }
 
-    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let key_values = blocks.iter().map(|e| (e.header.number, e.hash().into()));
 
         self.write_batch::<CanonicalBlockHashes>(key_values)
@@ -191,7 +192,7 @@ impl StoreEngine for Store {
         Ok(self.read::<Headers>(block_hash.into())?.map(|b| b.to()))
     }
 
-    fn add_block_number(
+    async fn add_block_number(
         &self,
         block_hash: BlockHash,
         block_number: BlockNumber,
@@ -203,7 +204,7 @@ impl StoreEngine for Store {
         self.read::<BlockNumbers>(block_hash.into())
     }
 
-    fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
+    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         self.write::<AccountCodes>(code_hash.into(), code.into())
     }
 
@@ -211,7 +212,7 @@ impl StoreEngine for Store {
         Ok(self.read::<AccountCodes>(code_hash.into())?.map(|b| b.to()))
     }
 
-    fn add_receipt(
+    async fn add_receipt(
         &self,
         block_hash: BlockHash,
         index: Index,
@@ -239,7 +240,7 @@ impl StoreEngine for Store {
         }
     }
 
-    fn add_transaction_location(
+    async fn add_transaction_location(
         &self,
         transaction_hash: H256,
         block_number: BlockNumber,
@@ -270,7 +271,7 @@ impl StoreEngine for Store {
     }
 
     /// Stores the chain config serialized as json
-    fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+    async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
         self.write::<ChainData>(
             ChainDataIndex::ChainConfig,
             serde_json::to_string(chain_config)
@@ -291,7 +292,7 @@ impl StoreEngine for Store {
         }
     }
 
-    fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write::<ChainData>(
             ChainDataIndex::EarliestBlockNumber,
             block_number.encode_to_vec(),
@@ -307,7 +308,7 @@ impl StoreEngine for Store {
         }
     }
 
-    fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write::<ChainData>(
             ChainDataIndex::FinalizedBlockNumber,
             block_number.encode_to_vec(),
@@ -323,7 +324,7 @@ impl StoreEngine for Store {
         }
     }
 
-    fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write::<ChainData>(
             ChainDataIndex::SafeBlockNumber,
             block_number.encode_to_vec(),
@@ -339,7 +340,7 @@ impl StoreEngine for Store {
         }
     }
 
-    fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write::<ChainData>(
             ChainDataIndex::LatestBlockNumber,
             block_number.encode_to_vec(),
@@ -355,7 +356,7 @@ impl StoreEngine for Store {
         }
     }
 
-    fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write::<ChainData>(
             ChainDataIndex::PendingBlockNumber,
             block_number.encode_to_vec(),
@@ -384,7 +385,7 @@ impl StoreEngine for Store {
         Trie::open(db, state_root)
     }
 
-    fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
         self.write::<CanonicalBlockHashes>(number, hash.into())
     }
 
@@ -396,7 +397,7 @@ impl StoreEngine for Store {
             .map(|o| o.map(|hash_rlp| hash_rlp.to()))
     }
 
-    fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
+    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
         self.write::<Payloads>(payload_id, PayloadBundle::from_block(block).into())
     }
 
@@ -405,7 +406,7 @@ impl StoreEngine for Store {
         Ok(r.map(|b| b.to()))
     }
 
-    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+    async fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
         self.write::<Payloads>(payload_id, payload.into())
     }
 
@@ -448,7 +449,7 @@ impl StoreEngine for Store {
         Ok(Some(Block::new(header, body)))
     }
 
-    fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
+    async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
         self.db
             .begin_readwrite()
             .map_err(StoreError::LibmdbxError)?
@@ -457,7 +458,7 @@ impl StoreEngine for Store {
             .map_err(StoreError::LibmdbxError)
     }
 
-    fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.write::<PendingBlocks>(block.header.compute_block_hash().into(), block.into())
     }
 
@@ -467,7 +468,7 @@ impl StoreEngine for Store {
             .map(|b| b.to()))
     }
 
-    fn add_transaction_locations(
+    async fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
@@ -481,7 +482,7 @@ impl StoreEngine for Store {
         self.write_batch::<TransactionLocations>(key_values)
     }
 
-    fn add_receipts(
+    async fn add_receipts(
         &self,
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
@@ -501,7 +502,7 @@ impl StoreEngine for Store {
         self.write_batch::<Receipts>(key_values.into_iter())
     }
 
-    fn add_receipts_for_blocks(
+    async fn add_receipts_for_blocks(
         &self,
         receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
@@ -545,7 +546,7 @@ impl StoreEngine for Store {
         Ok(receipts)
     }
 
-    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
         self.write::<SnapState>(
             SnapStateIndex::HeaderDownloadCheckpoint,
             block_hash.encode_to_vec(),
@@ -559,7 +560,7 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_state_trie_key_checkpoint(
+    async fn set_state_trie_key_checkpoint(
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
@@ -582,7 +583,7 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_storage_heal_paths(
+    async fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
@@ -603,11 +604,11 @@ impl StoreEngine for Store {
         }
     }
 
-    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+    async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
     }
 
-    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.write::<SnapState>(SnapStateIndex::StateHealPaths, paths.encode_to_vec())
     }
 
@@ -618,7 +619,7 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_snap_state(&self) -> Result<(), StoreError> {
+    async fn clear_snap_state(&self) -> Result<(), StoreError> {
         let txn = self
             .db
             .begin_readwrite()
@@ -628,7 +629,7 @@ impl StoreEngine for Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
-    fn write_snapshot_account_batch(
+    async fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
         account_states: Vec<AccountState>,
@@ -641,7 +642,7 @@ impl StoreEngine for Store {
         )
     }
 
-    fn write_snapshot_storage_batch(
+    async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
         storage_keys: Vec<H256>,
@@ -660,7 +661,7 @@ impl StoreEngine for Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
-    fn write_snapshot_storage_batches(
+    async fn write_snapshot_storage_batches(
         &self,
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,
@@ -682,7 +683,7 @@ impl StoreEngine for Store {
         txn.commit().map_err(StoreError::LibmdbxError)
     }
 
-    fn set_state_trie_rebuild_checkpoint(
+    async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
@@ -710,7 +711,7 @@ impl StoreEngine for Store {
         )))
     }
 
-    fn set_storage_trie_rebuild_pending(
+    async fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
@@ -727,7 +728,7 @@ impl StoreEngine for Store {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_snapshot(&self) -> Result<(), StoreError> {
+    async fn clear_snapshot(&self) -> Result<(), StoreError> {
         let txn = self
             .db
             .begin_readwrite()

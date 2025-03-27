@@ -225,7 +225,7 @@ impl RpcHandler for GetPayloadV1Request {
         // NOTE: This validation is actually not required to run Hive tests. Not sure if it's
         // necessary
         validate_payload_v1_v2(&payload.block, &context)?;
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
         let response = ExecutionPayload::from_block(payload_bundle.block);
 
@@ -246,7 +246,7 @@ impl RpcHandler for GetPayloadV2Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
         validate_payload_v1_v2(&payload.block, &context)?;
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -318,7 +318,7 @@ impl RpcHandler for GetPayloadV3Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
         validate_fork(&payload.block, Fork::Cancun, &context)?;
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -363,7 +363,7 @@ impl RpcHandler for GetPayloadV4Request {
             )));
         }
 
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -785,7 +785,7 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     Ok(())
 }
 
-fn build_payload_if_necessary(
+async fn build_payload_if_necessary(
     payload_id: u64,
     mut payload: PayloadBundle,
     context: RpcApiContext,
@@ -802,6 +802,7 @@ fn build_payload_if_necessary(
             } = context
                 .blockchain
                 .build_payload(&mut payload.block)
+                .await
                 .map_err(|err| RpcErr::Internal(err.to_string()))?;
             (blobs_bundle, requests, block_value)
         };
@@ -816,7 +817,8 @@ fn build_payload_if_necessary(
 
         context
             .storage
-            .update_payload(payload_id, new_payload.clone())?;
+            .update_payload(payload_id, new_payload.clone())
+            .await?;
 
         Ok(new_payload)
     }

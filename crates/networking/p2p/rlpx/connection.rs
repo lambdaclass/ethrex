@@ -454,7 +454,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 if is_synced {
                     let mut valid_txs = vec![];
                     for tx in &txs.transactions {
-                        if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()) {
+                        if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()).await {
                             log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
                             continue;
                         }
@@ -505,7 +505,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if is_synced {
-                    msg.handle(&self.node, &self.blockchain)?;
+                    msg.handle(&self.node, &self.blockchain).await?;
                 }
             }
             Message::GetStorageRanges(req) => {

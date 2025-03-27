@@ -19,7 +19,7 @@ use ethrex_vm::backends;
 use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
-pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
+pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
     let hash = test
         ._info
@@ -36,7 +36,7 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
             if !test.post.has_vector_for_fork(vector, *fork) {
                 continue;
             }
-            match run_ef_test_tx(vector, test, fork) {
+            match run_ef_test_tx(vector, test, fork).await {
                 Ok(_) => continue,
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                     ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
@@ -74,24 +74,24 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     Ok(ef_test_report)
 }
 
-pub fn run_ef_test_tx(
+pub async fn run_ef_test_tx(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let mut levm = prepare_vm_for_tx(vector, test, fork)?;
+    let mut levm = prepare_vm_for_tx(vector, test, fork).await?;
     ensure_pre_state(&levm, test)?;
     let levm_execution_result = levm.execute();
-    ensure_post_state(&levm_execution_result, vector, test, fork)?;
+    ensure_post_state(&levm_execution_result, vector, test, fork).await?;
     Ok(())
 }
 
-pub fn prepare_vm_for_tx(
+pub async fn prepare_vm_for_tx(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
 ) -> Result<VM, EFTestRunnerError> {
-    let db = Arc::new(utils::load_initial_state_levm(test));
+    let db = Arc::new(utils::load_initial_state_levm(test).await);
 
     let tx = test
         .transactions
@@ -273,7 +273,7 @@ fn exception_is_expected(
     })
 }
 
-pub fn ensure_post_state(
+pub async fn ensure_post_state(
     levm_execution_result: &Result<ExecutionReport, VMError>,
     vector: &TestVector,
     test: &EFTest,
@@ -308,7 +308,7 @@ pub fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let store_wrapper = utils::load_initial_state_levm(test);
+                    let store_wrapper = utils::load_initial_state_levm(test).await;
                     let block_header = store_wrapper
                         .store
                         .get_block_header_by_hash(store_wrapper.block_hash)
@@ -332,7 +332,7 @@ pub fn ensure_post_state(
                                 .to_owned(),
                         )
                     })?;
-                    let pos_state_root = post_state_root(&levm_account_updates, test);
+                    let pos_state_root = post_state_root(&levm_account_updates, test).await;
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {
@@ -386,12 +386,13 @@ pub fn ensure_post_state(
     Ok(())
 }
 
-pub fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
-    let (initial_state, block_hash) = utils::load_initial_state(test);
+pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
+    let (initial_state, block_hash) = utils::load_initial_state(test).await;
     initial_state
         .database()
         .unwrap()
         .apply_account_updates(block_hash, account_updates)
+        .await
         .unwrap()
         .unwrap()
 }

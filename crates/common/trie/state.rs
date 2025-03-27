@@ -10,13 +10,13 @@ use super::db::TrieDB;
 /// All nodes are stored in the DB and no node is ever removed
 use super::{node::Node, node_hash::NodeHash};
 pub struct TrieState {
-    db: Box<dyn TrieDB>,
+    db: Box<dyn TrieDB + Send>,
     cache: HashMap<NodeHash, Node>,
 }
 
 impl TrieState {
     /// Creates a TrieState referring to a db.
-    pub fn new(db: Box<dyn TrieDB>) -> TrieState {
+    pub fn new(db: Box<dyn TrieDB + Send>) -> TrieState {
         TrieState {
             db,
             cache: Default::default(),

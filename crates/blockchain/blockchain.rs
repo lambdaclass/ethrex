@@ -63,11 +63,12 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
+    /// TODO: make the asyncness real
+    async fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block.clone())?;
+            self.storage.add_pending_block(block.clone()).await?;
             return Err(ChainError::ParentNotFound);
         };
         let chain_config = self.storage.get_chain_config()?;
@@ -111,7 +112,8 @@ impl Blockchain {
         Ok(execution_result)
     }
 
-    pub fn store_block(
+    // TODO(PLT): review async
+    pub async fn store_block(
         &self,
         block: &Block,
         execution_result: BlockExecutionResult,
@@ -119,7 +121,8 @@ impl Blockchain {
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(block.header.parent_hash, &execution_result.account_updates)?
+            .apply_account_updates(block.header.parent_hash, &execution_result.account_updates)
+            .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
         // Check state root matches the one in block header
@@ -127,29 +130,32 @@ impl Blockchain {
 
         self.storage
             .add_block(block.clone())
+            .await
             .map_err(ChainError::StoreError)?;
         self.storage
             .add_receipts(block.hash(), execution_result.receipts)
+            .await
             .map_err(ChainError::StoreError)
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
-        tokio::task::spawn_blocking(|| {
-            let since = Instant::now();
-
-            let result = self
+        let since = Instant::now();
+        let inner = || async {
+            let res = self
                 .execute_block(block)
-                .and_then(|res| self.store_block(block, res));
+                .await?;
+            self.store_block(block, res).await
+        };
 
-            let interval = Instant::now().duration_since(since).as_millis();
-            if interval != 0 {
-                let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-                let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-                info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
-            }
-            result
-        }).await
+        let result = inner().await;
 
+        let interval = Instant::now().duration_since(since).as_millis();
+        if interval != 0 {
+            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
+            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+        }
+        result
     }
 
     /// Adds multiple blocks in a batch.
@@ -159,7 +165,7 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
-    pub fn add_blocks_in_batch(
+    pub async fn add_blocks_in_batch(
         &self,
         blocks: &[Block],
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
@@ -259,6 +265,7 @@ impl Blockchain {
                 first_block_header.parent_hash,
                 &all_account_updates.into_values().collect::<Vec<_>>(),
             )
+            .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
@@ -267,9 +274,11 @@ impl Blockchain {
 
         self.storage
             .add_blocks(blocks)
+            .await
             .map_err(|e| (e.into(), None))?;
         self.storage
             .add_receipts_for_blocks(all_receipts)
+            .await
             .map_err(|e| (e.into(), None))?;
 
         let elapsed_total = interval.elapsed().as_millis();
@@ -305,6 +314,7 @@ impl Blockchain {
             if self
                 .storage
                 .update_latest_block_number(block.header.number)
+                .await
                 .is_err()
             {
                 error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
@@ -313,6 +323,7 @@ impl Blockchain {
             if self
                 .storage
                 .set_canonical_block(block.header.number, hash)
+                .await
                 .is_err()
             {
                 error!(
@@ -327,10 +338,10 @@ impl Blockchain {
             match self.evm_engine {
                 EvmEngine::LEVM => {
                     // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                    let _ = apply_fork_choice(&self.storage, hash, hash, hash);
+                    let _ = apply_fork_choice(&self.storage, hash, hash, hash).await;
                 }
                 EvmEngine::REVM => {
-                    apply_fork_choice(&self.storage, hash, hash, hash).unwrap();
+                    apply_fork_choice(&self.storage, hash, hash, hash).await.unwrap();
                 }
             }
         }
@@ -339,7 +350,7 @@ impl Blockchain {
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
     #[cfg(feature = "c-kzg")]
-    pub fn add_blob_transaction_to_pool(
+    pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
@@ -363,7 +374,7 @@ impl Blockchain {
     }
 
     /// Add a transaction to the mempool checking that the transaction is valid
-    pub fn add_transaction_to_pool(&self, transaction: Transaction) -> Result<H256, MempoolError> {
+    pub async fn add_transaction_to_pool(&self, transaction: Transaction) -> Result<H256, MempoolError> {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);

@@ -236,7 +236,7 @@ pub async fn start_api(
     let http_listener = TcpListener::bind(http_addr).await.unwrap();
 
     let authrpc_router = Router::new()
-        .route("/", post(handle_authrpc_request))
+        .route("/", post(|ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await }))
         .with_state(service_context);
     let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
 
