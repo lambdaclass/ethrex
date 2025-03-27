@@ -320,10 +320,10 @@ impl LEVM {
             let mut account = block_cache.get(&address).cloned().unwrap_or({
                 let acc_info = store
                     .get_account_info_by_hash(parent_hash, address)
-                    .ok_or(StoreError::Custom("Missing account info".to_owned()))?;
+                    .unwrap_or_default();
                 let acc_code = store
                     .get_account_code(acc_info.code_hash)
-                    .ok_or(StoreError::Custom("Missing account code".to_owned()))?;
+                    .unwrap_or_default();
 
                 Account {
                     info: LevmAccountInfo {
