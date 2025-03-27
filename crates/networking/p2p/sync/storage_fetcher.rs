@@ -3,7 +3,7 @@
 //! Each storage will be queued and fetch in batches, once a storage is fully fetched it is then advertised to the storage rebuilder
 //! Each downloaded storage will be written to the storage snapshot in the DB
 //! If a large storage is detected while fetching it will be delegated to a separate large storage fetcher process in order to not stall the rest of the storages
-//! A large storage fetcher will exist and by supervised by each storage fetcher
+//! A large storage fetcher will exist and be supervised by each storage fetcher
 //! If the pivot becomes stale while there are still pending storages in queue these will be sent to the storage healer
 //! Even if the pivot becomes stale, the fetcher will remain active and listening until a termination signal (an empty batch) is received
 
