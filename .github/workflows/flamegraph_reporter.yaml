@@ -26,117 +26,117 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      # - name: Cache Extra Binaries
-      #   id: cache-binaries
-      #   uses: actions/cache@v4
+      # - name: Rustup toolchain install
+      #   uses: dtolnay/rust-toolchain@stable
       #   with:
-      #     path: |
-      #       ${{ env.HOME }}/.cargo/bin/addr2line
-      #       ${{ env.HOME }}/.cargo/bin/flamegraph
-      #       ${{ env.HOME }}/.cargo/bin/inferno-*
-      #       ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/state/vectors
-      #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+      #     toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Change perf settings
-        run: |
-          sudo sysctl kernel.perf_event_paranoid=-1
-          sudo sysctl -w kernel.kptr_restrict=0
-          sudo chmod +r /proc/kallsyms
-          sudo perf list hw
+      # # - name: Cache Extra Binaries
+      # #   id: cache-binaries
+      # #   uses: actions/cache@v4
+      # #   with:
+      # #     path: |
+      # #       ${{ env.HOME }}/.cargo/bin/addr2line
+      # #       ${{ env.HOME }}/.cargo/bin/flamegraph
+      # #       ${{ env.HOME }}/.cargo/bin/inferno-*
+      # #       ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/state/vectors
+      # #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
 
-      - name: Check addr2line installation
-        id: check-addr2line
-        run: |
-          if [ -f "$HOME/.cargo/bin/addr2line" ]; then
-            echo "$HOME/.cargo/bin/addr2line found"
-            echo "addr2line_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "$HOME/.cargo/bin/addr2line NOT found"
-            echo "addr2line_exists=false" >> $GITHUB_OUTPUT
-          fi
+      # - name: Change perf settings
+      #   run: |
+      #     sudo sysctl kernel.perf_event_paranoid=-1
+      #     sudo sysctl -w kernel.kptr_restrict=0
+      #     sudo chmod +r /proc/kallsyms
+      #     sudo perf list hw
 
-      - name: Checkout gimli addr2line
-        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: gimli-rs/addr2line
-          path: "addr2line"
+      # - name: Check addr2line installation
+      #   id: check-addr2line
+      #   run: |
+      #     if [ -f "$HOME/.cargo/bin/addr2line" ]; then
+      #       echo "$HOME/.cargo/bin/addr2line found"
+      #       echo "addr2line_exists=true" >> $GITHUB_OUTPUT
+      #     else
+      #       echo "$HOME/.cargo/bin/addr2line NOT found"
+      #       echo "addr2line_exists=false" >> $GITHUB_OUTPUT
+      #     fi
 
-      - name: Build gimli addr2line
-        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        working-directory: ./addr2line
-        run: |
-          # Little hack we need else it throws error building
-          echo "[workspace]" >> ./Cargo.toml
-          cargo install --force --features="bin" addr2line
+      # - name: Checkout gimli addr2line
+      #   if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+      #   uses: actions/checkout@v4
+      #   with:
+      #     repository: gimli-rs/addr2line
+      #     path: "addr2line"
 
-      - name: Install flamegraph tools
-        run: |
-          if [ ! -f "$HOME/.cargo/bin/flamegraph" ]; then
-            cargo install --force flamegraph
-          else
-            echo "$HOME/.cargo/bin/flamegraph already found"
-          fi
-          if [ ! -f "$HOME/.cargo/bin/inferno-collapse-perf" ]; then
-            cargo install --force inferno
-          else
-            echo "$HOME/.cargo/bin/inferno-collapse-perf already found"
-          fi
+      # - name: Build gimli addr2line
+      #   if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+      #   working-directory: ./addr2line
+      #   run: |
+      #     # Little hack we need else it throws error building
+      #     echo "[workspace]" >> ./Cargo.toml
+      #     cargo install --force --features="bin" addr2line
 
-      - name: Download EF Tests
-        run: |
-          if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/state/vectors" ]; then
-            cd crates/vm/levm
-            make download-evm-ef-tests
-          fi
+      # - name: Install flamegraph tools
+      #   run: |
+      #     if [ ! -f "$HOME/.cargo/bin/flamegraph" ]; then
+      #       cargo install --force flamegraph
+      #     else
+      #       echo "$HOME/.cargo/bin/flamegraph already found"
+      #     fi
+      #     if [ ! -f "$HOME/.cargo/bin/inferno-collapse-perf" ]; then
+      #       cargo install --force inferno
+      #     else
+      #       echo "$HOME/.cargo/bin/inferno-collapse-perf already found"
+      #     fi
 
-      - name: Generate Flamegraph data for ${{ matrix.name }}
-        run: |
-          start_time=$(date +%s)
+      # - name: Download EF Tests
+      #   run: |
+      #     if [ ! -f "$HOME/ethrex/ethrex/cmd/ef_tests/state/vectors" ]; then
+      #       cd crates/vm/levm
+      #       make download-evm-ef-tests
+      #     fi
 
-          if [ "${{ matrix.name }}" == "levm" ]; then
-            rm -rf target/debug/ef_tests_state
-            CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-            -p ef_tests-state --test all -- --tests stSolidityTest,stCallCodes
-          elif [ "${{ matrix.name }}" == "revm" ]; then
-            rm -rf target/debug/ef_tests_state
-            CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-            -p ef_tests-state --test all -- --revm --tests stSolidityTest,stCallCodes
-          fi
+      # - name: Generate Flamegraph data for ${{ matrix.name }}
+      #   run: |
+      #     start_time=$(date +%s)
 
-          end_time=$(date +%s)
-          elapsed_time=$((end_time - start_time))
-          echo "time_${{ matrix.name }}=${elapsed_time}" >> time_${{ matrix.name }}.txt
+      #     if [ "${{ matrix.name }}" == "levm" ]; then
+      #       rm -rf target/debug/ef_tests_state
+      #       CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+      #       -p ef_tests-state --test all -- --tests stSolidityTest,stCallCodes
+      #     elif [ "${{ matrix.name }}" == "revm" ]; then
+      #       rm -rf target/debug/ef_tests_state
+      #       CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+      #       -p ef_tests-state --test all -- --revm --tests stSolidityTest,stCallCodes
+      #     fi
 
-      - name: Generate SVG
-        shell: bash
-        run: |
-          PATH=$HOME/.cargo/bin:$PATH which addr2line
-          PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
-          PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
+      #     end_time=$(date +%s)
+      #     elapsed_time=$((end_time - start_time))
+      #     echo "time_${{ matrix.name }}=${elapsed_time}" >> time_${{ matrix.name }}.txt
 
-          if [ "${{ matrix.name }}" == "levm" ]; then
-            PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "LEVM Flamegraph" < collapsed.data > flamegraph_levm.svg
-          elif [ "${{ matrix.name }}" == "revm" ]; then
-            PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "REVM Flamegraph" < collapsed.data > flamegraph_revm.svg
-          fi
+      # - name: Generate SVG
+      #   shell: bash
+      #   run: |
+      #     PATH=$HOME/.cargo/bin:$PATH which addr2line
+      #     PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/perf.data --no-inline > stack.data
+      #     PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
 
-      - name: Upload artifact - time_${{ matrix.name }}.txt
-        uses: actions/upload-artifact@v4
-        with:
-          name: time_${{ matrix.name }}.txt
-          path: time_${{ matrix.name }}.txt
+      #     if [ "${{ matrix.name }}" == "levm" ]; then
+      #       PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "LEVM Flamegraph" < collapsed.data > flamegraph_levm.svg
+      #     elif [ "${{ matrix.name }}" == "revm" ]; then
+      #       PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "REVM Flamegraph" < collapsed.data > flamegraph_revm.svg
+      #     fi
 
-      - name: Upload artifact - ${{ matrix.name }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: flamegraph_${{ matrix.name }}.svg
-          path: ./flamegraph_${{ matrix.name }}.svg
+      # - name: Upload artifact - time_${{ matrix.name }}.txt
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: time_${{ matrix.name }}.txt
+      #     path: time_${{ matrix.name }}.txt
+
+      # - name: Upload artifact - ${{ matrix.name }}
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: flamegraph_${{ matrix.name }}.svg
+      #     path: ./flamegraph_${{ matrix.name }}.svg
 
   test-output:
     name: Test Output
@@ -296,134 +296,134 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_RETH_VERSION }}
-
-      - name: Set Rust toolchain
-        run: rustup override set ${{ env.RUST_RETH_VERSION }}
-
-      - name: Checkout reth
-        uses: actions/checkout@v4
-        with:
-          repository: paradigmxyz/reth
-          path: "reth"
-          ref: main
-
-      # - name: Caching
-      #   uses: Swatinem/rust-cache@v2
+      # - name: Rustup toolchain install
+      #   uses: dtolnay/rust-toolchain@stable
       #   with:
-      #     workspaces: ". -> target \
-      #       ./reth -> ./reth/target"
+      #     toolchain: ${{ env.RUST_RETH_VERSION }}
 
-      # - name: Cache Extra Binaries
-      #   id: cache-binaries
-      #   uses: actions/cache@v4
+      # - name: Set Rust toolchain
+      #   run: rustup override set ${{ env.RUST_RETH_VERSION }}
+
+      # - name: Checkout reth
+      #   uses: actions/checkout@v4
       #   with:
-      #     path: |
-      #       ${{ env.HOME }}/.cargo/bin/addr2line
-      #       ${{ env.HOME }}/.cargo/bin/flamegraph
-      #       ${{ env.HOME }}/.cargo/bin/inferno-*
-      #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+      #     repository: paradigmxyz/reth
+      #     path: "reth"
+      #     ref: main
 
-      # - name: Cache ethrex_l2
-      #   id: cache-ethrex-l2
-      #   uses: actions/cache@v4
+      # # - name: Caching
+      # #   uses: Swatinem/rust-cache@v2
+      # #   with:
+      # #     workspaces: ". -> target \
+      # #       ./reth -> ./reth/target"
+
+      # # - name: Cache Extra Binaries
+      # #   id: cache-binaries
+      # #   uses: actions/cache@v4
+      # #   with:
+      # #     path: |
+      # #       ${{ env.HOME }}/.cargo/bin/addr2line
+      # #       ${{ env.HOME }}/.cargo/bin/flamegraph
+      # #       ${{ env.HOME }}/.cargo/bin/inferno-*
+      # #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+
+      # # - name: Cache ethrex_l2
+      # #   id: cache-ethrex-l2
+      # #   uses: actions/cache@v4
+      # #   with:
+      # #     path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
+      # #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
+
+      # - name: Change perf settings
+      #   run: |
+      #     sudo sysctl kernel.perf_event_paranoid=-1
+      #     sudo sysctl -w kernel.kptr_restrict=0
+      #     sudo chmod +r /proc/kallsyms
+      #     sudo perf list hw
+
+      # - name: Check addr2line installation
+      #   id: check-addr2line
+      #   run: |
+      #     if [ -f "$HOME/.cargo/bin/addr2line" ]; then
+      #       echo "$HOME/.cargo/bin/addr2line found"
+      #       echo "addr2line_exists=true" >> $GITHUB_OUTPUT
+      #     else
+      #       echo "$HOME/.cargo/bin/addr2line NOT found"
+      #       echo "addr2line_exists=false" >> $GITHUB_OUTPUT
+      #     fi
+
+      # - name: Checkout gimli addr2line
+      #   if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+      #   uses: actions/checkout@v4
       #   with:
-      #     path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
-      #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
+      #     repository: gimli-rs/addr2line
+      #     path: "addr2line"
 
-      - name: Change perf settings
-        run: |
-          sudo sysctl kernel.perf_event_paranoid=-1
-          sudo sysctl -w kernel.kptr_restrict=0
-          sudo chmod +r /proc/kallsyms
-          sudo perf list hw
+      # - name: Build gimli addr2line
+      #   if: steps.check-addr2line.outputs.addr2line_exists != 'true'
+      #   working-directory: ./addr2line
+      #   run: |
+      #     # Little hack we need else it throws error building
+      #     echo "[workspace]" >> ./Cargo.toml
+      #     cargo install --force --features="bin" addr2line
 
-      - name: Check addr2line installation
-        id: check-addr2line
-        run: |
-          if [ -f "$HOME/.cargo/bin/addr2line" ]; then
-            echo "$HOME/.cargo/bin/addr2line found"
-            echo "addr2line_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "$HOME/.cargo/bin/addr2line NOT found"
-            echo "addr2line_exists=false" >> $GITHUB_OUTPUT
-          fi
+      # - name: Install flamegraph
+      #   run: |
+      #     if [ ! -f "$HOME/.cargo/bin/flamegraph" ]; then
+      #       cargo install --force flamegraph
+      #     else
+      #       echo "$HOME/.cargo/bin/flamegraph" already found
+      #     fi
+      #     if [ ! -f "$HOME/.cargo/bin/inferno-collapse-perf" ]; then
+      #       cargo install --force inferno
+      #     else
+      #       echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
+      #     fi
 
-      - name: Checkout gimli addr2line
-        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: gimli-rs/addr2line
-          path: "addr2line"
+      # - name: Install ethrex_l2 cli
+      #   run: |
+      #     if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
+      #       echo "$HOME/.cargo/bin/ethrex_l2" already found
+      #     else
+      #       cargo install --force --path cmd/ethrex_l2
+      #     fi
+      #     ethrex_l2 config create default --default
+      #     ethrex_l2 config set default
 
-      - name: Build gimli addr2line
-        if: steps.check-addr2line.outputs.addr2line_exists != 'true'
-        working-directory: ./addr2line
-        run: |
-          # Little hack we need else it throws error building
-          echo "[workspace]" >> ./Cargo.toml
-          cargo install --force --features="bin" addr2line
+      # - id: generate-flamegraph-reth
+      #   name: Build and test reth
+      #   shell: bash
+      #   # --dev.block-time 1000ms set to 1000ms to match ethrex block generation time
+      #   run: |
+      #     cd ./reth
+      #     rm -rf target/profiling/reth
+      #     CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+      #     --bin reth --profile profiling -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
+      #     --dev.block-time 1000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
+      #     --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 \
+      #     --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000 >/dev/null &
+      #     while [ ! -x "./target/profiling/reth" ]; do
+      #       echo "Waiting for reth binary to be ready..."
+      #       sleep 10
+      #     done
+      #     sleep 30
+      #     echo "Executing load test..."
+      #     bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
+      #     echo "Load test finished"
 
-      - name: Install flamegraph
-        run: |
-          if [ ! -f "$HOME/.cargo/bin/flamegraph" ]; then
-            cargo install --force flamegraph
-          else
-            echo "$HOME/.cargo/bin/flamegraph" already found
-          fi
-          if [ ! -f "$HOME/.cargo/bin/inferno-collapse-perf" ]; then
-            cargo install --force inferno
-          else
-            echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
-          fi
+      # - name: Generate SVG
+      #   shell: bash
+      #   run: |
+      #     PATH=$HOME/.cargo/bin:$PATH which addr2line
+      #     PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/reth/perf.data --no-inline > stack.data
+      #     PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
+      #     PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "Reth Flamegraph" < collapsed.data > flamegraph_reth.svg
 
-      - name: Install ethrex_l2 cli
-        run: |
-          if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
-            echo "$HOME/.cargo/bin/ethrex_l2" already found
-          else
-            cargo install --force --path cmd/ethrex_l2
-          fi
-          ethrex_l2 config create default --default
-          ethrex_l2 config set default
-
-      - id: generate-flamegraph-reth
-        name: Build and test reth
-        shell: bash
-        # --dev.block-time 1000ms set to 1000ms to match ethrex block generation time
-        run: |
-          cd ./reth
-          rm -rf target/profiling/reth
-          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
-          --bin reth --profile profiling -- node --chain /home/runner/work/ethrex/ethrex/test_data/genesis-load-test.json --dev \
-          --dev.block-time 1000ms --http.port 1729  --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 \
-          --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 \
-          --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000 >/dev/null &
-          while [ ! -x "./target/profiling/reth" ]; do
-            echo "Waiting for reth binary to be ready..."
-            sleep 10
-          done
-          sleep 30
-          echo "Executing load test..."
-          bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
-          echo "Load test finished"
-
-      - name: Generate SVG
-        shell: bash
-        run: |
-          PATH=$HOME/.cargo/bin:$PATH which addr2line
-          PATH=$HOME/.cargo/bin:$PATH perf script -v -i /home/runner/work/ethrex/ethrex/reth/perf.data --no-inline > stack.data
-          PATH=$HOME/.cargo/bin:$PATH inferno-collapse-perf -q < stack.data > collapsed.data
-          PATH=$HOME/.cargo/bin:$PATH inferno-flamegraph --title "Reth Flamegraph" < collapsed.data > flamegraph_reth.svg
-
-      - name: Upload artifacts - flamegraph_reth.svg
-        uses: actions/upload-artifact@v4
-        with:
-          name: flamegraph_reth.svg
-          path: ./flamegraph_reth.svg
+      # - name: Upload artifacts - flamegraph_reth.svg
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: flamegraph_reth.svg
+      #     path: ./flamegraph_reth.svg
 
   upload-static-page:
     name: Upload artifacts for static page
