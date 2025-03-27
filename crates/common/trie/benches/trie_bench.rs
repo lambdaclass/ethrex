@@ -31,6 +31,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
                     )
                     .unwrap()
             }
+            trie.commit()
         });
     });
 
@@ -42,6 +43,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
                 trie.insert(keys_10k[i].clone(), values_10k[i].clone())
                     .unwrap()
             }
+            trie.commit();
         });
     });
 
@@ -60,6 +62,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
                     )
                     .unwrap()
             }
+            trie.root()
         });
     });
 
@@ -74,6 +77,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
                 trie.insert(keys_10k[i].clone(), values_10k[i].clone())
                     .unwrap()
             }
+            trie.root()
         });
     });
 }
