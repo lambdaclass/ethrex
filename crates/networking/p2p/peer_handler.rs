@@ -137,15 +137,11 @@ impl PeerHandler {
             let mut receiver = channel.receiver.lock().await;
             channel.sender.send(request_msg()).await.ok();
             let since = Instant::now();
-            let response = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                match receiver.recv().await {
-                    Some(res) => Some(res),
-                    None => None,
-                }
-            })
-            .await
-            .ok()
-            .flatten();
+            let response =
+                tokio::time::timeout(PEER_REPLY_TIMEOUT, async move { receiver.recv().await })
+                    .await
+                    .ok()
+                    .flatten();
 
             let Some(response) = response else {
                 self.peer_failed_to_respond(node_id).await;
