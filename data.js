@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743082022277,
+  "lastUpdate": 1743093453505,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1585,6 +1585,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184805574099,
             "range": "± 1273678246",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f13c24d9197d162c64d2f05b26669307a090681b",
+          "message": "feat(levm): implement create_access_list (#2244)\n\n**Motivation**\n\nImplement create_access_list for levm\n\n**Description**\n\n- Implement a function that executes a transaction and creates from the\nresulting `accrued_substate` an access list.\n- Add a function to utils that generates the access list\n\n**Observation**\n\nChanges `touched_storage_slots` from `HashSet` to `BTreeSet` to align\nwith the expected output order of the addresses in the Hive tests.\n\n**Hive Tests**\n\nThese hive tests should be fixed with this PR\n```Shell\nmake run-hive EVM_BACKEND=\"levm\" SIMULATION=\"ethereum/rpc-compat\" TEST_PATTERN=\"rpc-compat/eth_createAccessList/\"                          \n```\n\nCloses #2183\n\n---------\n\nCo-authored-by: avilagaston9 <gavila@fi.uba.ar>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>",
+          "timestamp": "2025-03-27T15:46:49Z",
+          "tree_id": "2cb5c83041298ea0d404c437c8c0cc55581e155d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f13c24d9197d162c64d2f05b26669307a090681b"
+        },
+        "date": 1743093450747,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 190274384277,
+            "range": "± 857475100",
             "unit": "ns/iter"
           }
         ]
