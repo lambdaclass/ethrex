@@ -7,7 +7,7 @@
 use ethrex_common::H256;
 use ethrex_storage::{error::StoreError, Store};
 use tokio::sync::mpsc::Receiver;
-use tracing::debug;
+use tracing::info;
 
 use crate::peer_handler::PeerHandler;
 
@@ -15,6 +15,7 @@ use super::{SyncError, BYTECODE_BATCH_SIZE};
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 pub(crate) async fn bytecode_fetcher(
+    segment_number: usize,
     mut receiver: Receiver<Vec<H256>>,
     peers: PeerHandler,
     store: Store,
@@ -28,15 +29,25 @@ pub(crate) async fn bytecode_fetcher(
                 pending_bytecodes.extend(code_hashes);
             }
             // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => incoming = false,
+            _ => {
+                info!("[Segment {segment_number}: Bytecode fetcher received end signal");
+                incoming = false
+            }
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
-        while pending_bytecodes.len() >= BYTECODE_BATCH_SIZE || !incoming && !pending_bytecodes.is_empty() {
+        while pending_bytecodes.len() >= BYTECODE_BATCH_SIZE
+            || !incoming && !pending_bytecodes.is_empty()
+        {
+            if !incoming {
+                info!("[Segment {segment_number}: Bytecode fetcher received end signal but keeps on looping, pending: {}", pending_bytecodes.len());
+            }
             let next_batch = pending_bytecodes
                 .drain(..BYTECODE_BATCH_SIZE.min(pending_bytecodes.len()))
                 .collect::<Vec<_>>();
-            let remaining = fetch_bytecode_batch(next_batch, peers.clone(), store.clone()).await?;
+            let remaining =
+                fetch_bytecode_batch(segment_number, next_batch, peers.clone(), store.clone())
+                    .await?;
             // Add unfeched bytecodes back to the queue
             pending_bytecodes.extend(remaining);
         }
@@ -46,12 +57,16 @@ pub(crate) async fn bytecode_fetcher(
 
 /// Receives a batch of code hahses, fetches their respective bytecodes via p2p and returns a list of the code hashes that couldn't be fetched in the request (if applicable)
 async fn fetch_bytecode_batch(
+    segment_number: usize,
     mut batch: Vec<H256>,
     peers: PeerHandler,
     store: Store,
 ) -> Result<Vec<H256>, StoreError> {
     if let Some(bytecodes) = peers.request_bytecodes(batch.clone()).await {
-        debug!("Received {} bytecodes", bytecodes.len());
+        info!(
+            "[Segment {segment_number}: Received {} bytecodes",
+            bytecodes.len()
+        );
         // Store the bytecodes
         for code in bytecodes.into_iter() {
             store.add_account_code(batch.remove(0), code)?;
