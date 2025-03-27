@@ -380,6 +380,7 @@ impl ProverServer {
                 }
 
                 // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
+                self.handle_proof_submission(block_number).await?;
             }
             Err(e) => {
                 warn!("Failed to parse request: {e}");
