@@ -35,7 +35,7 @@ jobs:
       - name: Bake docker images
         uses: docker/bake-action@v6
         with:
-          files: "crates/l2/docker-compose-l2.yaml"
+          workdir: "crates/l2"
           load: true
           set: |
             *.cache-to=type=gha,mode=max
