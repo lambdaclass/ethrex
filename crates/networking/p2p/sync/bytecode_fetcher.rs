@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use crate::{peer_handler::PeerHandler, sync::MAX_PARALLEL_FETCHES};
 
-use super::{SyncError, BATCH_SIZE};
+use super::{SyncError, BATCH_SIZE, BYTECODE_BATCH_SIZE};
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 pub(crate) async fn bytecode_fetcher(
@@ -32,7 +32,7 @@ pub(crate) async fn bytecode_fetcher(
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
-        while pending_bytecodes.len() >= BATCH_SIZE || !incoming && !pending_bytecodes.is_empty() {
+        while pending_bytecodes.len() >= BYTECODE_BATCH_SIZE || !incoming && !pending_bytecodes.is_empty() {
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut bytecode_tasks = tokio::task::JoinSet::new();
@@ -40,7 +40,7 @@ pub(crate) async fn bytecode_fetcher(
             let instant = tokio::time::Instant::now();
             for _ in 0..MAX_PARALLEL_FETCHES {
                 let next_batch = pending_bytecodes
-                    .drain(..BATCH_SIZE.min(pending_bytecodes.len()))
+                    .drain(..BYTECODE_BATCH_SIZE.min(pending_bytecodes.len()))
                     .collect::<Vec<_>>();
                 bytecode_tasks.spawn(fetch_bytecode_batch(
                     next_batch,
@@ -49,7 +49,7 @@ pub(crate) async fn bytecode_fetcher(
                 ));
                 // End loop if we don't have enough elements to fill up a batch
                 if pending_bytecodes.is_empty()
-                    || (incoming && pending_bytecodes.len() < BATCH_SIZE)
+                    || (incoming && pending_bytecodes.len() < BYTECODE_BATCH_SIZE)
                 {
                     break;
                 }
