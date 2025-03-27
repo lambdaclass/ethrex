@@ -344,7 +344,7 @@ pub fn ensure_post_state(
             let account_updates_report = compare_levm_revm_account_updates(
                 vector,
                 test,
-                &fork,
+                fork,
                 &levm_account_updates,
                 &revm_account_updates,
             );
