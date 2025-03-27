@@ -321,7 +321,7 @@ impl KademliaTable {
     /// the given capability.  
     ///  
     /// A peer is considered idle if it is not currently handling an ongoing request (`busy == false`).  
-    /// Among all eligible peers, the one with the highest score is selected.  
+    /// Among all eligible peers, one is pick randomly with a probability proportional to its score.  
     pub fn get_idle_peer_with_capability_mut(
         &mut self,
         capability: Capability,
