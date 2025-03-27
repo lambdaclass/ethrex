@@ -284,17 +284,20 @@ fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError>
         .to_str()
         .ok_or(ConfigError::Custom("Couldn't convert to_str()".to_string()))?
         .to_owned();
-    let file = std::fs::read_to_string(toml_path)
-        .map_err(|_| TomlParserError::TomlFileNotFound(toml_file_name.clone()))?;
+    let file = std::fs::read_to_string(toml_path).map_err(|err| {
+        TomlParserError::TomlFileNotFound(format!("{err}: {}", toml_file_name.clone()), mode)
+    })?;
     match mode {
         ConfigMode::Sequencer => {
-            let config: L2Config = toml::from_str(&file)
-                .map_err(|_| TomlParserError::TomlFormat(toml_file_name.clone()))?;
+            let config: L2Config = toml::from_str(&file).map_err(|err| {
+                TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
+            })?;
             write_to_env(config.to_env(), mode)?;
         }
         ConfigMode::ProverClient => {
-            let config: ProverClientConfig =
-                toml::from_str(&file).map_err(|_| TomlParserError::TomlFormat(toml_file_name))?;
+            let config: ProverClientConfig = toml::from_str(&file).map_err(|err| {
+                TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
+            })?;
             write_to_env(config.to_env(), mode)?;
         }
     }
