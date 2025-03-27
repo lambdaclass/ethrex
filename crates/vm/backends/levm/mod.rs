@@ -5,7 +5,7 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult, StoreWrapper};
+use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
@@ -23,9 +23,10 @@ use ethrex_levm::{
     db::Database as LevmDatabase,
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, VM},
-    Account, AccountInfo as LevmAccountInfo, Environment,
+    Account, Environment,
 };
-use ethrex_storage::{AccountUpdate, Store};
+use ethrex_storage::error::StoreError;
+use ethrex_storage::AccountUpdate;
 use std::cmp::min;
 use std::{collections::HashMap, sync::Arc};
 
@@ -61,15 +62,11 @@ impl LEVM {
             }
         }
 
+        let fork = chain_config.fork(block.header.timestamp);
+
         // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
         // Here we get the state_transitions from the db and then we get the state_transitions from the cache_db.
-        let mut account_updates = Self::get_state_transitions(
-            None,
-            db.clone(),
-            chain_config,
-            &block.header,
-            &block_cache,
-        )?;
+        let mut account_updates = Self::get_state_transitions(db.clone(), fork, &block_cache)?;
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -136,13 +133,9 @@ impl LEVM {
             &mut block_cache,
         )?;
 
-        account_updates.extend(Self::get_state_transitions(
-            None,
-            db.clone(),
-            chain_config,
-            &block.header,
-            &block_cache,
-        )?);
+        let fork = chain_config.fork(block.header.timestamp);
+
+        account_updates.extend(Self::get_state_transitions(db.clone(), fork, &block_cache)?);
 
         Ok(BlockExecutionResult {
             receipts,
@@ -214,11 +207,11 @@ impl LEVM {
         // The block header for the current block.
         block_header: &BlockHeader,
         // EVM StoreWrapper database.
-        store: &StoreWrapper,
+        store: Arc<dyn LevmDatabase>,
         // A cache database for intermediate state changes during execution.
         block_cache: CacheDB,
     ) -> Result<ExecutionResult, EvmError> {
-        let mut env = env_from_generic(tx, block_header, store)?;
+        let mut env = env_from_generic(tx, block_header, &*store)?;
 
         env.block_gas_limit = u64::MAX; // disable block gas limit
 
@@ -232,12 +225,8 @@ impl LEVM {
     }
 
     pub fn get_state_transitions(
-        // Warning only pass the fork if running the ef-tests.
-        // ISSUE #2021: https://github.com/lambdaclass/ethrex/issues/2021
-        ef_tests: Option<Fork>,
         db: Arc<dyn LevmDatabase>,
-        chain_config: ChainConfig,
-        block_header: &BlockHeader,
+        fork: Fork,
         new_state: &CacheDB,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
@@ -297,9 +286,6 @@ impl LEVM {
                 added_storage,
             };
 
-            let fork_from_config = chain_config.fork(block_header.timestamp);
-            // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
-            let fork = ef_tests.unwrap_or(fork_from_config);
             let old_info = db.get_account_info(account_update.address);
             // https://eips.ethereum.org/EIPS/eip-161
             // if an account was empty and is now empty, after spurious dragon, it should be removed
@@ -320,8 +306,6 @@ impl LEVM {
     pub fn process_withdrawals(
         block_cache: &mut CacheDB,
         withdrawals: &[Withdrawal],
-        store: &Store,
-        parent_hash: H256,
     ) -> Result<(), ethrex_storage::error::StoreError> {
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
@@ -329,26 +313,12 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            // We check if it was in block_cache, if not, we get it from DB.
-            let mut account = block_cache.get(&address).cloned().unwrap_or({
-                let acc_info = store
-                    .get_account_info_by_hash(parent_hash, address)?
-                    .unwrap_or_default();
-                let acc_code = store
-                    .get_account_code(acc_info.code_hash)?
-                    .unwrap_or_default();
-
-                Account {
-                    info: LevmAccountInfo {
-                        balance: acc_info.balance,
-                        bytecode: acc_code,
-                        nonce: acc_info.nonce,
-                    },
-                    // This is the added_storage for the withdrawal.
-                    // If not involved in the TX, there won't be any updates in the storage
-                    storage: HashMap::new(),
-                }
-            });
+            let mut account = block_cache
+                .get(&address)
+                .cloned()
+                .ok_or(StoreError::Custom(
+                    "Could not find address for withdrawals".to_owned(),
+                ))?;
 
             account.info.balance += increment.into();
             block_cache.insert(address, account);
@@ -450,14 +420,14 @@ impl LEVM {
     pub fn create_access_list(
         mut tx: GenericTransaction,
         header: &BlockHeader,
-        store: &StoreWrapper,
+        store: Arc<dyn LevmDatabase>,
         block_cache: &CacheDB,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
-        let mut env = env_from_generic(&tx, header, store)?;
+        let mut env = env_from_generic(&tx, header, &*store)?;
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), store, block_cache.clone())?;
+        let mut vm = vm_from_generic(&tx, env.clone(), store.clone(), block_cache.clone())?;
 
         vm.execute()?;
         let access_list = build_access_list(&vm.accrued_substate);
@@ -629,14 +599,11 @@ pub fn build_access_list(substate: &Substate) -> AccessList {
 fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
-    store: &StoreWrapper,
+    store: &dyn LevmDatabase,
 ) -> Result<Environment, VMError> {
-    let chain_config = &store
-        .store
-        .get_chain_config()
-        .map_err(|_| VMError::FatalError)?;
+    let chain_config = store.get_chain_config();
     let gas_price = calculate_gas_price(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
-    let config = EVMConfig::new_from_chain_config(chain_config, header);
+    let config = EVMConfig::new_from_chain_config(&chain_config, header);
     Ok(Environment {
         origin: tx.from.0.into(),
         refunded_gas: 0,
@@ -665,7 +632,7 @@ fn env_from_generic(
 fn vm_from_generic(
     tx: &GenericTransaction,
     env: Environment,
-    store: &StoreWrapper,
+    store: Arc<dyn LevmDatabase>,
     block_cache: CacheDB,
 ) -> Result<VM, VMError> {
     VM::new(
@@ -673,7 +640,7 @@ fn vm_from_generic(
         env,
         tx.value,
         tx.input.clone(),
-        Arc::new(store.clone()),
+        store,
         block_cache,
         tx.access_list
             .iter()

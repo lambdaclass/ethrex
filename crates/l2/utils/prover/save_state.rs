@@ -444,7 +444,7 @@ mod tests {
 
         // Write all the account_updates and proofs for each block
         for block in &blocks {
-            let mut evm = Evm::new(evm_engine, store.clone(), block.hash());
+            let evm = Evm::new(evm_engine, store.clone(), block.hash());
             let account_updates =
                 ExecutionDB::get_account_updates(blocks.last().unwrap(), &store).unwrap();
 
