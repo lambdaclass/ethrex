@@ -7,11 +7,11 @@
 use ethrex_common::H256;
 use ethrex_storage::{error::StoreError, Store};
 use tokio::sync::mpsc::Receiver;
-use tracing::{debug, info};
+use tracing::debug;
 
-use crate::{peer_handler::PeerHandler, sync::MAX_PARALLEL_FETCHES};
+use crate::peer_handler::PeerHandler;
 
-use super::{SyncError, BATCH_SIZE, BYTECODE_BATCH_SIZE};
+use super::{SyncError, BYTECODE_BATCH_SIZE};
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 pub(crate) async fn bytecode_fetcher(
@@ -33,40 +33,12 @@ pub(crate) async fn bytecode_fetcher(
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         while pending_bytecodes.len() >= BYTECODE_BATCH_SIZE || !incoming && !pending_bytecodes.is_empty() {
-            // We will be spawning multiple tasks and then collecting their results
-            // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
-            let mut bytecode_tasks = tokio::task::JoinSet::new();
-            info!("Spawning bytecode tasks");
-            let instant = tokio::time::Instant::now();
-            for n in 0..MAX_PARALLEL_FETCHES {
-                info!("Spawning bytecode task {n}");
-                let next_batch = pending_bytecodes
-                    .drain(..BYTECODE_BATCH_SIZE.min(pending_bytecodes.len()))
-                    .collect::<Vec<_>>();
-                bytecode_tasks.spawn(fetch_bytecode_batch(
-                    next_batch,
-                    peers.clone(),
-                    store.clone(),
-                ));
-                // End loop if we don't have enough elements to fill up a batch
-                if pending_bytecodes.is_empty()
-                    || (incoming && pending_bytecodes.len() < BYTECODE_BATCH_SIZE)
-                {
-                    break;
-                }
-            }
-            info!(
-                "Completed bytecode tasks in {} miliseconds",
-                instant.elapsed().as_millis()
-            );
-            // Add unfetched bytecodes back to the queue
-            for remaining in bytecode_tasks.join_all().await {
-                pending_bytecodes.extend(remaining?);
-            }
-            info!(
-                "{} pending bytecodes after fetch cycle",
-                pending_bytecodes.len()
-            )
+            let next_batch = pending_bytecodes
+                .drain(..BYTECODE_BATCH_SIZE.min(pending_bytecodes.len()))
+                .collect::<Vec<_>>();
+            let remaining = fetch_bytecode_batch(next_batch, peers.clone(), store.clone()).await?;
+            // Add unfeched bytecodes back to the queue
+            pending_bytecodes.extend(remaining);
         }
     }
     Ok(())
