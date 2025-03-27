@@ -16,7 +16,12 @@ For more detailed documentation on each part of the system:
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp config_example.toml config.toml` &rarr; check if you want to change any config.
+3. `cp configs/config_example.toml configs/config.toml` &rarr; check if you want to change any config.
+   - The `salt_is_zero` can be set to:
+     - `false` &rarr; randomizes the SALT to allow multiple deployments with random addresses.
+     - `true` &rarr; uses SALT equal to `H256::zero()` to deploy to deterministic addresses.
+     - The `L1` has to be restarted to use the `salt_is_zero = true`. 
+     - Set it to `false` if not using the CI or running a deterministic test.
 4. `make init`
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
@@ -27,7 +32,7 @@ For more information on how to run the L2 node with the prover attached to it, t
 
 ## Configuration
 
-Configuration is done through env vars. A detailed list is available in each part documentation.
+Configuration consists of two steps, the parsing of a `.toml` config file and the creation and modification of a `.env` file, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
 
 ## Testing
 
