@@ -42,11 +42,8 @@ interval_ms = 5000
 # 1 Gwei
 arbitrary_base_blob_gas_price = 1000000000
 
-[prover.client]
-prover_server_endpoint = "localhost:3900"
-interval_ms = 5000
-
-[prover.server]
+[prover_server]
+# set it to 0.0.0.0 to allow connections from other machines
 listen_ip = "0.0.0.0"
 listen_port = 3900
 # Not the same account as the [committer] l1 Account
@@ -54,5 +51,5 @@ listen_port = 3900
 # The prover_server is in charge of verifying the zkProofs.
 verifier_address = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425"
 verifier_private_key = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-dev_mode = false
-dev_interval_ms = 1000
+dev_mode = true
+dev_interval_ms = 5000

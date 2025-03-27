@@ -25,6 +25,8 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
+        with:
+            cache-on-failure: "true"
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
@@ -58,6 +60,6 @@ jobs:
           cp configs/config_docker_example.toml configs/config.toml
 
           touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up
 
           RUST_LOG=info,ethrex_prover=debug ../../target/release/ethrex_prover & cargo test l2 --release -- --nocapture --test-threads=1
