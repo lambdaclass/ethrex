@@ -197,8 +197,9 @@ impl RedBStore {
     }
 }
 
+#[async_trait::async_trait]
 impl StoreEngine for RedBStore {
-    fn add_block_header(
+    async fn add_block_header(
         &self,
         block_hash: BlockHash,
         block_header: BlockHeader,
@@ -210,7 +211,7 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn add_block_headers(
+    async fn add_block_headers(
         &self,
         block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
@@ -241,7 +242,7 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    fn add_block_body(
+    async fn add_block_body(
         &self,
         block_hash: BlockHash,
         block_body: BlockBody,
@@ -253,7 +254,7 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    async fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let write_txn = self.db.begin_write()?;
 
         {
@@ -298,7 +299,7 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let key_values = blocks
             .iter()
             .map(|e| {
@@ -344,7 +345,7 @@ impl StoreEngine for RedBStore {
             .map(|b| b.value().to()))
     }
 
-    fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.write(
             PENDING_BLOCKS_TABLE,
             <H256 as Into<BlockHashRLP>>::into(block.header.compute_block_hash()),
@@ -361,7 +362,7 @@ impl StoreEngine for RedBStore {
             .map(|b| b.value().to()))
     }
 
-    fn add_block_number(
+    async fn add_block_number(
         &self,
         block_hash: BlockHash,
         block_number: BlockNumber,
@@ -382,7 +383,7 @@ impl StoreEngine for RedBStore {
             .map(|b| b.value()))
     }
 
-    fn add_transaction_location(
+    async fn add_transaction_location(
         &self,
         transaction_hash: ethrex_common::H256,
         block_number: BlockNumber,
@@ -416,7 +417,7 @@ impl StoreEngine for RedBStore {
             }))
     }
 
-    fn add_receipt(
+    async fn add_receipt(
         &self,
         block_hash: BlockHash,
         index: Index,
@@ -429,7 +430,7 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn add_receipts_for_blocks(
+    async fn add_receipts_for_blocks(
         &self,
         receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
@@ -473,7 +474,7 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    fn add_account_code(
+    async fn add_account_code(
         &self,
         code_hash: ethrex_common::H256,
         code: bytes::Bytes,
@@ -505,7 +506,7 @@ impl StoreEngine for RedBStore {
             .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
     }
 
-    fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+    async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::ChainConfig,
@@ -527,7 +528,7 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::EarliestBlockNumber,
@@ -544,7 +545,7 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::FinalizedBlockNumber,
@@ -561,7 +562,7 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::SafeBlockNumber,
@@ -578,7 +579,7 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::LatestBlockNumber,
@@ -595,7 +596,7 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::PendingBlockNumber,
@@ -626,7 +627,7 @@ impl StoreEngine for RedBStore {
         Trie::open(db, state_root)
     }
 
-    fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
         self.write(
             CANONICAL_BLOCK_HASHES_TABLE,
             number,
@@ -634,11 +635,11 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
+    async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
         self.delete(CANONICAL_BLOCK_HASHES_TABLE, number)
     }
 
-    fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
+    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
         self.write(
             PAYLOADS_TABLE,
             payload_id,
@@ -652,7 +653,7 @@ impl StoreEngine for RedBStore {
             .map(|b| b.value().to()))
     }
 
-    fn add_receipts(
+    async fn add_receipts(
         &self,
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
@@ -673,7 +674,7 @@ impl StoreEngine for RedBStore {
         self.write_batch(RECEIPTS_TABLE, key_values)
     }
 
-    fn add_transaction_locations(
+    async fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
@@ -696,7 +697,7 @@ impl StoreEngine for RedBStore {
         Ok(())
     }
 
-    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+    async fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
         self.write(
             PAYLOADS_TABLE,
             payload_id,
@@ -733,7 +734,7 @@ impl StoreEngine for RedBStore {
             .collect())
     }
 
-    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
             SnapStateIndex::HeaderDownloadCheckpoint,
@@ -748,7 +749,7 @@ impl StoreEngine for RedBStore {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_state_trie_key_checkpoint(&self, last_key: [H256; 2]) -> Result<(), StoreError> {
+    async fn set_state_trie_key_checkpoint(&self, last_key: [H256; 2]) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
             SnapStateIndex::StateTrieKeyCheckpoint,
@@ -767,7 +768,7 @@ impl StoreEngine for RedBStore {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_storage_heal_paths(
+    async fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
@@ -792,7 +793,7 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+    async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::IsSynced,
@@ -800,7 +801,7 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
             SnapStateIndex::StateHealPaths,
@@ -815,7 +816,7 @@ impl StoreEngine for RedBStore {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_snap_state(&self) -> Result<(), StoreError> {
+    async fn clear_snap_state(&self) -> Result<(), StoreError> {
         let write_txn = self.db.begin_write()?;
         // Delete the whole table as it will be re-crated when we next open it
         write_txn.delete_table(SNAP_STATE_TABLE)?;
@@ -823,7 +824,7 @@ impl StoreEngine for RedBStore {
         Ok(())
     }
 
-    fn write_snapshot_account_batch(
+    async fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
         account_states: Vec<ethrex_common::types::AccountState>,
@@ -842,7 +843,7 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    fn write_snapshot_storage_batch(
+    async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
         storage_keys: Vec<H256>,
@@ -861,7 +862,7 @@ impl StoreEngine for RedBStore {
         write_tx.commit()?;
         Ok(())
     }
-    fn write_snapshot_storage_batches(
+    async fn write_snapshot_storage_batches(
         &self,
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,
@@ -886,7 +887,7 @@ impl StoreEngine for RedBStore {
         Ok(())
     }
 
-    fn set_state_trie_rebuild_checkpoint(
+    async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; crate::STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
@@ -915,7 +916,7 @@ impl StoreEngine for RedBStore {
         )))
     }
 
-    fn set_storage_trie_rebuild_pending(
+    async fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
@@ -933,7 +934,7 @@ impl StoreEngine for RedBStore {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn clear_snapshot(&self) -> Result<(), StoreError> {
+    async fn clear_snapshot(&self) -> Result<(), StoreError> {
         let write_tx = self.db.begin_write()?;
         write_tx.delete_table(STATE_SNAPSHOT_TABLE)?;
         write_tx.delete_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
