@@ -111,8 +111,10 @@ impl TrieState {
         let key_values = node_hashes
             .into_iter()
             .zip(nodes)
-            .filter(|(hash, _)| matches!(hash, NodeHash::Hashed(_)))
-            .map(|(hash, node)| (hash.into(), node.encode_to_vec()))
+            .filter_map(|(hash, node)| {
+                matches!(hash, NodeHash::Hashed(_))
+                    .then(|| (hash.into(), node.encode_to_vec()))
+            })
             .collect();
         self.db.put_batch(key_values)?;
         Ok(())
