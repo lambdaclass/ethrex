@@ -190,7 +190,7 @@ impl ProverServer {
 
     pub async fn run(&mut self, server_config: &ProverServerConfig) {
         loop {
-            let result = self.clone().main_logic(server_config).await;
+            let result = self.clone().main_logic().await;
 
             match result {
                 Ok(()) => {
@@ -371,6 +371,7 @@ impl ProverServer {
                         if !error.contains("No such file or directory") {
                             return Err(e.into());
                         }
+                        false
                     }
                 };
                 // If we don't have it, insert it.
