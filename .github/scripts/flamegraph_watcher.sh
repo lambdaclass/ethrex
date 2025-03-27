@@ -20,6 +20,8 @@ while [[ $output -lt $end_val ]]; do
     echo "balance: $output"
     disk_usage=$(df -h / | awk 'NR==2 {print $5}')
     echo "Disk usage: $disk_usage"
+    file_size=$(du -h /home/runner/work/ethrex/ethrex/perf.data | awk '{print $1}')
+    echo "File size of perf.data: $file_size"
 done
 end_time=$(date +%s)
 elapsed=$((end_time - start_time))
