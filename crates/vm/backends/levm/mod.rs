@@ -5,7 +5,7 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult};
+use crate::{EvmError, ExecutionResult, StoreWrapper};
 use bytes::Bytes;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
@@ -451,7 +451,7 @@ impl LEVM {
         mut tx: GenericTransaction,
         header: &BlockHeader,
         store: &StoreWrapper,
-        block_cache: &mut CacheDB,
+        block_cache: &CacheDB,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, store)?;
 
