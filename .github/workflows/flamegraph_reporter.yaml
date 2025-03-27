@@ -169,13 +169,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-      
-      - name: Check disk usage
-        run: df -h
 
-      - name: Check for large files
-        run: sudo du -ah / | sort -rh | head -n 20
-
+      # This is necessary because we don't have enough disk space otherwise.
       - name: Cleanup unnecessary components (Android SDK, CodeQL, ghcup)
         run: |
           echo "Cleaning up unnecessary components..."
@@ -193,14 +188,8 @@ jobs:
           sudo rm -rf /usr/local/.ghcup
           echo "ghcup removed (if not needed)."
 
-          # Optionally check disk usage after cleanup to confirm
+          # Check disk usage after cleanup
           df -h
-
-      - name: Check disk usage
-        run: df -h
-
-      - name: Check for large files
-        run: sudo du -ah / | sort -rh | head -n 20
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
@@ -276,12 +265,6 @@ jobs:
             echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
 
-      - name: Check disk usage
-        run: df -h
-
-      - name: Check for large files
-        run: sudo du -ah / | sort -rh | head -n 20
-
       - name: Install ethrex_l2 cli
         run: |
           if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
@@ -291,12 +274,6 @@ jobs:
           fi
           ethrex_l2 config create default --default
           ethrex_l2 config set default
-
-      - name: Check disk usage
-        run: df -h
-
-      - name: Check for large files
-        run: sudo du -ah / | sort -rh | head -n 20
 
       # By default ethrex uses revm as evm backend.
       - id: generate-flamegraph-ethrex
@@ -314,9 +291,6 @@ jobs:
           echo "Compilation finished. Executing load test..."
           bash /home/runner/work/ethrex/ethrex/.github/scripts/flamegraph_watcher.sh &&
           echo "Load test finished"
-
-      - name: Check disk usage
-        run: df -h
 
       - name: Generate SVG
         shell: bash
