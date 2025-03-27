@@ -136,6 +136,7 @@ async fn transfer_from(
     let mut retries = 0;
 
     for i in nonce..nonce + iterations {
+        // For debugging purposes, print every 250 transactions
         if i % 250 == 0 && verbose {
             println!("Sending transaction {i} from {address:#x} with pk {pk}");
         }
