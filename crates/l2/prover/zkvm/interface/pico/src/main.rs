@@ -35,7 +35,7 @@ pub fn main() {
         panic!("invalid database")
     };
 
-    let mut evm = Evm::from_db(db.clone());
+    let mut evm = Evm::from_execution_db(db.clone());
     let result = evm.execute_block(&block).expect("failed to execute block");
     let receipts = result.receipts;
     let account_updates = result.account_updates;
