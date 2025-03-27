@@ -55,7 +55,7 @@ jobs:
       - name: Run L2 integration test
         run: |
           cd crates/l2
-          cp configs/config_example_docker.toml configs/config_docker.toml
+          cp configs/config_docker_example.toml configs/config.toml
 
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d
