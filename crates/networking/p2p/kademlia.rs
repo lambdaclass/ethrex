@@ -6,6 +6,7 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, H512, U256};
+use rand::prelude::*;
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex};
@@ -325,6 +326,8 @@ impl KademliaTable {
         &mut self,
         capability: Capability,
     ) -> Option<&mut PeerData> {
+        let mut rng = thread_rng();
+
         let filter = |peer: &&mut PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
             !peer.busy
@@ -332,10 +335,24 @@ impl KademliaTable {
                 && peer.supported_capabilities.contains(&capability)
         };
 
-        // take the peer with the highest score
-        self.iter_peers_mut()
+        let mut eligible_peers: Vec<(usize, u16, &mut PeerData)> = self
+            .iter_peers_mut()
             .filter(filter)
-            .max_by(|a, b| a.scoring.cmp(&b.scoring))
+            .enumerate()
+            .map(|(idx, peer)| (idx, peer.scoring, peer))
+            .collect();
+
+        if eligible_peers.is_empty() {
+            return None;
+        }
+
+        // Pick a peer with probability proportional to its score.
+        let selected_peer = eligible_peers
+            .choose_weighted(&mut rng, |(_, score, _)| *score)
+            .ok()?;
+
+        // take ownership of the peer by removing it
+        Some(eligible_peers.remove(selected_peer.0).2)
     }
 }
 
