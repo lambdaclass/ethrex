@@ -235,7 +235,7 @@ impl Subcommand {
     }
 
     fn removedb(datadir: &str) -> eyre::Result<()> {
-        let data_dir = set_datadir(&datadir);
+        let data_dir = set_datadir(datadir);
 
         let path = Path::new(&data_dir);
 
