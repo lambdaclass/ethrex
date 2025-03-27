@@ -26,8 +26,19 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
+      - name: Build prover
+        run: |
+          cd crates/l2
+          make build-prover T=sp1
+
       - name: Run L2 integration test
         run: |
           cd crates/l2
           cp configs/config_example.toml configs/config.toml
           make ci_test
+
+      - name: Run L2 integration prover_client
+        run: |
+          cd crates/l2
+          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
+          make ci_test_retrigger
