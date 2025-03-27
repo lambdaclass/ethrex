@@ -8,6 +8,7 @@ use std::error::Error;
 fn main() -> Result<(), Box<dyn Error>> {
     let opts = EFTestRunnerOptions::parse();
     let ef_tests = parser::parse_ef_tests(&opts)?;
-    runner::run_ef_tests(ef_tests, &opts)?;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(runner::run_ef_tests(ef_tests, &opts))?;
     Ok(())
 }

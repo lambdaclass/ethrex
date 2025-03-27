@@ -20,7 +20,7 @@ mod blockchain_integration_test {
     #[tokio::test]
     async fn test_small_to_long_reorg() {
         // Store and genesis
-        let store = test_store();
+        let store = test_store().await;
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
         let genesis_hash = genesis_header.compute_block_hash();
 
@@ -28,17 +28,17 @@ mod blockchain_integration_test {
         let blockchain = Blockchain::default_with_store(store.clone());
 
         // Add first block. We'll make it canonical.
-        let block_1a = new_block(&store, &genesis_header);
+        let block_1a = new_block(&store, &genesis_header).await;
         let hash_1a = block_1a.hash();
         blockchain.add_block(&block_1a).await.unwrap();
-        store.set_canonical_block(1, hash_1a).unwrap();
+        store.set_canonical_block(1, hash_1a).await.unwrap();
         let retrieved_1a = store.get_block_header(1).unwrap().unwrap();
 
         assert_eq!(retrieved_1a, block_1a.header);
         assert!(is_canonical(&store, 1, hash_1a).unwrap());
 
         // Add second block at height 1. Will not be canonical.
-        let block_1b = new_block(&store, &genesis_header);
+        let block_1b = new_block(&store, &genesis_header).await;
         let hash_1b = block_1b.hash();
         blockchain
             .add_block(&block_1b)
@@ -50,7 +50,7 @@ mod blockchain_integration_test {
         assert!(!is_canonical(&store, 1, hash_1b).unwrap());
 
         // Add a third block at height 2, child to the non canonical block.
-        let block_2 = new_block(&store, &block_1b.header);
+        let block_2 = new_block(&store, &block_1b.header).await;
         let hash_2 = block_2.hash();
         blockchain
             .add_block(&block_2)
@@ -68,6 +68,7 @@ mod blockchain_integration_test {
             genesis_header.compute_block_hash(),
             genesis_header.compute_block_hash(),
         )
+        .await
         .unwrap();
 
         // Check that canonical blocks changed to the new branch.
@@ -79,20 +80,20 @@ mod blockchain_integration_test {
 
     #[tokio::test]
     async fn test_sync_not_supported_yet() {
-        let store = test_store();
+        let store = test_store().await;
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
         // Create blockchain
         let blockchain = Blockchain::default_with_store(store.clone());
 
         // Build a single valid block.
-        let block_1 = new_block(&store, &genesis_header);
+        let block_1 = new_block(&store, &genesis_header).await;
         let hash_1 = block_1.header.compute_block_hash();
         blockchain.add_block(&block_1).await.unwrap();
-        apply_fork_choice(&store, hash_1, H256::zero(), H256::zero()).unwrap();
+        apply_fork_choice(&store, hash_1, H256::zero(), H256::zero()).await.unwrap();
 
         // Build a child, then change its parent, making it effectively a pending block.
-        let mut block_2 = new_block(&store, &block_1.header);
+        let mut block_2 = new_block(&store, &block_1.header).await;
         block_2.header.parent_hash = H256::random();
         let hash_2 = block_2.header.compute_block_hash();
         let result = blockchain.add_block(&block_2).await;
@@ -101,7 +102,7 @@ mod blockchain_integration_test {
         // block 2 should now be pending.
         assert!(store.get_pending_block(hash_2).unwrap().is_some());
 
-        let fc_result = apply_fork_choice(&store, hash_2, H256::zero(), H256::zero());
+        let fc_result = apply_fork_choice(&store, hash_2, H256::zero(), H256::zero()).await;
         assert!(matches!(fc_result, Err(InvalidForkChoice::Syncing)));
 
         // block 2 should still be pending.
@@ -111,7 +112,7 @@ mod blockchain_integration_test {
     #[tokio::test]
     async fn test_reorg_from_long_to_short_chain() {
         // Store and genesis
-        let store = test_store();
+        let store = test_store().await;
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
         let genesis_hash = genesis_header.compute_block_hash();
 
@@ -119,7 +120,7 @@ mod blockchain_integration_test {
         let blockchain = Blockchain::default_with_store(store.clone());
 
         // Add first block. Not canonical.
-        let block_1a = new_block(&store, &genesis_header);
+        let block_1a = new_block(&store, &genesis_header).await;
         let hash_1a = block_1a.hash();
         blockchain.add_block(&block_1a).await.unwrap();
         let retrieved_1a = store.get_block_header_by_hash(hash_1a).unwrap().unwrap();
@@ -127,13 +128,13 @@ mod blockchain_integration_test {
         assert!(!is_canonical(&store, 1, hash_1a).unwrap());
 
         // Add second block at height 1. Canonical.
-        let block_1b = new_block(&store, &genesis_header);
+        let block_1b = new_block(&store, &genesis_header).await;
         let hash_1b = block_1b.hash();
         blockchain
             .add_block(&block_1b)
             .await
             .expect("Could not add block 1b.");
-        apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_1b, genesis_hash, genesis_hash).await.unwrap();
         let retrieved_1b = store.get_block_header(1).unwrap().unwrap();
 
         assert_ne!(retrieved_1a, retrieved_1b);
@@ -142,13 +143,13 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_1b);
 
         // Add a third block at height 2, child to the canonical one.
-        let block_2 = new_block(&store, &block_1b.header);
+        let block_2 = new_block(&store, &block_1b.header).await;
         let hash_2 = block_2.hash();
         blockchain
             .add_block(&block_2)
             .await
             .expect("Could not add block 2.");
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).await.unwrap();
         let retrieved_2 = store.get_block_header_by_hash(hash_2).unwrap();
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
@@ -163,6 +164,7 @@ mod blockchain_integration_test {
             genesis_header.compute_block_hash(),
             genesis_header.compute_block_hash(),
         )
+        .await
         .unwrap();
 
         // Check that canonical blocks changed to the new branch.
@@ -175,7 +177,7 @@ mod blockchain_integration_test {
     #[tokio::test]
     async fn new_head_with_canonical_ancestor_should_skip() {
         // Store and genesis
-        let store = test_store();
+        let store = test_store().await;
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
         let genesis_hash = genesis_header.compute_block_hash();
 
@@ -183,7 +185,7 @@ mod blockchain_integration_test {
         let blockchain = Blockchain::default_with_store(store.clone());
 
         // Add block at height 1.
-        let block_1 = new_block(&store, &genesis_header);
+        let block_1 = new_block(&store, &genesis_header).await;
         let hash_1 = block_1.hash();
         blockchain
             .add_block(&block_1)
@@ -191,7 +193,7 @@ mod blockchain_integration_test {
             .expect("Could not add block 1b.");
 
         // Add child at height 2.
-        let block_2 = new_block(&store, &block_1.header);
+        let block_2 = new_block(&store, &block_1.header).await;
         let hash_2 = block_2.hash();
         blockchain
             .add_block(&block_2)
@@ -202,12 +204,12 @@ mod blockchain_integration_test {
         assert!(!is_canonical(&store, 2, hash_2).unwrap());
 
         // Make that chain the canonical one.
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).await.unwrap();
 
         assert!(is_canonical(&store, 1, hash_1).unwrap());
         assert!(is_canonical(&store, 2, hash_2).unwrap());
 
-        let result = apply_fork_choice(&store, hash_1, hash_1, hash_1);
+        let result = apply_fork_choice(&store, hash_1, hash_1, hash_1).await;
 
         assert!(matches!(
             result,
@@ -226,7 +228,7 @@ mod blockchain_integration_test {
         // Then add one in a different branch. Check that the last one is still the same.
 
         // Store and genesis
-        let store = test_store();
+        let store = test_store().await;
         let genesis_header = store.get_block_header(0).unwrap().unwrap();
         let genesis_hash = genesis_header.compute_block_hash();
 
@@ -234,14 +236,14 @@ mod blockchain_integration_test {
         let blockchain = Blockchain::default_with_store(store.clone());
 
         // Add block at height 1.
-        let block_1 = new_block(&store, &genesis_header);
+        let block_1 = new_block(&store, &genesis_header).await;
         blockchain
             .add_block(&block_1)
             .await
             .expect("Could not add block 1b.");
 
         // Add child at height 2.
-        let block_2 = new_block(&store, &block_1.header);
+        let block_2 = new_block(&store, &block_1.header).await;
         let hash_2 = block_2.hash();
         blockchain
             .add_block(&block_2)
@@ -251,12 +253,12 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), genesis_hash);
 
         // Make that chain the canonical one.
-        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash).await.unwrap();
 
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
         // Add a new, non canonical block, starting from genesis.
-        let block_1b = new_block(&store, &genesis_header);
+        let block_1b = new_block(&store, &genesis_header).await;
         let hash_b = block_1b.hash();
         blockchain
             .add_block(&block_1b)
@@ -267,13 +269,13 @@ mod blockchain_integration_test {
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_2);
 
         // if we apply fork choice to the new one, then we should
-        apply_fork_choice(&store, hash_b, genesis_hash, genesis_hash).unwrap();
+        apply_fork_choice(&store, hash_b, genesis_hash, genesis_hash).await.unwrap();
 
         // The latest block should now be the new head.
         assert_eq!(latest_canonical_block_hash(&store).unwrap(), hash_b);
     }
 
-    fn new_block(store: &Store, parent: &BlockHeader) -> Block {
+    async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
         let args = BuildPayloadArgs {
             parent: parent.compute_block_hash(),
             timestamp: parent.timestamp + 12,
@@ -288,11 +290,11 @@ mod blockchain_integration_test {
         let blockchain = Blockchain::default_with_store(store.clone().clone());
 
         let mut block = create_payload(&args, store).unwrap();
-        blockchain.build_payload(&mut block).unwrap();
+        blockchain.build_payload(&mut block).await.unwrap();
         block
     }
 
-    fn test_store() -> Store {
+    async fn test_store() -> Store {
         // Get genesis
         let file = File::open("../../test_data/genesis-execution-api.json")
             .expect("Failed to open genesis file");
@@ -305,6 +307,7 @@ mod blockchain_integration_test {
 
         store
             .add_initial_state(genesis)
+            .await
             .expect("Failed to add genesis state");
 
         store

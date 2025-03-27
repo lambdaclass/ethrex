@@ -1086,25 +1086,29 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_in_memory_store() {
-        test_store_suite(EngineType::InMemory);
+    #[tokio::test]
+    async fn test_in_memory_store() {
+        test_store_suite(EngineType::InMemory).await;
     }
 
     #[cfg(feature = "libmdbx")]
-    #[test]
-    fn test_libmdbx_store() {
-        test_store_suite(EngineType::Libmdbx);
+    #[tokio::test]
+    async fn test_libmdbx_store() {
+        test_store_suite(EngineType::Libmdbx).await;
     }
 
     #[cfg(feature = "redb")]
-    #[test]
-    fn test_redb_store() {
-        test_store_suite(EngineType::RedB);
+    #[tokio::test]
+    async fn test_redb_store() {
+        test_store_suite(EngineType::RedB).await;
     }
 
     // Creates an empty store, runs the test and then removes the store (if needed)
-    fn run_test(test_func: &dyn Fn(Store), engine_type: EngineType) {
+    async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
+    where
+        F: FnOnce(Store) -> Fut,
+        Fut: std::future::Future<Output=()>
+    {
         // Remove preexistent DBs in case of a failed previous test
         if !matches!(engine_type, EngineType::InMemory) {
             remove_test_dbs("store-test-db");
@@ -1112,26 +1116,26 @@ mod tests {
         // Build a new store
         let store = Store::new("store-test-db", engine_type).expect("Failed to create test db");
         // Run the test
-        test_func(store);
+        test_func(store).await;
         // Remove store (if needed)
         if !matches!(engine_type, EngineType::InMemory) {
             remove_test_dbs("store-test-db");
         };
     }
 
-    fn test_store_suite(engine_type: EngineType) {
-        run_test(&test_store_block, engine_type);
-        run_test(&test_store_block_number, engine_type);
-        run_test(&test_store_transaction_location, engine_type);
-        run_test(&test_store_transaction_location_not_canonical, engine_type);
-        run_test(&test_store_block_receipt, engine_type);
-        run_test(&test_store_account_code, engine_type);
-        run_test(&test_store_block_tags, engine_type);
-        run_test(&test_chain_config_storage, engine_type);
-        run_test(&test_genesis_block, engine_type);
+    async fn test_store_suite(engine_type: EngineType) {
+        run_test(test_store_block, engine_type).await;
+        run_test(test_store_block_number, engine_type).await;
+        run_test(test_store_transaction_location, engine_type).await;
+        run_test(test_store_transaction_location_not_canonical, engine_type).await;
+        run_test(test_store_block_receipt, engine_type).await;
+        run_test(test_store_account_code, engine_type).await;
+        run_test(test_store_block_tags, engine_type).await;
+        run_test(test_chain_config_storage, engine_type).await;
+        run_test(test_genesis_block, engine_type).await;
     }
 
-    fn test_genesis_block(store: Store) {
+    async fn test_genesis_block(store: Store) {
         const GENESIS_KURTOSIS: &str = include_str!("../../test_data/genesis-kurtosis.json");
         const GENESIS_HIVE: &str = include_str!("../../test_data/genesis-hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
@@ -1141,12 +1145,15 @@ mod tests {
             serde_json::from_str(GENESIS_HIVE).expect("deserialize genesis-hive.json");
         store
             .add_initial_state(genesis_kurtosis.clone())
+            .await
             .expect("first genesis");
         store
             .add_initial_state(genesis_kurtosis)
+            .await
             .expect("second genesis with same block");
         panic::catch_unwind(move || {
-            let _ = store.add_initial_state(genesis_hive);
+            let rt = tokio::runtime::Runtime::new().expect("runtime creation failed");
+            let _ = rt.block_on(store.add_initial_state(genesis_hive));
         })
         .expect_err("genesis with a different block should panic");
     }
@@ -1158,14 +1165,14 @@ mod tests {
         }
     }
 
-    fn test_store_block(store: Store) {
+    async fn test_store_block(store: Store) {
         let (block_header, block_body) = create_block_for_testing();
         let block_number = 6;
         let hash = block_header.compute_block_hash();
 
-        store.add_block_header(hash, block_header.clone()).unwrap();
-        store.add_block_body(hash, block_body.clone()).unwrap();
-        store.set_canonical_block(block_number, hash).unwrap();
+        store.add_block_header(hash, block_header.clone()).await.unwrap();
+        store.add_block_body(hash, block_body.clone()).await.unwrap();
+        store.set_canonical_block(block_number, hash).await.unwrap();
 
         let stored_header = store.get_block_header(block_number).unwrap().unwrap();
         let stored_body = store.get_block_body(block_number).unwrap().unwrap();
@@ -1227,18 +1234,18 @@ mod tests {
         (block_header, block_body)
     }
 
-    fn test_store_block_number(store: Store) {
+    async fn test_store_block_number(store: Store) {
         let block_hash = H256::random();
         let block_number = 6;
 
-        store.add_block_number(block_hash, block_number).unwrap();
+        store.add_block_number(block_hash, block_number).await.unwrap();
 
         let stored_number = store.get_block_number(block_hash).unwrap().unwrap();
 
         assert_eq!(stored_number, block_number);
     }
 
-    fn test_store_transaction_location(store: Store) {
+    async fn test_store_transaction_location(store: Store) {
         let transaction_hash = H256::random();
         let block_hash = H256::random();
         let block_number = 6;
@@ -1246,9 +1253,10 @@ mod tests {
 
         store
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .await
             .unwrap();
 
-        store.set_canonical_block(block_number, block_hash).unwrap();
+        store.set_canonical_block(block_number, block_hash).await.unwrap();
 
         let stored_location = store
             .get_transaction_location(transaction_hash)
@@ -1258,7 +1266,7 @@ mod tests {
         assert_eq!(stored_location, (block_number, block_hash, index));
     }
 
-    fn test_store_transaction_location_not_canonical(store: Store) {
+    async fn test_store_transaction_location_not_canonical(store: Store) {
         let transaction_hash = H256::random();
         let block_hash = H256::random();
         let block_number = 6;
@@ -1266,10 +1274,12 @@ mod tests {
 
         store
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .await
             .unwrap();
 
         store
             .set_canonical_block(block_number, H256::random())
+            .await
             .unwrap();
 
         assert_eq!(
@@ -1278,7 +1288,7 @@ mod tests {
         )
     }
 
-    fn test_store_block_receipt(store: Store) {
+    async fn test_store_block_receipt(store: Store) {
         let receipt = Receipt {
             tx_type: TxType::EIP2930,
             succeeded: true,
@@ -1292,27 +1302,28 @@ mod tests {
 
         store
             .add_receipt(block_hash, index, receipt.clone())
+            .await
             .unwrap();
 
-        store.set_canonical_block(block_number, block_hash).unwrap();
+        store.set_canonical_block(block_number, block_hash).await.unwrap();
 
         let stored_receipt = store.get_receipt(block_number, index).unwrap().unwrap();
 
         assert_eq!(stored_receipt, receipt);
     }
 
-    fn test_store_account_code(store: Store) {
+    async fn test_store_account_code(store: Store) {
         let code_hash = H256::random();
         let code = Bytes::from("kiwi");
 
-        store.add_account_code(code_hash, code.clone()).unwrap();
+        store.add_account_code(code_hash, code.clone()).await.unwrap();
 
         let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
 
         assert_eq!(stored_code, code);
     }
 
-    fn test_store_block_tags(store: Store) {
+    async fn test_store_block_tags(store: Store) {
         let earliest_block_number = 0;
         let finalized_block_number = 7;
         let safe_block_number = 6;
@@ -1321,16 +1332,23 @@ mod tests {
 
         store
             .update_earliest_block_number(earliest_block_number)
+            .await
             .unwrap();
         store
             .update_finalized_block_number(finalized_block_number)
+            .await
             .unwrap();
-        store.update_safe_block_number(safe_block_number).unwrap();
+        store
+            .update_safe_block_number(safe_block_number)
+            .await
+            .unwrap();
         store
             .update_latest_block_number(latest_block_number)
+            .await
             .unwrap();
         store
             .update_pending_block_number(pending_block_number)
+            .await
             .unwrap();
 
         let stored_earliest_block_number = store.get_earliest_block_number().unwrap();
@@ -1346,9 +1364,9 @@ mod tests {
         assert_eq!(pending_block_number, stored_pending_block_number);
     }
 
-    fn test_chain_config_storage(store: Store) {
+    async fn test_chain_config_storage(store: Store) {
         let chain_config = example_chain_config();
-        store.set_chain_config(&chain_config).unwrap();
+        store.set_chain_config(&chain_config).await.unwrap();
         let retrieved_chain_config = store.get_chain_config().unwrap();
         assert_eq!(chain_config, retrieved_chain_config);
     }
