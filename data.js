@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743110968140,
+  "lastUpdate": 1743112141227,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1645,6 +1645,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184674546450,
             "range": "± 1003660756",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d90a9dc5e6269543a85cc7ae9177dfd23bfb17d3",
+          "message": "fix(core): make metrics port flag not optional (#2343)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nCurrently, the metrics are initiated iif the `--metrics-port` flag is\npassed. This is wrong because the flag is used both to configure the\nlistening port and as a metrics enabler flag.\n\nIf needed, a flag `--metrics.enabled` could be introduced in another PR\nif metrics are unwanted for some reason. IMHO initializing metrics as\ndefault is ok.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n- Always initialize metrics\n- The `--metrics.port` flag is now not optional and defaults to 9090 as\nthe default value.",
+          "timestamp": "2025-03-27T20:58:50Z",
+          "tree_id": "45eacb2f732ca8dbb353d790b06ee84795360b48",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d90a9dc5e6269543a85cc7ae9177dfd23bfb17d3"
+        },
+        "date": 1743112138346,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 188848074989,
+            "range": "± 1075290354",
             "unit": "ns/iter"
           }
         ]
