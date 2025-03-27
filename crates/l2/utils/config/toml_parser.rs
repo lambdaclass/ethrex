@@ -107,7 +107,7 @@ impl Watcher {
 
 #[derive(Deserialize, Debug)]
 struct Proposer {
-    interval_ms: u64,
+    block_time_ms: u64,
     coinbase_address: String,
 }
 
@@ -116,10 +116,10 @@ impl Proposer {
         let prefix = "PROPOSER";
         format!(
             "
-{prefix}_INTERVAL_MS={}
+{prefix}_BLOCK_TIME_MS={}
 {prefix}_COINBASE_ADDRESS={}
 ",
-            self.interval_ms, self.coinbase_address,
+            self.block_time_ms, self.coinbase_address,
         )
     }
 }
