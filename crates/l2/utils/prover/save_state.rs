@@ -389,7 +389,6 @@ mod tests {
 
     use super::*;
     use crate::utils::test_data_io;
-    use ethrex_vm::Evm;
     use ethrex_vm::EvmEngine;
     use std::fs::{self};
     use test_casing::test_casing;
