@@ -23,8 +23,20 @@ jobs:
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Caching
+      - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Bake docker images
+        uses: docker/bake-action@v2
+        with:
+          source: "crates/l2/docker-compose-l2.yaml"
+          load: true
+          set: |
+            *.cache-to=type=gha,mode=max
+            *.cache-from=type=gha
 
       - name: RISC-V SP1 toolchain install
         run: |
@@ -40,4 +52,8 @@ jobs:
         run: |
           cd crates/l2
           cp configs/config_example_docker.toml configs/config_docker.toml
-          make ci_test
+
+          touch .env
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d
+
+          RUST_LOG=info,ethrex_prover=debug ../../target/release/ethrex_prover & cargo test l2 --release -- --nocapture --test-threads=1
