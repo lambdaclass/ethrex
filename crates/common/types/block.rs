@@ -17,6 +17,7 @@ use ethrex_rlp::{
 };
 use ethrex_trie::Trie;
 use keccak_hash::keccak;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
 use std::cmp::{max, Ordering};
@@ -231,6 +232,15 @@ impl BlockBody {
             ommers: Vec::new(),
             withdrawals: Some(Vec::new()),
         }
+    }
+
+    pub fn get_transactions_with_sender(&self) -> Vec<(&Transaction, Address)> {
+        // Recovering addresses is computationally expensive.
+        // Computing them in parallel greatly reduces execution time.
+        self.transactions
+            .par_iter()
+            .map(|tx| (tx, tx.sender()))
+            .collect()
     }
 }
 

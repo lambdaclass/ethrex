@@ -151,6 +151,7 @@ impl Evm {
 
                 let execution_report = LEVM::execute_tx(
                     tx,
+                    sender,
                     block_header,
                     Arc::new(store_wrapper.clone()),
                     block_cache.clone(),
@@ -336,16 +337,8 @@ impl Evm {
                 block_cache,
             } => {
                 store_wrapper.block_hash = header.parent_hash;
-                let store = store_wrapper.store.clone();
-                let chain_config = store.get_chain_config()?;
 
-                LEVM::simulate_tx_from_generic(
-                    tx,
-                    header,
-                    Arc::new(store_wrapper.clone()),
-                    block_cache.clone(),
-                    &chain_config,
-                )
+                LEVM::simulate_tx_from_generic(tx, header, store_wrapper, block_cache.clone())
             }
         }
     }
@@ -358,17 +351,17 @@ impl Evm {
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
         let spec_id = fork_to_spec_id(fork);
 
-        let res = match self {
+        let result = match self {
             Evm::REVM { state } => {
-                self::revm::helpers::create_access_list(tx, header, state, spec_id)
+                self::revm::helpers::create_access_list(tx, header, state, spec_id)?
             }
-            Evm::LEVM {
-                store_wrapper: _,
-                block_cache: _,
-            } => Err(EvmError::Custom("Not implemented".to_string())),
-        }?;
 
-        match res {
+            Evm::LEVM {
+                store_wrapper,
+                block_cache,
+            } => LEVM::create_access_list(tx.clone(), header, store_wrapper, block_cache)?,
+        };
+        match result {
             (
                 ExecutionResult::Success {
                     gas_used,

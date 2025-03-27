@@ -22,7 +22,7 @@ use crate::utils::config::{block_producer::BlockProducerConfig, errors::ConfigEr
 use super::{errors::BlockProducerError, execution_cache::ExecutionCache};
 
 pub struct BlockProducer {
-    interval_ms: u64,
+    block_time_ms: u64,
     coinbase_address: Address,
 }
 
@@ -43,11 +43,11 @@ pub async fn start_block_producer(
 impl BlockProducer {
     pub fn new_from_config(config: BlockProducerConfig) -> Result<Self, BlockProducerError> {
         let BlockProducerConfig {
-            interval_ms,
+            block_time_ms,
             coinbase_address,
         } = config;
         Ok(Self {
-            interval_ms,
+            block_time_ms,
             coinbase_address,
         })
     }
@@ -65,7 +65,7 @@ impl BlockProducer {
                 error!("Block Producer Error: {}", err);
             }
 
-            sleep(Duration::from_millis(self.interval_ms)).await;
+            sleep(Duration::from_millis(self.block_time_ms)).await;
         }
     }
 

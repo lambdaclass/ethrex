@@ -5,10 +5,12 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult};
+use crate::{EvmError, ExecutionResult, StoreWrapper};
 use bytes::Bytes;
 use ethrex_common::types::requests::Requests;
-use ethrex_common::types::{AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE};
+use ethrex_common::types::{
+    AccessList, AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE,
+};
 use ethrex_common::{
     types::{
         code_hash, AccountInfo, Block, BlockHeader, ChainConfig, Receipt, Transaction, TxKind,
@@ -16,6 +18,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::vm::Substate;
 use ethrex_levm::{
     db::Database as LevmDatabase,
     errors::{ExecutionReport, TxResult, VMError},
@@ -70,9 +73,10 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for tx in block.body.transactions.iter() {
+        for (tx, tx_sender) in block.body.get_transactions_with_sender() {
             let report = Self::execute_tx(
                 tx,
+                tx_sender,
                 &block.header,
                 db.clone(),
                 block_cache.clone(),
@@ -150,6 +154,8 @@ impl LEVM {
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
         // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
@@ -166,7 +172,7 @@ impl LEVM {
 
         let config = EVMConfig::new_from_chain_config(chain_config, block_header);
         let env = Environment {
-            origin: tx.sender(),
+            origin: tx_sender,
             refunded_gas: 0,
             gas_limit: tx.gas_limit(),
             config,
@@ -207,62 +213,18 @@ impl LEVM {
         tx: &GenericTransaction,
         // The block header for the current block.
         block_header: &BlockHeader,
-        // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
-        db: Arc<dyn LevmDatabase>,
+        // EVM StoreWrapper database.
+        store: &StoreWrapper,
         // A cache database for intermediate state changes during execution.
         block_cache: CacheDB,
-        // The EVM configuration to use.
-        chain_config: &ChainConfig,
     ) -> Result<ExecutionResult, EvmError> {
-        let gas_price: U256 = calculate_gas_price(
-            tx,
-            block_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
-        );
+        let mut env = env_from_generic(tx, block_header, store)?;
 
-        let config = EVMConfig::new_from_chain_config(chain_config, block_header);
-        let mut env = Environment {
-            origin: tx.from.0.into(),
-            refunded_gas: 0,
-            gas_limit: tx.gas.unwrap_or(u64::MAX), // Ensure tx doesn't fail due to gas limit
-            config,
-            block_number: block_header.number.into(),
-            coinbase: block_header.coinbase,
-            timestamp: block_header.timestamp.into(),
-            prev_randao: Some(block_header.prev_randao),
-            chain_id: tx.chain_id.unwrap_or(chain_config.chain_id).into(),
-            base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-            gas_price,
-            block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
-            block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-            tx_blob_hashes: tx.blob_versioned_hashes.clone(),
-            tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
-            tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
-            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
-            tx_nonce: tx.nonce.unwrap_or_default(),
-            block_gas_limit: u64::MAX, // disable block gas limit
-            transient_storage: HashMap::new(),
-            difficulty: block_header.difficulty,
-        };
+        env.block_gas_limit = u64::MAX; // disable block gas limit
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = VM::new(
-            tx.to.clone(),
-            env,
-            tx.value,
-            tx.input.clone(),
-            db,
-            block_cache.clone(),
-            tx.access_list
-                .iter()
-                .map(|list| (list.address, list.storage_keys.clone()))
-                .collect(),
-            tx.authorization_list.clone().map(|list| {
-                list.iter()
-                    .map(|list| Into::<AuthorizationTuple>::into(list.clone()))
-                    .collect()
-            }),
-        )?;
+        let mut vm = vm_from_generic(tx, env, store, block_cache.clone())?;
 
         vm.execute()
             .map(|value| value.into())
@@ -484,6 +446,30 @@ impl LEVM {
             _ => None,
         }
     }
+
+    pub fn create_access_list(
+        mut tx: GenericTransaction,
+        header: &BlockHeader,
+        store: &StoreWrapper,
+        block_cache: &CacheDB,
+    ) -> Result<(ExecutionResult, AccessList), VMError> {
+        let mut env = env_from_generic(&tx, header, store)?;
+
+        adjust_disabled_base_fee(&mut env);
+
+        let mut vm = vm_from_generic(&tx, env.clone(), store, block_cache.clone())?;
+
+        vm.execute()?;
+        let access_list = build_access_list(&vm.accrued_substate);
+
+        // Execute the tx again, now with the created access list.
+        tx.access_list = access_list.iter().map(|item| item.into()).collect();
+        let mut vm = vm_from_generic(&tx, env.clone(), store, block_cache.clone())?;
+
+        let report = vm.execute()?;
+
+        Ok((report.into(), access_list))
+    }
 }
 
 /// `new_state` is being modified at the end.
@@ -628,4 +614,75 @@ fn adjust_disabled_base_fee(env: &mut Environment) {
     {
         env.block_excess_blob_gas = None;
     }
+}
+
+pub fn build_access_list(substate: &Substate) -> AccessList {
+    let access_list: AccessList = substate
+        .touched_storage_slots
+        .iter()
+        .map(|(address, slots)| (*address, slots.iter().cloned().collect::<Vec<H256>>()))
+        .collect();
+
+    access_list
+}
+
+fn env_from_generic(
+    tx: &GenericTransaction,
+    header: &BlockHeader,
+    store: &StoreWrapper,
+) -> Result<Environment, VMError> {
+    let chain_config = &store
+        .store
+        .get_chain_config()
+        .map_err(|_| VMError::FatalError)?;
+    let gas_price = calculate_gas_price(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
+    let config = EVMConfig::new_from_chain_config(chain_config, header);
+    Ok(Environment {
+        origin: tx.from.0.into(),
+        refunded_gas: 0,
+        gas_limit: tx.gas.unwrap_or(header.gas_limit), // Ensure tx doesn't fail due to gas limit
+        config,
+        block_number: header.number.into(),
+        coinbase: header.coinbase,
+        timestamp: header.timestamp.into(),
+        prev_randao: Some(header.prev_randao),
+        chain_id: tx.chain_id.unwrap_or(chain_config.chain_id).into(),
+        base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
+        gas_price,
+        block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
+        block_blob_gas_used: header.blob_gas_used.map(U256::from),
+        tx_blob_hashes: tx.blob_versioned_hashes.clone(),
+        tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
+        tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
+        tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
+        tx_nonce: tx.nonce.unwrap_or_default(),
+        block_gas_limit: header.gas_limit,
+        transient_storage: HashMap::new(),
+        difficulty: header.difficulty,
+    })
+}
+
+fn vm_from_generic(
+    tx: &GenericTransaction,
+    env: Environment,
+    store: &StoreWrapper,
+    block_cache: CacheDB,
+) -> Result<VM, VMError> {
+    VM::new(
+        tx.to.clone(),
+        env,
+        tx.value,
+        tx.input.clone(),
+        Arc::new(store.clone()),
+        block_cache,
+        tx.access_list
+            .iter()
+            .map(|list| (list.address, list.storage_keys.clone()))
+            .collect(),
+        tx.authorization_list.clone().map(|list| {
+            list.iter()
+                .map(|list| Into::<AuthorizationTuple>::into(list.clone()))
+                .collect()
+        }),
+    )
 }
