@@ -6,6 +6,7 @@ use crate::{
     types::{Node, NodeRecord},
 };
 use ethrex_common::{H256, H512, U256};
+use rand::prelude::*;
 use sha3::{Digest, Keccak256};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex};
@@ -231,6 +232,13 @@ impl KademliaTable {
         self.buckets.iter().flat_map(|bucket| bucket.peers.iter())
     }
 
+    /// Returns an mutable iterator for all peers in the table
+    pub fn iter_peers_mut(&mut self) -> impl Iterator<Item = &mut PeerData> {
+        self.buckets
+            .iter_mut()
+            .flat_map(|bucket| bucket.peers.iter_mut())
+    }
+
     /// Counts the number of connected peers
     pub fn count_connected_peers(&self) -> usize {
         self.filter_peers(&|peer| peer.is_connected).count()
@@ -242,18 +250,6 @@ impl KademliaTable {
         filter: &'a dyn Fn(&'a PeerData) -> bool,
     ) -> impl Iterator<Item = &'a PeerData> {
         self.iter_peers().filter(|peer| filter(peer))
-    }
-
-    /// Obtain a random peer from the kademlia table that matches the filter
-    fn get_random_peer_with_filter<'a>(
-        &'a self,
-        filter: &'a dyn Fn(&'a PeerData) -> bool,
-    ) -> Option<&'a PeerData> {
-        let filtered_peers: Vec<&PeerData> = self.filter_peers(filter).collect();
-        let peer_idx = rand::random::<usize>()
-            .checked_rem(filtered_peers.len())
-            .unwrap_or_default();
-        filtered_peers.get(peer_idx).cloned()
     }
 
     /// Replaces the peer with the given id with the latest replacement stored.
@@ -321,15 +317,42 @@ impl KademliaTable {
         }
     }
 
-    /// Returns the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    pub fn get_peer_channels(&self, capability: Capability) -> Option<PeerChannels> {
-        let filter = |peer: &PeerData| -> bool {
+    /// Returns a mutable reference to the idle peer with an active connection that supports
+    /// the given capability.  
+    ///  
+    /// A peer is considered idle if it is not currently handling an ongoing request (`busy == false`).  
+    /// Among all eligible peers, one is pick randomly with a probability proportional to its score.  
+    pub fn get_idle_peer_with_capability_mut(
+        &mut self,
+        capability: Capability,
+    ) -> Option<&mut PeerData> {
+        let mut rng = thread_rng();
+
+        let filter = |peer: &&mut PeerData| -> bool {
             // Search for peers with an active connection that support the required capabilities
-            peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
+            !peer.busy
+                && peer.channels.is_some()
+                && peer.supported_capabilities.contains(&capability)
         };
-        self.get_random_peer_with_filter(&filter)
-            .and_then(|peer| peer.channels.clone())
+
+        let mut eligible_peers: Vec<(usize, u16, &mut PeerData)> = self
+            .iter_peers_mut()
+            .filter(filter)
+            .enumerate()
+            .map(|(idx, peer)| (idx, peer.scoring, peer))
+            .collect();
+
+        if eligible_peers.is_empty() {
+            return None;
+        }
+
+        // Pick a peer with probability proportional to its score.
+        let selected_peer = eligible_peers
+            .choose_weighted(&mut rng, |(_, score, _)| *score)
+            .ok()?;
+
+        // take ownership of the peer by removing it
+        Some(eligible_peers.remove(selected_peer.0).2)
     }
 }
 
@@ -364,6 +387,11 @@ pub struct PeerData {
     /// Starts as false when a node is added. Set to true when a connection si active. When a
     /// connection fails, the peer record is removed, so no need to set it to false.
     pub is_connected: bool,
+    /// A number to track the scoring of peer
+    /// Higher number means it has given better responses
+    pub scoring: u16,
+    /// Whether a request has been made to this peer
+    pub busy: bool,
 }
 
 impl PeerData {
@@ -382,6 +410,8 @@ impl PeerData {
             channels: None,
             supported_capabilities: vec![],
             is_connected: false,
+            scoring: 2,
+            busy: false,
         }
     }
 
@@ -400,6 +430,14 @@ impl PeerData {
 
     pub fn decrement_liveness(&mut self) {
         self.liveness /= 3;
+    }
+
+    pub fn set_as_busy(&mut self) {
+        self.busy = true;
+    }
+
+    pub fn set_as_idle(&mut self) {
+        self.busy = false;
     }
 }
 
