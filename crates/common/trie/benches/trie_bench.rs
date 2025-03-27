@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
+use ethereum_types::H256;
 use hasher::HasherKeccak;
-use uuid::Uuid;
 
 use cita_trie::MemoryDB;
 use cita_trie::{PatriciaTrie, Trie};
