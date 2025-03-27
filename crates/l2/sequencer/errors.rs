@@ -1,5 +1,3 @@
-use std::sync::mpsc::SendError;
-
 use crate::utils::config::errors::ConfigError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
@@ -43,8 +41,6 @@ pub enum ProverServerError {
     StorageDataIsNone,
     #[error("ProverServer failed to create ProverInputs: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
-    #[error("ProverServer SigIntError: {0}")]
-    SigIntError(#[from] SigIntError),
     #[error("ProverServer JoinError: {0}")]
     JoinError(#[from] JoinError),
     #[error("ProverServer failed: {0}")]
@@ -61,16 +57,6 @@ pub enum ProverServerError {
     InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum SigIntError {
-    #[error("SigInt sigint.recv() failed")]
-    Recv,
-    #[error("SigInt tx.send(()) failed: {0}")]
-    Send(#[from] SendError<()>),
-    #[error("SigInt shutdown(Shutdown::Both) failed: {0}")]
-    Shutdown(#[from] std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
