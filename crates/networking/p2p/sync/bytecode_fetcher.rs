@@ -39,7 +39,7 @@ pub(crate) async fn bytecode_fetcher(
             info!("Spawning bytecode tasks");
             let instant = tokio::time::Instant::now();
             for n in 0..MAX_PARALLEL_FETCHES {
-                info!("Spawning bytecode task n");
+                info!("Spawning bytecode task {n}");
                 let next_batch = pending_bytecodes
                     .drain(..BYTECODE_BATCH_SIZE.min(pending_bytecodes.len()))
                     .collect::<Vec<_>>();
