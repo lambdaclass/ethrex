@@ -60,6 +60,6 @@ jobs:
           cp configs/config_docker_example.toml configs/config.toml
 
           touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach
 
           RUST_LOG=info,ethrex_prover=debug ../../target/release/ethrex_prover & cargo test l2 --release -- --nocapture --test-threads=1
