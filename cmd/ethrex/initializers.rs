@@ -56,10 +56,8 @@ pub fn init_tracing(opts: &Options) {
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
-    if let Some(port) = &opts.metrics_port {
-        let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(port.clone());
-        tracker.spawn(metrics_api);
-    }
+    let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(opts.metrics_port.clone());
+    tracker.spawn(metrics_api);
 }
 
 pub fn init_store(data_dir: &str, network: &str) -> Store {
