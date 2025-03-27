@@ -59,7 +59,13 @@ interface ICommonBridge {
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
     /// @param to, the address in L2 to which the tokens will be minted to.
-    function deposit(address to) external payable;
+    /// @param recipient, the address in L1 that will receive the tokens.
+    /// @param gasLimit, the gas limit for the deposit transaction.
+    function deposit(
+        address to,
+        address recipient,
+        uint256 gasLimit
+    ) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number` deposit logs.
     /// @param number of deposit logs to retrieve the versioned hash.
