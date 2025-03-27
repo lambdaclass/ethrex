@@ -397,7 +397,7 @@ mod tests {
     #[test_casing(2, [EvmEngine::LEVM, EvmEngine::REVM])]
     #[test]
     fn test_state_file_integration(
-        evm_engine: EvmEngine,
+        _evm_engine: EvmEngine,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = fs::remove_dir_all(default_datadir()?) {
             if e.kind() != std::io::ErrorKind::NotFound {
@@ -444,7 +444,6 @@ mod tests {
 
         // Write all the account_updates and proofs for each block
         for block in &blocks {
-            let evm = Evm::new(evm_engine, store.clone(), block.hash());
             let account_updates =
                 ExecutionDB::get_account_updates(blocks.last().unwrap(), &store).unwrap();
 
