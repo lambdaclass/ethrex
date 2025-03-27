@@ -26,7 +26,6 @@ use ethrex_levm::{
     vm::{EVMConfig, VM},
     Account, Environment,
 };
-use ethrex_storage::error::StoreError;
 use ethrex_storage::AccountUpdate;
 use std::cmp::min;
 use std::{collections::HashMap, sync::Arc};
