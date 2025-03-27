@@ -140,8 +140,7 @@ async fn heal_state_batch(
                 }
             }
             // Write nodes to trie
-            let node_hashes = nodes.iter().map(|node| node.compute_hash()).collect();
-            trie.state_mut().write_node_batch(nodes, node_hashes)?;
+            trie.state_mut().write_node_batch(&nodes)?;
         }
         // Send storage & bytecode requests
         if !hashed_addresses.is_empty() {
