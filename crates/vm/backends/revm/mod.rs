@@ -132,9 +132,9 @@ impl REVM {
         let mut pevm = pevm::Pevm::default();
         let txs = block
             .body
-            .transactions
-            .iter()
-            .map(|t| pevm_utils::tx_env(t, t.sender()))
+            .get_transactions_with_sender()
+            .into_iter()
+            .map(|(t, sender)| pevm_utils::tx_env(t, sender))
             .collect::<Vec<revm_pevm::primitives::TxEnv>>();
 
         let concurrency_level = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
