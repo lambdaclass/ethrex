@@ -294,7 +294,7 @@ impl Blockchain {
             .unwrap_or(&binding);
         context
             .vm
-            .process_withdrawals(withdrawals)
+            .process_withdrawals(withdrawals, &context.payload.header)
             .map_err(EvmError::from)
     }
 

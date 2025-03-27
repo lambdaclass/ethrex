@@ -19,6 +19,7 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_levm::vm::Substate;
+use ethrex_levm::AccountInfo as LevmAccountInfo;
 use ethrex_levm::{
     db::Database as LevmDatabase,
     errors::{ExecutionReport, TxResult, VMError},
@@ -306,6 +307,8 @@ impl LEVM {
     pub fn process_withdrawals(
         block_cache: &mut CacheDB,
         withdrawals: &[Withdrawal],
+        store: &dyn LevmDatabase,
+        parent_hash: H256,
     ) -> Result<(), ethrex_storage::error::StoreError> {
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
@@ -313,12 +316,26 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            let mut account = block_cache
-                .get(&address)
-                .cloned()
-                .ok_or(StoreError::Custom(
-                    "Could not find address for withdrawals".to_owned(),
-                ))?;
+            // We check if it was in block_cache, if not, we get it from DB.
+            let mut account = block_cache.get(&address).cloned().unwrap_or({
+                let acc_info = store
+                    .get_account_info_by_hash(parent_hash, address)
+                    .ok_or(StoreError::Custom("Missing account info".to_owned()))?;
+                let acc_code = store
+                    .get_account_code(acc_info.code_hash)
+                    .ok_or(StoreError::Custom("Missing account code".to_owned()))?;
+
+                Account {
+                    info: LevmAccountInfo {
+                        balance: acc_info.balance,
+                        bytecode: acc_code,
+                        nonce: acc_info.nonce,
+                    },
+                    // This is the added_storage for the withdrawal.
+                    // If not involved in the TX, there won't be any updates in the storage
+                    storage: HashMap::new(),
+                }
+            });
 
             account.info.balance += increment.into();
             block_cache.insert(address, account);

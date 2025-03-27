@@ -275,15 +275,24 @@ impl Evm {
 
     /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
-    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), StoreError> {
+    pub fn process_withdrawals(
+        &mut self,
+        withdrawals: &[Withdrawal],
+        block_header: &BlockHeader,
+    ) -> Result<(), StoreError> {
         match self {
             Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
             Evm::LEVM {
-                store_wrapper: _,
+                store_wrapper,
                 block_cache,
             } => {
                 let mut new_state = CacheDB::new();
-                LEVM::process_withdrawals(&mut new_state, withdrawals)?;
+                LEVM::process_withdrawals(
+                    &mut new_state,
+                    withdrawals,
+                    &*store_wrapper.clone(),
+                    block_header.parent_hash,
+                )?;
                 block_cache.extend(new_state);
                 Ok(())
             }
