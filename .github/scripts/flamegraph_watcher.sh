@@ -15,7 +15,7 @@ ethrex_l2 test load --path /home/runner/work/ethrex/ethrex/test_data/private_key
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "balance: $output"
 while [[ $output -lt $end_val ]]; do
-    sleep 30
+    sleep 15
     output=$(ethrex_l2 info -b -a $account --wei 2>&1)
     echo "balance: $output"
     disk_usage=$(df -h / | awk 'NR==2 {print $5}')
