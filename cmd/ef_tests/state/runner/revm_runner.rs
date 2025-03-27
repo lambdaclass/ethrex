@@ -15,10 +15,11 @@ use ethrex_levm::{
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
+    self,
     backends::{self, revm::db::EvmState},
-    db::StoreWrapper,
-    fork_to_spec_id, RevmAddress, RevmU256,
+    fork_to_spec_id, StoreWrapper,
 };
+pub use revm::primitives::{Address as RevmAddress, SpecId, U256 as RevmU256};
 use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
@@ -29,7 +30,10 @@ use revm::{
     },
     Evm as Revm,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 pub fn re_run_failed_ef_test(
     test: &EFTest,
@@ -328,9 +332,21 @@ pub fn ensure_post_state(
         // We only want to compare account updates when no exception is expected.
         None => {
             let store_wrapper = load_initial_state_levm(test);
+            let block_header = store_wrapper
+                .store
+                .get_block_header_by_hash(store_wrapper.block_hash)
+                .unwrap()
+                .unwrap();
             let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                 Some(*fork),
-                &store_wrapper,
+                Arc::new(store_wrapper.clone()),
+                store_wrapper.store.get_chain_config().map_err(|e| {
+                    EFTestRunnerError::VMInitializationFailed(format!(
+                        "Error at LEVM::get_state_transitions in ensure_post_state(): {}",
+                        e
+                    ))
+                })?,
+                &block_header,
                 &levm_execution_report.new_state,
             )
             .map_err(|_| {

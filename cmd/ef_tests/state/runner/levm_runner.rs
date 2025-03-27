@@ -15,7 +15,7 @@ use ethrex_levm::{
     Environment,
 };
 use ethrex_storage::AccountUpdate;
-use ethrex_vm::backends::{self};
+use ethrex_vm::backends;
 use keccak_hash::keccak;
 use std::{collections::HashMap, sync::Arc};
 
@@ -309,9 +309,21 @@ pub fn ensure_post_state(
                 // Execution result was successful and no exception was expected.
                 None => {
                     let store_wrapper = utils::load_initial_state_levm(test);
+                    let block_header = store_wrapper
+                        .store
+                        .get_block_header_by_hash(store_wrapper.block_hash)
+                        .unwrap()
+                        .unwrap();
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(
                         Some(*fork),
-                        &store_wrapper,
+                        Arc::new(store_wrapper.clone()),
+                        store_wrapper.store.get_chain_config().map_err(|e| {
+                            EFTestRunnerError::VMInitializationFailed(format!(
+                                "Error at LEVM::get_state_transitions in ensure_post_state(): {}",
+                                e
+                            ))
+                        })?,
+                        &block_header,
                         &execution_report.new_state,
                     )
                     .map_err(|_| {
