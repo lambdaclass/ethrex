@@ -294,16 +294,8 @@ impl Evm {
                 block_cache,
             } => {
                 store_wrapper.block_hash = header.parent_hash;
-                let store = store_wrapper.store.clone();
-                let chain_config = store.get_chain_config()?;
 
-                LEVM::simulate_tx_from_generic(
-                    tx,
-                    header,
-                    Arc::new(store_wrapper.clone()),
-                    block_cache.clone(),
-                    &chain_config,
-                )
+                LEVM::simulate_tx_from_generic(tx, header, store_wrapper, block_cache.clone())
             }
         }
     }
@@ -322,13 +314,7 @@ impl Evm {
             Evm::LEVM {
                 store_wrapper,
                 block_cache,
-            } => LEVM::create_access_list(
-                tx,
-                header,
-                store_wrapper,
-                &store_wrapper.store.get_chain_config()?,
-                block_cache,
-            )?,
+            } => LEVM::create_access_list(tx.clone(), header, store_wrapper, block_cache)?,
         };
         match result {
             (
