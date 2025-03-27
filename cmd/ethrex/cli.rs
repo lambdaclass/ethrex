@@ -62,9 +62,10 @@ pub struct Options {
     #[arg(
         long = "metrics.port",
         value_name = "PROMETHEUS_METRICS_PORT",
+        default_value = "9090", // Default Prometheus port (https://prometheus.io/docs/tutorials/getting_started/#show-me-how-it-is-done).
         help_heading = "Node options"
     )]
-    pub metrics_port: Option<String>,
+    pub metrics_port: String,
     #[arg(
         long = "dev",
         action = ArgAction::SetTrue,
