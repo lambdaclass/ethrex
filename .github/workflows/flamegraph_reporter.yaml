@@ -277,7 +277,7 @@ jobs:
         shell: bash
         run: |
           rm -rf target/release/ethrex
-          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F200 --call-graph dwarf,16384 -g" \
           --bin ethrex --features dev -- --dev --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2-ci.json --http.port 1729 >/dev/null &
           while [ ! -x "./target/release/ethrex" ]; do
             echo "Waiting for ethrex binary to be ready..."
