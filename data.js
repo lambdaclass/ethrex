@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743027021231,
+  "lastUpdate": 1743082022277,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1555,6 +1555,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 228971430179,
             "range": "± 936604869",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "76252340+MarcosNicolau@users.noreply.github.com",
+            "name": "Marcos Nicolau",
+            "username": "MarcosNicolau"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b36a7c603985788c9cc115d123dfa0649eac997b",
+          "message": "perf(core): compute tx senders in parallel (#2268)\n\n**Motivation**\nIncrease performance\n\n**Description**\nA big time of `execute_block` in the vm was spent in recovering the\n`address` from the transactions. This pr, parallelizes the computation\nof the address and reduces the time down to almost negligible.\n\nIt also fixes the ci that got broken with the latest changes.\n\nCloses None",
+          "timestamp": "2025-03-27T12:35:52Z",
+          "tree_id": "061ab79965fa884720b1bac7353c219c7520eba1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b36a7c603985788c9cc115d123dfa0649eac997b"
+        },
+        "date": 1743082019601,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184805574099,
+            "range": "± 1273678246",
             "unit": "ns/iter"
           }
         ]
