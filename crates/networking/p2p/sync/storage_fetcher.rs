@@ -15,7 +15,7 @@ use tracing::debug;
 
 use crate::{
     peer_handler::PeerHandler,
-    sync::{BATCH_SIZE, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES},
+    sync::{MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, STORAGE_BATCH_SIZE},
 };
 
 use super::SyncError;
@@ -57,14 +57,15 @@ pub(crate) async fn storage_fetcher(
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
         while !stale
-            && (pending_storage.len() >= BATCH_SIZE || (!incoming && !pending_storage.is_empty()))
+            && (pending_storage.len() >= STORAGE_BATCH_SIZE
+                || (!incoming && !pending_storage.is_empty()))
         {
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
             for _ in 0..MAX_PARALLEL_FETCHES {
                 let next_batch = pending_storage
-                    .drain(..BATCH_SIZE.min(pending_storage.len()))
+                    .drain(..STORAGE_BATCH_SIZE.min(pending_storage.len()))
                     .collect::<Vec<_>>();
                 storage_tasks.spawn(fetch_storage_batch(
                     next_batch,
@@ -74,7 +75,9 @@ pub(crate) async fn storage_fetcher(
                     storage_trie_rebuilder_sender.clone(),
                 ));
                 // End loop if we don't have enough elements to fill up a batch
-                if pending_storage.is_empty() || (incoming && pending_storage.len() < BATCH_SIZE) {
+                if pending_storage.is_empty()
+                    || (incoming && pending_storage.len() < STORAGE_BATCH_SIZE)
+                {
                     break;
                 }
             }
