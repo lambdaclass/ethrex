@@ -1397,7 +1397,14 @@ impl PrivilegedL2Transaction {
         let nonce = u256_nonce.to_big_endian();
 
         Some(keccak_hash::keccak(
-            [to.as_bytes(), &value, &nonce].concat(),
+            [
+                to.as_bytes(),
+                &value,
+                &nonce,
+                self.recipient.as_bytes(),
+                keccak(&self.data).as_bytes(),
+            ]
+            .concat(),
         ))
     }
 }

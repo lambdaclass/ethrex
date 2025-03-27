@@ -8,17 +8,21 @@ pragma solidity ^0.8.27;
 interface ICommonBridge {
     /// @notice A deposit to L2 has initiated.
     /// @dev Event emitted when a deposit is initiated.
+    /// @param recipient the address that initiated the deposit and will receive the tokens.
     /// @param amount the amount of tokens being deposited.
-    /// @param to the address in L2 to which the tokens will be minted to.
+    /// @param to the address that will be called in the L2.
     /// @param l2MintTxHash the hash of the transaction that will finalize the
     /// deposit in L2. Could be used to track the status of the deposit finalization
     /// on L2. You can use this hash to retrive the tx data.
     /// It is the result of keccak(abi.encode(transaction)).
     /// @param depositId Id used to differentiate deposits with same amount and recipient.
+    /// @param data The calldata of the deposit transaction.
     event DepositInitiated(
         uint256 indexed amount,
         address indexed to,
         uint256 indexed depositId,
+        address recipient,
+        bytes data,
         bytes32 l2MintTxHash
     );
 

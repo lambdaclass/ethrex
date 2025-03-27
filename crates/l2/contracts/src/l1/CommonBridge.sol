@@ -96,11 +96,20 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
                 bytes.concat(
                     bytes20(to),
                     bytes32(msg.value),
-                    bytes32(depositId)
+                    bytes32(depositId),
+                    bytes20(recipient),
+                    bytes32(keccak256(data))
                 )
             )
         );
-        emit DepositInitiated(msg.value, to, depositId, l2MintTxHash);
+        emit DepositInitiated(
+            msg.value,
+            to,
+            depositId,
+            recipient,
+            data,
+            l2MintTxHash
+        );
         depositId += 1;
     }
 
