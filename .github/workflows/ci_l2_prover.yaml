@@ -24,6 +24,10 @@ jobs:
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
+      - name: Install CMake
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
       - name: RISC-V SP1 toolchain install
         run: |
           curl -L https://sp1.succinct.xyz | bash
@@ -44,6 +48,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.82.0
+      - name: Install CMake
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
       # TODO(#1974): Restore these steps once we fix risc0
       # Use cargo-risczero v1.2.0
       # The risc0-zkvm crate should match this version

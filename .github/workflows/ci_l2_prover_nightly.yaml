@@ -31,6 +31,10 @@ jobs:
         with:
           toolchain: nightly-2024-11-27
           components: rust-src, clippy
+      - name: Install CMake
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       # https://pico-docs.brevis.network/getting-started/installation
@@ -51,6 +55,10 @@ jobs:
         with:
           toolchain: nightly-2024-11-27
           components: rust-src
+      - name: Install CMake
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
       # https://pico-docs.brevis.network/getting-started/installation
       - name: Install pico-cli
         run: cargo +nightly install --git https://github.com/brevis-network/pico pico-cli
