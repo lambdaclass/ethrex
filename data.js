@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743093453505,
+  "lastUpdate": 1743110968140,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1615,6 +1615,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 190274384277,
             "range": "± 857475100",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f0cfaa6cae7e11c6fdc02427654b04554127ee36",
+          "message": "refactor(l2): rename proposer config with a more descriptive name (#2341)",
+          "timestamp": "2025-03-27T20:40:24Z",
+          "tree_id": "a91440aed48af0296e4d4a0df95941c29af4c8f0",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f0cfaa6cae7e11c6fdc02427654b04554127ee36"
+        },
+        "date": 1743110966847,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184674546450,
+            "range": "± 1003660756",
             "unit": "ns/iter"
           }
         ]
