@@ -176,6 +176,32 @@ jobs:
       - name: Check for large files
         run: sudo du -ah / | sort -rh | head -n 20
 
+      - name: Cleanup unnecessary components (Android SDK, CodeQL, ghcup)
+        run: |
+          echo "Cleaning up unnecessary components..."
+
+          # Remove Android SDK and related directories
+          sudo rm -rf /usr/local/lib/android/sdk
+          sudo rm -rf /usr/local/lib/android
+          echo "Android SDK removed."
+
+          # Remove CodeQL
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          echo "CodeQL removed."
+
+          # Remove ghcup if not needed
+          sudo rm -rf /usr/local/.ghcup
+          echo "ghcup removed (if not needed)."
+
+          # Optionally check disk usage after cleanup to confirm
+          df -h
+
+      - name: Check disk usage
+        run: df -h
+
+      - name: Check for large files
+        run: sudo du -ah / | sort -rh | head -n 20
+
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
         with:
