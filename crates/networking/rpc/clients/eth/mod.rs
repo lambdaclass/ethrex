@@ -28,7 +28,7 @@ use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{ops::Div, str::FromStr};
-use tracing::warn;
+use tracing::{error, warn};
 
 pub mod errors;
 pub mod eth_sender;
@@ -97,14 +97,28 @@ impl EthClient {
     }
 
     async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EthClientError> {
-        self.client
+        let response = self
+            .client
             .post(&self.url)
             .header("content-type", "application/json")
             .body(serde_json::ser::to_string(&request).map_err(|error| {
                 EthClientError::FailedToSerializeRequestBody(format!("{error}: {request:?}"))
             })?)
             .send()
-            .await?
+            .await?;
+
+        // The reason we are doing this is because the call to `.json()` below can fail,
+        // and when it does the error returned by it is completely generic and useless
+        // (essentially saying something like "error decoding response body"), so for
+        // debugging purposes we log the actual response.
+        if !response.status().is_success() {
+            error!(
+                "Failed to deserialize into an RpcResponse: {:#?}",
+                &response
+            );
+        }
+
+        response
             .json::<RpcResponse>()
             .await
             .map_err(EthClientError::from)
