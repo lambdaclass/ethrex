@@ -28,17 +28,19 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Extra Binaries
-        id: cache-binaries
-        uses: actions/cache@v4
         with:
-          path: |
-            ${{ env.HOME }}/.cargo/bin/addr2line
-            ${{ env.HOME }}/.cargo/bin/flamegraph
-            ${{ env.HOME }}/.cargo/bin/inferno-*
-            ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/state/vectors
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+          toolchain: ${{ env.RUST_VERSION }}
+
+      # - name: Cache Extra Binaries
+      #   id: cache-binaries
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ${{ env.HOME }}/.cargo/bin/addr2line
+      #       ${{ env.HOME }}/.cargo/bin/flamegraph
+      #       ${{ env.HOME }}/.cargo/bin/inferno-*
+      #       ${{ env.HOME }}/ethrex/ethrex/cmd/ef_tests/state/vectors
+      #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
 
       - name: Change perf settings
         run: |
@@ -176,25 +178,25 @@ jobs:
       - name: Set Rust toolchain
         run: rustup override set ${{ env.RUST_VERSION }}
 
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
+      # - name: Caching
+      #   uses: Swatinem/rust-cache@v2
 
-      - name: Cache Extra Binaries
-        id: cache-binaries
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.HOME }}/.cargo/bin/addr2line
-            ${{ env.HOME }}/.cargo/bin/flamegraph
-            ${{ env.HOME }}/.cargo/bin/inferno-*
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+      # - name: Cache Extra Binaries
+      #   id: cache-binaries
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ${{ env.HOME }}/.cargo/bin/addr2line
+      #       ${{ env.HOME }}/.cargo/bin/flamegraph
+      #       ${{ env.HOME }}/.cargo/bin/inferno-*
+      #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
 
-      - name: Cache ethrex_l2
-        id: cache-ethrex-l2
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
+      # - name: Cache ethrex_l2
+      #   id: cache-ethrex-l2
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
+      #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
 
       - name: Change perf settings
         run: |
@@ -309,28 +311,28 @@ jobs:
           path: "reth"
           ref: main
 
-      - name: Caching
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target \
-            ./reth -> ./reth/target"
+      # - name: Caching
+      #   uses: Swatinem/rust-cache@v2
+      #   with:
+      #     workspaces: ". -> target \
+      #       ./reth -> ./reth/target"
 
-      - name: Cache Extra Binaries
-        id: cache-binaries
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.HOME }}/.cargo/bin/addr2line
-            ${{ env.HOME }}/.cargo/bin/flamegraph
-            ${{ env.HOME }}/.cargo/bin/inferno-*
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
+      # - name: Cache Extra Binaries
+      #   id: cache-binaries
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ${{ env.HOME }}/.cargo/bin/addr2line
+      #       ${{ env.HOME }}/.cargo/bin/flamegraph
+      #       ${{ env.HOME }}/.cargo/bin/inferno-*
+      #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-extra-binaries
 
-      - name: Cache ethrex_l2
-        id: cache-ethrex-l2
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
-          key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
+      # - name: Cache ethrex_l2
+      #   id: cache-ethrex-l2
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
+      #     key: ${{ runner.os }}-${{ env.RUST_VERSION }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
 
       - name: Change perf settings
         run: |
