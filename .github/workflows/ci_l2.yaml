@@ -27,12 +27,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Bake docker images
-        uses: docker/bake-action@v2
+        uses: docker/bake-action@v6
         with:
-          files: [crates/l2/docker-compose-l2.yaml]
+          files: ["crates/l2/docker-compose-l2.yaml"]
           load: true
           set: |
             *.cache-to=type=gha,mode=max
