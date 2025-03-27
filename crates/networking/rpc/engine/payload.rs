@@ -115,7 +115,7 @@ impl RpcHandler for NewPayloadV3Request {
             request.parent_beacon_block_root,
         );
 
-        let client_response = Self::call(req, context);
+        let client_response = Self::call(req, context).await;
 
         let gateway_response = gateway_request
             .await
@@ -293,7 +293,7 @@ impl RpcHandler for GetPayloadV3Request {
 
         let gateway_request = gateway_auth_client.engine_get_payload_v3(request.payload_id);
 
-        let client_response = Self::call(req, context);
+        let client_response = Self::call(req, context).await;
 
         let gateway_response = gateway_request
             .await

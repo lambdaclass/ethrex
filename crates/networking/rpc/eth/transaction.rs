@@ -597,7 +597,7 @@ impl RpcHandler for SendRawTransactionRequest {
 
         let gateway_request = gateway_eth_client.send_raw_transaction(&tx_data);
 
-        let client_response = Self::call(req, context);
+        let client_response = Self::call(req, context).await;
 
         let gateway_response = gateway_request
             .await

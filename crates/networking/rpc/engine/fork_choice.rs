@@ -131,7 +131,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
 
         // Parse it again as it was consumed for gateway_response and it is the same as cloning it.
         let request = Self::parse(&req.params)?;
-        let client_response = request.handle(context);
+        let client_response = request.handle(context).await;
 
         let gateway_response = gateway_request
             .await

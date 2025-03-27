@@ -158,7 +158,7 @@ trait RpcHandler: Sized {
         req: &RpcRequest,
         context: RpcApiContext,
     ) -> Result<Value, RpcErr> {
-        Self::call(req, context)
+        Self::call(req, context).await
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
@@ -324,7 +324,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Based) => map_based_requests(req, context),
         Err(rpc_err) => Err(rpc_err),
         #[cfg(feature = "l2")]
-        Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context),
+        Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
     }
 }
 
@@ -382,7 +382,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_sendRawTransaction" => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "based")] {
-                    SendRawTransactionRequest::relay_to_gateway_or_fallback(req, context)
+                    SendRawTransactionRequest::relay_to_gateway_or_fallback(req, context).await
                 } else {
                     SendRawTransactionRequest::call(req, context).await
                 }
@@ -491,7 +491,7 @@ pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 }
 
 #[cfg(feature = "l2")]
-pub fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
         unknown_ethrex_l2_method => {
