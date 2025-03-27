@@ -383,6 +383,7 @@ async fn l2_revert_test() -> Result<(), Box<dyn std::error::Error>> {
         .build_privileged_transaction(
             l1_rich_wallet_address,
             l1_rich_wallet_address,
+            l1_rich_wallet_address,
             Bytes::new(),
             Overrides {
                 value: Some(U256::from(100000000000000000000u128)),

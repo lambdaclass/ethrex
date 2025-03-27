@@ -247,6 +247,7 @@ pub struct PrivilegedL2Transaction {
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    pub recipient: Address,
     pub value: U256,
     pub data: Bytes,
     pub access_list: AccessList,
@@ -562,6 +563,7 @@ impl RLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.gas_limit)
             .encode_field(&self.to)
+            .encode_field(&self.recipient)
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
@@ -673,6 +675,7 @@ impl PayloadRLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.gas_limit)
             .encode_field(&self.to)
+            .encode_field(&self.recipient)
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
@@ -859,8 +862,9 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (max_priority_fee_per_gas, decoder) =
             decoder.decode_field("max_priority_fee_per_gas")?;
         let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let (gas_limit, decoder) = decoder.decode_field::<u64>("gas_limit")?;
         let (to, decoder) = decoder.decode_field("to")?;
+        let (recipient, decoder) = decoder.decode_field("recipient")?;
         let (value, decoder) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
@@ -875,6 +879,7 @@ impl RLPDecode for PrivilegedL2Transaction {
             max_fee_per_gas,
             gas_limit,
             to,
+            recipient,
             value,
             data,
             access_list,
@@ -1374,10 +1379,11 @@ impl TxType {
 }
 
 impl PrivilegedL2Transaction {
-    /// Returns the formated hash of the deposit transaction,
+    /// Returns the formatted hash of the deposit transaction,
     /// or None if the transaction is not a deposit.
     /// The hash is computed as keccak256(to || value || deposit_id == nonce)
     pub fn get_deposit_hash(&self) -> Option<H256> {
+        // Should this function be changed?
         let to = match self.to {
             TxKind::Call(to) => to,
             _ => return None,
@@ -1831,6 +1837,7 @@ mod serde_impl {
             struct_serializer.serialize_field("type", &TxType::Privileged)?;
             struct_serializer.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
             struct_serializer.serialize_field("to", &self.to)?;
+            struct_serializer.serialize_field("recipient", &self.recipient)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
             struct_serializer.serialize_field("value", &self.value)?;
             struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
@@ -2151,6 +2158,7 @@ mod serde_impl {
                 max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
+                recipient: deserialize_field::<Address, D>(&mut map, "recipient")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
@@ -2776,5 +2784,34 @@ mod tests {
         if let Transaction::EIP7702Transaction(tx) = deserialized_tx {
             assert_eq!(tx, eip7702);
         }
+    }
+
+    #[test]
+    fn serialize_deserialize_privileged_l2_transaction() -> Result<(), RLPDecodeError> {
+        let privileged_l2 = PrivilegedL2Transaction {
+            chain_id: 1729,
+            nonce: 0,
+            max_priority_fee_per_gas: 875000000,
+            max_fee_per_gas: 875000000,
+            gas_limit: 42000u64,
+            to: TxKind::Call(
+                Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
+            ),
+            recipient: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
+            value: U256::from(500000000000000000000000000u128),
+            data: Bytes::new(),
+            access_list: vec![],
+            signature_y_parity: false,
+            signature_r: U256::zero(),
+            signature_s: U256::zero(),
+        };
+
+        let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
+        println!("encoded length: {}", encoded.len());
+
+        let deserialized_tx = PrivilegedL2Transaction::decode(&encoded)?;
+
+        assert_eq!(deserialized_tx, privileged_l2);
+        Ok(())
     }
 }
