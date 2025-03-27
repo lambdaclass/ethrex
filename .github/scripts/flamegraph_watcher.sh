@@ -15,7 +15,7 @@ ethrex_l2 test load --path /home/runner/work/ethrex/ethrex/test_data/private_key
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "balance: $output"
 while [[ $output -lt $end_val ]]; do
-    sleep 2
+    sleep 30
     output=$(ethrex_l2 info -b -a $account --wei 2>&1)
     echo "balance: $output"
 done
