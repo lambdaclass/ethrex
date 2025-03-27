@@ -227,7 +227,7 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 ci_test_prover_client: ## 🚧 Runs the L2's prover_client test, used by the github's CI
 	touch .env
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
 	make init-prover 2>&1 &
 	cargo test prover_client --release
 
