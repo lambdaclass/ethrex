@@ -20,8 +20,6 @@ while [[ $output -lt $end_val ]]; do
     echo "balance: $output"
     disk_usage=$(df -h / | awk 'NR==2 {print $5}')
     echo "Disk usage: $disk_usage"
-    echo "Top 10 directories using the most storage:"
-    du -ah / | sort -rh | head -n 10
 done
 end_time=$(date +%s)
 elapsed=$((end_time - start_time))
