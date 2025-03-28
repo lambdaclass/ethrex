@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743176599174,
+  "lastUpdate": 1743181445008,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1795,6 +1795,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 187390215232,
             "range": "± 882029235",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "156438142+fborello-lambda@users.noreply.github.com",
+            "name": "Federico Borello",
+            "username": "fborello-lambda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9a28ac444e5e7f01effbdbf36a9d5dddb9943d8b",
+          "message": "fix(l2): prover_client_config parser (#2348)\n\n**Motivation**\n\nThe previous PR removed the `ProverClientConfig` leaving just the\n`ProverClient` structure. To successfully parse the file, we should\nremove the `prover_client` table header.\n\n**Description**\n\n- Remove header from `prover_client_config_example.toml`",
+          "timestamp": "2025-03-28T16:13:55Z",
+          "tree_id": "da357e2b19a1d3929c363d656f3dadbcd12cfb0a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9a28ac444e5e7f01effbdbf36a9d5dddb9943d8b"
+        },
+        "date": 1743181442687,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 188884940955,
+            "range": "± 818849675",
             "unit": "ns/iter"
           }
         ]
