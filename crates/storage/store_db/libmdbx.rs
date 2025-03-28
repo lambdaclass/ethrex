@@ -2,7 +2,8 @@ use crate::api::StoreEngine;
 use crate::error::StoreError;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
-    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
+    BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP,
+    TriePathsRLP, TupleRLP,
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
@@ -586,14 +587,31 @@ impl StoreEngine for Store {
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.write::<SnapState>(SnapStateIndex::StorageHealPaths, accounts.encode_to_vec())
+        self.write_batch::<StorageHealPaths>(
+            accounts
+                .into_iter()
+                .map(|(hash, paths)| (hash.into(), paths.into())),
+        )
     }
 
-    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StorageHealPaths)?
-            .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
-            .transpose()
-            .map_err(StoreError::RLPDecode)
+    fn get_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
+        // self.read::<SnapState>(SnapStateIndex::StorageHealPaths)?
+        //     .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
+        //     .transpose()
+        //     .map_err(StoreError::RLPDecode)
+        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
+        let cursor = txn
+            .cursor::<StorageHealPaths>()
+            .map_err(StoreError::LibmdbxError)?;
+        let res = cursor
+            .walk(None)
+            .map_while(|res| res.ok().map(|(hash, paths)| (hash.to(), paths.to())))
+            .take(limit)
+            .collect::<Vec<_>>();
+        Ok(res)
     }
 
     fn is_synced(&self) -> Result<bool, StoreError> {
@@ -960,6 +978,7 @@ table!(
     /// Stores blocks that are pending validation.
     ( PendingBlocks ) BlockHashRLP => BlockRLP
 );
+
 table!(
     /// State Snapshot used by an ongoing sync process
     ( StateSnapShot ) AccountHashRLP => AccountStateRLP
@@ -968,6 +987,11 @@ table!(
 dupsort!(
     /// Storage Snapshot used by an ongoing sync process
     ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
+);
+
+table!(
+    /// Storage trie paths in need of healing stored by hashed address
+    ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
 );
 
 // Storage values are stored as bytes instead of using their rlp encoding
@@ -1070,6 +1094,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         table_info!(SnapState),
         table_info!(StateSnapShot),
         table_info!(StorageSnapShot),
+        table_info!(StorageHealPaths),
     ]
     .into_iter()
     .collect();

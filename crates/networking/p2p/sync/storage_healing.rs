@@ -27,11 +27,15 @@ pub(crate) async fn storage_healer(
     peers: PeerHandler,
     store: Store,
 ) -> Result<bool, SyncError> {
-    let mut pending_paths: BTreeMap<H256, Vec<Nibbles>> = store
-        .get_storage_heal_paths()?
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    // Retrieve pending paths
+    let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
+    loop {
+        let paths = store.get_storage_heal_paths(100)?;
+        if paths.is_empty() {
+            break;
+        }
+        pending_paths.extend(paths);
+    }
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;

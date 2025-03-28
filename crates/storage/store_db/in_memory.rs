@@ -471,8 +471,11 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        Ok(self.inner().snap_state.storage_heal_paths.clone())
+    fn get_storage_heal_paths(
+        &self,
+        _limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
+        todo!();
     }
 
     fn clear_snap_state(&self) -> Result<(), StoreError> {
