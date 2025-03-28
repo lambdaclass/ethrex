@@ -24,14 +24,14 @@ struct ProverData {
 
 struct ProverClient {
     prover_server_endpoint: String,
-    interval_ms: u64,
+    proving_time_ms: u64,
 }
 
 impl ProverClient {
     pub fn new(config: ProverClientConfig) -> Self {
         Self {
             prover_server_endpoint: config.prover_server_endpoint,
-            interval_ms: config.interval_ms,
+            proving_time_ms: config.proving_time_ms,
         }
     }
 
@@ -61,11 +61,11 @@ impl ProverClient {
                     };
                 }
                 Err(e) => {
-                    sleep(Duration::from_millis(self.interval_ms)).await;
+                    sleep(Duration::from_millis(self.proving_time_ms)).await;
                     warn!("Failed to request new data: {e}");
                 }
             }
-            sleep(Duration::from_millis(self.interval_ms)).await;
+            sleep(Duration::from_millis(self.proving_time_ms)).await;
         }
     }
 
