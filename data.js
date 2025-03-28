@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743112141227,
+  "lastUpdate": 1743125932115,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1675,6 +1675,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 188848074989,
             "range": "± 1075290354",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d41018978ddb6684452a48e44872e07071175dc1",
+          "message": "refactor(l2): rename prover client config to a more descriptive name (#2345)\n\n- Rename prover client `interval_ms` -> `proving_time_ms`.\n- Remove needless `ProverClientConfig` struct in `toml_parser`.",
+          "timestamp": "2025-03-28T00:49:34Z",
+          "tree_id": "e0c3e409cb121bf4dd608b77a7b788ef32bd83af",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d41018978ddb6684452a48e44872e07071175dc1"
+        },
+        "date": 1743125929502,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184651396277,
+            "range": "± 644941291",
             "unit": "ns/iter"
           }
         ]
