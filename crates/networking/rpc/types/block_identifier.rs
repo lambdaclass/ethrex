@@ -69,11 +69,8 @@ impl BlockIdentifier {
             return Ok(BlockIdentifier::Number(value));
         };
 
-        let block_number_result = if let Some(hex_str_stripped) = hex_str.strip_prefix("0x") {
-            u64::from_str_radix(hex_str_stripped, 16)
-        } else {
-            u64::from_str_radix(&hex_str, 16)
-        };
+        let hex_str = hex_str.strip_prefix("0x").unwrap_or(&hex_str);
+        let block_number_result = u64::from_str_radix(hex_str, 16);
 
         let Ok(block_number) = block_number_result else {
             return Err(RpcErr::BadHexFormat(arg_index));
