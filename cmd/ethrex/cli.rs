@@ -14,8 +14,8 @@ use crate::{
     DEFAULT_DATADIR,
 };
 
-#[cfg(feature = "l2")]
-use secp256k1::SecretKey;
+#[cfg(any(feature = "l2", feature = "based"))]
+use crate::l2;
 
 pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 
@@ -25,12 +25,6 @@ pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 pub struct CLI {
     #[clap(flatten)]
     pub opts: Options,
-    #[cfg(feature = "l2")]
-    #[clap(flatten)]
-    pub l2_opts: L2Options,
-    #[cfg(feature = "based")]
-    #[clap(flatten)]
-    pub based_opts: BasedOptions,
     #[command(subcommand)]
     pub command: Option<Subcommand>,
 }
@@ -192,64 +186,7 @@ impl Default for Options {
     }
 }
 
-#[cfg(feature = "l2")]
-#[derive(ClapParser)]
-pub struct L2Options {
-    #[arg(
-        long = "sponsorable-addresses",
-        value_name = "SPONSORABLE_ADDRESSES_PATH",
-        help = "Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs",
-        help_heading = "L2 options"
-    )]
-    pub sponsorable_addresses_file_path: Option<String>,
-    #[arg(long, value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
-    pub sponsor_private_key: Option<SecretKey>,
-}
-
-#[cfg(feature = "based")]
-#[derive(ClapParser)]
-pub struct BasedOptions {
-    #[arg(
-        long = "gateway.addr",
-        default_value = "0.0.0.0",
-        value_name = "GATEWAY_ADDRESS",
-        env = "GATEWAY_ADDRESS",
-        help_heading = "Based options"
-    )]
-    pub gateway_addr: String,
-    #[arg(
-        long = "gateway.eth_port",
-        default_value = "8546",
-        value_name = "GATEWAY_ETH_PORT",
-        env = "GATEWAY_ETH_PORT",
-        help_heading = "Based options"
-    )]
-    pub gateway_eth_port: String,
-    #[arg(
-        long = "gateway.auth_port",
-        default_value = "8553",
-        value_name = "GATEWAY_AUTH_PORT",
-        env = "GATEWAY_AUTH_PORT",
-        help_heading = "Based options"
-    )]
-    pub gateway_auth_port: String,
-    #[arg(
-        long = "gateway.jwtsecret",
-        default_value = "jwt.hex",
-        value_name = "GATEWAY_JWTSECRET_PATH",
-        env = "GATEWAY_JWTSECRET_PATH",
-        help_heading = "Based options"
-    )]
-    pub gateway_jwtsecret: String,
-    #[arg(
-        long = "gateway.pubkey",
-        value_name = "GATEWAY_PUBKEY",
-        env = "GATEWAY_PUBKEY",
-        help_heading = "Based options"
-    )]
-    pub gateway_pubkey: String,
-}
-
+#[allow(clippy::large_enum_variant)]
 #[derive(ClapSubcommand)]
 pub enum Subcommand {
     #[clap(name = "removedb", about = "Remove the database")]
@@ -268,29 +205,27 @@ pub enum Subcommand {
         #[clap(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
+    #[cfg(any(feature = "l2", feature = "based"))]
+    #[clap(subcommand)]
+    L2(l2::Command),
 }
 
 impl Subcommand {
-    pub fn run(self, opts: &Options) -> eyre::Result<()> {
+    pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         match self {
             Subcommand::RemoveDB { datadir } => {
-                let data_dir = set_datadir(&datadir);
-
-                let path = Path::new(&data_dir);
-
-                if path.exists() {
-                    std::fs::remove_dir_all(path).expect("Failed to remove data directory");
-                    info!("Successfully removed database at {data_dir}");
-                } else {
-                    warn!("Data directory does not exist: {data_dir}");
-                }
+                remove_db(&datadir);
             }
             Subcommand::Import { path, removedb } => {
                 if removedb {
-                    Self::RemoveDB {
-                        datadir: opts.datadir.clone(),
-                    }
-                    .run(opts)?;
+                    Box::pin(async {
+                        Self::RemoveDB {
+                            datadir: opts.datadir.clone(),
+                        }
+                        .run(opts)
+                        .await
+                    })
+                    .await?;
                 }
 
                 let network = opts
@@ -298,32 +233,51 @@ impl Subcommand {
                     .as_ref()
                     .expect("--network is required and it was not provided");
 
-                let data_dir = set_datadir(&opts.datadir);
-
-                let store = init_store(&data_dir, network);
-
-                let blockchain = init_blockchain(opts.evm, store);
-
-                let path_metadata = metadata(&path).expect("Failed to read path");
-                let blocks = if path_metadata.is_dir() {
-                    let mut blocks = vec![];
-                    let dir_reader = read_dir(&path).expect("Failed to read blocks directory");
-                    for file_res in dir_reader {
-                        let file = file_res.expect("Failed to open file in directory");
-                        let path = file.path();
-                        let s = path
-                            .to_str()
-                            .expect("Path could not be converted into string");
-                        blocks.push(utils::read_block_file(s));
-                    }
-                    blocks
-                } else {
-                    info!("Importing blocks from chain file: {path}");
-                    utils::read_chain_file(&path)
-                };
-                blockchain.import_blocks(&blocks);
+                import_blocks(&path, &opts.datadir, network, opts.evm);
             }
+            #[cfg(any(feature = "l2", feature = "based"))]
+            Subcommand::L2(command) => command.run().await?,
         }
         Ok(())
     }
+}
+
+pub fn remove_db(datadir: &str) {
+    let data_dir = set_datadir(datadir);
+
+    let path = Path::new(&data_dir);
+
+    if path.exists() {
+        std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+        info!("Successfully removed database at {data_dir}");
+    } else {
+        warn!("Data directory does not exist: {data_dir}");
+    }
+}
+
+pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
+    let data_dir = set_datadir(data_dir);
+
+    let store = init_store(&data_dir, network);
+
+    let blockchain = init_blockchain(evm, store);
+
+    let path_metadata = metadata(path).expect("Failed to read path");
+    let blocks = if path_metadata.is_dir() {
+        let mut blocks = vec![];
+        let dir_reader = read_dir(path).expect("Failed to read blocks directory");
+        for file_res in dir_reader {
+            let file = file_res.expect("Failed to open file in directory");
+            let path = file.path();
+            let s = path
+                .to_str()
+                .expect("Path could not be converted into string");
+            blocks.push(utils::read_block_file(s));
+        }
+        blocks
+    } else {
+        info!("Importing blocks from chain file: {path}");
+        utils::read_chain_file(path)
+    };
+    blockchain.import_blocks(&blocks);
 }
