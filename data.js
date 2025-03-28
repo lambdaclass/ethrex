@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743199852523,
+  "lastUpdate": 1743199879498,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1855,6 +1855,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182531092599,
             "range": "± 956807821",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7cd2ddc67c483fad5bb6de52b4c81a0986118228",
+          "message": "feat(l1): add separate queue for large storages during snap sync (#2256)\n\n**Motivation**\nCurrently, large storage tries are handled by the same process that\nhandles smaller storage tries, which can cause the fetcher to stall when\nencountering large storages. This PR aims to fix this by delegating the\nfetching of large storages to a separate queue process\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add a new fetcher process for large storages with its own queue. (One\nwill be spawned for each storage fetcher\n* Delegate fetching of large storages to the large storage fetcher\n* Allow the rebuilder to skip root validations for partial storage tries\nwhen the pivot becomes stale during a large storage trie fetch\n* Other: unify all SendError into one generic mapping for SyncError\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #1965\n\n---------\n\nCo-authored-by: ElFantasma <estebandh@gmail.com>",
+          "timestamp": "2025-03-28T21:21:19Z",
+          "tree_id": "13e2d1f16201031cc00b2951e185542735ad341d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7cd2ddc67c483fad5bb6de52b4c81a0986118228"
+        },
+        "date": 1743199877296,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186577284621,
+            "range": "± 700543628",
             "unit": "ns/iter"
           }
         ]
