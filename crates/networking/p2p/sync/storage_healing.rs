@@ -71,11 +71,15 @@ pub(crate) async fn storage_healer(
     peers: PeerHandler,
     store: Store,
 ) -> Result<bool, SyncError> {
-    let mut pending_paths: BTreeMap<H256, Vec<Nibbles>> = store
-        .get_storage_heal_paths()?
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    // Retrieve pending paths
+    let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
+    loop {
+        let paths = store.get_storage_heal_paths(100)?;
+        if paths.is_empty() {
+            break;
+        }
+        pending_paths.extend(paths);
+    }
     let mut time_since_info = Instant::now();
     info!(
         "Spawned Storage Healer, backlog: {} storage paths",
@@ -163,7 +167,9 @@ pub(crate) async fn storage_healer(
         pending_paths.len()
     );
     info!("Setting storage heal paths");
-    store.set_storage_heal_paths(pending_paths.into_iter().collect()).unwrap();
+    store
+        .set_storage_heal_paths(pending_paths.into_iter().collect())
+        .unwrap();
     info!("Set storage heal paths complete");
     Ok(healing_complete)
 }
