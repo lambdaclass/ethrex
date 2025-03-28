@@ -8,11 +8,11 @@
 //! This method is called while fetching a storage batch and can stall the fetching of other smaller storages.
 //! Large storage handling could be moved to its own separate queue process so that it runs parallel to regular storage fetching
 
-use std::time::Instant;
+use std::{cmp::min, time::Instant};
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
-use std::cmp::min;
+use ethrex_trie::Nibbles;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{debug, info};
 
@@ -60,7 +60,6 @@ pub(crate) async fn storage_fetcher(
     store: Store,
     state_root: H256,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(), SyncError> {
     // Spawn large storage fetcher
     let (large_storage_sender, large_storage_receiver) =
@@ -71,7 +70,6 @@ pub(crate) async fn storage_fetcher(
         store.clone(),
         state_root,
         storage_trie_rebuilder_sender.clone(),
-        storage_healer_sender.clone(),
     ));
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
@@ -152,9 +150,7 @@ pub(crate) async fn storage_fetcher(
         pending_storage.len()
     );
     if !pending_storage.is_empty() {
-        storage_healer_sender
-            .send(pending_storage.into_iter().map(|(hash, _)| hash).collect())
-            .await?;
+        store.set_storage_heal_paths(pending_storage.into_iter().map(|(hash, _)| (hash, vec![Nibbles::default()])).collect())?;
     }
     // Signal large storage fetcher
     large_storage_sender.send(vec![]).await?;
@@ -238,7 +234,6 @@ pub(crate) async fn large_storage_fetcher(
     store: Store,
     state_root: H256,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(), SyncError> {
     // Pending list of storages to fetch
     // (account_hash, storage_root, last_key)
@@ -309,7 +304,7 @@ pub(crate) async fn large_storage_fetcher(
             .iter()
             .map(|hash| (*hash, REBUILDER_INCOMPLETE_STORAGE_ROOT))
             .collect();
-        storage_healer_sender.send(account_hashes).await?;
+        store.set_storage_heal_paths(account_hashes.into_iter().map(|hash| (hash, vec![Nibbles::default()])).collect())?;
         storage_trie_rebuilder_sender
             .send(account_hashes_and_roots)
             .await?;

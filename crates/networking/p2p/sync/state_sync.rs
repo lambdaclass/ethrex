@@ -77,7 +77,6 @@ pub(crate) async fn state_sync(
     peers: PeerHandler,
     key_checkpoints: Option<[H256; STATE_TRIE_SEGMENTS]>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<bool, SyncError> {
     // Spawn tasks to fetch each state trie segment
     let mut state_trie_tasks = tokio::task::JoinSet::new();
@@ -94,7 +93,6 @@ pub(crate) async fn state_sync(
             key_checkpoints.map(|chs| chs[i]),
             state_sync_progress.clone(),
             storage_trie_rebuilder_sender.clone(),
-            storage_healer_sender.clone(),
         ));
     }
     show_progress_handle.await?;
@@ -127,7 +125,6 @@ async fn state_sync_segment(
     checkpoint: Option<H256>,
     state_sync_progress: StateSyncProgress,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(usize, bool, H256), SyncError> {
     info!("[Segment {segment_number}] Stored checkpoint: {checkpoint:?}");
     info!("[Segment {segment_number}] end hash: {}", STATE_TRIE_SEGMENTS_END[segment_number]);
@@ -163,7 +160,6 @@ async fn state_sync_segment(
         store.clone(),
         state_root,
         storage_trie_rebuilder_sender.clone(),
-        storage_healer_sender.clone(),
     ));
     info!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
     // Fetch Account Ranges

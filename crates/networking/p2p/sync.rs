@@ -498,11 +498,8 @@ impl SyncManager {
             ));
         };
         // Spawn storage healer earlier so we can start healing stale storages
-        let (storage_healer_sender, storage_healer_receiver) =
-            mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
         let storage_healer_handler = tokio::spawn(storage_healer(
             state_root,
-            storage_healer_receiver,
             self.peers.clone(),
             store.clone(),
         ));
@@ -527,14 +524,12 @@ impl SyncManager {
                     .unwrap()
                     .storage_rebuilder_sender
                     .clone(),
-                storage_healer_sender.clone(),
             )
             .await?;
             if stale_pivot {
                 warn!("Stale Pivot, aborting state sync");
                 // Send empty batch to signal that no more batches are incoming
-                info!("Signaling storage healer to go die :)");
-                storage_healer_sender.send(vec![]).await?;
+                info!("Waiting for storage healer to end");
                 storage_healer_handler.await??;
                 return Ok(false);
             }
@@ -554,12 +549,10 @@ impl SyncManager {
         let state_heal_complete = heal_state_trie(
             state_root,
             store.clone(),
-            self.peers.clone(),
-            storage_healer_sender.clone(),
+            self.peers.clone()
         )
         .await?;
-        // Send empty batch to signal that no more batches are incoming
-        storage_healer_sender.send(vec![]).await?;
+        // Wait for storage healer to end
         let storage_heal_complete = storage_healer_handler.await??;
         if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");
