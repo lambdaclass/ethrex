@@ -5,7 +5,7 @@ use super::errors::ConfigError;
 #[derive(Deserialize, Debug)]
 pub struct ProverClientConfig {
     pub prover_server_endpoint: String,
-    pub interval_ms: u64,
+    pub proving_time_ms: u64,
 }
 
 impl ProverClientConfig {
