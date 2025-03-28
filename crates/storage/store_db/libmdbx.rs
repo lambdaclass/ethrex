@@ -599,14 +599,6 @@ impl StoreEngine for Store {
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
         // (QuickFix) Move storage heal paths to their own table
-        tracing::info!("Moving storages from snap state to own table");
-        if let Some(storage_heal_paths) = self.read::<SnapState>(SnapStateIndex::StorageHealPaths)?
-            .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
-            .transpose()
-            .map_err(StoreError::RLPDecode)? {
-            self.set_storage_heal_paths(storage_heal_paths)?;
-        };
-        tracing::info!("Moved storages from snap state to own table");
         tracing::info!("Fetching state heal paths");
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let cursor = txn
