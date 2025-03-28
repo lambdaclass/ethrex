@@ -234,6 +234,19 @@ impl L2Config {
     }
 }
 
+#[derive(Deserialize, Debug)]
+struct ProverClientConfig {
+    prover_client: ProverClient,
+}
+
+impl ProverClientConfig {
+    fn to_env(&self) -> String {
+        let mut env_representation = String::new();
+        env_representation.push_str(&self.prover_client.to_env());
+        env_representation
+    }
+}
+
 fn write_to_env(config: String, mode: ConfigMode) -> Result<(), TomlParserError> {
     let env_file_path = mode.get_env_path_or_default();
     let env_file = OpenOptions::new()
