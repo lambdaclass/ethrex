@@ -100,4 +100,18 @@ impl TrieState {
         }
         Ok(())
     }
+
+    /// Writes a node batch directly to the DB bypassing the cache
+    pub fn write_node_batch(&mut self, nodes: &[Node]) -> Result<(), TrieError> {
+        // Don't insert the node if it is already inlined on the parent
+        let key_values = nodes
+            .iter()
+            .filter_map(|node| {
+                let hash = node.compute_hash();
+                matches!(hash, NodeHash::Hashed(_)).then(|| (hash.into(), node.encode_to_vec()))
+            })
+            .collect();
+        self.db.put_batch(key_values)?;
+        Ok(())
+    }
 }
