@@ -205,7 +205,7 @@ fn check_state_diff_size(
     context: &mut PayloadBuildContext,
     accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
 ) -> Result<bool, BlockProducerError> {
-    if is_withdrawal_l2(&tx, receipt) {
+    if is_withdrawal_l2(&tx, receipt)? {
         *acc_withdrawals_size += L2_WITHDRAWAL_SIZE;
     }
     if is_deposit_l2(&tx) {
@@ -217,7 +217,7 @@ fn check_state_diff_size(
 
     if current_state_diff_size > SAFE_BYTES_PER_BLOB {
         // Restore the withdrawals and deposits counters.
-        if is_withdrawal_l2(&tx, receipt) {
+        if is_withdrawal_l2(&tx, receipt)? {
             *acc_withdrawals_size -= L2_WITHDRAWAL_SIZE;
         }
         if is_deposit_l2(&tx) {

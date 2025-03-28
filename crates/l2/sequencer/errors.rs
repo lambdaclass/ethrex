@@ -1,4 +1,5 @@
 use crate::utils::config::errors::ConfigError;
+use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
@@ -87,6 +88,8 @@ pub enum BlockProducerError {
     TryIntoError(#[from] std::num::TryFromIntError),
     #[error("{0}")]
     Custom(String),
+    #[error("Failed to parse withdrawal: {0}")]
+    FailedToParseWithdrawal(#[from] UtilsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -127,6 +130,8 @@ pub enum CommitterError {
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
+    #[error("Failed to get withdrawals: {0}")]
+    FailedToGetWithdrawals(#[from] UtilsError),
 }
 
 #[derive(Debug, thiserror::Error)]
