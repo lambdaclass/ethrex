@@ -75,9 +75,13 @@ impl LEVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for tx in block.body.transactions.iter() {
+        for (tx, tx_sender) in block.body.get_transactions_with_sender() {
             let report = Self::execute_tx(
                 tx,
+<<<<<<< HEAD
+=======
+                tx_sender,
+>>>>>>> main
                 &block.header,
                 db.clone(),
                 block_cache.clone(),
@@ -155,6 +159,8 @@ impl LEVM {
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
+        // The transactions recovered address
+        tx_sender: Address,
         // The block header for the current block.
         block_header: &BlockHeader,
         // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
@@ -171,7 +177,7 @@ impl LEVM {
 
         let config = EVMConfig::new_from_chain_config(chain_config, block_header);
         let env = Environment {
-            origin: tx.sender(),
+            origin: tx_sender,
             refunded_gas: 0,
             gas_limit: tx.gas_limit(),
             config,
