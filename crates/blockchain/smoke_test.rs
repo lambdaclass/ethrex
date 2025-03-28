@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod blockchain_integration_test {
     use std::{fs::File, io::BufReader};
-    use tokio;
 
     use crate::{
         error::{ChainError, InvalidForkChoice},
