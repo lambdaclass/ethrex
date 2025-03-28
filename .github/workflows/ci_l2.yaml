@@ -61,9 +61,8 @@ jobs:
       - name: Run L2 integration test
         run: |
           cd crates/l2
-          cp configs/config_docker_example.toml configs/config.toml
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
+          cp configs/sequencer_config_docker_example.toml configs/sequencer_config.toml
 
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach
