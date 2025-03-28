@@ -1,5 +1,5 @@
-// This code is originally from https://github.com/citahub/cita_trie/ and
-// modified to suit our needs, and to have a baseline to benchmark our own
+// This code is originally from https://github.com/citahub/cita_trie/ (commit: 9a8659f9f40feb3b89868f3964cdfb250f23a1c4),
+// licensed under Apache-2. Modified to suit our needs, and to have a baseline to benchmark our own
 // trie implementation against an existing one.
 
 use std::sync::Arc;
