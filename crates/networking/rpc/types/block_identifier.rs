@@ -64,15 +64,18 @@ impl BlockIdentifier {
             Ok(hex_str) => hex_str,
             Err(error) => return Err(RpcErr::BadParams(error.to_string())),
         };
-        // Check that the BlockNumber is 0x prefixed
-        let Some(hex_str) = hex_str.strip_prefix("0x") else {
+
+        if let Ok(value) = hex_str.parse::<u64>() {
+            return Ok(BlockIdentifier::Number(value));
+        };
+
+        let hex_str = hex_str.strip_prefix("0x").unwrap_or(&hex_str);
+        let block_number_result = u64::from_str_radix(hex_str, 16);
+
+        let Ok(block_number) = block_number_result else {
             return Err(RpcErr::BadHexFormat(arg_index));
         };
 
-        // Parse hex string
-        let Ok(block_number) = u64::from_str_radix(hex_str, 16) else {
-            return Err(RpcErr::BadHexFormat(arg_index));
-        };
         Ok(BlockIdentifier::Number(block_number))
     }
 
