@@ -30,7 +30,11 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 #[cfg(feature = "l2")]
 use crate::cli::L2Options;
 #[cfg(feature = "l2")]
-use ::{ethrex_common::Address, ethrex_l2::utils::config::read_env_file, secp256k1::SecretKey};
+use ::{
+    ethrex_common::Address,
+    ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
+    secp256k1::SecretKey,
+};
 
 #[cfg(feature = "based")]
 use crate::cli::BasedOptions;
@@ -52,10 +56,8 @@ pub fn init_tracing(opts: &Options) {
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
-    if let Some(port) = &opts.metrics_port {
-        let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(port.clone());
-        tracker.spawn(metrics_api);
-    }
+    let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(opts.metrics_port.clone());
+    tracker.spawn(metrics_api);
 }
 
 pub fn init_store(data_dir: &str, network: &str) -> Store {
@@ -378,7 +380,7 @@ pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
 
     warn!("Sponsor private key not provided. Trying to read from the .env file.");
 
-    if let Err(e) = read_env_file() {
+    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
         panic!("Failed to read .env file: {e}");
     }
     let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();

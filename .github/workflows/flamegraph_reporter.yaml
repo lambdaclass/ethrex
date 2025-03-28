@@ -12,7 +12,6 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_VERSION: 1.85.0
   RUST_RETH_VERSION: 1.85.0
 
 jobs:
@@ -189,8 +188,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Set Rust toolchain
         run: rustup override set ${{ env.RUST_VERSION }}
