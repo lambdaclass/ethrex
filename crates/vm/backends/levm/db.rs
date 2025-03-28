@@ -1,3 +1,4 @@
+use ethrex_common::types::AccountInfo;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
@@ -46,6 +47,24 @@ impl LevmDatabase for StoreWrapper {
 
         a.map(|a| CoreH256::from(a.compute_block_hash().0))
     }
+
+    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+        self.store.get_chain_config().unwrap()
+    }
+
+    fn get_account_info_by_hash(
+        &self,
+        block_hash: ethrex_common::types::BlockHash,
+        address: CoreAddress,
+    ) -> Option<AccountInfo> {
+        self.store
+            .get_account_info_by_hash(block_hash, address)
+            .unwrap()
+    }
+
+    fn get_account_code(&self, code_hash: CoreH256) -> Option<bytes::Bytes> {
+        self.store.get_account_code(code_hash).unwrap()
+    }
 }
 
 impl LevmDatabase for ExecutionDB {
@@ -74,5 +93,21 @@ impl LevmDatabase for ExecutionDB {
             return CoreU256::default();
         };
         *storage.get(&key).unwrap_or(&CoreU256::default())
+    }
+
+    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+        self.get_chain_config()
+    }
+
+    fn get_account_info_by_hash(
+        &self,
+        _block_hash: ethrex_common::types::BlockHash,
+        _address: CoreAddress,
+    ) -> Option<ethrex_common::types::AccountInfo> {
+        unreachable!()
+    }
+
+    fn get_account_code(&self, _code_hash: CoreH256) -> Option<bytes::Bytes> {
+        unreachable!()
     }
 }

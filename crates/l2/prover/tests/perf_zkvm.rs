@@ -4,7 +4,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Block;
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{backends::revm::execution_db::ToExecDB, StoreWrapper};
+use ethrex_vm::{StoreWrapper, ToExecDB};
 use std::path::Path;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
