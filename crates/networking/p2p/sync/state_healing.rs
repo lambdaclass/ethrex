@@ -105,7 +105,7 @@ async fn heal_state_batch(
         .request_state_trienodes(state_root, batch.clone())
         .await
     {
-        debug!("Received {} state nodes", nodes.len());
+        info!("Received {} state nodes", nodes.len());
         let mut hashed_addresses = vec![];
         let mut code_hashes = vec![];
         // For each fetched node:
