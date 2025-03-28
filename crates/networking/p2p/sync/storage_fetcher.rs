@@ -103,7 +103,7 @@ pub(crate) async fn storage_fetcher(
 async fn fetch_storage_batch(
     mut batch: Vec<(H256, H256)>,
     state_root: H256,
-    peers: PeerHandler,
+    mut peers: PeerHandler,
     store: Store,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Vec<(H256, H256)>, bool), SyncError> {
