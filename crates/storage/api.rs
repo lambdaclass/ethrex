@@ -4,12 +4,19 @@ use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
-use std::{fmt::Debug, panic::RefUnwindSafe};
+use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
+    /// Add a batch of blocks in a single transaction.
+    /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
+    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError>;
+
+    /// Sets the blocks as part of the canonical chain
+    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError>;
+
     /// Add block header
     fn add_block_header(
         &self,
@@ -93,9 +100,15 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         receipt: Receipt,
     ) -> Result<(), StoreError>;
 
-    /// Add receipt
+    /// Add receipts
     fn add_receipts(&self, block_hash: BlockHash, receipts: Vec<Receipt>)
         -> Result<(), StoreError>;
+
+    /// Adds receipts for a batch of blocks
+    fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError>;
 
     /// Obtain receipt for a canonical block represented by the block number.
     fn get_receipt(

@@ -1,5 +1,3 @@
-use std::sync::mpsc::SendError;
-
 use crate::utils::config::errors::ConfigError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
@@ -9,6 +7,7 @@ use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::EngineClientError;
 use ethrex_storage::error::StoreError;
+use ethrex_trie::TrieError;
 use ethrex_vm::EvmError;
 use tokio::task::JoinError;
 
@@ -42,8 +41,6 @@ pub enum ProverServerError {
     StorageDataIsNone,
     #[error("ProverServer failed to create ProverInputs: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
-    #[error("ProverServer SigIntError: {0}")]
-    SigIntError(#[from] SigIntError),
     #[error("ProverServer JoinError: {0}")]
     JoinError(#[from] JoinError),
     #[error("ProverServer failed: {0}")]
@@ -56,18 +53,10 @@ pub enum ProverServerError {
     SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum SigIntError {
-    #[error("SigInt sigint.recv() failed")]
-    Recv,
-    #[error("SigInt tx.send(()) failed: {0}")]
-    Send(#[from] SendError<()>),
-    #[error("SigInt shutdown(Shutdown::Both) failed: {0}")]
-    Shutdown(#[from] std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -168,6 +157,8 @@ pub enum StateDiffError {
     EmptyAccountDiff,
     #[error("The length of the vector is too big to fit in u16: {0}")]
     LengthTooBig(#[from] core::num::TryFromIntError),
+    #[error("DB Error: {0}")]
+    DbError(#[from] TrieError),
 }
 
 #[derive(Debug, thiserror::Error)]

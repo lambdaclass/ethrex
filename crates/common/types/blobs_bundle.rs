@@ -19,7 +19,7 @@ use ethrex_rlp::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::BYTES_PER_BLOB;
+use super::{BYTES_PER_BLOB, SAFE_BYTES_PER_BLOB};
 
 pub type Bytes48 = [u8; 48];
 pub type Blob = [u8; BYTES_PER_BLOB];
@@ -47,7 +47,7 @@ pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
     // This functions moved from `l2/utils/eth_client/transaction.rs`
     // We set the first byte of every 32-bytes chunk to 0x00
     // so it's always under the field module.
-    if bytes.len() > BYTES_PER_BLOB * 31 / 32 {
+    if bytes.len() > SAFE_BYTES_PER_BLOB {
         return Err(BlobsBundleError::BlobDataInvalidBytesLength);
     }
 
@@ -61,6 +61,19 @@ pub fn blob_from_bytes(bytes: Bytes) -> Result<Blob, BlobsBundleError> {
     );
 
     Ok(buf)
+}
+
+pub fn bytes_from_blob(blob: Bytes) -> [u8; SAFE_BYTES_PER_BLOB] {
+    let mut buf = [0u8; SAFE_BYTES_PER_BLOB];
+    buf.copy_from_slice(
+        &blob
+            .chunks(32)
+            .map(|x| x[1..].to_vec())
+            .collect::<Vec<_>>()
+            .concat(),
+    );
+
+    buf
 }
 
 fn kzg_commitment_to_versioned_hash(data: &Commitment) -> H256 {

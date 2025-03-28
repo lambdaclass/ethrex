@@ -1,4 +1,5 @@
-use crate::sequencer::errors::{ProverServerError, SigIntError};
+use crate::sequencer::errors::ProverServerError;
+use crate::sequencer::utils::sleep_random;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -12,34 +13,34 @@ use crate::utils::{
 };
 use ethrex_common::{
     types::{Block, BlockHeader},
-    Address, H256, U256,
+    Address, H160, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
-use ethrex_vm::{
-    backends::revm::execution_db::{ExecutionDB, ToExecDB},
-    db::StoreWrapper,
-    EvmError,
-};
+use ethrex_vm::backends::revm::execution_db::ToExecDB;
+use ethrex_vm::{EvmError, ExecutionDB, StoreWrapper};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::Debug,
-    net::IpAddr,
-    sync::mpsc::{self, Receiver},
-    time::Duration,
-};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use std::{fmt::Debug, net::IpAddr, time::Duration};
 use tokio::{
-    signal::unix::{signal, SignalKind},
-    time::sleep,
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::TryAcquireError,
 };
 use tracing::{debug, error, info, warn};
 
+// These constants have to match with the OnChainProposer.sol contract
+const R0VERIFIER: &str = "R0VERIFIER()";
+const SP1VERIFIER: &str = "SP1VERIFIER()";
+const PICOVERIFIER: &str = "PICOVERIFIER()";
+const VERIFIER_CONTRACTS: [&str; 3] = [R0VERIFIER, SP1VERIFIER, PICOVERIFIER];
+const DEV_MODE_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0xAA,
+]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verify(uint256,bytes,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -58,6 +59,7 @@ struct ProverServer {
     verifier_address: Address,
     verifier_private_key: SecretKey,
     dev_interval_ms: u64,
+    needed_proof_types: Vec<ProverType>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -123,7 +125,7 @@ pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
     let proposer_config = CommitterConfig::from_env()?;
     let mut prover_server =
         ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
-            .await;
+            .await?;
     prover_server.run(&server_config).await;
     Ok(())
 }
@@ -134,11 +136,42 @@ impl ProverServer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
-    ) -> Self {
+    ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
-        Self {
+        let verifier_contracts = EthClient::get_verifier_contracts(
+            &eth_client,
+            &VERIFIER_CONTRACTS,
+            on_chain_proposer_address,
+        )
+        .await?;
+
+        let mut needed_proof_types = vec![];
+
+        for (key, addr) in verifier_contracts {
+            if addr == DEV_MODE_ADDRESS {
+                continue;
+            } else {
+                match key.as_str() {
+                    R0VERIFIER => {
+                        info!("RISC0 proof needed");
+                        needed_proof_types.push(ProverType::RISC0);
+                    }
+                    SP1VERIFIER => {
+                        info!("SP1 proof needed");
+                        needed_proof_types.push(ProverType::SP1);
+                    }
+                    PICOVERIFIER => {
+                        info!("PICO proof needed");
+                        needed_proof_types.push(ProverType::Pico);
+                    }
+                    _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
+                }
+            }
+        }
+
+        Ok(Self {
             ip: config.listen_ip,
             port: config.listen_port,
             store,
@@ -146,8 +179,10 @@ impl ProverServer {
             on_chain_proposer_address,
             verifier_address: config.verifier_address,
             verifier_private_key: config.verifier_private_key,
+            needed_proof_types,
+
             dev_interval_ms: config.dev_interval_ms,
-        }
+        })
     }
 
     pub async fn run(&mut self, server_config: &ProverServerConfig) {
@@ -155,13 +190,13 @@ impl ProverServer {
             let result = if server_config.dev_mode {
                 self.main_logic_dev().await
             } else {
-                self.clone().main_logic(server_config).await
+                self.clone().main_logic().await
             };
 
             match result {
-                Ok(_) => {
+                Ok(()) => {
                     if !server_config.dev_mode {
-                        warn!("Prover Server shutting down");
+                        info!("Prover Server shutting down");
                         break;
                     }
                 }
@@ -175,72 +210,77 @@ impl ProverServer {
                 }
             }
 
-            sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
     }
 
-    async fn main_logic(
-        mut self,
-        server_config: &ProverServerConfig,
-    ) -> Result<(), ProverServerError> {
-        let (tx, rx) = mpsc::channel();
+    async fn main_logic(self) -> Result<(), ProverServerError> {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        tokio::task::spawn(async move {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                error!("Error handling ctrl_c: {e}");
+            };
+            if let Err(e) = shutdown_tx.send(0) {
+                error!("Error sending shutdown message through the oneshot::channel {e}");
+            };
+        });
 
-        // It should never exit the start() fn, handling errors inside the for loop of the function.
-        let server_handle = tokio::spawn(async move { self.start(rx).await });
-
-        ProverServer::handle_sigint(tx, server_config).await?;
-
-        match server_handle.await {
-            Ok(result) => match result {
-                Ok(_) => (),
-                Err(e) => return Err(e),
-            },
-            Err(e) => return Err(e.into()),
-        };
-
-        Ok(())
-    }
-
-    async fn handle_sigint(
-        tx: mpsc::Sender<()>,
-        config: &ProverServerConfig,
-    ) -> Result<(), ProverServerError> {
-        let mut sigint = signal(SignalKind::interrupt())?;
-        sigint.recv().await.ok_or(SigIntError::Recv)?;
-        tx.send(()).map_err(SigIntError::Send)?;
-        TcpStream::connect(format!("{}:{}", config.listen_ip, config.listen_port))
-            .await?
-            .shutdown()
-            .await
-            .map_err(SigIntError::Shutdown)?;
-
-        Ok(())
-    }
-
-    pub async fn start(&mut self, rx: Receiver<()>) -> Result<(), ProverServerError> {
         let listener = TcpListener::bind(format!("{}:{}", self.ip, self.port)).await?;
 
-        info!("Starting TCP server at {}:{}", self.ip, self.port);
+        let concurent_clients = 3;
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurent_clients));
+        info!(
+            "Starting TCP server at {}:{} accepting {concurent_clients} concurrent clients.",
+            self.ip, self.port
+        );
 
         loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    debug!("Connection established!");
-
-                    if let Ok(()) = rx.try_recv() {
-                        info!("Shutting down Prover Server");
-                        break;
-                    }
-
-                    if let Err(e) = self.handle_connection(stream).await {
-                        error!("Error handling connection: {}", e);
-                    }
+            tokio::select! {
+                _ = &mut shutdown_rx => {
+                    debug!("Shutting down...");
+                    // It will return from the main_logic() with an `Ok(())`
+                    // And inside the run() function the loop will break
+                    // and the prover_server task will finish gracefully.
+                    break;
                 }
-                Err(e) => {
-                    error!("Failed to accept connection: {}", e);
+                res = listener.accept() => {
+                    match res {
+                        Ok((stream, addr)) => {
+
+                            match sem.clone().try_acquire_owned(){
+                                Ok(permit) => {
+                                    // Cloning the ProverServer structure to use the handle_connection() fn
+                                    // in every spawned task.
+                                    // The important fields are `Store` and `EthClient`
+                                    // Both fields are wrapped with an Arc, making it possible to clone
+                                    // the entire structure.
+                                    let mut self_clone = self.clone();
+                                    tokio::task::spawn(async move {
+                                        if let Err(e) = self_clone.handle_connection(stream).await {
+                                            error!("Error handling connection from {addr}: {e}");
+                                        } else {
+                                            debug!("Connection from {addr} handled successfully");
+                                        }
+                                        drop(permit);
+                                    });
+                                },
+                                Err(e) => {
+                                    match e {
+                                        TryAcquireError::Closed => error!("Fatal error the semaphore has been closed: {e}"),
+                                        TryAcquireError::NoPermits => warn!("Connection limit reached. Closing connection from {addr}."),
+                                    }
+                                }
+                            }
+
+                        }
+                        Err(e) => {
+                            error!("Failed to accept connection: {e}");
+                        }
+                    }
                 }
             }
         }
+
         Ok(())
     }
 
@@ -257,24 +297,38 @@ impl ProverServer {
         let mut tx_submitted = false;
 
         // If we have all the proofs send a transaction to verify them on chain
-
-        let send_tx = match block_number_has_all_proofs(block_to_verify) {
-            Ok(has_all_proofs) => has_all_proofs,
-            Err(e) => {
-                if let SaveStateError::IOError(ref error) = e {
-                    if error.kind() != std::io::ErrorKind::NotFound {
+        let send_tx =
+            match block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types) {
+                Ok(has_all_proofs) => has_all_proofs,
+                Err(e) => {
+                    if let SaveStateError::IOError(ref error) = e {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            return Err(e.into());
+                        }
+                    } else {
                         return Err(e.into());
                     }
-                } else {
-                    return Err(e.into());
+                    false
                 }
-                false
-            }
-        };
+            };
+
         if send_tx {
             self.handle_proof_submission(block_to_verify).await?;
+
             // Remove the Proofs for that block_number
-            prune_state(block_to_verify)?;
+            match prune_state(block_to_verify) {
+                Ok(_) => (),
+                Err(e) => {
+                    if let SaveStateError::IOError(ref error) = e {
+                        if error.kind() != std::io::ErrorKind::NotFound {
+                            return Err(e.into());
+                        }
+                    } else {
+                        return Err(e.into());
+                    }
+                }
+            }
+
             tx_submitted = true;
         }
 
@@ -307,23 +361,26 @@ impl ProverServer {
                     return Ok(());
                 }
 
-                // Check if we have the proof for that ProverType
-                // If we don't have it, insert it.
-                let has_proof = match block_number_has_state_file(
-                    StateFileType::Proof(calldata.prover_type),
-                    block_number,
-                ) {
-                    Ok(has_proof) => has_proof,
-                    Err(e) => {
-                        let error = format!("{e}");
-                        if !error.contains("No such file or directory") {
-                            return Err(e.into());
+                // The ProverType::Exec doesn't generate a real proof, we don't need to save it.
+                if calldata.prover_type != ProverType::Exec {
+                    // Check if we have the proof for that ProverType
+                    let has_proof = match block_number_has_state_file(
+                        StateFileType::Proof(calldata.prover_type),
+                        block_number,
+                    ) {
+                        Ok(has_proof) => has_proof,
+                        Err(e) => {
+                            let error = format!("{e}");
+                            if !error.contains("No such file or directory") {
+                                return Err(e.into());
+                            }
+                            false
                         }
-                        false
+                    };
+                    // If we don't have it, insert it.
+                    if !has_proof {
+                        write_state(block_number, &StateType::Proof(calldata))?;
                     }
-                };
-                if !has_proof {
-                    write_state(block_number, &StateType::Proof(calldata))?;
                 }
 
                 // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
@@ -427,49 +484,74 @@ impl ProverServer {
         &self,
         block_number: u64,
     ) -> Result<H256, ProverServerError> {
-        // TODO change error
-        let exec_proof = read_proof(block_number, StateFileType::Proof(ProverType::Exec))?;
-        if exec_proof.prover_type != ProverType::Exec {
-            return Err(ProverServerError::Custom(
-                "Exec Proof isn't present".to_string(),
-            ));
-        }
+        // TODO: change error
+        // TODO: If the proof is not needed, a default calldata is used,
+        // the structure has to match the one defined in the OnChainProposer.sol contract.
+        // It may cause some issues, but the ethrex_prover_lib cannot be imported,
+        // this approach is straight-forward for now.
+        let risc0_proof = {
+            if self.needed_proof_types.contains(&ProverType::RISC0) {
+                let risc0_proof =
+                    read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
+                if risc0_proof.prover_type != ProverType::RISC0 {
+                    return Err(ProverServerError::Custom(
+                        "RISC0 Proof isn't present".to_string(),
+                    ));
+                }
+                risc0_proof.calldata
+            } else {
+                ProverType::RISC0.empty_calldata()
+            }
+        };
 
-        let risc0_proof = read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
-        if risc0_proof.prover_type != ProverType::RISC0 {
-            return Err(ProverServerError::Custom(
-                "RISC0 Proof isn't present".to_string(),
-            ));
-        }
+        let sp1_proof = {
+            if self.needed_proof_types.contains(&ProverType::SP1) {
+                let sp1_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
+                if sp1_proof.prover_type != ProverType::SP1 {
+                    return Err(ProverServerError::Custom(
+                        "SP1 Proof isn't present".to_string(),
+                    ));
+                }
+                sp1_proof.calldata
+            } else {
+                ProverType::SP1.empty_calldata()
+            }
+        };
 
-        let sp1_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
-        if sp1_proof.prover_type != ProverType::SP1 {
-            return Err(ProverServerError::Custom(
-                "SP1 Proof isn't present".to_string(),
-            ));
-        }
+        let pico_proof = {
+            if self.needed_proof_types.contains(&ProverType::Pico) {
+                let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::Pico))?;
+                if pico_proof.prover_type != ProverType::Pico {
+                    return Err(ProverServerError::Custom(
+                        "Pico Proof isn't present".to_string(),
+                    ));
+                }
+                pico_proof.calldata
+            } else {
+                ProverType::Pico.empty_calldata()
+            }
+        };
 
-        let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::Pico))?;
-        if pico_proof.prover_type != ProverType::Pico {
-            return Err(ProverServerError::Custom(
-                "Pico Proof isn't present".to_string(),
-            ));
-        }
-
-        debug!("Sending proof for {block_number}");
+        debug!("Sending proof for block number: {block_number}");
 
         let calldata_values = [
             &[Value::Uint(U256::from(block_number))],
-            exec_proof.calldata.as_slice(),
-            risc0_proof.calldata.as_slice(),
-            sp1_proof.calldata.as_slice(),
-            pico_proof.calldata.as_slice(),
+            risc0_proof.as_slice(),
+            sp1_proof.as_slice(),
+            pico_proof.as_slice(),
         ]
         .concat();
 
-        warn!("calldata value len: {}", calldata_values.len());
-
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
+
+        let gas_price = self
+            .eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                ProverServerError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            })?;
 
         let verify_tx = self
             .eth_client
@@ -477,19 +559,19 @@ impl ProverServer {
                 self.on_chain_proposer_address,
                 self.verifier_address,
                 calldata.into(),
-                Overrides::default(),
-                10,
+                Overrides {
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
             )
             .await?;
 
+        let mut tx = WrappedTransaction::EIP1559(verify_tx);
+
         let verify_tx_hash = self
             .eth_client
-            .send_wrapped_transaction_with_retry(
-                &WrappedTransaction::EIP1559(verify_tx),
-                &self.verifier_private_key,
-                3 * 60,
-                10,
-            )
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
             .await?;
 
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
@@ -499,8 +581,6 @@ impl ProverServer {
 
     pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
         loop {
-            tokio::time::sleep(Duration::from_millis(self.dev_interval_ms)).await;
-
             let last_committed_block = EthClient::get_last_committed_block(
                 &self.eth_client,
                 self.on_chain_proposer_address,
@@ -523,8 +603,6 @@ impl ProverServer {
             let calldata_values = vec![
                 // blockNumber
                 Value::Uint(U256::from(last_verified_block + 1)),
-                // execPublicInputs
-                Value::Bytes(vec![].into()),
                 // risc0BlockProof
                 Value::Bytes(vec![].into()),
                 // risc0ImageId
@@ -547,6 +625,17 @@ impl ProverServer {
 
             let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+            let gas_price = self
+                .eth_client
+                .get_gas_price_with_extra(20)
+                .await?
+                .try_into()
+                .map_err(|_| {
+                    ProverServerError::InternalError(
+                        "Failed to convert gas_price to a u64".to_owned(),
+                    )
+                })?;
+
             let verify_tx = self
                 .eth_client
                 .build_eip1559_transaction(
@@ -554,22 +643,23 @@ impl ProverServer {
                     self.verifier_address,
                     calldata.into(),
                     Overrides {
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
                         ..Default::default()
                     },
-                    10,
                 )
                 .await?;
 
             info!("Sending verify transaction.");
 
+            let mut tx = WrappedTransaction::EIP1559(verify_tx);
+            self.eth_client
+                .set_gas_for_wrapped_tx(&mut tx, self.verifier_address)
+                .await?;
+
             let verify_tx_hash = self
                 .eth_client
-                .send_wrapped_transaction_with_retry(
-                    &WrappedTransaction::EIP1559(verify_tx),
-                    &self.verifier_private_key,
-                    3 * 60,
-                    10,
-                )
+                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
                 .await?;
 
             info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");
@@ -578,6 +668,8 @@ impl ProverServer {
                 "Mocked verify transaction sent for block {}",
                 last_verified_block + 1
             );
+
+            sleep_random(self.dev_interval_ms).await;
         }
     }
 }

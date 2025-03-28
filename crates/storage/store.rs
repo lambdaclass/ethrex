@@ -286,6 +286,7 @@ impl Store {
         let account_state = AccountState::decode(&encoded_state)?;
         self.get_account_code(account_state.code_hash)
     }
+
     pub fn get_nonce_by_account_address(
         &self,
         block_number: BlockNumber,
@@ -312,9 +313,19 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<H256>, StoreError> {
-        let Some(mut state_trie) = self.state_trie(block_hash)? else {
+        let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
+
+        let mut state_trie = self.apply_account_updates_from_trie(state_trie, account_updates)?;
+        Ok(Some(state_trie.hash()?))
+    }
+
+    pub fn apply_account_updates_from_trie(
+        &self,
+        mut state_trie: Trie,
+        account_updates: &[AccountUpdate],
+    ) -> Result<Trie, StoreError> {
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
             if update.removed {
@@ -355,7 +366,8 @@ impl Store {
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
-        Ok(Some(state_trie.hash()?))
+
+        Ok(state_trie)
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
@@ -409,6 +421,13 @@ impl Store {
         self.engine.add_receipts(block_hash, receipts)
     }
 
+    pub fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError> {
+        self.engine.add_receipts_for_blocks(receipts)
+    }
+
     pub fn get_receipt(
         &self,
         block_number: BlockNumber,
@@ -418,14 +437,15 @@ impl Store {
     }
 
     pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        // TODO Maybe add both in a single tx?
-        let header = block.header;
-        let number = header.number;
-        let hash = header.compute_block_hash();
-        self.add_transaction_locations(&block.body.transactions, number, hash)?;
-        self.add_block_body(hash, block.body)?;
-        self.add_block_header(hash, header)?;
-        self.add_block_number(hash, number)
+        self.add_blocks(&[block])
+    }
+
+    pub fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        self.engine.add_blocks(blocks)
+    }
+
+    pub fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        self.engine.mark_chain_as_canonical(blocks)
     }
 
     pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
@@ -603,7 +623,7 @@ impl Store {
         self.engine.unset_canonical_block(number)
     }
 
-    // Obtain the storage trie for the given block
+    /// Obtain the storage trie for the given block
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
@@ -611,7 +631,7 @@ impl Store {
         Ok(Some(self.engine.open_state_trie(header.state_root)))
     }
 
-    // Obtain the storage trie for the given account on the given block
+    /// Obtain the storage trie for the given account on the given block
     pub fn storage_trie(
         &self,
         block_hash: BlockHash,
@@ -645,11 +665,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        Ok(Some(AccountState::decode(&encoded_state)?))
+        self.get_account_state_from_trie(&state_trie, address)
     }
 
     pub fn get_account_state_by_hash(
@@ -660,6 +676,14 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
+        self.get_account_state_from_trie(&state_trie, address)
+    }
+
+    pub fn get_account_state_from_trie(
+        &self,
+        state_trie: &Trie,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
         let hashed_address = hash_address(&address);
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
@@ -842,16 +866,16 @@ impl Store {
         self.engine.open_state_trie(*EMPTY_TRIE_HASH)
     }
 
-    /// Methods exclusive for trie management during snap-syncing
+    // Methods exclusive for trie management during snap-syncing
 
-    // Obtain a state trie from the given state root
-    // Doesn't check if the state root is valid
+    /// Obtain a state trie from the given state root.
+    /// Doesn't check if the state root is valid
     pub fn open_state_trie(&self, state_root: H256) -> Trie {
         self.engine.open_state_trie(state_root)
     }
 
-    // Obtain a storage trie from the given address and storage_root
-    // Doesn't check if the account is stored
+    /// Obtain a storage trie from the given address and storage_root.
+    /// Doesn't check if the account is stored
     pub fn open_storage_trie(&self, account_hash: H256, storage_root: H256) -> Trie {
         self.engine.open_storage_trie(account_hash, storage_root)
     }
