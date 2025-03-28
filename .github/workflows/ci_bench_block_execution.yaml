@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-binaries:
-    if: contains(github.event.pull_request.labels.*.name, 'performance')
+    # if: contains(github.event.pull_request.labels.*.name, 'performance')
     strategy:
       matrix:
         branch: [base, head]
@@ -42,7 +42,7 @@ jobs:
           cp target/release/ethrex bin/ethrex-${{ matrix.branch }}
 
   run-hyperfine:
-    if: contains(github.event.pull_request.labels.*.name, 'performance')
+    # if: contains(github.event.pull_request.labels.*.name, 'performance')
     name: Run benchmark against base branch
     needs: [build-binaries]
     runs-on: ubuntu-22.04
