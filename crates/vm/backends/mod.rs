@@ -38,6 +38,7 @@ impl TryFrom<String> for EvmEngine {
     }
 }
 
+#[derive(Clone)]
 pub enum Evm {
     REVM {
         state: EvmState,
