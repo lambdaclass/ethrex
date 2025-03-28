@@ -54,7 +54,7 @@ ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain
 CI_ETHREX_WORKDIR := /usr/local/bin
 
 ethrex_L2_CONFIGS_PATH=$(shell pwd)/configs
-ethrex_L2_SEQUENCER_CONFIG_FILE=config.toml
+ethrex_L2_SEQUENCER_CONFIG_FILE=sequencer_config.toml
 ethrex_L2_PROVER_CLIENT_CONFIG_FILE=prover_client_config.toml
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545

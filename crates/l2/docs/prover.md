@@ -7,7 +7,7 @@
   - [What](#what)
   - [Workflow](#workflow)
   - [How](#how)
-      - [Quick Test](#quick-test)
+    - [Quick Test](#quick-test)
     - [Dev Mode](#dev-mode)
       - [Run the whole system with the prover - In one Machine](#run-the-whole-system-with-the-prover---in-one-machine)
     - [GPU mode](#gpu-mode)
@@ -92,7 +92,7 @@ select the "exec" backend whenever it's not desired to generate proofs, like in 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp configs/config_example.toml configs/config.toml` &rarr; check if you want to change any config.
+3. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` &rarr; check if you want to change any config.
 4. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` &rarr; check if you want to change any config.
 5. `make init`
    - Make sure you have the `solc` compiler installed in your system.
@@ -160,7 +160,7 @@ prover_server_endpoint=<ip-address>:3900
 
 2. `prover_server`/`proposer` &rarr; this server just needs rust installed.
    1. `cd ethrex/crates/l2`
-   2. `cp configs/config_example.toml configs/config.toml` and change the addresses and the following fields:
+   2. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` and change the addresses and the following fields:
       - [prover_server]
         - `listen_ip=0.0.0.0` &rarr; Used to handle TCP communication with other servers from any network interface.
       - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.

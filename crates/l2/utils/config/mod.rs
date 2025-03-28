@@ -1,4 +1,5 @@
 use std::{
+    fmt::{Debug, Display},
     io::{BufRead, Write},
     path::{Path, PathBuf},
 };
@@ -17,7 +18,7 @@ pub mod toml_parser;
 
 #[derive(Clone, Copy)]
 pub enum ConfigMode {
-    /// Parses the entire the config.toml
+    /// Parses the entire the sequencer_config.toml
     /// And generates the .env file.
     Sequencer,
     /// Parses the prover_config.toml
@@ -27,13 +28,13 @@ pub enum ConfigMode {
 
 impl ConfigMode {
     /// Gets the .*config.toml file from the environment, or sets a default value
-    /// config.toml         for the sequencer/L2 node
+    /// sequencer_config.toml         for the sequencer/L2 node
     /// prover_config.toml  for the the prover_client
     fn get_config_file_path(&self, config_path: &str) -> PathBuf {
         match self {
             ConfigMode::Sequencer => {
-                let sequencer_config_file_name =
-                    std::env::var("SEQUENCER_CONFIG_FILE").unwrap_or("config.toml".to_owned());
+                let sequencer_config_file_name = std::env::var("SEQUENCER_CONFIG_FILE")
+                    .unwrap_or("sequencer_config.toml".to_owned());
                 Path::new(&config_path).join(sequencer_config_file_name)
             }
             ConfigMode::ProverClient => {
@@ -57,6 +58,24 @@ impl ConfigMode {
             ConfigMode::ProverClient => std::env::var("PROVER_ENV_FILE")
                 .map(Into::into)
                 .unwrap_or(cargo_manifest_dir.join(".env.prover")),
+        }
+    }
+}
+
+impl Debug for ConfigMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sequencer => write!(f, "sequencer"),
+            Self::ProverClient => write!(f, "prover_client"),
+        }
+    }
+}
+
+impl Display for ConfigMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sequencer => write!(f, "sequencer"),
+            Self::ProverClient => write!(f, "prover_client"),
         }
     }
 }
