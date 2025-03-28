@@ -30,8 +30,8 @@ zkvm_interface = { path = "./zkvm/interface", default-features = false }
 risc0-zkvm = { version = "1.2.2", optional = true }
 risc0-ethereum-contracts = { version = "1.3.1", optional = true }
 
-sp1-sdk = { version = "4.1.1", optional = true }
-sp1-recursion-gnark-ffi = { version = "4.1.1", optional = true }
+sp1-sdk = { version = "4.1.4", optional = true }
+sp1-recursion-gnark-ffi = { version = "4.1.4", optional = true }
 pico-sdk = { git = "https://github.com/brevis-network/pico", optional = true }
 
 [dev-dependencies]

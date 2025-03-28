@@ -3,7 +3,7 @@ use ethrex_l2::{
     sequencer::prover_server::ProofData,
     utils::{config::prover_client::ProverClientConfig, prover::proving_systems::ProofCalldata},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -42,10 +42,15 @@ impl ProverClient {
                 // If we get the input
                 Ok(prover_data) => {
                     // Generate the Proof
+                    let start_proving = Instant::now();
                     match prove(prover_data.input).and_then(to_calldata) {
                         Ok(proving_output) => {
                             if let Err(e) = self
-                                .submit_proof(prover_data.block_number, proving_output)
+                                .submit_proof(
+                                    prover_data.block_number,
+                                    proving_output,
+                                    &start_proving,
+                                )
                                 .await
                             {
                                 // TODO: Retry?
@@ -101,6 +106,7 @@ impl ProverClient {
         &self,
         block_number: u64,
         proving_output: ProofCalldata,
+        start_proving: &Instant,
     ) -> Result<(), String> {
         let submit = ProofData::submit(block_number, proving_output);
 
@@ -111,6 +117,7 @@ impl ProverClient {
         match submit_ack {
             ProofData::SubmitAck { block_number } => {
                 info!("Received submit ack for block_number: {}", block_number);
+                info!("[TIME] Proving process took: {:?}", start_proving.elapsed());
                 Ok(())
             }
             _ => Err("Expecting ProofData::SubmitAck".to_owned()),

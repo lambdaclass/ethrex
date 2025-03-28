@@ -166,6 +166,18 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
 init-prover: ## 🚀 Initializes the Prover
+	@if [ -z "$$B" ]; then \
+		echo "Skipping build step"; \
+	else \
+		make build-prover; \
+	fi; \
+
+	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
+	PROVER_CLIENT_CONFIG_FILE=${ethrex_L2_PROVER_CLIENT_CONFIG_FILE} \
+	PROVER_ENV_FILE=${PROVER_ENV_FILE} \
+	../../target/release/ethrex_prover
+
+build-prover: ## 🚧 Builds the Prover
 	@if [ -z "$$T" ]; then \
 		echo "Error: ProverType (T) is missing."; \
 		echo "Please provide it as an argument:"; \
@@ -180,12 +192,9 @@ init-prover: ## 🚀 Initializes the Prover
 		GPU=",gpu"; \
 	fi; \
 
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	PROVER_CLIENT_CONFIG_FILE=${ethrex_L2_PROVER_CLIENT_CONFIG_FILE} \
-	PROVER_ENV_FILE=${PROVER_ENV_FILE} \
-	cargo run --release --features "$$T$$GPU,l2" \
+	cargo build --release --features "$$T$$GPU,l2" \
 	--manifest-path ./prover/Cargo.toml \
-	--bin ethrex_prover -- $$T
+	--bin ethrex_prover
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
@@ -214,6 +223,15 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	cargo b --manifest-path ../../Cargo.toml --release
 	make init-l2-no-metrics ethrex_L2_DEV_LIBMDBX=$$PWD/store 2>&1 >/dev/null &
 	cargo test state_reconstruct --release
+
+
+ci_test_prover_client: ## 🚧 Runs the L2's prover_client test, used by the github's CI
+	touch .env
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
+	make init-prover 2>&1 &
+	cargo test prover_client --release
+
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)

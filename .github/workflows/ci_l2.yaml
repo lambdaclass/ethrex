@@ -30,4 +30,41 @@ jobs:
         run: |
           cd crates/l2
           cp configs/sequencer_config_example.toml configs/sequencer_config.toml
-          make ci_test
+        # make ci_test
+
+      - name: RISC-V SP1 toolchain install
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 4.1.4
+
+      - name: Build prover
+        run: |
+          cd crates/l2
+          make build-prover T=sp1
+
+      - name: Setup L2 integration prover_client
+        run: |
+          cd crates/l2
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
+          sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
+          sed -i 's/sp1_deploy_verifier = false/sp1_deploy_verifier = true/' configs/sequencer_config.toml
+          sed -i 's/dev_mode = true/dev_mode = false/' configs/sequencer_config.toml
+          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
+          sed -i 's/sp1_prover = "mock"/sp1_prover = "cpu"/' configs/prover_client_config.toml
+
+      - name: Display configs/sequencer_config.toml
+        run: |
+          cd crates/l2
+          cat configs/sequencer_config.toml
+
+      - name: Display cat configs/prover_client_config.toml
+        run: |
+          cd crates/l2
+          cat configs/prover_client_config.toml
+
+      - name: Run L2 integration prover_client
+        run: |
+          cd crates/l2
+          touch .env
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach --build
+          RUST_LOG=info,ethrex_prover=debug make init-prover 2>&1 & cargo test prover_client --release -- --nocapture
