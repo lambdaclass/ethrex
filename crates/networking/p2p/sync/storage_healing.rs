@@ -10,14 +10,13 @@ use std::collections::BTreeMap;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
-use tokio::sync::mpsc::Receiver;
 use tracing::debug;
 
 use crate::{peer_handler::PeerHandler, sync::node_missing_children};
 
 const MINUMUM_STORAGES_IN_QUEUE: usize = 400;
 
-use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
+use super::{SyncError, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
 
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
 /// Also retrieves their children nodes until we have the full storage trie stored
@@ -25,7 +24,6 @@ use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE}
 // Returns true if there are no more pending storages in the queue (aka storage healing was completed)
 pub(crate) async fn storage_healer(
     state_root: H256,
-    mut receiver: Receiver<Vec<H256>>,
     peers: PeerHandler,
     store: Store,
 ) -> Result<bool, SyncError> {
@@ -35,8 +33,7 @@ pub(crate) async fn storage_healer(
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
-    let mut incoming = true;
-    while incoming {
+    while !stale {
         // If we have few storages in queue, fetch more from the store
         if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
             pending_paths.extend(store.get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?.into_iter());
@@ -46,7 +43,7 @@ pub(crate) async fn storage_healer(
         // If the pivot became stale don't process anything and just save incoming requests
         let mut storage_tasks = tokio::task::JoinSet::new();
         let mut task_num = 0;
-        while !stale && !pending_paths.is_empty() && task_num < MAX_PARALLEL_FETCHES {
+        while !pending_paths.is_empty() && task_num < MAX_PARALLEL_FETCHES {
             let mut next_batch: BTreeMap<H256, Vec<Nibbles>> = BTreeMap::new();
             // Fill batch
             let mut batch_size = 0;
@@ -68,30 +65,6 @@ pub(crate) async fn storage_healer(
             let (remaining, is_stale) = res?;
             pending_paths.extend(remaining);
             stale |= is_stale;
-        }
-
-        // Read incoming requests that are already awaiting on the receiver
-        // Don't wait for requests unless we have no pending paths left
-        if incoming && (!receiver.is_empty() || pending_paths.is_empty()) {
-            // Fetch incoming requests
-            let mut msg_buffer = vec![];
-            if receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await != 0 {
-                for account_hashes in msg_buffer {
-                    if !account_hashes.is_empty() {
-                        pending_paths.extend(
-                            account_hashes
-                                .into_iter()
-                                .map(|acc_path| (acc_path, vec![Nibbles::default()])),
-                        );
-                    } else {
-                        // Empty message signaling no more bytecodes to sync
-                        incoming = false
-                    }
-                }
-            } else {
-                // Disconnect
-                incoming = false
-            }
         }
     }
     let healing_complete = pending_paths.is_empty();
