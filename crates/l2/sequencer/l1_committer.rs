@@ -267,7 +267,7 @@ impl Committer {
             // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
             // and we may have to keep track of the latestCommittedBlock (last block of the batch),
             // the batch_size and the latestCommittedBatch in the contract.
-            let nonce_diff = get_nonce_diff(account_update, &store, block.header.number)
+            let nonce_diff = get_nonce_diff(account_update, &store, None, block.header.number)
                 .map_err(CommitterError::from)?;
 
             modified_accounts.insert(

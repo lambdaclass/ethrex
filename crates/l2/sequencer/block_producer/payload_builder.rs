@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ethrex_blockchain::{
@@ -5,7 +6,10 @@ use ethrex_blockchain::{
     payload::{PayloadBuildContext, PayloadBuildResult},
     Blockchain,
 };
-use ethrex_common::types::{Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB};
+use ethrex_common::{
+    types::{AccountInfo, Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB},
+    Address,
+};
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
@@ -69,6 +73,7 @@ pub fn fill_transactions(
 ) -> Result<(), BlockProducerError> {
     // Two bytes for the len
     let (mut acc_withdrawals_size, mut acc_deposits_size): (usize, usize) = (2, 2);
+    let mut accounts_info_cache = HashMap::new();
 
     let chain_config = store.get_chain_config()?;
     let max_blob_number_per_block: usize = chain_config
@@ -148,6 +153,7 @@ pub fn fill_transactions(
                     head_tx.clone().into(),
                     &receipt,
                     context,
+                    &mut accounts_info_cache,
                 )? {
                     debug!(
                         "Skipping transaction: {}, doesn't feet in blob_size",
@@ -197,6 +203,7 @@ fn check_state_diff_size(
     tx: Transaction,
     receipt: &Receipt,
     context: &mut PayloadBuildContext,
+    accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
 ) -> Result<bool, BlockProducerError> {
     if is_withdrawal_l2(&tx, receipt) {
         *acc_withdrawals_size += L2_WITHDRAWAL_SIZE;
@@ -204,7 +211,7 @@ fn check_state_diff_size(
     if is_deposit_l2(&tx) {
         *acc_deposits_size += L2_DEPOSIT_SIZE;
     }
-    let modified_accounts_size = calc_modified_accounts_size(context)?;
+    let modified_accounts_size = calc_modified_accounts_size(context, accounts_info_cache)?;
 
     let current_state_diff_size = 1 /* version (u8) */ + HEADER_FIELDS_SIZE + *acc_withdrawals_size + *acc_deposits_size + modified_accounts_size;
 
@@ -227,6 +234,7 @@ fn check_state_diff_size(
 
 fn calc_modified_accounts_size(
     context: &mut PayloadBuildContext,
+    accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
 ) -> Result<usize, BlockProducerError> {
     let mut modified_accounts_size: usize = 2; // modified_accounts_len(u16)
 
@@ -241,10 +249,16 @@ fn calc_modified_accounts_size(
         if account_update.info.is_some() {
             modified_accounts_size += 32; // new_balance(U256)
         }
-        let nonce_diff = get_nonce_diff(&account_update, &context.store, context.block_number())
-            .map_err(|e| {
-                BlockProducerError::Custom(format!("Block Producer failed to get nonce diff: {e}"))
-            })?;
+
+        let nonce_diff = get_nonce_diff(
+            &account_update,
+            &context.store,
+            Some(accounts_info_cache),
+            context.block_number(),
+        )
+        .map_err(|e| {
+            BlockProducerError::Custom(format!("Block Producer failed to get nonce diff: {e}"))
+        })?;
         if nonce_diff != 0 {
             modified_accounts_size += 2; // nonce_diff(u16)
         }
