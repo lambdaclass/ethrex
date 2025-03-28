@@ -129,7 +129,7 @@ async fn state_sync_segment(
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
     storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(usize, bool, H256), SyncError> {
-    info!("[Segment {segment_number}] Stored checkpoint: {checkpoint}");
+    info!("[Segment {segment_number}] Stored checkpoint: {checkpoint:?}");
     info!("[Segment {segment_number}] end hash: {}", STATE_TRIE_SEGMENTS_END[segment_number]);
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
