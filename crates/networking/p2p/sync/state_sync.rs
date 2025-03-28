@@ -325,6 +325,7 @@ impl StateSyncProgress {
                 .unwrap_or_default();
             let segment_completion_rate = (U512::from(segment_synced_accounts + 1) * 100)
                 / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
+            info!("Segment {i} synced accounts: {segment_synced_accounts}%");
             info!("Segment {i} completion rate: {segment_completion_rate}%");
             synced_accounts += segment_synced_accounts;
             synced_accounts_this_cycle += data.current_keys[i]
