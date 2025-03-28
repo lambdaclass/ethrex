@@ -53,10 +53,16 @@ jobs:
           sed -i 's/sp1_prover = "mock"/sp1_prover = "cpu"/' configs/prover_client_config.toml
 
       - name: Display configs/config.toml
-        run: cat configs/config.toml
+        run: |
+          cd crates/l2
+          cat configs/config.toml
 
       - name: Display cat configs/prover_client_config.toml
-        run: cat configs/prover_client_config.toml
+        run: |
+          cd crates/l2
+          cat configs/prover_client_config.toml
 
       - name: Run L2 integration prover_client
-        run: make ci_test_prover_client
+        run: |
+          cd crates/l2
+          make ci_test_prover_client
