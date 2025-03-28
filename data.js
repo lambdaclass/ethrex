@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743170264029,
+  "lastUpdate": 1743171368312,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1735,6 +1735,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185323473554,
             "range": "± 645552899",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8a026aa0fdd0e02c2d1bc5c2436e5ab05086cd05",
+          "message": "fix(l2): config error handling (#2339)\n\n**Motivation**\n\nIn a previous PR, the configuration file error handling was updated, and\nthe help messages stopped being helpful. This PR aims to make these\nerror messages useful again and improve their handling.\n\nThe current help message does not work:\n\n```Shell\nError parsing the .toml configuration files: Could not find crates/l2/configs/config.toml\nHave you tried copying the provided example? Try:\ncp /Users/ivanlitteri/Repositories/lambdaclass/ethrex/crates/l2/configs/*_example.toml /Users/ivanlitteri/Repositories/lambdaclass/ethrex/crates/l2/configs/*.toml\n\nError: ConfigError(TomlParserError(TomlFileNotFound(\"config.toml\")))\nmake: *** [deploy-l1] Error 1\n➜  l2 git:(main) ✗ cp /Users/ivanlitteri/Repositories/lambdaclass/ethrex/crates/l2/configs/*_example.toml /Users/ivanlitteri/Repositories/lambdaclass/ethrex/crates/l2/configs/*.toml\ncp: /Users/ivanlitteri/Repositories/lambdaclass/ethrex/crates/l2/configs/sequencer_config_example.toml is not a directory\n```\n\n**Description**\n\n- Add a prefix `sequencer_` to the sequencer config file to be\nconsistent with the prover client config file and update its references.\n- Pass `ConfigMode` to the `toml` errors to make the help messages\nhelpful again, and implement `Debug` and `Display` for this on it.\n- Make the `toml` parsing error explicit.",
+          "timestamp": "2025-03-28T13:25:33Z",
+          "tree_id": "ca573e46b003e3b630b64bdaaad230aa8de55184",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8a026aa0fdd0e02c2d1bc5c2436e5ab05086cd05"
+        },
+        "date": 1743171366371,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185080725230,
+            "range": "± 833080354",
             "unit": "ns/iter"
           }
         ]
