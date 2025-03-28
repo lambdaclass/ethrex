@@ -54,6 +54,10 @@ jobs:
           cd crates/l2
           PROVER=sp1 make build-prover
 
+      - name: Build L2 integration test
+        run: |
+          cargo test l2 --no-run --release
+
       - name: Run L2 integration test
         run: |
           cd crates/l2
