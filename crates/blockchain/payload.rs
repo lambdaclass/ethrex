@@ -18,9 +18,7 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
 };
 
-use ethrex_vm::{
-    EvmError, {Evm, EvmEngine},
-};
+use ethrex_vm::{backends::levm::CacheDB, Evm, EvmEngine, EvmError};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
@@ -525,7 +523,9 @@ impl Blockchain {
 
     fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let parent_hash = context.payload.header.parent_hash;
-        let account_updates = context.vm.get_state_transitions(parent_hash)?;
+        let account_updates = context
+            .vm
+            .get_state_transitions(parent_hash, &mut CacheDB::new())?;
 
         context.payload.header.state_root = context
             .store

@@ -18,11 +18,11 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_levm::vm::Substate;
 use ethrex_levm::{
     db::Database as LevmDatabase,
     errors::{ExecutionReport, TxResult, VMError},
-    vm::{EVMConfig, VM},
+    utils::get_account,
+    vm::{EVMConfig, Substate, VM},
     Account, AccountInfo as LevmAccountInfo, Environment,
 };
 use ethrex_storage::{AccountUpdate, Store};
@@ -69,6 +69,7 @@ impl LEVM {
             chain_config,
             &block.header,
             &block_cache,
+            &mut CacheDB::new(),
         )?;
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -142,6 +143,7 @@ impl LEVM {
             chain_config,
             &block.header,
             &block_cache,
+            &mut CacheDB::new(),
         )?);
 
         Ok(BlockExecutionResult {
@@ -239,15 +241,18 @@ impl LEVM {
         chain_config: ChainConfig,
         block_header: &BlockHeader,
         new_state: &CacheDB,
+        // Useful for incremental state diff calculations (e.g., per-transaction diffs).
+        previous_state: &mut CacheDB,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (new_state_account_address, new_state_account) in new_state {
-            let initial_account_state = db.get_account_info(*new_state_account_address);
+            let initial_account_state =
+                get_account(previous_state, db.clone(), *new_state_account_address);
             let mut updates = 0;
-            if initial_account_state.balance != new_state_account.info.balance {
+            if initial_account_state.info.balance != new_state_account.info.balance {
                 updates += 1;
             }
-            if initial_account_state.nonce != new_state_account.info.nonce {
+            if initial_account_state.info.nonce != new_state_account.info.nonce {
                 updates += 1;
             }
             let code = if new_state_account.info.bytecode.is_empty() {
@@ -255,7 +260,7 @@ impl LEVM {
                 None
             } else {
                 // Look into the current database to see if the bytecode hash is already present
-                let current_bytecode = &initial_account_state.bytecode;
+                let current_bytecode = &initial_account_state.info.bytecode;
                 let code = new_state_account.info.bytecode.clone();
                 // The code is present in the current database
                 if *current_bytecode != Bytes::new() {
@@ -303,9 +308,9 @@ impl LEVM {
             // https://eips.ethereum.org/EIPS/eip-161
             // if an account was empty and is now empty, after spurious dragon, it should be removed
             if account_update.removed
-                && initial_account_state.balance.is_zero()
-                && initial_account_state.nonce == 0
-                && initial_account_state.bytecode_hash() == code_hash(&Bytes::new())
+                && initial_account_state.info.balance.is_zero()
+                && initial_account_state.info.nonce == 0
+                && initial_account_state.info.bytecode_hash() == code_hash(&Bytes::new())
                 && fork < Fork::SpuriousDragon
             {
                 continue;
