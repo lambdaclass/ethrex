@@ -164,7 +164,7 @@ impl ProverClient {
         let prefix = "PROVER_CLIENT";
         format!(
             "{prefix}_PROVER_SERVER_ENDPOINT={}
-{prefix}_INTERVAL_MS={}
+{prefix}_PROVING_TIME_MS={}
 ",
             self.prover_server_endpoint, self.proving_time_ms
         )
