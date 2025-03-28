@@ -25,7 +25,7 @@ async fn prover_client() -> Result<(), Box<dyn std::error::Error>> {
             interval.tick().await;
             let last_verified_block = EthClient::get_last_verified_block(
                 &eth_client,
-                Address::from_str(&on_chain_proposer_address).unwrap(),
+                Address::from_str(on_chain_proposer_address).unwrap(),
             )
             .await
             .unwrap();
