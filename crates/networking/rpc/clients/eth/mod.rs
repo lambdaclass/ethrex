@@ -112,10 +112,7 @@ impl EthClient {
         // (essentially saying something like "error decoding response body"), so for
         // debugging purposes we log the actual response.
         if !response.status().is_success() {
-            error!(
-                "Failed to deserialize into an RpcResponse: {:#?}",
-                &response
-            );
+            error!("RPC request failed, response was: {:#?}", &response);
         }
 
         response
