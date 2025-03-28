@@ -18,6 +18,8 @@ use crate::{
     sync::{node_missing_children, SHOW_PROGRESS_INTERVAL_DURATION},
 };
 
+const MINUMUM_STORAGES_IN_QUEUE: usize = 400;
+
 use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
 
 struct StorageHealingMetrics {
@@ -71,15 +73,9 @@ pub(crate) async fn storage_healer(
     peers: PeerHandler,
     store: Store,
 ) -> Result<bool, SyncError> {
-    // Retrieve pending paths
-    let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
-    loop {
-        let paths = store.get_storage_heal_paths(100)?;
-        if paths.is_empty() {
-            break;
-        }
-        pending_paths.extend(paths);
-    }
+    // Retrieve a batch of pending paths from the store
+    // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
+    let mut pending_paths : BTreeMap<H256, Vec<Nibbles>> = store.get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?.into_iter().collect();
     let mut time_since_info = Instant::now();
     info!(
         "Spawned Storage Healer, backlog: {} storage paths",
@@ -98,6 +94,10 @@ pub(crate) async fn storage_healer(
                 pending_paths.iter().flat_map(|(_, a)| a).count()
             );
             time_since_info = Instant::now();
+        }
+        // If we have few storages in queue, fetch more from the store
+        if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
+            pending_paths.extend(store.get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?.into_iter());
         }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
