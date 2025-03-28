@@ -1,7 +1,7 @@
 use crate::{
     based::{env::EnvV0, frag::FragV0, seal::SealV0},
+    rpc::RpcApiContext,
     utils::{RpcErr, RpcRequest},
-    RpcApiContext,
 };
 use ethrex_common::{Public, Signature};
 use serde::{Deserialize, Serialize};

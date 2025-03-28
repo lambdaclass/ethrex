@@ -292,7 +292,7 @@ pub mod test_utils {
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
 
-    use crate::start_api;
+    use crate::rpc::start_api;
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]

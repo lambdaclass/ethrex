@@ -1,4 +1,4 @@
-use crate::{utils::RpcErr, RpcApiContext};
+use crate::{rpc::RpcApiContext, utils::RpcErr};
 use ethrex_common::H256;
 use serde::{Deserialize, Serialize};
 use tree_hash::TreeHash;

@@ -4,13 +4,13 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::{
+    rpc::{RpcApiContext, RpcHandler},
     types::{
         block::RpcBlock,
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
         receipt::{RpcReceipt, RpcReceiptBlockInfo, RpcReceiptTxInfo},
     },
     utils::RpcErr,
-    RpcApiContext, RpcHandler,
 };
 use ethrex_common::types::{
     calculate_base_fee_per_blob_gas, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt,

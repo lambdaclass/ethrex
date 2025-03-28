@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{info, warn};
 
-use crate::{utils::RpcErr, RpcApiContext, RpcHandler};
+use crate::{
+    rpc::{RpcApiContext, RpcHandler},
+    utils::RpcErr,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

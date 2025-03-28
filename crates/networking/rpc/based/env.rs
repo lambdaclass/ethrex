@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ssz_types::{typenum, VariableList};
 use tree_hash::TreeHash;
 
-use crate::{utils::RpcErr, RpcApiContext};
+use crate::{rpc::RpcApiContext, utils::RpcErr};
 
 pub type MaxExtraDataSize = typenum::U256;
 pub type ExtraData = VariableList<u8, MaxExtraDataSize>;

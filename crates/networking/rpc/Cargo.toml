@@ -49,7 +49,7 @@ strum_macros = { version = "0.24", optional = true }
 hex-literal = "0.4.1"
 
 [lib]
-path = "./rpc.rs"
+path = "./lib.rs"
 
 [features]
 based = ["l2", "dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]
