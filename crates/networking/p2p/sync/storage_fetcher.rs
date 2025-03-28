@@ -10,6 +10,7 @@
 
 use ethrex_common::{H256, U256};
 use ethrex_storage::Store;
+use ethrex_trie::Nibbles;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::debug;
 
@@ -29,7 +30,6 @@ pub(crate) async fn storage_fetcher(
     store: Store,
     state_root: H256,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(), SyncError> {
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
@@ -91,9 +91,7 @@ pub(crate) async fn storage_fetcher(
         pending_storage.len()
     );
     if !pending_storage.is_empty() {
-        storage_healer_sender
-            .send(pending_storage.into_iter().map(|(hash, _)| hash).collect())
-            .await?;
+        store.set_storage_heal_paths(pending_storage.into_iter().map(|(hash, _)| (hash, vec![Nibbles::default()])).collect())?;
     }
     Ok(())
 }
