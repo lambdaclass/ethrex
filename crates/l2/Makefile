@@ -65,8 +65,6 @@ ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
-# Used in the .env file. Ensure the same port is used for `ENGINE_API_RPC_URL`.
-L2_AUTH_PORT=8552
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -150,7 +148,6 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr 0.0.0.0 \
-	--authrpc.port ${L2_AUTH_PORT} \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--datadir ${ethrex_L2_DEV_LIBMDBX}
 

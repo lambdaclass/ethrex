@@ -234,24 +234,31 @@ pub async fn start_api(
         .layer(cors)
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr).await.unwrap();
-
-    let authrpc_router = Router::new()
-        .route("/", post(handle_authrpc_request))
-        .with_state(service_context);
-    let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
-
-    let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .into_future();
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal())
         .into_future();
-
     info!("Starting HTTP server at {http_addr}");
-    info!("Starting Auth-RPC server at {}", authrpc_addr);
 
-    let _ = tokio::try_join!(authrpc_server, http_server)
-        .inspect_err(|e| info!("Error shutting down servers: {:?}", e));
+    cfg_if::cfg_if! {
+        if #[cfg(any(feature = "l2", feature = "based"))] {
+            info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
+
+            let _ = tokio::try_join!(http_server)
+            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+        } else {
+            let authrpc_router = Router::new()
+            .route("/", post(handle_authrpc_request))
+            .with_state(service_context);
+            let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
+            let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
+                .with_graceful_shutdown(shutdown_signal())
+                .into_future();
+            info!("Starting Auth-RPC server at {authrpc_addr}");
+
+            let _ = tokio::try_join!(authrpc_server, http_server)
+            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+        }
+    }
 }
 
 async fn shutdown_signal() {
