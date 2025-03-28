@@ -443,7 +443,7 @@ impl SyncManager {
         // Spawn a blocking task to not block the tokio runtime
         let res = {
             let blockchain = self.blockchain.clone();
-            Self::add_blocks(blockchain, &blocks, sync_head_found)
+            Self::add_blocks(blockchain, blocks, sync_head_found)
                 .await
         };
 
@@ -490,14 +490,14 @@ impl SyncManager {
 
     async fn add_blocks(
         blockchain: Arc<Blockchain>,
-        blocks: &[Block],
+        blocks: Vec<Block>,
         sync_head_found: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
             let mut last_valid_hash = H256::default();
             for block in blocks {
-                blockchain.add_block(block).await.map_err(|e| {
+                blockchain.add_block(&block).await.map_err(|e| {
                     (
                         e,
                         Some(BatchBlockProcessingFailure {

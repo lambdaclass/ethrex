@@ -15,7 +15,7 @@ use ethrex_trie::{Nibbles, Trie};
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
-    async fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError>;
+    async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;
 
     /// Sets the blocks as part of the canonical chain
     async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError>;

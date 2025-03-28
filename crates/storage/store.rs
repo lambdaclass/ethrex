@@ -438,10 +438,10 @@ impl Store {
     }
 
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        self.add_blocks(&[block]).await
+        self.add_blocks(vec![block]).await
     }
 
-    pub async fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         self.engine.add_blocks(blocks).await
     }
 

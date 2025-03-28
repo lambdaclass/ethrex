@@ -167,7 +167,7 @@ impl Blockchain {
     /// Note: only the last block's state trie is stored in the db
     pub async fn add_blocks_in_batch(
         &self,
-        blocks: &[Block],
+        blocks: Vec<Block>,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 

@@ -144,9 +144,9 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         for block in blocks {
-            let header = block.header.clone();
+            let header = block.header;
             let number = header.number;
             let hash = header.compute_block_hash();
             let locations = block

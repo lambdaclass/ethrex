@@ -254,7 +254,7 @@ impl StoreEngine for RedBStore {
         )
     }
 
-    async fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let write_txn = self.db.begin_write()?;
 
         {
