@@ -147,7 +147,8 @@ impl RpcHandler for NewPayloadV3Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
-        ).await?;
+        )
+        .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -204,7 +205,8 @@ impl RpcHandler for NewPayloadV4Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
-        ).await?;
+        )
+        .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

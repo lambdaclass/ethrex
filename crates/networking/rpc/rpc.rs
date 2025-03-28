@@ -236,7 +236,10 @@ pub async fn start_api(
     let http_listener = TcpListener::bind(http_addr).await.unwrap();
 
     let authrpc_router = Router::new()
-        .route("/", post(|ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await }))
+        .route(
+            "/",
+            post(|ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await }),
+        )
         .with_state(service_context);
     let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
 
@@ -352,7 +355,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBlockTransactionCountByNumber" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }
-        "eth_getBlockTransactionCountByHash" => GetBlockTransactionCountRequest::call(req, context).await,
+        "eth_getBlockTransactionCountByHash" => {
+            GetBlockTransactionCountRequest::call(req, context).await
+        }
         "eth_getTransactionByBlockNumberAndIndex" => {
             GetTransactionByBlockNumberAndIndexRequest::call(req, context).await
         }
@@ -390,7 +395,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         }
         "eth_getProof" => GetProofRequest::call(req, context).await,
         "eth_gasPrice" => GasPrice::call(req, context).await,
-        "eth_maxPriorityFeePerGas" => eth::max_priority_fee::MaxPriorityFee::call(req, context).await,
+        "eth_maxPriorityFeePerGas" => {
+            eth::max_priority_fee::MaxPriorityFee::call(req, context).await
+        }
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
@@ -449,8 +456,12 @@ pub async fn map_engine_requests(
         }
         "engine_getPayloadV2" => GetPayloadV2Request::call(req, context).await,
         "engine_getPayloadV1" => GetPayloadV1Request::call(req, context).await,
-        "engine_getPayloadBodiesByHashV1" => GetPayloadBodiesByHashV1Request::call(req, context).await,
-        "engine_getPayloadBodiesByRangeV1" => GetPayloadBodiesByRangeV1Request::call(req, context).await,
+        "engine_getPayloadBodiesByHashV1" => {
+            GetPayloadBodiesByHashV1Request::call(req, context).await
+        }
+        "engine_getPayloadBodiesByRangeV1" => {
+            GetPayloadBodiesByRangeV1Request::call(req, context).await
+        }
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
 }
@@ -554,7 +565,10 @@ mod tests {
         let local_p2p_node = example_p2p_node();
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        storage.set_chain_config(&example_chain_config()).await.unwrap();
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             local_p2p_node,
@@ -766,7 +780,10 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        storage.set_chain_config(&example_chain_config()).await.unwrap();
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let chain_id = storage
             .get_chain_config()

@@ -141,9 +141,7 @@ impl Blockchain {
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let inner = || async {
-            let res = self
-                .execute_block(block)
-                .await?;
+            let res = self.execute_block(block).await?;
             self.store_block(block, res).await
         };
 
@@ -341,7 +339,9 @@ impl Blockchain {
                     let _ = apply_fork_choice(&self.storage, hash, hash, hash).await;
                 }
                 EvmEngine::REVM => {
-                    apply_fork_choice(&self.storage, hash, hash, hash).await.unwrap();
+                    apply_fork_choice(&self.storage, hash, hash, hash)
+                        .await
+                        .unwrap();
                 }
             }
         }
@@ -374,7 +374,10 @@ impl Blockchain {
     }
 
     /// Add a transaction to the mempool checking that the transaction is valid
-    pub async fn add_transaction_to_pool(&self, transaction: Transaction) -> Result<H256, MempoolError> {
+    pub async fn add_transaction_to_pool(
+        &self,
+        transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);

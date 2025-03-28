@@ -27,7 +27,8 @@ fn block_import() {
         data_dir,
         network,
         evm_engine,
-    ));
+    ))
+    .unwrap();
 }
 
 pub fn criterion_benchmark(c: &mut Criterion) {

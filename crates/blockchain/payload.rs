@@ -254,7 +254,10 @@ impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
 
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub async fn build_payload(&self, payload: &mut Block) -> Result<PayloadBuildResult, ChainError> {
+    pub async fn build_payload(
+        &self,
+        payload: &mut Block,
+    ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -523,7 +526,10 @@ impl Blockchain {
         Ok(())
     }
 
-    async fn finalize_payload(&self, context: &mut PayloadBuildContext<'_>) -> Result<(), ChainError> {
+    async fn finalize_payload(
+        &self,
+        context: &mut PayloadBuildContext<'_>,
+    ) -> Result<(), ChainError> {
         let parent_hash = context.payload.header.parent_hash;
         let account_updates = context.vm.get_state_transitions(parent_hash)?;
 

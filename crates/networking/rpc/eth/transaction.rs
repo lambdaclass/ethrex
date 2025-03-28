@@ -634,8 +634,7 @@ impl RpcHandler for SendRawTransactionRequest {
                 .blockchain
                 .add_transaction_to_pool(self.to_transaction())
                 .await
-        }
-        ?;
+        }?;
         serde_json::to_value(format!("{:#x}", hash))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }

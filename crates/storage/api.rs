@@ -104,8 +104,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Add receipts
-    async fn add_receipts(&self, block_hash: BlockHash, receipts: Vec<Receipt>)
-        -> Result<(), StoreError>;
+    async fn add_receipts(
+        &self,
+        block_hash: BlockHash,
+        receipts: Vec<Receipt>,
+    ) -> Result<(), StoreError>;
 
     /// Adds receipts for a batch of blocks
     async fn add_receipts_for_blocks(
@@ -179,13 +182,19 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError>;
 
     /// Update earliest block number
-    async fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
+    async fn update_earliest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError>;
 
     /// Obtain earliest block number
     fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Update finalized block number
-    async fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
+    async fn update_finalized_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError>;
 
     /// Obtain finalized block number
     fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
@@ -197,13 +206,17 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Update latest block number
-    async fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
+    async fn update_latest_block_number(&self, block_number: BlockNumber)
+        -> Result<(), StoreError>;
 
     /// Obtain latest block number
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Update pending block number
-    async fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
+    async fn update_pending_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError>;
 
     /// Obtain pending block number
     fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
@@ -219,7 +232,11 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     fn open_state_trie(&self, state_root: H256) -> Trie;
 
     /// Set the canonical block hash for a given block number.
-    async fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError>;
+    async fn set_canonical_block(
+        &self,
+        number: BlockNumber,
+        hash: BlockHash,
+    ) -> Result<(), StoreError>;
 
     /// Unsets canonical block for a block number.
     async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError>;
@@ -228,14 +245,19 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
 
-    async fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError>;
+    async fn update_payload(
+        &self,
+        payload_id: u64,
+        payload: PayloadBundle,
+    ) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
 
     // Snap State methods
 
     /// Sets the hash of the last header downloaded during a snap sync
-    async fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError>;
+    async fn set_header_download_checkpoint(&self, block_hash: BlockHash)
+        -> Result<(), StoreError>;
 
     /// Gets the hash of the last header downloaded during a snap sync
     fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
@@ -252,8 +274,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
 
     /// Sets the storage trie paths in need of healing, grouped by hashed address
-    async fn set_storage_heal_paths(&self, accounts: Vec<(H256, Vec<Nibbles>)>)
-        -> Result<(), StoreError>;
+    async fn set_storage_heal_paths(
+        &self,
+        accounts: Vec<(H256, Vec<Nibbles>)>,
+    ) -> Result<(), StoreError>;
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
     #[allow(clippy::type_complexity)]

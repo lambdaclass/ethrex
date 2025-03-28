@@ -266,7 +266,10 @@ impl StoreEngine for Store {
         Ok(self.inner().chain_data.chain_config.unwrap())
     }
 
-    async fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_earliest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.inner()
             .chain_data
             .earliest_block_number
@@ -278,7 +281,10 @@ impl StoreEngine for Store {
         Ok(self.inner().chain_data.earliest_block_number)
     }
 
-    async fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_finalized_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.inner()
             .chain_data
             .finalized_block_number
@@ -302,7 +308,10 @@ impl StoreEngine for Store {
         Ok(self.inner().chain_data.safe_block_number)
     }
 
-    async fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_latest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.inner()
             .chain_data
             .latest_block_number
@@ -313,7 +322,10 @@ impl StoreEngine for Store {
         Ok(self.inner().chain_data.latest_block_number)
     }
 
-    async fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_pending_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.inner()
             .chain_data
             .pending_block_number
@@ -352,7 +364,11 @@ impl StoreEngine for Store {
         Ok(self.inner().headers.get(&block_hash).cloned())
     }
 
-    async fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_canonical_block(
+        &self,
+        number: BlockNumber,
+        hash: BlockHash,
+    ) -> Result<(), StoreError> {
         self.inner().canonical_hashes.insert(number, hash);
         Ok(())
     }
@@ -436,12 +452,19 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+    async fn update_payload(
+        &self,
+        payload_id: u64,
+        payload: PayloadBundle,
+    ) -> Result<(), StoreError> {
         self.inner().payloads.insert(payload_id, payload);
         Ok(())
     }
 
-    async fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_header_download_checkpoint(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
         self.inner().snap_state.header_download_checkpoint = Some(block_hash);
         Ok(())
     }

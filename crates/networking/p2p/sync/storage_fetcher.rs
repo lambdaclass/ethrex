@@ -154,7 +154,9 @@ async fn fetch_storage_batch(
         let filled_storages: Vec<(H256, H256)> = batch.drain(..values.len()).collect();
         let account_hashes: Vec<H256> = filled_storages.iter().map(|(hash, _)| *hash).collect();
         complete_storages.extend(filled_storages);
-        store.write_snapshot_storage_batches(account_hashes, keys, values).await?;
+        store
+            .write_snapshot_storage_batches(account_hashes, keys, values)
+            .await?;
         // Send complete storages to the rebuilder
         storage_trie_rebuilder_sender
             .send(complete_storages)
@@ -183,7 +185,9 @@ async fn handle_large_storage_range(
     // First process the initial range
     // Keep hold of the last key as this will be the first key of the next range
     let mut next_key = *keys.last().unwrap();
-    store.write_snapshot_storage_batch(account_hash, keys, values).await?;
+    store
+        .write_snapshot_storage_batch(account_hash, keys, values)
+        .await?;
     let mut should_continue = true;
     // Fetch the remaining range
     while should_continue {
@@ -195,7 +199,9 @@ async fn handle_large_storage_range(
         {
             next_key = *keys.last().unwrap();
             should_continue = incomplete;
-            store.write_snapshot_storage_batch(account_hash, keys, values).await?;
+            store
+                .write_snapshot_storage_batch(account_hash, keys, values)
+                .await?;
         } else {
             return Ok(true);
         }

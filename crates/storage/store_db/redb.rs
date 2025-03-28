@@ -528,7 +528,10 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    async fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_earliest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::EarliestBlockNumber,
@@ -545,7 +548,10 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    async fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_finalized_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::FinalizedBlockNumber,
@@ -579,7 +585,10 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    async fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_latest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::LatestBlockNumber,
@@ -596,7 +605,10 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    async fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_pending_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::PendingBlockNumber,
@@ -627,7 +639,11 @@ impl StoreEngine for RedBStore {
         Trie::open(db, state_root)
     }
 
-    async fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_canonical_block(
+        &self,
+        number: BlockNumber,
+        hash: BlockHash,
+    ) -> Result<(), StoreError> {
         self.write(
             CANONICAL_BLOCK_HASHES_TABLE,
             number,
@@ -697,7 +713,11 @@ impl StoreEngine for RedBStore {
         Ok(())
     }
 
-    async fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+    async fn update_payload(
+        &self,
+        payload_id: u64,
+        payload: PayloadBundle,
+    ) -> Result<(), StoreError> {
         self.write(
             PAYLOADS_TABLE,
             payload_id,
@@ -734,7 +754,10 @@ impl StoreEngine for RedBStore {
             .collect())
     }
 
-    async fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_header_download_checkpoint(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
         self.write(
             SNAP_STATE_TABLE,
             SnapStateIndex::HeaderDownloadCheckpoint,

@@ -153,7 +153,9 @@ impl Store {
         block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_headers(block_hashes, block_headers).await
+        self.engine
+            .add_block_headers(block_hashes, block_headers)
+            .await
     }
 
     pub fn get_block_header(
@@ -231,7 +233,8 @@ impl Store {
         index: Index,
     ) -> Result<(), StoreError> {
         self.engine
-            .add_transaction_location(transaction_hash, block_number, block_hash, index).await
+            .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .await
     }
 
     pub async fn add_transaction_locations(
@@ -318,7 +321,9 @@ impl Store {
             return Ok(None);
         };
 
-        let mut state_trie = self.apply_account_updates_from_trie(state_trie, account_updates).await?;
+        let mut state_trie = self
+            .apply_account_updates_from_trie(state_trie, account_updates)
+            .await?;
         Ok(Some(state_trie.hash()?))
     }
 
@@ -481,9 +486,12 @@ impl Store {
         );
 
         self.add_block(genesis_block).await?;
-        self.update_earliest_block_number(genesis_block_number).await?;
-        self.update_latest_block_number(genesis_block_number).await?;
-        self.set_canonical_block(genesis_block_number, genesis_hash).await?;
+        self.update_earliest_block_number(genesis_block_number)
+            .await?;
+        self.update_latest_block_number(genesis_block_number)
+            .await?;
+        self.set_canonical_block(genesis_block_number, genesis_hash)
+            .await?;
 
         // Set chain config
         self.set_chain_config(&genesis.config).await
@@ -561,14 +569,19 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_finalized_block_number(block_number).await
+        self.engine
+            .update_finalized_block_number(block_number)
+            .await
     }
 
     pub fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.engine.get_finalized_block_number()
     }
 
-    pub async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    pub async fn update_safe_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.engine.update_safe_block_number(block_number).await
     }
 
@@ -576,7 +589,10 @@ impl Store {
         self.engine.get_safe_block_number()
     }
 
-    pub async fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    pub async fn update_latest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.engine.update_latest_block_number(block_number).await
     }
 
@@ -586,7 +602,10 @@ impl Store {
             .ok_or(StoreError::MissingLatestBlockNumber)
     }
 
-    pub async fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    pub async fn update_pending_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
         self.engine.update_pending_block_number(block_number).await
     }
 
@@ -906,7 +925,10 @@ impl Store {
     }
 
     /// Sets the hash of the last header downloaded during a snap sync
-    pub async fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+    pub async fn set_header_download_checkpoint(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
         self.engine.set_header_download_checkpoint(block_hash).await
     }
 
@@ -1006,7 +1028,9 @@ impl Store {
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        self.engine.set_state_trie_rebuild_checkpoint(checkpoint).await
+        self.engine
+            .set_state_trie_rebuild_checkpoint(checkpoint)
+            .await
     }
 
     /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
@@ -1107,7 +1131,7 @@ mod tests {
     async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
     where
         F: FnOnce(Store) -> Fut,
-        Fut: std::future::Future<Output=()>
+        Fut: std::future::Future<Output = ()>,
     {
         // Remove preexistent DBs in case of a failed previous test
         if !matches!(engine_type, EngineType::InMemory) {
@@ -1170,8 +1194,14 @@ mod tests {
         let block_number = 6;
         let hash = block_header.compute_block_hash();
 
-        store.add_block_header(hash, block_header.clone()).await.unwrap();
-        store.add_block_body(hash, block_body.clone()).await.unwrap();
+        store
+            .add_block_header(hash, block_header.clone())
+            .await
+            .unwrap();
+        store
+            .add_block_body(hash, block_body.clone())
+            .await
+            .unwrap();
         store.set_canonical_block(block_number, hash).await.unwrap();
 
         let stored_header = store.get_block_header(block_number).unwrap().unwrap();
@@ -1238,7 +1268,10 @@ mod tests {
         let block_hash = H256::random();
         let block_number = 6;
 
-        store.add_block_number(block_hash, block_number).await.unwrap();
+        store
+            .add_block_number(block_hash, block_number)
+            .await
+            .unwrap();
 
         let stored_number = store.get_block_number(block_hash).unwrap().unwrap();
 
@@ -1256,7 +1289,10 @@ mod tests {
             .await
             .unwrap();
 
-        store.set_canonical_block(block_number, block_hash).await.unwrap();
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .unwrap();
 
         let stored_location = store
             .get_transaction_location(transaction_hash)
@@ -1305,7 +1341,10 @@ mod tests {
             .await
             .unwrap();
 
-        store.set_canonical_block(block_number, block_hash).await.unwrap();
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .unwrap();
 
         let stored_receipt = store.get_receipt(block_number, index).unwrap().unwrap();
 
@@ -1316,7 +1355,10 @@ mod tests {
         let code_hash = H256::random();
         let code = Bytes::from("kiwi");
 
-        store.add_account_code(code_hash, code.clone()).await.unwrap();
+        store
+            .add_account_code(code_hash, code.clone())
+            .await
+            .unwrap();
 
         let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
 

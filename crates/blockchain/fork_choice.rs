@@ -115,7 +115,9 @@ pub async fn apply_fork_choice(
     // Make head canonical and label all special blocks correctly.
     store.set_canonical_block(head.number, head_hash).await?;
     if let Some(finalized) = finalized_res {
-        store.update_finalized_block_number(finalized.number).await?;
+        store
+            .update_finalized_block_number(finalized.number)
+            .await?;
     }
     if let Some(safe) = safe_res {
         store.update_safe_block_number(safe.number).await?;

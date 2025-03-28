@@ -106,7 +106,8 @@ pub async fn re_run_failed_ef_test_tx(
         test,
         re_run_report,
         fork,
-    ).await?;
+    )
+    .await?;
     Ok(())
 }
 
@@ -359,7 +360,8 @@ pub async fn ensure_post_state(
                 fork,
                 &levm_account_updates,
                 &revm_account_updates,
-            ).await;
+            )
+            .await;
             re_run_report.register_account_updates_report(*vector, account_updates_report, *fork);
         }
     }

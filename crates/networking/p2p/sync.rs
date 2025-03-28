@@ -275,7 +275,9 @@ impl SyncManager {
             // Store headers and save hashes for full block retrieval
             all_block_hashes.extend_from_slice(&block_hashes[..]);
             // This step is necessary for full sync because some opcodes depend on previous blocks during execution.
-            store.add_block_headers(block_hashes.clone(), block_headers.clone()).await?;
+            store
+                .add_block_headers(block_hashes.clone(), block_headers.clone())
+                .await?;
 
             if self.sync_mode == SyncMode::Full {
                 let last_block_hash = self
@@ -443,8 +445,7 @@ impl SyncManager {
         // Spawn a blocking task to not block the tokio runtime
         let res = {
             let blockchain = self.blockchain.clone();
-            Self::add_blocks(blockchain, blocks, sync_head_found)
-                .await
+            Self::add_blocks(blockchain, blocks, sync_head_found).await
         };
 
         if let Err((error, failure)) = res {
@@ -466,7 +467,9 @@ impl SyncManager {
             return Err(error.into());
         }
 
-        store.update_latest_block_number(last_block.header.number).await?;
+        store
+            .update_latest_block_number(last_block.header.number)
+            .await?;
 
         let elapsed_secs: f64 = since.elapsed().as_millis() as f64 / 1000.0;
         let blocks_per_second = blocks_len as f64 / elapsed_secs;

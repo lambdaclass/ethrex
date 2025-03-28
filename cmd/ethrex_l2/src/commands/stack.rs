@@ -303,7 +303,8 @@ impl Command {
                     store_path.to_str().expect("Invalid store path"),
                     EngineType::Libmdbx,
                     genesis.to_str().expect("Invalid genesis path"),
-                ).await?;
+                )
+                .await?;
 
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
                 let genesis_block_hash = genesis_header.compute_block_hash();
@@ -341,8 +342,12 @@ impl Command {
                     let new_block_hash = new_block.compute_block_hash();
 
                     store.add_block_header(new_block_hash, new_block).await?;
-                    store.add_block_number(new_block_hash, last_number + 1).await?;
-                    store.set_canonical_block(last_number + 1, new_block_hash).await?;
+                    store
+                        .add_block_number(new_block_hash, last_number + 1)
+                        .await?;
+                    store
+                        .set_canonical_block(last_number + 1, new_block_hash)
+                        .await?;
 
                     last_number += 1;
                     last_hash = new_block_hash;

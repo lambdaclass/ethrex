@@ -57,8 +57,9 @@ impl BlockProducer {
         execution_cache: Arc<ExecutionCache>,
     ) {
         loop {
-            if let Err(err) =
-                self.main_logic(store.clone(), blockchain.clone(), execution_cache.clone()).await
+            if let Err(err) = self
+                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+                .await
             {
                 error!("Block Producer Error: {}", err);
             }
@@ -116,7 +117,9 @@ impl BlockProducer {
             requests: Vec::new(),
         };
 
-        blockchain.store_block(&block, execution_result.clone()).await?;
+        blockchain
+            .store_block(&block, execution_result.clone())
+            .await?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 

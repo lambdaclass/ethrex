@@ -230,7 +230,9 @@ async fn rebuild_storage_trie_in_background(
             res?;
         }
     }
-    store.set_storage_trie_rebuild_pending(pending_storages).await?;
+    store
+        .set_storage_trie_rebuild_pending(pending_storages)
+        .await?;
     Ok(())
 }
 
