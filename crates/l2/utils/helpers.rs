@@ -7,7 +7,6 @@ use std::str::FromStr;
 
 use super::error::UtilsError;
 
-#[allow(clippy::expect_used)]
 pub fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> Result<bool, UtilsError> {
     // WithdrawalInitiated(address,address,uint256)
     let withdrawal_event_selector: H256 =
