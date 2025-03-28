@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743125932115,
+  "lastUpdate": 1743170264029,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1705,6 +1705,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184651396277,
             "range": "± 644941291",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "14216ab80801c1edf2ac0f2f99c4d091dce64cc4",
+          "message": "feat(core): add metrics address config flag (#2344)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\nNowadays, the metrics API address is hardcoded to `0.0.0.0`. This PR\naims to parameterize this.\n\n**Description**\n\n- Adds a `--metrics.addr` flag to the CLI with `0.0.0.0` as the default\nvalue.\n- Implement the wiring necessary to pass the flag value to the metrics\nAPI initialization.\n\n---------\n\nCo-authored-by: fborello-lambda <federicoborello@lambdaclass.com>",
+          "timestamp": "2025-03-28T13:08:40Z",
+          "tree_id": "f796da1d04454ae694dea1c857792ba51caae4c9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/14216ab80801c1edf2ac0f2f99c4d091dce64cc4"
+        },
+        "date": 1743170262005,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185323473554,
+            "range": "± 645552899",
             "unit": "ns/iter"
           }
         ]
