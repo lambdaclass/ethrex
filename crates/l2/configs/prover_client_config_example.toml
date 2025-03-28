@@ -1,3 +1,2 @@
-[prover_client]
 prover_server_endpoint = "localhost:3900"
 proving_time_ms = 5000
