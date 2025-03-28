@@ -158,7 +158,7 @@ struct ProverClient {
     prover_server_endpoint: String,
     sp1_prover: String,
     risc0_dev_mode: u64,
-    interval_ms: u64,
+    proving_time_ms: u64,
 }
 
 impl ProverClient {
@@ -166,25 +166,12 @@ impl ProverClient {
         let prefix = "PROVER_CLIENT";
         format!(
             "{prefix}_PROVER_SERVER_ENDPOINT={}
-{prefix}_INTERVAL_MS={}
+{prefix}_PROVING_TIME_MS={}
 RISC0_DEV_MODE={}
 SP1_PROVER={}
 ",
-            self.prover_server_endpoint, self.interval_ms, self.risc0_dev_mode, self.sp1_prover
+            self.prover_server_endpoint, self.proving_time_ms, self.risc0_dev_mode, self.sp1_prover
         )
-    }
-}
-
-#[derive(Deserialize, Debug)]
-struct ProverClientConfig {
-    prover_client: ProverClient,
-}
-
-impl ProverClientConfig {
-    fn to_env(&self) -> String {
-        let mut env_representation = String::new();
-        env_representation.push_str(&self.prover_client.to_env());
-        env_representation
     }
 }
 
@@ -293,7 +280,7 @@ fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError>
             write_to_env(config.to_env(), mode)?;
         }
         ConfigMode::ProverClient => {
-            let config: ProverClientConfig =
+            let config: ProverClient =
                 toml::from_str(&file).map_err(|_| TomlParserError::TomlFormat(toml_file_name))?;
             write_to_env(config.to_env(), mode)?;
         }
