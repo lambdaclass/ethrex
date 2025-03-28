@@ -251,7 +251,8 @@ impl StoreEngine for RedBStore {
             HEADERS_TABLE,
             <H256 as Into<BlockHashRLP>>::into(block_hash),
             <BlockHeader as Into<BlockHeaderRLP>>::into(block_header),
-        ).await
+        )
+        .await
     }
 
     async fn add_block_headers(
@@ -294,7 +295,8 @@ impl StoreEngine for RedBStore {
             BLOCK_BODIES_TABLE,
             <H256 as Into<BlockHashRLP>>::into(block_hash),
             <BlockBody as Into<BlockBodyRLP>>::into(block_body),
-        ).await
+        )
+        .await
     }
 
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
@@ -358,7 +360,8 @@ impl StoreEngine for RedBStore {
             })
             .collect();
 
-        self.write_batch(CANONICAL_BLOCK_HASHES_TABLE, key_values).await
+        self.write_batch(CANONICAL_BLOCK_HASHES_TABLE, key_values)
+            .await
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
@@ -398,7 +401,8 @@ impl StoreEngine for RedBStore {
             PENDING_BLOCKS_TABLE,
             <H256 as Into<BlockHashRLP>>::into(block.header.compute_block_hash()),
             <Block as Into<BlockRLP>>::into(block),
-        ).await
+        )
+        .await
     }
 
     fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
@@ -419,7 +423,8 @@ impl StoreEngine for RedBStore {
             BLOCK_NUMBERS_TABLE,
             <H256 as Into<BlockHashRLP>>::into(block_hash),
             block_number,
-        ).await
+        )
+        .await
     }
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
@@ -446,7 +451,8 @@ impl StoreEngine for RedBStore {
                 block_hash,
                 index,
             )),
-        ).await
+        )
+        .await
     }
 
     fn get_transaction_location(
@@ -475,7 +481,8 @@ impl StoreEngine for RedBStore {
             RECEIPTS_TABLE,
             <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((block_hash, index)),
             <Receipt as Into<ReceiptRLP>>::into(receipt),
-        ).await
+        )
+        .await
     }
 
     async fn add_receipts_for_blocks(
@@ -531,7 +538,8 @@ impl StoreEngine for RedBStore {
             ACCOUNT_CODES_TABLE,
             <H256 as Into<AccountCodeHashRLP>>::into(code_hash),
             <bytes::Bytes as Into<AccountCodeRLP>>::into(code),
-        ).await
+        )
+        .await
     }
 
     fn get_account_code(
@@ -561,7 +569,8 @@ impl StoreEngine for RedBStore {
             serde_json::to_string(chain_config)
                 .map_err(|_| StoreError::DecodeError)?
                 .into_bytes(),
-        ).await
+        )
+        .await
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
@@ -584,7 +593,8 @@ impl StoreEngine for RedBStore {
             CHAIN_DATA_TABLE,
             ChainDataIndex::EarliestBlockNumber,
             block_number.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -604,7 +614,8 @@ impl StoreEngine for RedBStore {
             CHAIN_DATA_TABLE,
             ChainDataIndex::FinalizedBlockNumber,
             block_number.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -621,7 +632,8 @@ impl StoreEngine for RedBStore {
             CHAIN_DATA_TABLE,
             ChainDataIndex::SafeBlockNumber,
             block_number.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -641,7 +653,8 @@ impl StoreEngine for RedBStore {
             CHAIN_DATA_TABLE,
             ChainDataIndex::LatestBlockNumber,
             block_number.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -661,7 +674,8 @@ impl StoreEngine for RedBStore {
             CHAIN_DATA_TABLE,
             ChainDataIndex::PendingBlockNumber,
             block_number.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -696,7 +710,8 @@ impl StoreEngine for RedBStore {
             CANONICAL_BLOCK_HASHES_TABLE,
             number,
             <H256 as Into<BlockHashRLP>>::into(hash),
-        ).await
+        )
+        .await
     }
 
     async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
@@ -708,7 +723,8 @@ impl StoreEngine for RedBStore {
             PAYLOADS_TABLE,
             payload_id,
             <PayloadBundle as Into<PayloadBundleRLP>>::into(PayloadBundle::from_block(block)),
-        ).await
+        )
+        .await
     }
 
     fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
@@ -756,7 +772,8 @@ impl StoreEngine for RedBStore {
             })
             .collect();
 
-        self.write_to_multi_batch(TRANSACTION_LOCATIONS_TABLE, key_values).await?;
+        self.write_to_multi_batch(TRANSACTION_LOCATIONS_TABLE, key_values)
+            .await?;
 
         Ok(())
     }
@@ -770,7 +787,8 @@ impl StoreEngine for RedBStore {
             PAYLOADS_TABLE,
             payload_id,
             <PayloadBundle as Into<PayloadBundleRLP>>::into(payload),
-        ).await
+        )
+        .await
     }
 
     fn get_receipts_for_block(
@@ -810,7 +828,8 @@ impl StoreEngine for RedBStore {
             SNAP_STATE_TABLE,
             SnapStateIndex::HeaderDownloadCheckpoint,
             block_hash.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
@@ -825,7 +844,8 @@ impl StoreEngine for RedBStore {
             SNAP_STATE_TABLE,
             SnapStateIndex::StateTrieKeyCheckpoint,
             last_key.to_vec().encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_state_trie_key_checkpoint(&self) -> Result<Option<[H256; 2]>, StoreError> {
@@ -847,7 +867,8 @@ impl StoreEngine for RedBStore {
             SNAP_STATE_TABLE,
             SnapStateIndex::StorageHealPaths,
             accounts.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
@@ -869,7 +890,8 @@ impl StoreEngine for RedBStore {
             CHAIN_DATA_TABLE,
             ChainDataIndex::IsSynced,
             status.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
@@ -877,7 +899,8 @@ impl StoreEngine for RedBStore {
             SNAP_STATE_TABLE,
             SnapStateIndex::StateHealPaths,
             paths.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
@@ -911,7 +934,8 @@ impl StoreEngine for RedBStore {
                         .map(<AccountState as Into<AccountStateRLP>>::into),
                 )
                 .collect::<Vec<_>>(),
-        ).await
+        )
+        .await
     }
 
     async fn write_snapshot_storage_batch(
@@ -966,7 +990,8 @@ impl StoreEngine for RedBStore {
             SNAP_STATE_TABLE,
             SnapStateIndex::StateTrieRebuildCheckpoint,
             (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_state_trie_rebuild_checkpoint(
@@ -995,7 +1020,8 @@ impl StoreEngine for RedBStore {
             SNAP_STATE_TABLE,
             SnapStateIndex::StorageTrieRebuildPending,
             pending.encode_to_vec(),
-        ).await
+        )
+        .await
     }
 
     fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
