@@ -60,11 +60,19 @@ pub struct Options {
     #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
     pub syncmode: SyncMode,
     #[arg(
-        long = "metrics.port",
-        value_name = "PROMETHEUS_METRICS_PORT",
+        long = "metrics.addr",
+        value_name = "ADDRESS",
+        default_value = "0.0.0.0",
         help_heading = "Node options"
     )]
-    pub metrics_port: Option<String>,
+    pub metrics_addr: String,
+    #[arg(
+        long = "metrics.port",
+        value_name = "PROMETHEUS_METRICS_PORT",
+        default_value = "9090", // Default Prometheus port (https://prometheus.io/docs/tutorials/getting_started/#show-me-how-it-is-done).
+        help_heading = "Node options"
+    )]
+    pub metrics_port: String,
     #[arg(
         long = "dev",
         action = ArgAction::SetTrue,
@@ -176,6 +184,7 @@ impl Default for Options {
             bootnodes: Default::default(),
             datadir: Default::default(),
             syncmode: Default::default(),
+            metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
             dev: Default::default(),
             evm: Default::default(),
