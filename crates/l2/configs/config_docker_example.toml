@@ -31,7 +31,7 @@ max_block_step = 5000
 l2_proposer_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
 
 [proposer]
-interval_ms = 5000
+interval_ms = 20000
 coinbase_address = "0x0007a881CD95B1484fca47615B64803dad620C8d"
 
 [committer]
