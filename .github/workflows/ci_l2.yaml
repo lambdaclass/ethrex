@@ -29,5 +29,5 @@ jobs:
       - name: Run L2 integration test
         run: |
           cd crates/l2
-          cp config_example.toml config.toml
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
           make ci_test

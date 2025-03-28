@@ -14,7 +14,7 @@ services:
     volumes:
       # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${CI_ETHREX_WORKDIR}/contracts
-      - ./config.toml:${CI_ETHREX_WORKDIR}/config.toml
+      - ./configs/sequencer_config.toml:${CI_ETHREX_WORKDIR}/configs/sequencer_config.toml
       - ./.env:${CI_ETHREX_WORKDIR}/.env
       - ../../test_data/genesis-l1-dev.json:${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
       - ../../test_data/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
@@ -24,7 +24,7 @@ services:
       # specified in the `volumes:` section
       - DEPLOYER_CONTRACTS_PATH=${CI_ETHREX_WORKDIR}/contracts
       - ENV_FILE=${CI_ETHREX_WORKDIR}/.env
-      - CONFIG_FILE=${CI_ETHREX_WORKDIR}/config.toml
+      - CONFIGS_PATH=${CI_ETHREX_WORKDIR}/configs
       - GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
       - PRIVATE_KEYS_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
     depends_on:
