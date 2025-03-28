@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743171368312,
+  "lastUpdate": 1743176599174,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1765,6 +1765,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185080725230,
             "range": "± 833080354",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "835045b3fc5b905cb90d64e59b3febef16b960c6",
+          "message": "refactor(l2, core): initial iteration for `l2` subcommand (#2324)\n\n**Motivation**\n\nThere are two motivations for this PR:\n1. Decouple L2 logic (initialization, etc) from `ethrex.rs`.\n2. Replace `crates/l2/Makefile` (we'll keep the Makefile for simplicity,\nby replacing I mean to have all the logic in `l2` subcommands such as\n`l2 init` and `l2 removedb` that replace `make init-l2` and `make\nrm-db-l2` logic). In future PRs we'll add more subcommands, making the\nMakefile a shortcut for running `cargo run --release --bin ethrex\n--features l2 -- l2 <some command>`.\n\n**Description**\n\n- Add an `l2.rs` submodule for the L2 subcommand logic.\n- Decouple L2 initialization from `ethrex.rs` file (moved into\nsubcommand handling).\n- Merge `BasedOptions` into `L2Options` (based options are also L2\noptions).\n- Implement `l2 init` and `l2 removedb` commands.\n- Update `crates/l2/Makefile` to use these new commands.\n\n**Test it out**\n\nDoing your regular L2 initialization with the makefile should be enough.\n\nResolves #2246.\nResolver #1987",
+          "timestamp": "2025-03-28T14:53:11Z",
+          "tree_id": "1bb340b2e037e27a22e0c78206cdbc0cad1d0a82",
+          "url": "https://github.com/lambdaclass/ethrex/commit/835045b3fc5b905cb90d64e59b3febef16b960c6"
+        },
+        "date": 1743176596284,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 187390215232,
+            "range": "± 882029235",
             "unit": "ns/iter"
           }
         ]
