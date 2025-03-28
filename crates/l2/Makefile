@@ -66,6 +66,7 @@ L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
 # Used in the .env file. Ensure the same port is used for `ENGINE_API_RPC_URL`.
+# https://github.com/lambdaclass/ethrex/issues/2358
 # The authrpc.port has to be deprecated when using the l2 flag
 L2_AUTH_PORT=8552
 
