@@ -139,10 +139,10 @@ async fn transfer_from(
     let mut retries = 0;
 
     for i in nonce..nonce + iterations {
-        if verbose {
-            println!("transfer {i} from {pk}");
+        // For debugging purposes, print every 250 transactions
+        if i % 300 == 0 && verbose {
+            println!("Sending transaction {i} from {address:#x} with pk {pk}");
         }
-
         let tx = client
             .build_eip1559_transaction(
                 to_address,
