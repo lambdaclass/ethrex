@@ -18,6 +18,9 @@ impl L1WatcherConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         envy::prefixed("L1_WATCHER_")
             .from_env::<Self>()
-            .map_err(ConfigError::from)
+            .map_err(|e| ConfigError::ConfigDeserializationError {
+                err: e,
+                from: "L1WatcherConfig".to_string(),
+            })
     }
 }
