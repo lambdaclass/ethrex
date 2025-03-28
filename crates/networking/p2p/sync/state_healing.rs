@@ -36,7 +36,6 @@ pub(crate) async fn heal_state_trie(
     state_root: H256,
     store: Store,
     peers: PeerHandler,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<bool, SyncError> {
     let mut paths = store.get_state_heal_paths()?.unwrap_or_default();
     // Spawn a bytecode fetcher for this block
@@ -59,7 +58,6 @@ pub(crate) async fn heal_state_trie(
                 batch,
                 peers.clone(),
                 store.clone(),
-                storage_healer_sender.clone(),
                 bytecode_sender.clone(),
             ));
             // End loop if we have no more paths to fetch
@@ -98,7 +96,6 @@ async fn heal_state_batch(
     mut batch: Vec<Nibbles>,
     peers: PeerHandler,
     store: Store,
-    storage_sender: Sender<Vec<H256>>,
     bytecode_sender: Sender<Vec<H256>>,
 ) -> Result<(Vec<Nibbles>, bool), SyncError> {
     if let Some(nodes) = peers
@@ -144,7 +141,7 @@ async fn heal_state_batch(
         }
         // Send storage & bytecode requests
         if !hashed_addresses.is_empty() {
-            storage_sender.send(hashed_addresses).await?;
+            store.set_storage_heal_paths(hashed_addresses.into_iter().map(|hash| (hash, vec![Nibbles::default()])).collect())?;
         }
         if !code_hashes.is_empty() {
             bytecode_sender.send(code_hashes).await?;

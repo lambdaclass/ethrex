@@ -8,7 +8,7 @@
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
-use ethrex_trie::EMPTY_TRIE_HASH;
+use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
 use std::array;
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
@@ -264,6 +264,7 @@ async fn rebuild_storage_trie(
     }
     if storage_trie.hash()? != expected_root {
         warn!("Mismatched storage root for account {account_hash}");
+        store.set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])?;
     }
     Ok(())
 }
