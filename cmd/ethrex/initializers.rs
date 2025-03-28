@@ -28,12 +28,16 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 
 #[cfg(feature = "l2")]
-use crate::cli::L2Options;
+use crate::l2::L2Options;
 #[cfg(feature = "l2")]
-use ::{ethrex_common::Address, ethrex_l2::utils::config::read_env_file, secp256k1::SecretKey};
+use ::{
+    ethrex_common::Address,
+    ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
+    secp256k1::SecretKey,
+};
 
 #[cfg(feature = "based")]
-use crate::cli::BasedOptions;
+use crate::l2::BasedOptions;
 #[cfg(feature = "based")]
 use ethrex_common::Public;
 #[cfg(feature = "based")]
@@ -52,10 +56,11 @@ pub fn init_tracing(opts: &Options) {
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
-    if let Some(port) = &opts.metrics_port {
-        let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(port.clone());
-        tracker.spawn(metrics_api);
-    }
+    let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(
+        opts.metrics_addr.clone(),
+        opts.metrics_port.clone(),
+    );
+    tracker.spawn(metrics_api);
 }
 
 pub fn init_store(data_dir: &str, network: &str) -> Store {
@@ -90,7 +95,6 @@ pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
 #[allow(clippy::too_many_arguments)]
 pub fn init_rpc_api(
     opts: &Options,
-    #[cfg(feature = "based")] based_ops: &BasedOptions,
     #[cfg(feature = "l2")] l2_opts: &L2Options,
     signer: &SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
@@ -125,11 +129,11 @@ pub fn init_rpc_api(
         local_node_record,
         syncer,
         #[cfg(feature = "based")]
-        get_gateway_http_client(based_ops),
+        get_gateway_http_client(&l2_opts.based_opts),
         #[cfg(feature = "based")]
-        get_gateway_auth_client(based_ops),
+        get_gateway_auth_client(&l2_opts.based_opts),
         #[cfg(feature = "based")]
-        get_gateway_public_key(based_ops),
+        get_gateway_public_key(&l2_opts.based_opts),
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
@@ -378,7 +382,7 @@ pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
 
     warn!("Sponsor private key not provided. Trying to read from the .env file.");
 
-    if let Err(e) = read_env_file() {
+    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
         panic!("Failed to read .env file: {e}");
     }
     let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();
