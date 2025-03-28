@@ -316,7 +316,7 @@ impl L1Watcher {
                         // not be calculated in here. The reason for this is that the
                         // gas_limit for this transaction is payed by the caller in
                         // the L1 as part of the deposited funds.
-                        gas_limit: Some(TX_GAS_COST.mul(2)),
+                        gas_limit: Some(TX_GAS_COST.mul(20)),
                         // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
                         // Otherwise, the transaction is not included in the mempool.
                         // We should override the blockchain to always include the transaction.

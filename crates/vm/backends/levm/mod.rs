@@ -196,7 +196,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
         };
 
-        let mut vm = if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
+        let mut vm = if let Transaction::PrivilegedL2Transaction(privileged_tx) = tx {
             VM::new_with_hooks(
                 tx.to(),
                 env,
@@ -206,7 +206,9 @@ impl LEVM {
                 block_cache.clone(),
                 tx.access_list(),
                 tx.authorization_list(),
-                vec![Arc::new(L2Hook)],
+                vec![Arc::new(L2Hook {
+                    recipient: privileged_tx.recipient,
+                })],
             )?
         } else {
             VM::new(

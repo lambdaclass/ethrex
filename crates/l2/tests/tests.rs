@@ -9,7 +9,7 @@ use ethrex_rpc::clients::eth::{
 };
 use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcReceipt;
-use keccak_hash::H256;
+use keccak_hash::{keccak, H256};
 use secp256k1::SecretKey;
 use std::{ops::Mul, str::FromStr, time::Duration};
 
@@ -400,8 +400,7 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     read_env_file_by_config(ConfigMode::Sequencer)?;
 
-    // 1. Check balances on L1 and L2
-
+    // Check balances on L1 and L2
     println!("Checking initial balances on L1 and L2");
     let l1_rich_wallet_address = l1_rich_wallet_address();
     let l1_rich_pk = H256::from_slice(&l1_rich_wallet_private_key().secret_bytes());
@@ -435,14 +434,14 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     println!("Deploying contract on L2...");
 
     // pragma solidity ^0.8.27;
-
     // contract Test {
-    //     uint256 public number;
-    //     function setNumber(uint256 new_number) public {
-    //         number = new_number;
+    //     event NumberSet(uint256 indexed number);
+    //     function emitNumber(uint256 _number) public {
+    //         emit NumberSet(_number);
     //     }
     // }
-    let init_code = hex::decode("6080604052348015600e575f5ffd5b506101268061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106030575f3560e01c80633fb5c1cb1460345780638381f58a14604c575b5f5ffd5b604a60048036038101906046919060a6565b6066565b005b6052606f565b604051605d919060d9565b60405180910390f35b805f8190555050565b5f5481565b5f5ffd5b5f819050919050565b6088816078565b81146091575f5ffd5b50565b5f8135905060a0816081565b92915050565b5f6020828403121560b85760b76074565b5b5f60c3848285016094565b91505092915050565b60d3816078565b82525050565b5f60208201905060ea5f83018460cc565b9291505056fea264697066735822122065d068783014f7271b7429169dd6407fbd153cacc389b40bf35f86c3adce071a64736f6c634300081c0033")?;
+
+    let init_code = hex::decode("6080604052348015600e575f5ffd5b506101008061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063f15d140b14602a575b5f5ffd5b60406004803603810190603c919060a4565b6042565b005b807f9ec8254969d1974eac8c74afb0c03595b4ffe0a1d7ad8a7f82ed31b9c854259160405160405180910390a250565b5f5ffd5b5f819050919050565b6086816076565b8114608f575f5ffd5b50565b5f81359050609e81607f565b92915050565b5f6020828403121560b65760b56072565b5b5f60c1848285016092565b9150509291505056fea26469706673582212206f6d360696127c56e2d2a456f3db4a61e30eae0ea9b3af3c900c81ea062e8fe464736f6c634300081c0033")?;
 
     let (_, contract_address) = proposer_client
         .deploy(
@@ -455,19 +454,12 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     println!("Contract deployed on L2: {contract_address:?}");
 
-    // We set the value of the number variable to 42 in the L2 contract
-    let calldata_to_contract: Bytes = calldata::encode_calldata(
-        "setNumber(uint256)",
-        &[Value::Uint(U256::from(
-            424242424242424242424242424242424242u128,
-        ))],
-    )?
-    .into();
+    // We call the contract to emit an event with the number 424242
+    let calldata_to_contract: Bytes =
+        calldata::encode_calldata("emitNumber(uint256)", &[Value::Uint(U256::from(424242))])?
+            .into();
 
-    println!(
-        "calldata: {}",
-        String::from_utf8_lossy(calldata_to_contract.as_ref())
-    );
+    println!("calldata: {:?}", hex::encode(calldata_to_contract.as_ref()));
 
     let values = vec![
         Value::Address(contract_address),       // to
@@ -501,13 +493,40 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
         )
         .await?;
 
-    println!("Deposit tx: {deposit_tx:?}");
-
     let deposit_tx_hash = eth_client
         .send_eip1559_transaction(&deposit_tx, &l1_rich_wallet_private_key())
         .await?;
 
     println!("Deposit tx hash: {deposit_tx_hash:?}");
+
+    // Wait for the event to be emitted
+    let topic = keccak(b"NumberSet(uint256)");
+    while proposer_client
+        .get_logs(U256::from(0), U256::from(20), contract_address, topic)
+        .await
+        .is_err()
+    {
+        println!("Waiting for the event to be built");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    let logs = proposer_client
+        .get_logs(U256::from(0), U256::from(20), contract_address, topic)
+        .await?;
+    println!("Logs: {logs:?}");
+
+    let number = U256::from_big_endian(
+        &logs
+            .first()
+            .unwrap()
+            .log
+            .topics
+            .get(1)
+            .unwrap()
+            .to_fixed_bytes(),
+    );
+    assert_eq!(number, U256::from(424242));
+
     Ok(())
 }
 
@@ -529,6 +548,8 @@ async fn l2_sdk_deploy() -> Result<(), Box<dyn std::error::Error>> {
             Overrides::default(),
         )
         .await?;
+
+    println!("Contract deployed on L1: {contract_address:?}");
 
     let calldata: Bytes = calldata::encode_calldata("number()", &[])?.into();
 

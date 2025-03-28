@@ -1,6 +1,6 @@
 use std::cmp::max;
 
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::{types::Fork, Address, U256};
 
 use crate::{
     constants::{INIT_CODE_MAX_SIZE, TX_BASE_COST, VALID_BLOB_PREFIXES},
@@ -20,7 +20,9 @@ use super::{
     hook::Hook,
 };
 
-pub struct L2Hook;
+pub struct L2Hook {
+    pub recipient: Address,
+}
 
 impl Hook for L2Hook {
     fn prepare_execution(
@@ -214,10 +216,11 @@ impl Hook for L2Hook {
             increase_account_balance(
                 &mut vm.cache,
                 vm.db.clone(),
-                initial_call_frame.to,
+                self.recipient,
                 initial_call_frame.msg_value,
             )?;
         }
+        initial_call_frame.msg_value = U256::from(0);
         Ok(())
     }
 
