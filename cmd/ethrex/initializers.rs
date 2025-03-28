@@ -56,7 +56,10 @@ pub fn init_tracing(opts: &Options) {
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
-    let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(opts.metrics_port.clone());
+    let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(
+        opts.metrics_addr.clone(),
+        opts.metrics_port.clone(),
+    );
     tracker.spawn(metrics_api);
 }
 
