@@ -64,6 +64,7 @@ jobs:
 
       - name: Run L2 integration prover_client
         run: |
+          cd crates/l2
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach --build
           RUST_LOG=info,ethrex_prover=debug make init-prover & cargo test prover_client --release -- --nocapture
