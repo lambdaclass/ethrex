@@ -15,6 +15,8 @@ use tracing::debug;
 
 use crate::{peer_handler::PeerHandler, sync::node_missing_children};
 
+const MINUMUM_STORAGES_IN_QUEUE: usize = 400;
+
 use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
 
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
@@ -27,20 +29,18 @@ pub(crate) async fn storage_healer(
     peers: PeerHandler,
     store: Store,
 ) -> Result<bool, SyncError> {
-    // Retrieve pending paths
-    let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
-    loop {
-        let paths = store.get_storage_heal_paths(100)?;
-        if paths.is_empty() {
-            break;
-        }
-        pending_paths.extend(paths);
-    }
+    // Retrieve a batch of pending paths from the store
+    // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
+    let mut pending_paths : BTreeMap<H256, Vec<Nibbles>> = store.get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?.into_iter().collect();
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
     while incoming {
+        // If we have few storages in queue, fetch more from the store
+        if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
+            pending_paths.extend(store.get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?.into_iter());
+        }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
