@@ -31,7 +31,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
                     )
                     .unwrap()
             }
-            trie.commit()
+            trie.commit().unwrap();
         });
     });
 
@@ -43,7 +43,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
                 trie.insert(keys_10k[i].clone(), values_10k[i].clone())
                     .unwrap()
             }
-            trie.commit();
+            trie.commit().unwrap();
         });
     });
 
