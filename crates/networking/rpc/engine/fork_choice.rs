@@ -309,14 +309,13 @@ async fn handle_forkchoice(
                         RpcErr::Internal("Missing latest canonical block".to_owned()),
                     )?;
                     let sync_head = fork_choice_state.head_block_hash;
-                    // TODO: replace with message passing
-                    // As is, this kind of breaks the request, as it will not respond until
-                    // sync is over
-                    if let Ok(mut syncer) = context.syncer.try_lock() {
-                        syncer
-                            .start_sync(current_head, sync_head, context.storage.clone())
-                            .await;
-                    }
+                    tokio::task::spawn(async move {
+                        if let Ok(mut syncer) = context.syncer.try_lock() {
+                            syncer
+                                .start_sync(current_head, sync_head, context.storage.clone())
+                                .await;
+                        }
+                    });
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
