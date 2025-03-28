@@ -65,7 +65,7 @@ impl BlockIdentifier {
             Err(error) => return Err(RpcErr::BadParams(error.to_string())),
         };
 
-        if let Ok(value) = u64::from_str_radix(&hex_str, 10) {
+        if let Ok(value) = hex_str.parse::<u64>() {
             return Ok(BlockIdentifier::Number(value));
         };
 
