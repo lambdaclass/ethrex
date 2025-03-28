@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743181445008,
+  "lastUpdate": 1743199852523,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1825,6 +1825,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 188884940955,
             "range": "± 818849675",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "27232155ca4b70ac1658d86e8411a00618e66598",
+          "message": "feat (l1): write nodes in batches during storage healing (#2288)\n\n**Motivation**\nIn a similar fashion to #2270, this PR aims to reduce the time spent\nwriting data to the DB by writing data in batches. In this case the\nnodes received during storage healing are written all at once using the\nalready existing `put_batch` method of the TrieDB trait.\nThis could only be done for nodes belonging to the same trie, as it\nwould otherwise involve leaking and constraining the internal\nrepresentation of TrieDB.\nThis has shown to reduce the time spent writing storage nodes in the DB\nfrom around 4 seconds to less than 20 milliseconds\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `write_node_batch` method for `TrieState` relying on\n`TrieDB::put_batch`\n* Refactor storage healer code to write all nodes for a trie in a single\noperation\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Rodrigo Oliveri <rodrigooliveri10@gmail.com>",
+          "timestamp": "2025-03-28T21:21:38Z",
+          "tree_id": "b424781e8fce7d01c22aba84916878998d30b789",
+          "url": "https://github.com/lambdaclass/ethrex/commit/27232155ca4b70ac1658d86e8411a00618e66598"
+        },
+        "date": 1743199849892,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182531092599,
+            "range": "± 956807821",
             "unit": "ns/iter"
           }
         ]
