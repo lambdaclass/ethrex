@@ -243,7 +243,7 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
                 item.encode(&mut tmp_buf);
             }
             encode_length(tmp_buf.len(), buf);
-            buf.extend_from_slice(&mut tmp_buf);
+            buf.put_slice(&mut tmp_buf);
         }
     }
 }
