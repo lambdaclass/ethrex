@@ -4,10 +4,7 @@ mod errors;
 mod execution_result;
 mod helpers;
 
-#[cfg(feature = "internal")]
 pub mod backends;
-#[cfg(not(feature = "internal"))]
-mod backends;
 
 pub use backends::{BlockExecutionResult, Evm, EvmEngine};
 pub use db::{ExecutionDB, StoreWrapper, ToExecDB};
