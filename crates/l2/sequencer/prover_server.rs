@@ -486,20 +486,6 @@ impl ProverServer {
         // the structure has to match the one defined in the OnChainProposer.sol contract.
         // It may cause some issues, but the ethrex_prover_lib cannot be imported,
         // this approach is straight-forward for now.
-        let exec_proof = {
-            if self.needed_proof_types.contains(&ProverType::Exec) {
-                let exec_proof = read_proof(block_number, StateFileType::Proof(ProverType::Exec))?;
-                if exec_proof.prover_type != ProverType::Exec {
-                    return Err(ProverServerError::Custom(
-                        "exec Proof isn't present".to_string(),
-                    ));
-                }
-                exec_proof.calldata
-            } else {
-                ProverType::Exec.empty_calldata()
-            }
-        };
-
         let risc0_proof = {
             if self.needed_proof_types.contains(&ProverType::RISC0) {
                 let risc0_proof =
