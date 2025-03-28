@@ -467,15 +467,25 @@ impl StoreEngine for Store {
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.inner().snap_state.storage_heal_paths = Some(accounts);
+        self.inner()
+            .snap_state
+            .storage_heal_paths
+            .get_or_insert(Default::default())
+            .extend(accounts);
         Ok(())
     }
 
     fn get_storage_heal_paths(
         &self,
-        _limit: usize,
+        limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        todo!();
+        Ok(self
+            .inner()
+            .snap_state
+            .storage_heal_paths
+            .as_ref()
+            .map(|paths| paths.iter().take(limit).cloned().collect::<Vec<_>>())
+            .unwrap_or_default())
     }
 
     fn clear_snap_state(&self) -> Result<(), StoreError> {

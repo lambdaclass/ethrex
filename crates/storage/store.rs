@@ -929,7 +929,8 @@ impl Store {
         self.engine.get_state_trie_key_checkpoint()
     }
 
-    /// Sets the storage trie paths in need of healing, grouped by hashed address
+    /// Sets storage trie paths in need of healing, grouped by hashed address
+    /// This will overwite previously stored paths for the received storages but will not remove other storage's paths
     pub fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
@@ -938,6 +939,7 @@ impl Store {
     }
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
+    /// Gets paths from at most `limit` storage tries and removed them from the Store
     #[allow(clippy::type_complexity)]
     pub fn get_storage_heal_paths(
         &self,

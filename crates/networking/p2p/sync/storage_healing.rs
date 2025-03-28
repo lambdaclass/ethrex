@@ -31,7 +31,10 @@ pub(crate) async fn storage_healer(
 ) -> Result<bool, SyncError> {
     // Retrieve a batch of pending paths from the store
     // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
-    let mut pending_paths : BTreeMap<H256, Vec<Nibbles>> = store.get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?.into_iter().collect();
+    let mut pending_paths: BTreeMap<H256, Vec<Nibbles>> = store
+        .get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?
+        .into_iter()
+        .collect();
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
@@ -39,7 +42,11 @@ pub(crate) async fn storage_healer(
     while incoming {
         // If we have few storages in queue, fetch more from the store
         if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
-            pending_paths.extend(store.get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?.into_iter());
+            pending_paths.extend(
+                store
+                    .get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?
+                    .into_iter(),
+            );
         }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
