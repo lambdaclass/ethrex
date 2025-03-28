@@ -389,11 +389,11 @@ pub fn run_without_commit(
     let tx_result = match state {
         EvmState::Store(db) => {
             let mut evm = evm_builder.with_db(db).build();
-            evm.transact().map_err(EvmError::from)?
+            evm.transact()?
         }
         EvmState::Execution(db) => {
             let mut evm = evm_builder.with_db(db).build();
-            evm.transact().map_err(EvmError::from)?
+            evm.transact()?
         }
     };
     Ok(tx_result.result.into())
