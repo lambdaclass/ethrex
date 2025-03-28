@@ -598,10 +598,16 @@ impl StoreEngine for Store {
         &self,
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        // self.read::<SnapState>(SnapStateIndex::StorageHealPaths)?
-        //     .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
-        //     .transpose()
-        //     .map_err(StoreError::RLPDecode)
+        // (QuickFix) Move storage heal paths to their own table
+        tracing::info!("Moving storages from snap state to own table");
+        if let Some(storage_heal_paths) = self.read::<SnapState>(SnapStateIndex::StorageHealPaths)?
+            .map(|ref h| <Vec<(H256, Vec<Nibbles>)>>::decode(h))
+            .transpose()
+            .map_err(StoreError::RLPDecode)? {
+            self.set_storage_heal_paths(storage_heal_paths)?;
+        };
+        tracing::info!("Moved storages from snap state to own table");
+        tracing::info!("Fetching state heal paths");
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StorageHealPaths>()
@@ -611,6 +617,14 @@ impl StoreEngine for Store {
             .map_while(|res| res.ok().map(|(hash, paths)| (hash.to(), paths.to())))
             .take(limit)
             .collect::<Vec<_>>();
+        tracing::info!("Fetched state heal paths");
+        // Delete fetched entries from the table
+        let txn = self.db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
+        for (hash, _) in res.iter() {
+            txn.delete::<StorageHealPaths>((*hash).into(), None).map_err(StoreError::LibmdbxError)?;
+        }
+        txn.commit().map_err(StoreError::LibmdbxError)?;
+        tracing::info!("Deleted fetched state heal paths");
         Ok(res)
     }
 
