@@ -29,7 +29,7 @@ jobs:
       - name: Run L2 integration test
         run: |
           cd crates/l2
-          cp configs/config_example.toml configs/config.toml
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
         # make ci_test
 
       - name: RISC-V SP1 toolchain install
@@ -45,17 +45,17 @@ jobs:
       - name: Setup L2 integration prover_client
         run: |
           cd crates/l2
-          cp configs/config_example.toml configs/config.toml
-          sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/config.toml
-          sed -i 's/sp1_deploy_verifier = false/sp1_deploy_verifier = true/' configs/config.toml
-          sed -i 's/dev_mode = true/dev_mode = false/' configs/config_example.toml
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
+          sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
+          sed -i 's/sp1_deploy_verifier = false/sp1_deploy_verifier = true/' configs/sequencer_config.toml
+          sed -i 's/dev_mode = true/dev_mode = false/' configs/sequencer_config.toml
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           sed -i 's/sp1_prover = "mock"/sp1_prover = "cpu"/' configs/prover_client_config.toml
 
-      - name: Display configs/config.toml
+      - name: Display configs/sequencer_config.toml
         run: |
           cd crates/l2
-          cat configs/config.toml
+          cat configs/sequencer_config.toml
 
       - name: Display cat configs/prover_client_config.toml
         run: |
