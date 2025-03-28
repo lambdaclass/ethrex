@@ -1,23 +1,20 @@
-use crate::prover::create_prover;
+use crate::{prove, to_calldata};
 use ethrex_l2::{
-    proposer::prover_server::ProofData,
-    utils::{
-        config::prover_client::ProverClientConfig,
-        prover::proving_systems::{ProverType, ProvingOutput},
-    },
+    sequencer::prover_server::ProofData,
+    utils::{config::prover_client::ProverClientConfig, prover::proving_systems::ProofCalldata},
 };
-use std::{
-    io::{BufReader, BufWriter},
+use std::time::Duration;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    time::Duration,
+    time::sleep,
 };
-use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 use zkvm_interface::io::ProgramInput;
 
-pub async fn start_proof_data_client(config: ProverClientConfig, prover_type: ProverType) {
+pub async fn start_proof_data_client(config: ProverClientConfig) {
     let proof_data_client = ProverClient::new(config);
-    proof_data_client.start(prover_type).await;
+    proof_data_client.start().await;
 }
 
 struct ProverData {
@@ -27,30 +24,29 @@ struct ProverData {
 
 struct ProverClient {
     prover_server_endpoint: String,
-    interval_ms: u64,
+    proving_time_ms: u64,
 }
 
 impl ProverClient {
     pub fn new(config: ProverClientConfig) -> Self {
         Self {
             prover_server_endpoint: config.prover_server_endpoint,
-            interval_ms: config.interval_ms,
+            proving_time_ms: config.proving_time_ms,
         }
     }
 
-    pub async fn start(&self, prover_type: ProverType) {
+    pub async fn start(&self) {
         // Build the prover depending on the prover_type passed as argument.
-        let mut prover = create_prover(prover_type);
-
         loop {
-            match self.request_new_input() {
+            match self.request_new_input().await {
                 // If we get the input
                 Ok(prover_data) => {
                     // Generate the Proof
-                    match prover.prove(prover_data.input) {
+                    match prove(prover_data.input).and_then(to_calldata) {
                         Ok(proving_output) => {
-                            if let Err(e) =
-                                self.submit_proof(prover_data.block_number, proving_output)
+                            if let Err(e) = self
+                                .submit_proof(prover_data.block_number, proving_output)
+                                .await
                             {
                                 // TODO: Retry?
                                 warn!("Failed to submit proof: {e}");
@@ -60,18 +56,19 @@ impl ProverClient {
                     };
                 }
                 Err(e) => {
-                    sleep(Duration::from_millis(self.interval_ms)).await;
+                    sleep(Duration::from_millis(self.proving_time_ms)).await;
                     warn!("Failed to request new data: {e}");
                 }
             }
-            sleep(Duration::from_millis(self.interval_ms)).await;
+            sleep(Duration::from_millis(self.proving_time_ms)).await;
         }
     }
 
-    fn request_new_input(&self) -> Result<ProverData, String> {
+    async fn request_new_input(&self) -> Result<ProverData, String> {
         // Request the input with the correct block_number
         let request = ProofData::request();
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
+            .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
         match response {
@@ -100,17 +97,15 @@ impl ProverClient {
         }
     }
 
-    fn submit_proof(&self, block_number: u64, proving_output: ProvingOutput) -> Result<(), String> {
-        let submit = match proving_output {
-            ProvingOutput::RISC0(risc0_proof) => {
-                ProofData::submit(block_number, ProvingOutput::RISC0(risc0_proof))
-            }
-            ProvingOutput::SP1(sp1_proof) => {
-                ProofData::submit(block_number, ProvingOutput::SP1(sp1_proof))
-            }
-        };
+    async fn submit_proof(
+        &self,
+        block_number: u64,
+        proving_output: ProofCalldata,
+    ) -> Result<(), String> {
+        let submit = ProofData::submit(block_number, proving_output);
 
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
+            .await
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;
 
         match submit_ack {
@@ -123,17 +118,19 @@ impl ProverClient {
     }
 }
 
-fn connect_to_prover_server_wr(
+async fn connect_to_prover_server_wr(
     addr: &str,
     write: &ProofData,
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
-    let stream = TcpStream::connect(addr)?;
-    let buf_writer = BufWriter::new(&stream);
+    let mut stream = TcpStream::connect(addr).await?;
     debug!("Connection established!");
-    serde_json::ser::to_writer(buf_writer, write)?;
-    stream.shutdown(std::net::Shutdown::Write)?;
 
-    let buf_reader = BufReader::new(&stream);
-    let response: ProofData = serde_json::de::from_reader(buf_reader)?;
-    Ok(response)
+    stream.write_all(&serde_json::to_vec(&write)?).await?;
+    stream.shutdown().await?;
+
+    let mut buffer = Vec::new();
+    stream.read_to_end(&mut buffer).await?;
+
+    let response: Result<ProofData, _> = serde_json::from_slice(&buffer);
+    Ok(response?)
 }

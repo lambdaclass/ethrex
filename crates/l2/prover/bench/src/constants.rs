@@ -2,10 +2,7 @@
 
 use std::time::Duration;
 
-use ethrex_common::{
-    constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS,
-    types::{BlobSchedule, ChainConfig},
-};
+use ethrex_common::types::{BlobSchedule, ChainConfig};
 use revm_primitives::SpecId;
 
 use lazy_static::lazy_static;
@@ -38,7 +35,8 @@ pub static ref CANCUN_CONFIG: ChainConfig = ChainConfig {
     terminal_total_difficulty_passed: false,
     verkle_time: None,
     blob_schedule: BlobSchedule::default(),
-        deposit_contract_address: Some(*MAINNET_DEPOSIT_CONTRACT_ADDRESS)
+    // Mainnet address
+    deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
 };
 }
 pub const MAINNET_CHAIN_ID: u64 = 0x1;

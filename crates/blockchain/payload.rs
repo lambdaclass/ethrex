@@ -19,8 +19,7 @@ use ethrex_common::{
 };
 
 use ethrex_vm::{
-    backends::{Evm, EvmEngine},
-    EvmError,
+    EvmError, {Evm, EvmEngine},
 };
 
 use ethrex_rlp::encode::RLPEncode;
@@ -40,7 +39,7 @@ use crate::{
     Blockchain,
 };
 
-use tracing::debug;
+use tracing::{debug, error};
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -262,6 +261,7 @@ impl Blockchain {
         debug!("Building payload");
         let mut context = PayloadBuildContext::new(payload, self.evm_engine, &self.storage)?;
 
+        #[cfg(not(feature = "l2"))]
         self.apply_system_operations(&mut context)?;
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
@@ -425,7 +425,7 @@ impl Blockchain {
                 }
                 // Ignore following txs from sender
                 Err(e) => {
-                    debug!("Failed to execute transaction: {}, {e}", tx_hash);
+                    error!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_with_status_and_type(
                         MetricsTxStatus::Failed,
                         MetricsTxType(head_tx.tx_type())

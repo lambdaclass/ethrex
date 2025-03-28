@@ -37,10 +37,11 @@ bincode = "1"
 ethereum-types.workspace = true
 
 [lib]
-path = "./vm.rs"
+path = "./lib.rs"
 
 [features]
 default = []
-l2 = []
+internal = []
+l2 = ["ethrex-levm/l2"]
 c-kzg = ["revm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["revm/blst"]

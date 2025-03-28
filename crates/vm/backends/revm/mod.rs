@@ -1,6 +1,5 @@
 pub mod db;
 pub mod execution_db;
-pub mod execution_result;
 pub mod helpers;
 #[cfg(feature = "l2")]
 mod mods;
@@ -10,14 +9,14 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::spec_id;
-use crate::EvmError;
+use crate::errors::EvmError;
+use crate::execution_result::ExecutionResult;
+use crate::helpers::spec_id;
 use db::EvmState;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
-use execution_result::ExecutionResult;
 use revm::db::states::bundle_state::BundleRetention;
 use revm::db::AccountStatus;
 use revm::{
@@ -73,8 +72,8 @@ impl REVM {
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for tx in block.body.transactions.iter() {
-            let result = Self::execute_tx(tx, block_header, state, spec_id, tx.sender())?;
+        for (tx, sender) in block.body.get_transactions_with_sender() {
+            let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -283,7 +282,7 @@ impl REVM {
                             if account.is_contract_changed() {
                                 // Update code in db
                                 if let Some(code) = new_acc_info.code {
-                                    account_update.code = Some(code.original_bytes().clone().0);
+                                    account_update.code = Some(code.original_bytes().0);
                                 }
                             }
                         }
@@ -446,46 +445,6 @@ fn run_evm(
         }
     };
     Ok(tx_result.into())
-}
-
-/// Processes a block's withdrawals, updating the account balances in the state
-pub fn process_withdrawals(
-    state: &mut EvmState,
-    withdrawals: &[Withdrawal],
-) -> Result<(), StoreError> {
-    //balance_increments is a vector of tuples (Address, increment as u128)
-    let balance_increments = withdrawals
-        .iter()
-        .filter(|withdrawal| withdrawal.amount > 0)
-        .map(|withdrawal| {
-            (
-                RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-            )
-        })
-        .collect::<Vec<_>>();
-    match state {
-        EvmState::Store(db) => {
-            db.increment_balances(balance_increments)?;
-        }
-        EvmState::Execution(db) => {
-            for (address, balance) in balance_increments {
-                if balance == 0 {
-                    continue;
-                }
-
-                let account = db
-                    .load_account(address)
-                    .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
-
-                account.info.balance += RevmU256::from(balance);
-                if account.account_state == RevmAccountState::None {
-                    account.account_state = RevmAccountState::Touched;
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
@@ -758,11 +717,7 @@ pub fn extract_all_requests(
         }
     }
 
-    let deposit_contract_address = config.deposit_contract_address.ok_or(EvmError::Custom(
-        "deposit_contract_address config is missing".to_string(),
-    ))?;
-
-    let deposits = Requests::from_deposit_receipts(deposit_contract_address, receipts);
+    let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
     let withdrawals_data = REVM::read_withdrawal_requests(header, state);
     let consolidation_data = REVM::dequeue_consolidation_requests(header, state);
 
