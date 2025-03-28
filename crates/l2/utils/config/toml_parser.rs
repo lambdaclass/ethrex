@@ -156,8 +156,6 @@ impl Committer {
 #[derive(Deserialize, Debug)]
 struct ProverClient {
     prover_server_endpoint: String,
-    sp1_prover: String,
-    risc0_dev_mode: u64,
     proving_time_ms: u64,
 }
 
@@ -167,10 +165,8 @@ impl ProverClient {
         format!(
             "{prefix}_PROVER_SERVER_ENDPOINT={}
 {prefix}_PROVING_TIME_MS={}
-RISC0_DEV_MODE={}
-SP1_PROVER={}
 ",
-            self.prover_server_endpoint, self.proving_time_ms, self.risc0_dev_mode, self.sp1_prover
+            self.prover_server_endpoint, self.proving_time_ms
         )
     }
 }
