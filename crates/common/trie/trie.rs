@@ -52,7 +52,7 @@ pub struct Trie {
 
 impl Trie {
     /// Creates a new Trie from a clean DB
-    pub fn new(db: Box<dyn TrieDB>) -> Self {
+    pub fn new(db: Box<dyn TrieDB + Send>) -> Self {
         Self {
             state: TrieState::new(db),
             root: None,
@@ -60,7 +60,7 @@ impl Trie {
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
-    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
+    pub fn open(db: Box<dyn TrieDB + Send>, root: H256) -> Self {
         let root = (root != *EMPTY_TRIE_HASH).then_some(root.into());
         Self {
             state: TrieState::new(db),

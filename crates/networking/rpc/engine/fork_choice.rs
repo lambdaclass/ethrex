@@ -32,9 +32,9 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 1)?;
+            handle_forkchoice(&self.fork_choice_state, context.clone(), 1).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
@@ -43,7 +43,7 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
                 ));
             }
             validate_attributes_v1(attributes, &head_block)?;
-            let payload_id = build_payload(attributes, context, &self.fork_choice_state, 1)?;
+            let payload_id = build_payload(attributes, context, &self.fork_choice_state, 1).await?;
             response.set_id(payload_id);
         }
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -65,9 +65,9 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 2)?;
+            handle_forkchoice(&self.fork_choice_state, context.clone(), 2).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config()?;
             if chain_config.is_cancun_activated(attributes.timestamp) {
@@ -80,7 +80,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
                 // Behave as a v1
                 validate_attributes_v1(attributes, &head_block)?;
             }
-            let payload_id = build_payload(attributes, context, &self.fork_choice_state, 2)?;
+            let payload_id = build_payload(attributes, context, &self.fork_choice_state, 2).await?;
             response.set_id(payload_id);
         }
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -131,7 +131,7 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
 
         // Parse it again as it was consumed for gateway_response and it is the same as cloning it.
         let request = Self::parse(&req.params)?;
-        let client_response = request.handle(context);
+        let client_response = request.handle(context).await;
 
         let gateway_response = gateway_request
             .await
@@ -153,12 +153,12 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
         gateway_response.or(client_response)
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 3)?;
+            handle_forkchoice(&self.fork_choice_state, context.clone(), 3).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             validate_attributes_v3(attributes, &head_block, &context)?;
-            let payload_id = build_payload(attributes, context, &self.fork_choice_state, 3)?;
+            let payload_id = build_payload(attributes, context, &self.fork_choice_state, 3).await?;
             response.set_id(payload_id);
         }
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -196,7 +196,7 @@ fn parse(
     Ok((forkchoice_state, payload_attributes))
 }
 
-fn handle_forkchoice(
+async fn handle_forkchoice(
     fork_choice_state: &ForkChoiceState,
     context: RpcApiContext,
     version: usize,
@@ -252,6 +252,7 @@ fn handle_forkchoice(
                         fork_choice_state.safe_block_hash,
                         fork_choice_state.finalized_block_hash,
                     )
+                    .await
                 }
             }
         }
@@ -302,17 +303,17 @@ fn handle_forkchoice(
                     context
                         .storage
                         .update_sync_status(false)
+                        .await
                         .map_err(|e| RpcErr::Internal(e.to_string()))?;
                     let current_head = context.storage.get_latest_canonical_block_hash()?.ok_or(
                         RpcErr::Internal("Missing latest canonical block".to_owned()),
                     )?;
                     let sync_head = fork_choice_state.head_block_hash;
-                    tokio::spawn(async move {
-                        // If we can't get hold of the syncer, then it means that there is an active sync in process
+                    tokio::task::spawn(async move {
                         if let Ok(mut syncer) = context.syncer.try_lock() {
                             syncer
                                 .start_sync(current_head, sync_head, context.storage.clone())
-                                .await
+                                .await;
                         }
                     });
                     ForkChoiceResponse::from(PayloadStatus::syncing())
@@ -403,7 +404,7 @@ fn validate_timestamp(
     Ok(())
 }
 
-fn build_payload(
+async fn build_payload(
     attributes: &PayloadAttributesV3,
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,
@@ -427,7 +428,7 @@ fn build_payload(
         // so the only errors that may be returned are internal storage errors
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
-    context.storage.add_payload(payload_id, payload)?;
+    context.storage.add_payload(payload_id, payload).await?;
 
     Ok(payload_id)
 }

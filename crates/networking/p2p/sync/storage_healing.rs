@@ -92,7 +92,9 @@ pub(crate) async fn storage_healer(
     }
     let healing_complete = pending_paths.is_empty();
     // Store pending paths
-    store.set_storage_heal_paths(pending_paths.into_iter().collect())?;
+    store
+        .set_storage_heal_paths(pending_paths.into_iter().collect())
+        .await?;
     Ok(healing_complete)
 }
 

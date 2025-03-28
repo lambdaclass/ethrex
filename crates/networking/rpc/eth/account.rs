@@ -47,7 +47,7 @@ impl RpcHandler for GetBalanceRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested balance of account {} at block {}",
             self.address, self.block
@@ -82,7 +82,7 @@ impl RpcHandler for GetCodeRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested code of account {} at block {}",
             self.address, self.block
@@ -118,7 +118,7 @@ impl RpcHandler for GetStorageAtRequest {
             block: BlockIdentifierOrHash::parse(params[2].clone(), 2)?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested storage sot {} of account {} at block {}",
             self.storage_slot, self.address, self.block
@@ -153,7 +153,7 @@ impl RpcHandler for GetTransactionCountRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested nonce of account {} at block {}",
             self.address, self.block
@@ -203,7 +203,7 @@ impl RpcHandler for GetProofRequest {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         info!(
             "Requested proof for account {} at block {} with storage keys: {:?}",

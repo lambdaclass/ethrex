@@ -35,7 +35,7 @@ use std::{
     sync::Arc,
 };
 
-pub fn re_run_failed_ef_test(
+pub async fn re_run_failed_ef_test(
     test: &EFTest,
     failed_test_report: &EFTestReport,
 ) -> Result<TestReRunReport, EFTestRunnerError> {
@@ -46,7 +46,7 @@ pub fn re_run_failed_ef_test(
             match vector_failure {
                 // We only want to re-run tests that failed in the post-state validation.
                 EFTestRunnerError::FailedToEnsurePostState(transaction_report, _) => {
-                    match re_run_failed_ef_test_tx(vector, test, transaction_report, &mut re_run_report, fork) {
+                    match re_run_failed_ef_test_tx(vector, test, transaction_report, &mut re_run_report, fork).await {
                         Ok(_) => continue,
                         Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                             return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
@@ -78,14 +78,14 @@ pub fn re_run_failed_ef_test(
     Ok(re_run_report)
 }
 
-pub fn re_run_failed_ef_test_tx(
+pub async fn re_run_failed_ef_test_tx(
     vector: &TestVector,
     test: &EFTest,
     levm_execution_report: &ExecutionReport,
     re_run_report: &mut TestReRunReport,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash) = load_initial_state(test);
+    let (mut state, _block_hash) = load_initial_state(test).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     if !test.post.has_vector_for_fork(vector, *fork) {
         return Ok(());
@@ -106,7 +106,8 @@ pub fn re_run_failed_ef_test_tx(
         test,
         re_run_report,
         fork,
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
@@ -319,7 +320,7 @@ pub fn compare_levm_revm_execution_results(
     Ok(())
 }
 
-pub fn ensure_post_state(
+pub async fn ensure_post_state(
     levm_execution_report: &ExecutionReport,
     vector: &TestVector,
     revm_state: &mut EvmState,
@@ -331,7 +332,7 @@ pub fn ensure_post_state(
         Some(_expected_exception) => {}
         // We only want to compare account updates when no exception is expected.
         None => {
-            let store_wrapper = load_initial_state_levm(test);
+            let store_wrapper = load_initial_state_levm(test).await;
             let block_header = store_wrapper
                 .store
                 .get_block_header_by_hash(store_wrapper.block_hash)
@@ -359,7 +360,8 @@ pub fn ensure_post_state(
                 fork,
                 &levm_account_updates,
                 &revm_account_updates,
-            );
+            )
+            .await;
             re_run_report.register_account_updates_report(*vector, account_updates_report, *fork);
         }
     }
@@ -367,15 +369,15 @@ pub fn ensure_post_state(
     Ok(())
 }
 
-pub fn compare_levm_revm_account_updates(
+pub async fn compare_levm_revm_account_updates(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
     levm_account_updates: &[AccountUpdate],
     revm_account_updates: &[AccountUpdate],
 ) -> ComparisonReport {
-    let levm_post_state_root = post_state_root(levm_account_updates, test);
-    let revm_post_state_root = post_state_root(revm_account_updates, test);
+    let levm_post_state_root = post_state_root(levm_account_updates, test).await;
+    let revm_post_state_root = post_state_root(revm_account_updates, test).await;
     let mut initial_accounts: HashMap<Address, Account> = test
         .pre
         .0
@@ -435,7 +437,7 @@ pub fn compare_levm_revm_account_updates(
     }
 }
 
-pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
+pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     let hash = test
         ._info
         .generated_test_hash
@@ -450,7 +452,7 @@ pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
             if !test.post.has_vector_for_fork(vector, *fork) {
                 continue;
             }
-            match _run_ef_test_tx_revm(vector, test, fork) {
+            match _run_ef_test_tx_revm(vector, test, fork).await {
                 Ok(_) => continue,
                 Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                     ef_test_report_fork.register_vm_initialization_failure(reason, *vector);
@@ -490,22 +492,22 @@ pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
     Ok(ef_test_report)
 }
 
-pub fn _run_ef_test_tx_revm(
+pub async fn _run_ef_test_tx_revm(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let (mut state, _block_hash) = load_initial_state(test);
+    let (mut state, _block_hash) = load_initial_state(test).await;
     let mut revm = prepare_revm_for_tx(&mut state, vector, test, fork)?;
     let revm_execution_result = revm.transact_commit();
     drop(revm); // Need to drop the state mutable reference.
 
-    _ensure_post_state_revm(revm_execution_result, vector, test, &mut state, fork)?;
+    _ensure_post_state_revm(revm_execution_result, vector, test, &mut state, fork).await?;
 
     Ok(())
 }
 
-pub fn _ensure_post_state_revm(
+pub async fn _ensure_post_state_revm(
     revm_execution_result: Result<RevmExecutionResult, REVMError<StoreError>>,
     vector: &TestVector,
     test: &EFTest,
@@ -535,7 +537,7 @@ pub fn _ensure_post_state_revm(
                 None => {
                     let revm_account_updates =
                         backends::revm::REVM::get_state_transitions(revm_state);
-                    let pos_state_root = post_state_root(&revm_account_updates, test);
+                    let pos_state_root = post_state_root(&revm_account_updates, test).await;
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {
