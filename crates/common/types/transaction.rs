@@ -1381,7 +1381,7 @@ impl TxType {
 impl PrivilegedL2Transaction {
     /// Returns the formatted hash of the deposit transaction,
     /// or None if the transaction is not a deposit.
-    /// The hash is computed as keccak256(to || value || deposit_id == nonce)
+    /// The hash is computed as keccak256(to || value || deposit_id == nonce || recipient || keccak256(calldata))
     pub fn get_deposit_hash(&self) -> Option<H256> {
         // Should this function be changed?
         let to = match self.to {

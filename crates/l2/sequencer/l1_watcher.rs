@@ -219,6 +219,7 @@ impl L1Watcher {
                 ))
             })?;
 
+            // The previous values are indexed in the topic of the log. Data contains the rest.
             // DATA = recipient: Address || offset_calldata: uint256 || tx_hash: H256 || length_calldata: uint256 || calldata: bytes
             // Any value that is not 32 bytes is padded with zeros.
 
@@ -294,8 +295,8 @@ impl L1Watcher {
                 .eth_client
                 .build_privileged_transaction(
                     to_address,
-                    to_address,
-                    to_address,
+                    recipient,
+                    recipient,
                     Bytes::copy_from_slice(calldata),
                     Overrides {
                         chain_id: Some(

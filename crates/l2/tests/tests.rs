@@ -7,6 +7,7 @@ use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, from_hex_string_to_u256, BlockByNumber, EthClient,
 };
+use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcReceipt;
 use keccak_hash::H256;
 use secp256k1::SecretKey;
@@ -403,6 +404,8 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     println!("Checking initial balances on L1 and L2");
     let l1_rich_wallet_address = l1_rich_wallet_address();
+    let l1_rich_pk = H256::from_slice(&l1_rich_wallet_private_key().secret_bytes());
+    println!("l1_rich_wallet_private_key: {l1_rich_pk:x?}");
 
     let l1_initial_balance = eth_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
@@ -431,11 +434,15 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     println!("Deploying contract on L2...");
 
-    //pragma solidity ^0.8.27;
-    //contract Test {
-    //    uint256 public constant number = 37;
-    //}
-    let init_code = hex::decode("6080604052348015600e575f5ffd5b5060ac80601a5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c80638381f58a14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b602581565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea2646970667358221220a6516c1bfca94ad11d1315b32cd08f115c050e098a0631d58ee55923e70bc36364736f6c634300081c0033")?;
+    // pragma solidity ^0.8.27;
+
+    // contract Test {
+    //     uint256 public number;
+    //     function setNumber(uint256 new_number) public {
+    //         number = new_number;
+    //     }
+    // }
+    let init_code = hex::decode("6080604052348015600e575f5ffd5b506101268061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106030575f3560e01c80633fb5c1cb1460345780638381f58a14604c575b5f5ffd5b604a60048036038101906046919060a6565b6066565b005b6052606f565b604051605d919060d9565b60405180910390f35b805f8190555050565b5f5481565b5f5ffd5b5f819050919050565b6088816078565b81146091575f5ffd5b50565b5f8135905060a0816081565b92915050565b5f6020828403121560b85760b76074565b5b5f60c3848285016094565b91505092915050565b60d3816078565b82525050565b5f60208201905060ea5f83018460cc565b9291505056fea264697066735822122065d068783014f7271b7429169dd6407fbd153cacc389b40bf35f86c3adce071a64736f6c634300081c0033")?;
 
     let (_, contract_address) = proposer_client
         .deploy(
@@ -448,28 +455,59 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     println!("Contract deployed on L2: {contract_address:?}");
 
+    // We set the value of the number variable to 42 in the L2 contract
+    let calldata_to_contract: Bytes = calldata::encode_calldata(
+        "setNumber(uint256)",
+        &[Value::Uint(U256::from(
+            424242424242424242424242424242424242u128,
+        ))],
+    )?
+    .into();
+
+    println!(
+        "calldata: {}",
+        String::from_utf8_lossy(calldata_to_contract.as_ref())
+    );
+
     let values = vec![
         Value::Address(contract_address),       // to
         Value::Address(l1_rich_wallet_address), // recipient
         Value::Uint(U256::from(21000 * 5)),     // gasLimit
+        Value::Bytes(calldata_to_contract),     // data
     ];
 
-    let calldata = calldata::encode_calldata("deposit(address,address,uint256)", &values)?.into();
+    let calldata =
+        calldata::encode_calldata("deposit(address,address,uint256,bytes)", &values)?.into();
+
+    let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
+        EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+    })?;
+
+    let overrides = Overrides {
+        value: Some(U256::from(100000000000000000000u128)), // value to deposit in the recipient
+        from: Some(l1_rich_wallet_address),
+        gas_limit: Some(21000 * 5),
+        max_fee_per_gas: Some(gas_price),
+        max_priority_fee_per_gas: Some(gas_price),
+        ..Overrides::default()
+    };
 
     let deposit_tx = eth_client
         .build_eip1559_transaction(
             common_bridge_address(),
             l1_rich_wallet_address,
             calldata,
-            Overrides {
-                value: Some(U256::from(100000000000000000000u128)),
-                ..Default::default()
-            },
+            overrides,
         )
         .await?;
 
     println!("Deposit tx: {deposit_tx:?}");
 
+    let deposit_tx_hash = eth_client
+        .send_eip1559_transaction(&deposit_tx, &l1_rich_wallet_private_key())
+        .await?;
+
+    println!("Deposit tx hash: {deposit_tx_hash:?}");
     Ok(())
 }
 
