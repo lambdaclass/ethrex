@@ -156,7 +156,6 @@ impl Committer {
 #[derive(Deserialize, Debug)]
 struct ProverClient {
     prover_server_endpoint: String,
-    interval_ms: u64,
     proving_time_ms: u64,
 }
 
