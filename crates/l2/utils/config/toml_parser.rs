@@ -282,7 +282,7 @@ fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError>
             write_to_env(config.to_env(), mode)?;
         }
         ConfigMode::ProverClient => {
-            let config: ProverClientConfig = toml::from_str(&file).map_err(|err| {
+            let config: ProverClient = toml::from_str(&file).map_err(|err| {
                 TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
             })?;
             write_to_env(config.to_env(), mode)?;
