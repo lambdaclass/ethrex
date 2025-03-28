@@ -113,32 +113,3 @@ impl LevmDatabase for BlockLogger {
         self.db.get_storage_slot(address, key)
     }
 }
-
-impl LevmDatabase for ExecutionDB {
-    fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::AccountInfo {
-        let Some(acc_info) = self.accounts.get(&address) else {
-            return ethrex_levm::AccountInfo::default();
-        };
-        let acc_code = self.code.get(&acc_info.code_hash).unwrap();
-        ethrex_levm::AccountInfo {
-            balance: acc_info.balance,
-            bytecode: acc_code.clone(),
-            nonce: acc_info.nonce,
-        }
-    }
-
-    fn account_exists(&self, address: CoreAddress) -> bool {
-        self.accounts.contains_key(&address)
-    }
-
-    fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
-        self.block_hashes.get(&block_number).cloned()
-    }
-
-    fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
-        let Some(storage) = self.storage.get(&address) else {
-            return CoreU256::default();
-        };
-        *storage.get(&key).unwrap_or(&CoreU256::default())
-    }
-}

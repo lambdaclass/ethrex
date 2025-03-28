@@ -691,6 +691,7 @@ impl LEVM {
         account_updates.extend(report.account_updates);
 
         Ok((account_updates, db))
+    }
     pub fn create_access_list(
         mut tx: GenericTransaction,
         header: &BlockHeader,
