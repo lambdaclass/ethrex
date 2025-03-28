@@ -71,27 +71,65 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         return depositLogs;
     }
 
-    /// @inheritdoc ICommonBridge
-    function deposit(address to) public payable {
+    function _deposit(
+        address to,
+        address recipient,
+        uint256 gasLimit,
+        bytes memory data
+    ) private {
         require(msg.value > 0, "CommonBridge: amount to deposit is zero");
 
-        // TODO: Build the tx.
-        bytes32 l2MintTxHash = keccak256(abi.encodePacked("dummyl2MintTxHash"));
+        bytes32 l2MintTxHash = keccak256(
+            abi.encodePacked(
+                msg.sender, // from
+                to, // to
+                recipient, // recipient
+                msg.value, // value
+                gasLimit, // gasLimit
+                depositId, // nonce
+                data // data
+            )
+        );
+
         depositLogs.push(
             keccak256(
                 bytes.concat(
                     bytes20(to),
                     bytes32(msg.value),
-                    bytes32(depositId)
+                    bytes32(depositId),
+                    bytes20(recipient),
+                    bytes32(keccak256(data))
                 )
             )
         );
-        emit DepositInitiated(msg.value, to, depositId, l2MintTxHash);
+        emit DepositInitiated(
+            msg.value,
+            to,
+            depositId,
+            recipient,
+            data,
+            l2MintTxHash
+        );
         depositId += 1;
     }
 
+    /// @inheritdoc ICommonBridge
+    function deposit(
+        address to,
+        address recipient,
+        uint256 gasLimit,
+        bytes calldata data
+    ) public payable {
+        _deposit(to, recipient, gasLimit, data);
+    }
+
+    fallback() external payable {
+        deposit(msg.sender, msg.sender, 21000 * 5, msg.data);
+    }
+
     receive() external payable {
-        deposit(msg.sender);
+        bytes memory data = bytes("");
+        _deposit(msg.sender, msg.sender, 21000 * 5, data);
     }
 
     /// @inheritdoc ICommonBridge

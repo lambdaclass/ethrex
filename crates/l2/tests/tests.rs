@@ -3,12 +3,13 @@
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
 use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
-use ethrex_l2_sdk::calldata;
+use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, from_hex_string_to_u256, BlockByNumber, EthClient,
 };
+use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcReceipt;
-use keccak_hash::H256;
+use keccak_hash::{keccak, H256};
 use secp256k1::SecretKey;
 use std::{ops::Mul, str::FromStr, time::Duration};
 
@@ -389,6 +390,146 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// In this test we deploy a contract on L2 and call it from L1 using the CommonBridge contract.
+/// We call the contract by making a deposit from L1 to L2 with the recipient being the rich account.
+/// The deposit will trigger the call to the contract.
+#[tokio::test]
+async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error>> {
+    let eth_client = eth_client();
+    let proposer_client = proposer_client();
+
+    read_env_file_by_config(ConfigMode::Sequencer)?;
+
+    // Check balances on L1 and L2
+    println!("Checking initial balances on L1 and L2");
+    let l1_rich_wallet_address = l1_rich_wallet_address();
+    let l1_rich_pk = H256::from_slice(&l1_rich_wallet_private_key().secret_bytes());
+    println!("l1_rich_wallet_private_key: {l1_rich_pk:x?}");
+
+    let l1_initial_balance = eth_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    let mut l2_initial_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    println!("Waiting for L2 to update for initial deposit");
+    let mut retries = 0;
+    while retries < 30 && l2_initial_balance.is_zero() {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        println!("[{retries}/30] Waiting for L2 balance to update");
+        l2_initial_balance = proposer_client
+            .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+            .await?;
+        retries += 1;
+    }
+    assert_ne!(retries, 30, "L2 balance is zero");
+    let common_bridge_initial_balance = eth_client
+        .get_balance(common_bridge_address(), BlockByNumber::Latest)
+        .await?;
+
+    println!("L1 initial balance: {l1_initial_balance}");
+    println!("L2 initial balance: {l2_initial_balance}");
+    println!("Common Bridge initial balance: {common_bridge_initial_balance}");
+
+    println!("Deploying contract on L2...");
+
+    // pragma solidity ^0.8.27;
+    // contract Test {
+    //     event NumberSet(uint256 indexed number);
+    //     function emitNumber(uint256 _number) public {
+    //         emit NumberSet(_number);
+    //     }
+    // }
+
+    let init_code = hex::decode("6080604052348015600e575f5ffd5b506101008061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063f15d140b14602a575b5f5ffd5b60406004803603810190603c919060a4565b6042565b005b807f9ec8254969d1974eac8c74afb0c03595b4ffe0a1d7ad8a7f82ed31b9c854259160405160405180910390a250565b5f5ffd5b5f819050919050565b6086816076565b8114608f575f5ffd5b50565b5f81359050609e81607f565b92915050565b5f6020828403121560b65760b56072565b5b5f60c1848285016092565b9150509291505056fea26469706673582212206f6d360696127c56e2d2a456f3db4a61e30eae0ea9b3af3c900c81ea062e8fe464736f6c634300081c0033")?;
+
+    let (_, contract_address) = proposer_client
+        .deploy(
+            l1_rich_wallet_address,
+            l1_rich_wallet_private_key(),
+            init_code.into(),
+            Overrides::default(),
+        )
+        .await?;
+
+    println!("Contract deployed on L2: {contract_address:?}");
+
+    // We call the contract to emit an event with the number 424242
+    let calldata_to_contract: Bytes =
+        calldata::encode_calldata("emitNumber(uint256)", &[Value::Uint(U256::from(424242))])?
+            .into();
+
+    println!("calldata: {:?}", hex::encode(calldata_to_contract.as_ref()));
+
+    let values = vec![
+        Value::Address(contract_address),       // to
+        Value::Address(l1_rich_wallet_address), // recipient
+        Value::Uint(U256::from(21000 * 5)),     // gasLimit
+        Value::Bytes(calldata_to_contract),     // data
+    ];
+
+    let calldata =
+        calldata::encode_calldata("deposit(address,address,uint256,bytes)", &values)?.into();
+
+    let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
+        EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+    })?;
+
+    let overrides = Overrides {
+        value: Some(U256::from(100000000000000000000u128)), // value to deposit in the recipient
+        from: Some(l1_rich_wallet_address),
+        gas_limit: Some(21000 * 5),
+        max_fee_per_gas: Some(gas_price),
+        max_priority_fee_per_gas: Some(gas_price),
+        ..Overrides::default()
+    };
+
+    let deposit_tx = eth_client
+        .build_eip1559_transaction(
+            common_bridge_address(),
+            l1_rich_wallet_address,
+            calldata,
+            overrides,
+        )
+        .await?;
+
+    let deposit_tx_hash = eth_client
+        .send_eip1559_transaction(&deposit_tx, &l1_rich_wallet_private_key())
+        .await?;
+
+    println!("Deposit tx hash: {deposit_tx_hash:?}");
+
+    // Wait for the event to be emitted
+    let topic = keccak(b"NumberSet(uint256)");
+    while proposer_client
+        .get_logs(U256::from(0), U256::from(20), contract_address, topic)
+        .await
+        .is_err()
+    {
+        println!("Waiting for the event to be built");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    let logs = proposer_client
+        .get_logs(U256::from(0), U256::from(20), contract_address, topic)
+        .await?;
+    println!("Logs: {logs:?}");
+
+    let number = U256::from_big_endian(
+        &logs
+            .first()
+            .unwrap()
+            .log
+            .topics
+            .get(1)
+            .unwrap()
+            .to_fixed_bytes(),
+    );
+    assert_eq!(number, U256::from(424242));
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn l2_sdk_deploy() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
@@ -407,6 +548,8 @@ async fn l2_sdk_deploy() -> Result<(), Box<dyn std::error::Error>> {
             Overrides::default(),
         )
         .await?;
+
+    println!("Contract deployed on L1: {contract_address:?}");
 
     let calldata: Bytes = calldata::encode_calldata("number()", &[])?.into();
 

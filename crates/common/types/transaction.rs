@@ -1,7 +1,7 @@
 use std::cmp::min;
 
 use bytes::Bytes;
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, H160, H256, U256};
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use secp256k1::{ecdsa::RecoveryId, Message, SecretKey};
@@ -18,6 +18,11 @@ use ethrex_rlp::{
 };
 
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
+// 0x3d1e15a1a55578f7c920884a9943b3b35d0d885b
+pub const DEFAULT_ADDRESS: H160 = H160([
+    0x3d, 0x1e, 0x15, 0xa1, 0xa5, 0x55, 0x78, 0xf7, 0xc9, 0x20, 0x88, 0x4a, 0x99, 0x43, 0xb3, 0xb3,
+    0x5d, 0x0d, 0x88, 0x5b,
+]);
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
 // a tag indicating the variant type. This means that Serde will serialize the enum's variants
@@ -242,6 +247,7 @@ pub struct PrivilegedL2Transaction {
     pub max_fee_per_gas: u64,
     pub gas_limit: u64,
     pub to: TxKind,
+    pub recipient: Address,
     pub value: U256,
     pub data: Bytes,
     pub access_list: AccessList,
@@ -557,6 +563,7 @@ impl RLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.gas_limit)
             .encode_field(&self.to)
+            .encode_field(&self.recipient)
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
@@ -668,6 +675,7 @@ impl PayloadRLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.gas_limit)
             .encode_field(&self.to)
+            .encode_field(&self.recipient)
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
@@ -854,8 +862,9 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (max_priority_fee_per_gas, decoder) =
             decoder.decode_field("max_priority_fee_per_gas")?;
         let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        let (gas_limit, decoder) = decoder.decode_field::<u64>("gas_limit")?;
         let (to, decoder) = decoder.decode_field("to")?;
+        let (recipient, decoder) = decoder.decode_field("recipient")?;
         let (value, decoder) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
@@ -870,6 +879,7 @@ impl RLPDecode for PrivilegedL2Transaction {
             max_fee_per_gas,
             gas_limit,
             to,
+            recipient,
             value,
             data,
             access_list,
@@ -1122,26 +1132,12 @@ impl Transaction {
                     &Bytes::from(buf),
                 )
             }
-            Transaction::PrivilegedL2Transaction(tx) => {
-                let mut buf = vec![self.tx_type() as u8];
-                Encoder::new(&mut buf)
-                    .encode_field(&tx.chain_id)
-                    .encode_field(&tx.nonce)
-                    .encode_field(&tx.max_priority_fee_per_gas)
-                    .encode_field(&tx.max_fee_per_gas)
-                    .encode_field(&tx.gas_limit)
-                    .encode_field(&tx.to)
-                    .encode_field(&tx.value)
-                    .encode_field(&tx.data)
-                    .encode_field(&tx.access_list)
-                    .finish();
-                recover_address(
-                    &tx.signature_r,
-                    &tx.signature_s,
-                    tx.signature_y_parity,
-                    &Bytes::from(buf),
-                )
-            }
+            Transaction::PrivilegedL2Transaction(tx) => match tx.to.clone() {
+                TxKind::Call(to) => to,
+                TxKind::Create => {
+                    panic!("This will never happen as the privilege tx is always a call")
+                }
+            },
         }
     }
 
@@ -1383,10 +1379,11 @@ impl TxType {
 }
 
 impl PrivilegedL2Transaction {
-    /// Returns the formated hash of the deposit transaction,
+    /// Returns the formatted hash of the deposit transaction,
     /// or None if the transaction is not a deposit.
-    /// The hash is computed as keccak256(to || value || deposit_id == nonce)
+    /// The hash is computed as keccak256(to || value || deposit_id == nonce || recipient || keccak256(calldata))
     pub fn get_deposit_hash(&self) -> Option<H256> {
+        // Should this function be changed?
         let to = match self.to {
             TxKind::Call(to) => to,
             _ => return None,
@@ -1400,7 +1397,14 @@ impl PrivilegedL2Transaction {
         let nonce = u256_nonce.to_big_endian();
 
         Some(keccak_hash::keccak(
-            [to.as_bytes(), &value, &nonce].concat(),
+            [
+                to.as_bytes(),
+                &value,
+                &nonce,
+                self.recipient.as_bytes(),
+                keccak(&self.data).as_bytes(),
+            ]
+            .concat(),
         ))
     }
 }
@@ -1840,6 +1844,7 @@ mod serde_impl {
             struct_serializer.serialize_field("type", &TxType::Privileged)?;
             struct_serializer.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
             struct_serializer.serialize_field("to", &self.to)?;
+            struct_serializer.serialize_field("recipient", &self.recipient)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
             struct_serializer.serialize_field("value", &self.value)?;
             struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
@@ -2160,6 +2165,7 @@ mod serde_impl {
                 max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
                 gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
+                recipient: deserialize_field::<Address, D>(&mut map, "recipient")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
@@ -2785,5 +2791,34 @@ mod tests {
         if let Transaction::EIP7702Transaction(tx) = deserialized_tx {
             assert_eq!(tx, eip7702);
         }
+    }
+
+    #[test]
+    fn serialize_deserialize_privileged_l2_transaction() -> Result<(), RLPDecodeError> {
+        let privileged_l2 = PrivilegedL2Transaction {
+            chain_id: 1729,
+            nonce: 0,
+            max_priority_fee_per_gas: 875000000,
+            max_fee_per_gas: 875000000,
+            gas_limit: 42000u64,
+            to: TxKind::Call(
+                Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
+            ),
+            recipient: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
+            value: U256::from(500000000000000000000000000u128),
+            data: Bytes::new(),
+            access_list: vec![],
+            signature_y_parity: false,
+            signature_r: U256::zero(),
+            signature_s: U256::zero(),
+        };
+
+        let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
+        println!("encoded length: {}", encoded.len());
+
+        let deserialized_tx = PrivilegedL2Transaction::decode(&encoded)?;
+
+        assert_eq!(deserialized_tx, privileged_l2);
+        Ok(())
     }
 }

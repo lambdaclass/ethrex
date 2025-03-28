@@ -820,6 +820,7 @@ impl EthClient {
     pub async fn build_privileged_transaction(
         &self,
         to: Address,
+        recipient: Address,
         from: Address,
         calldata: Bytes,
         overrides: Overrides,
@@ -827,6 +828,7 @@ impl EthClient {
         let mut get_gas_price = 1;
         let mut tx = PrivilegedL2Transaction {
             to: TxKind::Call(to),
+            recipient,
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
