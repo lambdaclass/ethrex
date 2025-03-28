@@ -53,8 +53,8 @@ The following environment variables are available to configure the Proposer cons
 
 - Under the [deployer] section:
 
-  - `address`: L1 account which will deploy the common bridge contracts in L1.
-  - `private key`: Its private key.
+  - `l1_address`: L1 account which will deploy the common bridge contracts in L1.
+  - `l1_private key`: Its private key.
   - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
   - `sp1_contract_verifier`: Address which will verify the `sp1` proofs.
   - `sp1_deploy_verifier`: Whether to deploy the `sp1` verifier contract or not.
@@ -79,17 +79,25 @@ The following environment variables are available to configure the Proposer cons
   - `l2_proposer_private_key`: Private key of the L2 proposer.
 
 - Under the [proposer] section:
+
   - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
   - `coinbase address`: Address which will receive the execution fees.
 
-Under the [committer] section: - `l1_address`: Address of the L1 committer. - `l1_private_key`: Private key of the L1 committer. - `on_chain_proposer_address`: Address of the on-chain committer.
+- Under the [committer] section:
+
+  - `l1_address`: Address of the L1 committer.
+  - `l1_private_key`: Its private key.
+  - `commit_time_ms`: Sleep time after sending the commit transaction.
+  - `on_chain_proposer_address`: Address of the on-chain committer.
 
 - Under the [prover_server] section:
+
+  - `l1_address`: Address of the account that sends verify transaction to L1.
+    - Must be different than the `committer.l1_address`, there might be conflicts with the transactions' nonce.
+  - `l1_private_key`: Its private key.
   - `listen_ip`: IP to listen for proof data requests.
   - `listen_port`: Port to listen for proof data requests.
-  - `verifier_address`: Address of the account that sends verify transaction to L1.
-  - `verifier_private_key`: Private key for the account that sends verify transaction to L1.
-  - `dev_mode`: whether `dev_mode` is activated.
+  - `dev_mode`: Whether `dev_mode` is activated or not.
 
 If you want to use a different configuration file, you can set the:
 

@@ -56,8 +56,8 @@ struct ProverServer {
     store: Store,
     eth_client: EthClient,
     on_chain_proposer_address: Address,
-    verifier_address: Address,
-    verifier_private_key: SecretKey,
+    l1_address: Address,
+    l1_private_key: SecretKey,
     dev_interval_ms: u64,
     needed_proof_types: Vec<ProverType>,
 }
@@ -177,8 +177,8 @@ impl ProverServer {
             store,
             eth_client,
             on_chain_proposer_address,
-            verifier_address: config.verifier_address,
-            verifier_private_key: config.verifier_private_key,
+            l1_address: config.l1_address,
+            l1_private_key: config.l1_private_key,
             needed_proof_types,
 
             dev_interval_ms: config.dev_interval_ms,
@@ -557,7 +557,7 @@ impl ProverServer {
             .eth_client
             .build_eip1559_transaction(
                 self.on_chain_proposer_address,
-                self.verifier_address,
+                self.l1_address,
                 calldata.into(),
                 Overrides {
                     max_fee_per_gas: Some(gas_price),
@@ -571,7 +571,7 @@ impl ProverServer {
 
         let verify_tx_hash = self
             .eth_client
-            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
             .await?;
 
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
@@ -640,7 +640,7 @@ impl ProverServer {
                 .eth_client
                 .build_eip1559_transaction(
                     self.on_chain_proposer_address,
-                    self.verifier_address,
+                    self.l1_address,
                     calldata.into(),
                     Overrides {
                         max_fee_per_gas: Some(gas_price),
@@ -654,12 +654,12 @@ impl ProverServer {
 
             let mut tx = WrappedTransaction::EIP1559(verify_tx);
             self.eth_client
-                .set_gas_for_wrapped_tx(&mut tx, self.verifier_address)
+                .set_gas_for_wrapped_tx(&mut tx, self.l1_address)
                 .await?;
 
             let verify_tx_hash = self
                 .eth_client
-                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
+                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
                 .await?;
 
             info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");
