@@ -26,6 +26,11 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
+      - name: Install CMake
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
+
       - name: Run L2 integration test
         run: |
           cd crates/l2

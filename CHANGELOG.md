@@ -18,3 +18,7 @@
 ### 2025-03-27
 
 - Compute tx senders in parallel [#2268](https://github.com/lambdaclass/ethrex/pull/2268)
+
+### 2025-03-27
+
+- Execute blocks in parallel with pevm [#2279](https://github.com/lambdaclass/ethrex/pull/2279)

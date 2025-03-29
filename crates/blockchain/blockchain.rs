@@ -80,7 +80,7 @@ impl Blockchain {
             self.storage.clone(),
             block.header.parent_hash,
         );
-        let execution_result = vm.execute_block(block)?;
+        let execution_result = vm.execute_block_parallel(block)?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
