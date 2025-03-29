@@ -4,7 +4,8 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Block;
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{backends::revm::execution_db::ToExecDB, StoreWrapper};
+use ethrex_vm::backends::Evm;
+use ethrex_vm::EvmEngine;
 use std::path::Path;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
@@ -65,11 +66,12 @@ async fn setup() -> (ProgramInput, Block) {
         .unwrap()
         .unwrap();
 
-    let store = StoreWrapper {
-        store: store.clone(),
-        block_hash: block_to_prove.header.parent_hash,
-    };
-    let db = store.to_exec_db(block_to_prove).unwrap();
+    #[cfg(feature = "levm-l2")]
+    let evm_engine = EvmEngine::LEVM;
+    #[cfg(not(feature = "levm-l2"))]
+    let evm_engine = EvmEngine::REVM;
+    let mut evm = Evm::new(evm_engine, store.clone(), block_to_prove.header.parent_hash);
+    let db = evm.to_exec_db(block_to_prove).unwrap();
 
     let input = ProgramInput {
         block: block_to_prove.clone(),

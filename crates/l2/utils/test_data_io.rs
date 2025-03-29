@@ -5,7 +5,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{backends::revm::execution_db::ToExecDB, StoreWrapper};
+use ethrex_vm::{backends::Evm, EvmEngine};
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -81,11 +81,15 @@ pub fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    let store = StoreWrapper {
-        store,
-        block_hash: parent_hash,
-    };
-    let db = store.to_exec_db(&block)?;
+
+    #[cfg(feature = "levm-l2")]
+    let evm_engine = EvmEngine::LEVM;
+    #[cfg(not(feature = "levm-l2"))]
+    let evm_engine = EvmEngine::REVM;
+    let mut evm = Evm::new(evm_engine, store.clone(), parent_hash);
+    let db = evm
+        .to_exec_db(&block)
+        .map_err(ProverInputError::ExecutionDBError)?;
 
     Ok(ProgramInput {
         db,

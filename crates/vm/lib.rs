@@ -14,4 +14,4 @@ pub use db::ExecutionDB;
 pub use db::StoreWrapper;
 pub use errors::{EvmError, ExecutionDBError};
 pub use execution_result::ExecutionResult;
-pub use helpers::{create_contract_address, fork_to_spec_id, SpecId};
+pub use helpers::{create_contract_address, fork_to_spec_id, get_potential_child_nodes, SpecId};

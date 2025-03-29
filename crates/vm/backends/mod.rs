@@ -2,6 +2,8 @@ pub mod levm;
 pub mod revm;
 
 use self::revm::db::evm_state;
+use crate::db::ExecutionDB;
+use crate::errors::ExecutionDBError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
 use crate::{db::StoreWrapper, errors::EvmError};
@@ -384,6 +386,19 @@ impl Evm {
             (ExecutionResult::Halt { reason, gas_used }, access_list) => {
                 Ok((gas_used, access_list, Some(reason)))
             }
+        }
+    }
+
+    pub fn to_exec_db(&mut self, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
+        match self {
+            Evm::REVM { state } => {
+                let store_wrapper = StoreWrapper {
+                    store: state.database().unwrap().clone(),
+                    block_hash: block.header.parent_hash,
+                };
+                REVM::to_exec_db(&store_wrapper, block)
+            }
+            Evm::LEVM { store_wrapper, .. } => LEVM::to_exec_db(store_wrapper, block),
         }
     }
 }

@@ -9,7 +9,6 @@ use ethrex_common::{
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use serde::{Deserialize, Serialize};
-
 #[derive(Clone)]
 pub struct StoreWrapper {
     pub store: Store,
