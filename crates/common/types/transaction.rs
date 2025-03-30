@@ -249,6 +249,7 @@ pub struct PrivilegedL2Transaction {
     pub to: TxKind,
     pub recipient: Address,
     pub value: U256,
+    pub deposit_value: U256,
     pub data: Bytes,
     pub access_list: AccessList,
     pub signature_y_parity: bool,
@@ -565,6 +566,7 @@ impl RLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.to)
             .encode_field(&self.recipient)
             .encode_field(&self.value)
+            .encode_field(&self.deposit_value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
             .encode_field(&self.signature_y_parity)
@@ -677,6 +679,7 @@ impl PayloadRLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.to)
             .encode_field(&self.recipient)
             .encode_field(&self.value)
+            .encode_field(&self.deposit_value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
             .finish();
@@ -866,6 +869,7 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (to, decoder) = decoder.decode_field("to")?;
         let (recipient, decoder) = decoder.decode_field("recipient")?;
         let (value, decoder) = decoder.decode_field("value")?;
+        let (deposit_value, decoder) = decoder.decode_field("deposit_value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
         let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
@@ -881,6 +885,7 @@ impl RLPDecode for PrivilegedL2Transaction {
             to,
             recipient,
             value,
+            deposit_value,
             data,
             access_list,
             signature_y_parity,
@@ -1842,6 +1847,7 @@ mod serde_impl {
             struct_serializer.serialize_field("recipient", &self.recipient)?;
             struct_serializer.serialize_field("gas", &format!("{:#x}", self.gas_limit))?;
             struct_serializer.serialize_field("value", &self.value)?;
+            struct_serializer.serialize_field("deposit_value", &self.deposit_value)?;
             struct_serializer.serialize_field("input", &format!("0x{:x}", self.data))?;
             struct_serializer.serialize_field(
                 "maxPriorityFeePerGas",
@@ -2162,6 +2168,7 @@ mod serde_impl {
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 recipient: deserialize_field::<Address, D>(&mut map, "recipient")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
+                deposit_value: deserialize_field::<U256, D>(&mut map, "depositValue")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
                 access_list: deserialize_field::<Vec<AccessListEntry>, D>(&mut map, "accessList")?
                     .into_iter()
@@ -2801,6 +2808,7 @@ mod tests {
             ),
             recipient: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
             value: U256::from(500000000000000000000000000u128),
+            deposit_value: U256::from(500000000000000000000000000u128),
             data: Bytes::new(),
             access_list: vec![],
             signature_y_parity: false,

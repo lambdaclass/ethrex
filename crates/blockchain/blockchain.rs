@@ -377,6 +377,8 @@ impl Blockchain {
 
         let hash = transaction.compute_hash();
 
+        dbg!(&transaction);
+
         // Add transaction to storage
         self.mempool
             .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;

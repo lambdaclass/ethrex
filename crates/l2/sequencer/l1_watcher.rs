@@ -298,6 +298,7 @@ impl L1Watcher {
                     recipient,
                     recipient,
                     Bytes::copy_from_slice(calldata),
+                    mint_value,
                     Overrides {
                         chain_id: Some(
                             store

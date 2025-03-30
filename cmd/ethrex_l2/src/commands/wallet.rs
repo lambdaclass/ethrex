@@ -438,6 +438,7 @@ impl Command {
                             L2_WITHDRAW_SIGNATURE,
                             &[Value::Address(from)],
                         )?),
+                        amount,
                         Overrides {
                             nonce,
                             from: Some(cfg.wallet.address),

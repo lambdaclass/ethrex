@@ -823,6 +823,7 @@ impl EthClient {
         recipient: Address,
         from: Address,
         calldata: Bytes,
+        deposit_value: U256,
         overrides: Overrides,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
         let mut get_gas_price = 1;
@@ -850,6 +851,7 @@ impl EthClient {
             },
             max_priority_fee_per_gas: overrides.max_priority_fee_per_gas.unwrap_or(get_gas_price),
             value: overrides.value.unwrap_or_default(),
+            deposit_value,
             data: calldata,
             access_list: overrides.access_list,
             ..Default::default()
