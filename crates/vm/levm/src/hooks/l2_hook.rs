@@ -8,9 +8,9 @@ use crate::{
     errors::{InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     utils::{
-        add_intrinsic_gas, decrease_account_balance, eip7702_set_access_code, get_account,
-        get_account_mut_vm, get_base_fee_per_blob_gas, get_intrinsic_gas,
-        get_valid_jump_destinations, has_delegation, increase_account_balance,
+        add_intrinsic_gas, eip7702_set_access_code, get_account, get_account_mut_vm,
+        get_base_fee_per_blob_gas, get_intrinsic_gas, get_valid_jump_destinations, has_delegation,
+        increase_account_balance,
     },
     Account,
 };
@@ -248,23 +248,10 @@ impl Hook for L2Hook {
                 // If transaction execution results in failure (any
                 // exceptional condition or code reverting), setting
                 // delegation designations is not rolled back.
-                decrease_account_balance(
-                    &mut vm.cache,
-                    vm.db.clone(),
-                    receiver_address,
-                    initial_call_frame.msg_value,
-                )?;
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
                 remove_account(&mut vm.cache, &receiver_address);
             }
-
-            increase_account_balance(
-                &mut vm.cache,
-                vm.db.clone(),
-                sender_address,
-                initial_call_frame.msg_value,
-            )?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.

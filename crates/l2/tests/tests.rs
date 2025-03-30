@@ -500,18 +500,21 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     println!("Deposit tx hash: {deposit_tx_hash:?}");
 
     // Wait for the event to be emitted
+
+    let mut blk_number = U256::zero();
     let topic = keccak(b"NumberSet(uint256)");
     while proposer_client
-        .get_logs(U256::from(0), U256::from(20), contract_address, topic)
+        .get_logs(U256::from(0), blk_number, contract_address, topic)
         .await
-        .is_err()
+        .is_ok_and(|logs| logs.is_empty())
     {
         println!("Waiting for the event to be built");
+        blk_number += U256::one();
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
     let logs = proposer_client
-        .get_logs(U256::from(0), U256::from(20), contract_address, topic)
+        .get_logs(U256::from(0), blk_number, contract_address, topic)
         .await?;
     println!("Logs: {logs:?}");
 
@@ -525,7 +528,30 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
             .unwrap()
             .to_fixed_bytes(),
     );
+
+    // Check that the number emitted is correct
     assert_eq!(number, U256::from(424242));
+
+    // Check balances on L1 and L2 after deposit
+    let l2_after_deposit_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+
+    let l2_contract_balance = proposer_client
+        .get_balance(contract_address, BlockByNumber::Latest)
+        .await?;
+
+    assert_eq!(
+        l2_after_deposit_balance,
+        l2_initial_balance + U256::from(100000000000000000000u128),
+        "L2 balance should increase with deposit value"
+    );
+
+    assert_eq!(
+        l2_contract_balance,
+        U256::zero(),
+        "Contract balance should not increase"
+    );
 
     Ok(())
 }
