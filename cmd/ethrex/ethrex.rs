@@ -26,23 +26,15 @@ async fn main() -> eyre::Result<()> {
     }
 
     let data_dir = set_datadir(&opts.datadir);
-
-    let network = get_network(&opts);
-
-    let store = init_store(&data_dir, &network);
-
-    let blockchain = init_blockchain(opts.evm, store.clone());
-
-    let signer = get_signer(&data_dir);
-
-    let local_p2p_node = get_local_p2p_node(&opts, &signer);
+    let network = get_network(&opts)?;
+    let store = init_store(&data_dir, &network)?;
+    let blockchain = init_blockchain(opts.evm, store.clone())?;
+    let signer = get_signer(&data_dir)?;
+    let local_p2p_node = get_local_p2p_node(&opts, &signer)?;
+    let tracker = TaskTracker::new();
+    let cancel_token = tokio_util::sync::CancellationToken::new();
 
     let peer_table = peer_table(signer.clone());
-
-    // TODO: Check every module starts properly.
-    let tracker = TaskTracker::new();
-
-    let cancel_token = tokio_util::sync::CancellationToken::new();
 
     init_rpc_api(
         &opts,
@@ -62,11 +54,9 @@ async fn main() -> eyre::Result<()> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "dev")] {
             use ethrex::initializers::init_dev_network;
-
             init_dev_network(&opts, &store, tracker.clone());
         } else {
             use ethrex::initializers::init_network;
-
             if opts.p2p_enabled {
                 init_network(
                     &opts,
