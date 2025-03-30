@@ -54,7 +54,6 @@ mod tests {
     use secp256k1::{rand, SecretKey};
     use serde_json::{json, Value};
     use std::sync::Arc;
-    use tokio::sync::Mutex;
 
     fn default_context() -> RpcApiContext {
         let storage = setup_store();
@@ -66,7 +65,7 @@ mod tests {
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
             active_filters: Default::default(),
-            syncer: Arc::new(Mutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]

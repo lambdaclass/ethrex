@@ -14,8 +14,9 @@ use crate::{
         payload::PayloadStatus,
     },
     utils::RpcRequest,
-    RpcApiContext, RpcErr, RpcHandler, SyncStatus,
+    RpcApiContext, RpcErr, RpcHandler,
 };
+use ethrex_p2p::sync::SyncStatus;
 
 #[derive(Debug)]
 pub struct ForkChoiceUpdatedV1 {
@@ -209,13 +210,13 @@ fn handle_forkchoice(
         fork_choice_state.finalized_block_hash
     );
     // Check if there is an ongoing sync before applying the forkchoice
-    let fork_choice_res = match context.sync_status()? {
+    let fork_choice_res = match context.syncer.sync_status()? {
         // Apply current fork choice
         SyncStatus::Inactive => {
             let invalid_ancestors = {
-                let lock = context.syncer.try_lock();
-                match lock {
-                    Ok(sync) => sync.invalid_ancestors.clone(),
+                let invalid_ancestors = context.syncer.invalid_ancestors();
+                match invalid_ancestors {
+                    Ok(invalid_ancestors) => invalid_ancestors,
                     Err(_) => return Err(RpcErr::Internal("Internal error".into())),
                 }
             };
@@ -309,11 +310,10 @@ fn handle_forkchoice(
                     let sync_head = fork_choice_state.head_block_hash;
                     tokio::spawn(async move {
                         // If we can't get hold of the syncer, then it means that there is an active sync in process
-                        if let Ok(mut syncer) = context.syncer.try_lock() {
-                            syncer
-                                .start_sync(current_head, sync_head, context.storage.clone())
-                                .await
-                        }
+                        context
+                            .syncer
+                            .start_sync(current_head, sync_head, context.storage.clone())
+                            .await;
                     });
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }

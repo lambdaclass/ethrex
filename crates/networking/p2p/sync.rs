@@ -62,6 +62,17 @@ lazy_static::lazy_static! {
     };
 }
 
+/// Describes the client's current sync status:
+/// Inactive: There is no active sync process
+/// Active: The client is currently syncing
+/// Pending: The previous sync process became stale, awaiting restart
+#[derive(Debug)]
+pub enum SyncStatus {
+    Inactive,
+    Active,
+    Pending,
+}
+
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {
     #[default]
@@ -70,9 +81,124 @@ pub enum SyncMode {
 }
 
 /// Manager in charge the sync process
-/// Only performs full-sync but will also be in charge of snap-sync in the future
 #[derive(Debug)]
 pub struct SyncManager {
+    inner: Arc<Mutex<InnerSyncManager>>,
+}
+
+impl SyncManager {
+    pub fn new(
+        peer_table: Arc<Mutex<KademliaTable>>,
+        sync_mode: SyncMode,
+        cancel_token: CancellationToken,
+        blockchain: Arc<Blockchain>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(InnerSyncManager {
+                sync_mode,
+                peers: PeerHandler::new(peer_table),
+                last_snap_pivot: 0,
+                invalid_ancestors: HashMap::new(),
+                trie_rebuilder: None,
+                cancel_token,
+                blockchain,
+            })),
+        }
+    }
+
+    /// Creates a dummy SyncManager for tests where syncing is not needed
+    /// This should only be used in tests as it won't be able to connect to the p2p network
+    pub fn dummy() -> Self {
+        let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
+        Self {
+            inner: Arc::new(Mutex::new(InnerSyncManager {
+                sync_mode: SyncMode::Full,
+                peers: PeerHandler::new(dummy_peer_table),
+                last_snap_pivot: 0,
+                invalid_ancestors: HashMap::new(),
+                trie_rebuilder: None,
+                // This won't be used
+                cancel_token: CancellationToken::new(),
+                blockchain: Arc::new(Blockchain::default_with_store(
+                    Store::new("", EngineType::InMemory).unwrap(),
+                )),
+            })),
+        }
+    }
+
+    /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
+    /// Will perforn either full or snap sync depending on the manager's `snap_mode`
+    /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
+    /// In snap mode, blocks and receipts will be fetched and stored in parallel while the state is fetched via p2p snap requests
+    /// After the sync cycle is complete, the sync mode will be set to full
+    /// If the sync fails, no error will be returned but a warning will be emitted
+    /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
+    /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
+    pub async fn start_sync(&self, current_head: H256, sync_head: H256, store: Store) {
+        info!("Syncing from current head {current_head} to sync_head {sync_head}");
+        let start_time = Instant::now();
+        let Ok(mut inner) = self.inner.try_lock() else {
+            warn!("Sync manager is currently syncing, skipping");
+            return;
+        };
+        match inner
+            .sync_cycle(current_head, sync_head, store)
+            .await
+        {
+            Ok(()) => {
+                info!(
+                    "Sync cycle finished, time elapsed: {} secs",
+                    start_time.elapsed().as_secs()
+                );
+            }
+            Err(error) => warn!(
+                "Sync cycle failed due to {error}, time elapsed: {} secs ",
+                start_time.elapsed().as_secs()
+            ),
+        }
+    }
+
+    /// Returns the engine's current sync status, see [SyncStatus]
+    pub fn sync_status(&self) -> Result<SyncStatus, StoreError> {
+        // Try to get hold of the sync manager, if we can't then it means it is currently involved in a sync process
+        let Ok(inner) = self.inner.try_lock() else {
+            return Ok(SyncStatus::Active);
+        };
+        // Check if there is a checkpoint left from a previous aborted sync
+        Ok(
+            if inner.storage().get_header_download_checkpoint()?.is_some() {
+                SyncStatus::Pending
+            // No trace of a sync being handled
+            } else {
+                SyncStatus::Inactive
+            },
+        )
+    }
+
+    /// Returns the invalid ancestors map or an error if the sync manager is currently syncing
+    /// NOTE: Err is () because SyncError is private and Option doesn't seem a good fit here
+    #[allow(clippy::result_unit_err)]
+    pub fn invalid_ancestors(&self) -> Result<HashMap<BlockHash, BlockHash>, ()> {
+        let Ok(inner) = self.inner.try_lock() else {
+            return Err(());
+        };
+        Ok(inner.invalid_ancestors.clone())
+    }
+
+    pub fn insert_invalid_ancestor(&self, block_hash: H256, latest_valid_hash: H256) {
+        let lock = self.inner.try_lock();
+        if let Ok(mut inner) = lock {
+            inner
+                .invalid_ancestors
+                .insert(block_hash, latest_valid_hash);
+        }
+    }
+}
+
+/// Manager in charge the sync process
+/// Only performs full-sync but will also be in charge of snap-sync in the future
+#[derive(Debug)]
+struct InnerSyncManager {
     sync_mode: SyncMode,
     peers: PeerHandler,
     /// The last block number used as a pivot for snap-sync
@@ -93,65 +219,9 @@ pub struct SyncManager {
     blockchain: Arc<Blockchain>,
 }
 
-impl SyncManager {
-    pub fn new(
-        peer_table: Arc<Mutex<KademliaTable>>,
-        sync_mode: SyncMode,
-        cancel_token: CancellationToken,
-        blockchain: Arc<Blockchain>,
-    ) -> Self {
-        Self {
-            sync_mode,
-            peers: PeerHandler::new(peer_table),
-            last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
-            trie_rebuilder: None,
-            cancel_token,
-            blockchain,
-        }
-    }
-
-    /// Creates a dummy SyncManager for tests where syncing is not needed
-    /// This should only be used in tests as it won't be able to connect to the p2p network
-    pub fn dummy() -> Self {
-        let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
-        Self {
-            sync_mode: SyncMode::Full,
-            peers: PeerHandler::new(dummy_peer_table),
-            last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
-            trie_rebuilder: None,
-            // This won't be used
-            cancel_token: CancellationToken::new(),
-            blockchain: Arc::new(Blockchain::default_with_store(
-                Store::new("", EngineType::InMemory).unwrap(),
-            )),
-        }
-    }
-
-    /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
-    /// Will perforn either full or snap sync depending on the manager's `snap_mode`
-    /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
-    /// In snap mode, blocks and receipts will be fetched and stored in parallel while the state is fetched via p2p snap requests
-    /// After the sync cycle is complete, the sync mode will be set to full
-    /// If the sync fails, no error will be returned but a warning will be emitted
-    /// [WARNING] Sync is done optimistically, so headers and bodies may be stored even if their data has not been fully synced if the sync is aborted halfway
-    /// [WARNING] Sync is currenlty simplified and will not download bodies + receipts previous to the pivot during snap sync
-    pub async fn start_sync(&mut self, current_head: H256, sync_head: H256, store: Store) {
-        info!("Syncing from current head {current_head} to sync_head {sync_head}");
-        let start_time = Instant::now();
-        match self.sync_cycle(current_head, sync_head, store).await {
-            Ok(()) => {
-                info!(
-                    "Sync cycle finished, time elapsed: {} secs",
-                    start_time.elapsed().as_secs()
-                );
-            }
-            Err(error) => warn!(
-                "Sync cycle failed due to {error}, time elapsed: {} secs ",
-                start_time.elapsed().as_secs()
-            ),
-        }
+impl InnerSyncManager {
+    pub fn storage(&self) -> &Store {
+        &self.blockchain.storage
     }
 
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
@@ -568,7 +638,7 @@ async fn store_receipts(
     Ok(())
 }
 
-impl SyncManager {
+impl InnerSyncManager {
     // Downloads the latest state trie and all associated storage tries & bytecodes from peers
     // Rebuilds the state trie and all storage tries based on the downloaded data
     // Performs state healing in order to fix all inconsistencies with the downloaded state

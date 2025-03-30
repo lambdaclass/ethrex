@@ -251,7 +251,6 @@ mod tests {
         sync::{Arc, Mutex},
         time::{Duration, Instant},
     };
-    use tokio::sync::Mutex as TokioMutex;
 
     use super::ActiveFilters;
     use crate::{
@@ -448,7 +447,7 @@ mod tests {
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
             active_filters: filters_pointer.clone(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -520,7 +519,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
             active_filters: active_filters.clone(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -557,7 +556,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             active_filters: active_filters.clone(),
             jwt_secret: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
