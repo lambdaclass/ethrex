@@ -249,7 +249,6 @@ impl Evm {
     pub fn get_state_transitions(
         &mut self,
         parent_hash: H256,
-        previous_state: &mut CacheDB,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
@@ -268,7 +267,6 @@ impl Evm {
                     store_wrapper.store.get_chain_config()?,
                     &block_header,
                     block_cache,
-                    previous_state,
                 )
             }
         }
