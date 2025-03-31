@@ -40,6 +40,7 @@ pub struct Committer {
     interval_ms: u64,
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
+    validium: bool,
 }
 
 pub async fn start_l1_committer(
@@ -71,6 +72,7 @@ impl Committer {
             interval_ms: committer_config.interval_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
+            validium: committer_config.validium,
         }
     }
 
@@ -160,9 +162,7 @@ impl Committer {
             &account_updates,
         )?;
 
-        let validium = true; //TODO: Change it for a flag when running the node
-
-        let blobs_bundle = if !validium {
+        let blobs_bundle = if !self.validium {
             self.generate_blobs_bundle(&state_diff)?
         } else {
             BlobsBundle::default() // Just empty fields. Maybe an Option<> would be better though.
@@ -363,9 +363,7 @@ impl Committer {
     ) -> Result<H256, CommitterError> {
         info!("Sending commitment for block {block_number}");
 
-        let validium = blobs_bundle == BlobsBundle::default(); //TODO: Change this
-
-        let commitment_bytes: Bytes = if !validium {
+        let commitment_bytes: Bytes = if !self.validium {
             let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
             blob_versioned_hashes
                 .first()
@@ -398,7 +396,7 @@ impl Committer {
 
         // Validium: EIP1559 Transaction.
         // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
-        let mut tx = if !validium {
+        let mut tx = if !self.validium {
             let le_bytes = estimate_blob_gas(
                 &self.eth_client,
                 self.arbitrary_base_blob_gas_price,

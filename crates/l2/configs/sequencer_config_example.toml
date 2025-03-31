@@ -41,6 +41,8 @@ l1_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b7
 interval_ms = 5000
 # 1 Gwei
 arbitrary_base_blob_gas_price = 1000000000
+# Initialize committer in validium mode
+validium = false
 
 [prover_server]
 # set it to 0.0.0.0 to allow connections from other machines

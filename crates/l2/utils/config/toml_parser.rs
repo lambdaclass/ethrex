@@ -131,6 +131,7 @@ struct Committer {
     l1_private_key: String,
     interval_ms: u64,
     arbitrary_base_blob_gas_price: u64,
+    validium: bool,
 }
 
 impl Committer {
@@ -143,12 +144,14 @@ impl Committer {
 {prefix}_L1_PRIVATE_KEY={}
 {prefix}_INTERVAL_MS={}
 {prefix}_ARBITRARY_BASE_BLOB_GAS_PRICE={}
+{prefix}_VALIDIUM={}
 ",
             self.on_chain_proposer_address,
             self.l1_address,
             self.l1_private_key,
             self.interval_ms,
             self.arbitrary_base_blob_gas_price,
+            self.validium,
         )
     }
 }

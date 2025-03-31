@@ -42,13 +42,6 @@ pub struct L2Options {
     pub sponsorable_addresses_file_path: Option<String>,
     #[arg(long, value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: Option<SecretKey>,
-    #[arg(
-        long = "validium",
-        default_value = "false",
-        help = "Enable or disable validium mode",
-        help_heading = "L2 options"
-    )]
-    pub validium: bool,
     #[cfg(feature = "based")]
     #[clap(flatten)]
     pub based_opts: BasedOptions,
