@@ -54,7 +54,7 @@ ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain
 CI_ETHREX_WORKDIR := /usr/local/bin
 
 ethrex_L2_CONFIGS_PATH=$(shell pwd)/configs
-ethrex_L2_SEQUENCER_CONFIG_FILE=config.toml
+ethrex_L2_SEQUENCER_CONFIG_FILE=sequencer_config.toml
 ethrex_L2_PROVER_CLIENT_CONFIG_FILE=prover_client_config.toml
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
@@ -66,6 +66,8 @@ L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
 # Used in the .env file. Ensure the same port is used for `ENGINE_API_RPC_URL`.
+# https://github.com/lambdaclass/ethrex/issues/2358
+# The authrpc.port has to be deprecated when using the l2 flag
 L2_AUTH_PORT=8552
 
 # Matches the ports used by the blockchain/metrics dir
@@ -146,6 +148,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 		echo "Running ethrex L2 with based"; \
 	fi; \
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
+	l2 init \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr 0.0.0.0 \
@@ -187,7 +190,7 @@ init-prover: ## 🚀 Initializes the Prover
 	--bin ethrex_prover -- $$T
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
 
 # Testing
 # cargo test l2 will match tests that has l2 in the function.
