@@ -1,11 +1,29 @@
 use crate::{config::EthrexL2Config, utils::config::confirm};
 use clap::Subcommand;
-use eyre::ContextCompat;
+use ethrex_common::{
+    types::{bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
+    Address, U256,
+};
+use ethrex_l2::sequencer::state_diff::StateDiff;
+use ethrex_rpc::{
+    clients::{beacon::BeaconClient, eth::BlockByNumber},
+    EthClient,
+};
+use ethrex_storage::{EngineType, Store};
+use eyre::{ContextCompat, OptionExt};
+use itertools::Itertools;
+use keccak_hash::keccak;
+use reqwest::Url;
 use secp256k1::SecretKey;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::{create_dir_all, read_dir},
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 pub const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub(crate) enum Command {
     #[clap(
@@ -64,6 +82,32 @@ pub(crate) enum Command {
     Restart {
         #[clap(short = 'y', long, help = "Forces the restart without confirmation.")]
         force: bool,
+    },
+    #[clap(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
+    BlobsSaver {
+        #[clap(
+            short = 'c',
+            long = "contract",
+            help = "The contract address to listen to."
+        )]
+        contract_address: Address,
+        #[clap(short = 'd', long, help = "The directory to save the blobs.")]
+        data_dir: PathBuf,
+        #[clap(short = 'e', long)]
+        l1_eth_rpc: Url,
+        #[clap(short = 'b', long)]
+        l1_beacon_rpc: Url,
+    },
+    #[clap(about = "Reconstructs the L2 state from L1 blobs.")]
+    Reconstruct {
+        #[clap(short = 'g', long, help = "The genesis file for the L2 network.")]
+        genesis: PathBuf,
+        #[clap(short = 'b', long, help = "The directory to read the blobs from.")]
+        blobs_dir: PathBuf,
+        #[clap(short = 's', long, help = "The path to the store.")]
+        store_path: PathBuf,
+        #[clap(short = 'c', long, help = "Address of the L2 proposer coinbase")]
+        coinbase: Address,
     },
 }
 
@@ -163,6 +207,147 @@ impl Command {
                 } else {
                     println!("Aborted.");
                 }
+            }
+            Command::BlobsSaver {
+                l1_eth_rpc,
+                l1_beacon_rpc,
+                contract_address,
+                data_dir,
+            } => {
+                create_dir_all(data_dir.clone())?;
+
+                let eth_client = EthClient::new(l1_eth_rpc.as_str());
+                let beacon_client = BeaconClient::new(l1_beacon_rpc);
+
+                // Keep delay for finality
+                let mut current_block = U256::zero();
+                while current_block < U256::from(64) {
+                    current_block = eth_client.get_block_number().await?;
+                    tokio::time::sleep(Duration::from_secs(12)).await;
+                }
+                current_block = current_block
+                    .checked_sub(U256::from(64))
+                    .ok_or_eyre("Cannot get finalized block")?;
+
+                let event_signature = keccak("BlockCommitted(bytes32)");
+
+                loop {
+                    // Wait for a block
+                    tokio::time::sleep(Duration::from_secs(12)).await;
+
+                    let logs = eth_client
+                        .get_logs(
+                            current_block,
+                            current_block,
+                            contract_address,
+                            event_signature,
+                        )
+                        .await?;
+
+                    if !logs.is_empty() {
+                        // Get parent beacon block root hash from block
+                        let block = eth_client
+                            .get_block_by_number(BlockByNumber::Number(current_block.as_u64()))
+                            .await?;
+                        let parent_beacon_hash = block
+                            .header
+                            .parent_beacon_block_root
+                            .ok_or_eyre("Unknown parent beacon root")?;
+
+                        // Get block slot from parent beacon block
+                        let parent_beacon_block =
+                            beacon_client.get_block_by_hash(parent_beacon_hash).await?;
+                        let target_slot = parent_beacon_block.message.slot + 1;
+
+                        // Get versioned hashes from transactions
+                        let mut l2_blob_hashes = vec![];
+                        for log in logs {
+                            let tx = eth_client
+                                .get_transaction_by_hash(log.transaction_hash)
+                                .await?
+                                .ok_or_eyre(format!(
+                                    "Transaction {:#x} not found",
+                                    log.transaction_hash
+                                ))?;
+                            l2_blob_hashes.extend(tx.blob_versioned_hashes.ok_or_eyre(format!(
+                                "Blobs not found in transaction {:#x}",
+                                log.transaction_hash
+                            ))?);
+                        }
+
+                        // Get blobs from block's slot and only keep L2 commitment's blobs
+                        for blob in beacon_client
+                            .get_blobs_by_slot(target_slot)
+                            .await?
+                            .into_iter()
+                            .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
+                        {
+                            let blob_path =
+                                data_dir.join(format!("{}-{}.blob", target_slot, blob.index));
+                            std::fs::write(blob_path, blob.blob)?;
+                        }
+
+                        println!("Saved blobs for slot {}", target_slot);
+                    }
+
+                    current_block += U256::one();
+                }
+            }
+            Command::Reconstruct {
+                genesis,
+                blobs_dir,
+                store_path,
+                coinbase,
+            } => {
+                let store = Store::new_from_genesis(
+                    store_path.to_str().expect("Invalid store path"),
+                    EngineType::Libmdbx,
+                    genesis.to_str().expect("Invalid genesis path"),
+                )?;
+
+                let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
+                let genesis_block_hash = genesis_header.compute_block_hash();
+
+                let mut new_trie = store
+                    .state_trie(genesis_block_hash)?
+                    .expect("Cannot open state trie");
+                let mut last_number = 0;
+                let mut last_hash = genesis_block_hash;
+
+                let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
+                for file in files.into_iter().sorted_by_key(|f| f.file_name()) {
+                    let blob = std::fs::read(file.path())?;
+
+                    if blob.len() != BYTES_PER_BLOB {
+                        panic!("Invalid blob size");
+                    }
+
+                    let blob = bytes_from_blob(blob.into());
+                    let state_diff = StateDiff::decode(&blob)?;
+                    let account_updates = state_diff.to_account_updates(&new_trie)?;
+
+                    new_trie = store
+                        .apply_account_updates_from_trie(new_trie, &account_updates)
+                        .expect("Error applying account updates");
+
+                    let new_block = BlockHeader {
+                        coinbase,
+                        number: last_number + 1,
+                        parent_hash: last_hash,
+                        state_root: new_trie.hash().expect("Error committing state"),
+                        ..state_diff.header
+                    };
+                    let new_block_hash = new_block.compute_block_hash();
+
+                    store.add_block_header(new_block_hash, new_block)?;
+                    store.add_block_number(new_block_hash, last_number + 1)?;
+                    store.set_canonical_block(last_number + 1, new_block_hash)?;
+
+                    last_number += 1;
+                    last_hash = new_block_hash;
+                }
+
+                store.update_latest_block_number(last_number)?;
             }
         }
         Ok(())

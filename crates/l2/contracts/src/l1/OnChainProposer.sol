@@ -8,6 +8,7 @@ import {CommonBridge} from "./CommonBridge.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
+import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
@@ -37,18 +38,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev This is crucial for ensuring that only subsequents blocks are committed in the contract.
     uint256 public lastCommittedBlock;
 
-    /// @notice The next block to commit.
-    /// @dev This variable holds the block number of the next block to commit.
-    /// @dev `nextBlockToCommit` should be equal to `lastCommittedBlock` + 1.
-    /// @dev Only the block with the block number equal to `nextBlockToCommit` will be committed.
-    /// @dev This variable is called by the `l1_committer.rs`.
-    uint256 public nextBlockToCommit;
-
     /// @dev The sequencer addresses that are authorized to commit and verify blocks.
     mapping(address _authorizedAddress => bool)
         public authorizedSequencerAddresses;
 
     address public BRIDGE;
+    address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
 
@@ -71,6 +66,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         address bridge,
         address r0verifier,
         address sp1verifier,
+        address picoverifier,
         address[] calldata sequencerAddresses
     ) public nonReentrant {
         // Set the CommonBridge address
@@ -87,6 +83,21 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: bridge is the contract address"
         );
         BRIDGE = bridge;
+
+        // Set the PicoGroth16Verifier address
+        require(
+            PICOVERIFIER == address(0),
+            "OnChainProposer: contract already initialized"
+        );
+        require(
+            picoverifier != address(0),
+            "OnChainProposer: picoverifier is the zero address"
+        );
+        require(
+            picoverifier != address(this),
+            "OnChainProposer: picoverifier is the contract address"
+        );
+        PICOVERIFIER = picoverifier;
 
         // Set the Risc0Groth16Verifier address
         require(
@@ -131,10 +142,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 depositLogs
     ) external override onlySequencer {
         require(
-            blockNumber == nextBlockToCommit ||
-                (blockNumber == 0 &&
-                    lastCommittedBlock == 0 &&
-                    nextBlockToCommit == 0),
+            blockNumber == lastCommittedBlock + 1,
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
         require(
@@ -162,7 +170,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             depositLogs
         );
         lastCommittedBlock = blockNumber;
-        nextBlockToCommit = blockNumber + 1;
         emit BlockCommitted(commitment);
     }
 
@@ -174,13 +181,21 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// we might get an error indicating that the block hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
     function verify(
         uint256 blockNumber,
-        bytes calldata blockProof,
-        bytes32 imageId,
-        bytes32 journalDigest,
-        bytes32 programVKey,
-        bytes calldata publicValues,
-        bytes calldata proofBytes
+        //risc0
+        bytes calldata risc0BlockProof,
+        bytes32 risc0ImageId,
+        bytes32 risc0JournalDigest,
+        //sp1
+        bytes32 sp1ProgramVKey,
+        bytes calldata sp1PublicValues,
+        bytes calldata sp1ProofBytes,
+        //pico
+        bytes32 picoRiscvVkey,
+        bytes calldata picoPublicValues,
+        uint256[8] calldata picoProof
     ) external override onlySequencer {
+        // TODO: imageid, programvkey and riscvvkey should be constants
+        // TODO: organize each zkvm proof arguments in their own structs
         require(
             blockNumber == lastVerifiedBlock + 1,
             "OnChainProposer: block already verified"
@@ -191,21 +206,30 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: block not committed"
         );
 
+        if (PICOVERIFIER != DEV_MODE) {
+            // If the verification fails, it will revert.
+            IPicoVerifier(PICOVERIFIER).verifyPicoProof(
+                picoRiscvVkey,
+                picoPublicValues,
+                picoProof
+            );
+        }
+
         if (R0VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             IRiscZeroVerifier(R0VERIFIER).verify(
-                blockProof,
-                imageId,
-                journalDigest
+                risc0BlockProof,
+                risc0ImageId,
+                risc0JournalDigest
             );
         }
 
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             ISP1Verifier(SP1VERIFIER).verifyProof(
-                programVKey,
-                publicValues,
-                proofBytes
+                sp1ProgramVKey,
+                sp1PublicValues,
+                sp1ProofBytes
             );
         }
 

@@ -7,15 +7,15 @@
   - [What](#what)
   - [Workflow](#workflow)
   - [How](#how)
-      - [Quick Test](#quick-test)
+    - [Quick Test](#quick-test)
     - [Dev Mode](#dev-mode)
-      - [Run the whole system with the prover](#run-the-whole-system-with-the-prover)
+      - [Run the whole system with the prover - In one Machine](#run-the-whole-system-with-the-prover---in-one-machine)
     - [GPU mode](#gpu-mode)
       - [Proving Process Test](#proving-process-test)
       - [Run the whole system with a GPU Prover](#run-the-whole-system-with-a-gpu-prover)
   - [Configuration](#configuration)
 
->[!NOTE]
+> [!NOTE]
 > The shipping/deploying process and the `Prover` itself are under development.
 
 ## What
@@ -45,12 +45,17 @@ sequenceDiagram
 ## How
 
 **Dependencies:**
+
 - [RISC0](https://dev.risczero.com/api/zkvm/install)
-   1. `curl -L https://risczero.com/install | bash`
-   2. `rzup install cargo-risczero 1.2.0`
+  1. `curl -L https://risczero.com/install | bash`
+  2. `rzup install cargo-risczero 1.2.0`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
-   1. `curl -L https://sp1up.succinct.xyz | bash`
-   2. `sp1up --version 4.0.0`
+  1. `curl -L https://sp1up.succinct.xyz | bash`
+  2. `sp1up --version 4.1.0`
+- [Pico](https://docs.brevis.network/)
+  1. `cargo +nightly install --git https://github.com/brevis-network/pico pico-cli`
+  2. `rustup install nightly-2024-11-27`
+  3. `rustup component add rust-src --toolchain nightly-2024-11-27`
 - [SOLC](https://docs.soliditylang.org/en/latest/installing-solidity.html)
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
@@ -64,37 +69,37 @@ cd crates/l2/prover
 ```
 
 Then run any of the targets:
+
+- `make perf-pico`
 - `make perf-risc0`
 - `make perf-sp1`
 
 ### Dev Mode
 
-To run the blockchain (`proposer`) and prover in conjunction in a development environment, set the following environment variables in the `.env` file:
-- `PROVER_SERVER_DEV_MODE=false`
-- Depending on the Proving System:
-  - RISC0: `RISC0_DEV_MODE=1` [(docs)](https://dev.risczero.com/api/generating-proofs/dev-mode)
-  - SP1: `SP1_PROVER=local`
-
-To start the `prover_client`, use the following command:
+To run the blockchain (`proposer`) and prover in conjunction, start the `prover_client`, use the following command:
 
 ```sh
-make init-prover T="prover_type (risc0 or sp1) G=true"
+make init-prover T="prover_type (pico,risc0,sp1,exec) G=true"
 ```
 
-If neither `risc0` nor `sp1` is installed on the system, the prover can be built without the "build" features to check whether all the surrounding components of the prover (except for the RISC-V zkVMs) can be compiled.
+select the "exec" backend whenever it's not desired to generate proofs, like in a CI environment.
 
-#### Run the whole system with the prover
+#### Run the whole system with the prover - In one Machine
+
+> [!NOTE]
+> Used for development purposes.
 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp .env.example .env` &rarr; check if you want to change any config.
-4. `make init`
+3. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` &rarr; check if you want to change any config.
+4. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` &rarr; check if you want to change any config.
+5. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-5. In a new terminal &rarr; `make init-prover T=(risc0 or sp1)`.
+6. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico,exec)`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
@@ -127,6 +132,8 @@ cd crates/l2/prover
 ```
 
 Then run any of the targets:
+
+- `make perf-pico-gpu`
 - `make perf-risc0-gpu`
 - `make perf-sp1-gpu`
 
@@ -134,47 +141,68 @@ Then run any of the targets:
 
 Two servers are required: one for the `prover` and another for the `proposer`. If you run both components on the same machine, the `prover` may consume all available resources, leading to potential stuttering or performance issues for the `proposer`/`node`.
 
+- The number 1 simbolizes a machine with GPU for the `prover_client`.
+- The number 2 simbolizes a machine for the `sequencer`/L2 node itself.
+
 1. `prover_client`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
-    1. `cd ethrex/crates/l2`
-    2. `cp .example.env` and change the `PROVER_CLIENT_PROVER_SERVER_ENDPOINT` with the ip of the other server.
+   1. `cd ethrex/crates/l2`
+   2. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` and change the `prover_server_endpoint` with machine's `2` ip and make sure the port matches the one defined in machine 2.
 
 The important variables are:
 
 ```sh
-PROVER_CLIENT_PROVER_SERVER_ENDPOINT=<ip-address>:3000
-RISC0_DEV_MODE=0
-SP1_PROVER=local
+[prover_client]
+prover_server_endpoint=<ip-address>:3900
 ```
 
 - `Finally`, to start the `prover_client`/`zkvm`, run:
-   - `make init-prover T=(risc0 or sp1) G=true`
+  - `make init-prover T=(sp1,risc0,pico,exec) G=true`
 
 2. `prover_server`/`proposer` &rarr; this server just needs rust installed.
-    1. `cd ethrex/crates/l2`
-    2. `cp .example.env` and change the addresses and the following fields:
-       - `PROVER_SERVER_LISTEN_IP=0.0.0.0` &rarr; used to handle the tcp communication with the other server.
-       - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.
-       - `DEPLOYER_SALT_IS_ZERO=false` &rarr; set to false to randomize the salt.
-       - `DEPLOYER_SP1_DEPLOY_VERIFIER=true` overwrites `DEPLOYER_SP1_CONTRACT_VERIFIER`. Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-       - `DEPLOYER_CONTRACT_VERIFIER=0xd9b0d07CeCd808a8172F21fA7C97992168f045CA` &rarr; risc0’s verifier contract deployed on Sepolia. (Check the if the contract is deployed in your preferred network).
-       - Set the `ETH_RPC_URL` to any L1 endpoint.
+   1. `cd ethrex/crates/l2`
+   2. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` and change the addresses and the following fields:
+      - [prover_server]
+        - `listen_ip=0.0.0.0` &rarr; Used to handle TCP communication with other servers from any network interface.
+      - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.
+      - [deployer]
+        - `salt_is_zero=false` &rarr; set to false to randomize the salt.
+      - `sp1_deploy_verifier = true` overwrites `sp1_contract_verifier`. Check if the contract is deployed in your preferred network or set to `true` to deploy it.
+      - `risc0_contract_verifier`
+        - Check the if the contract is present on your preferred network.
+      - `sp1_contract_verifier`
+        - It can be deployed.
+        - Check the if the contract is present on your preferred network.
+      - `pico_contract_verifier`
+        - It can be deployed.
+        - Check the if the contract is present on your preferred network.
+      - Set the [eth] `rpc_url` to any L1 endpoint.
 
->[!NOTE]
+> [!NOTE]
 > Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.
 
 - `Finally`, to start the `proposer`/`l2 node`, run:
-   - `make rm-db-l2 && make down`
-   - `make deploy-l1 && make init-l2`
+  - `make rm-db-l2 && make down`
+  - `make deploy-l1 && make init-l2`
 
 ## Configuration
 
-The following environment variables are available to configure the prover:
+Configuration is done through environment variables. The easiest way to configure the ProverClient is by creating a `prover_client_config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
+
+The following environment variables are available to configure the Proposer consider looking at the provided [prover_client_config_example.toml](../configs/prover_client_config_example.toml):
+
+The following environment variables are used by the ProverClient:
+
+- `CONFIGS_PATH`: The path where the `PROVER_CLIENT_CONFIG_FILE` is located at.
+- `PROVER_CLIENT_CONFIG_FILE`: The `.toml` that contains the config for the `prover_client`.
+- `PROVER_ENV_FILE`: The name of the `.env` that has the parsed `.toml` configuration.
+- `PROVER_CLIENT_PROVER_SERVER_ENDPOINT`: Prover Server's Endpoint used to connect the Client to the Server.
+
+The following environment variables are used by the ProverServer:
 
 - `PROVER_SERVER_LISTEN_IP`: IP used to start the Server.
 - `PROVER_SERVER_LISTEN_PORT`: Port used to start the Server.
-- `PROVER_CLIENT_PROVER_SERVER_ENDPOINT`: Prover Server's Endpoint used to connect the Client to the Server.
 - `PROVER_SERVER_VERIFIER_ADDRESS`: The address of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
 - `PROVER_SERVER_VERIFIER_PRIVATE_KEY`: The private key of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
 
->[!NOTE]
+> [!NOTE]
 > The `PROVER_SERVER_VERIFIER` account must differ from the `COMMITTER_L1` account.

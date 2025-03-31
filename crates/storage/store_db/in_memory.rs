@@ -6,8 +6,8 @@ use crate::{
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    Index, Receipt,
+    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Index, Receipt,
 };
 use ethrex_trie::{InMemoryTrieDB, Nibbles, Trie};
 use std::{
@@ -37,7 +37,7 @@ struct StoreInner {
     // A storage trie for each hashed account address
     storage_trie_nodes: HashMap<H256, NodeMap>,
     // Stores local blocks by payload id
-    payloads: HashMap<u64, (Block, U256, BlobsBundle, bool)>,
+    payloads: HashMap<u64, PayloadBundle>,
     pending_blocks: HashMap<BlockHash, Block>,
     // Stores current Snap Sate
     snap_state: SnapState,
@@ -140,6 +140,37 @@ impl StoreEngine for Store {
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
         self.inner().bodies.insert(block_hash, block_body);
+        Ok(())
+    }
+
+    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        for block in blocks {
+            let header = block.header.clone();
+            let number = header.number;
+            let hash = header.compute_block_hash();
+            let locations = block
+                .body
+                .transactions
+                .iter()
+                .enumerate()
+                .map(|(i, tx)| (tx.compute_hash(), number, hash, i as u64));
+
+            self.add_transaction_locations(locations.collect())?;
+            self.add_block_body(hash, block.body.clone())?;
+            self.add_block_header(hash, header)?;
+            self.add_block_number(hash, number)?;
+        }
+
+        Ok(())
+    }
+
+    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        for block in blocks {
+            self.inner()
+                .canonical_hashes
+                .insert(block.header.number, block.hash());
+        }
+
         Ok(())
     }
 
@@ -338,17 +369,13 @@ impl StoreEngine for Store {
     }
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.inner().payloads.insert(
-            payload_id,
-            (block, U256::zero(), BlobsBundle::empty(), false),
-        );
+        self.inner()
+            .payloads
+            .insert(payload_id, PayloadBundle::from_block(block));
         Ok(())
     }
 
-    fn get_payload(
-        &self,
-        payload_id: u64,
-    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError> {
+    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         Ok(self.inner().payloads.get(&payload_id).cloned())
     }
 
@@ -382,6 +409,17 @@ impl StoreEngine for Store {
         Ok(())
     }
 
+    fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError> {
+        for (block_hash, receipts) in receipts.into_iter() {
+            self.add_receipts(block_hash, receipts)?;
+        }
+
+        Ok(())
+    }
+
     fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
@@ -396,17 +434,9 @@ impl StoreEngine for Store {
 
         Ok(())
     }
-    fn update_payload(
-        &self,
-        payload_id: u64,
-        block: Block,
-        block_value: U256,
-        blobs_bundle: BlobsBundle,
-        completed: bool,
-    ) -> Result<(), StoreError> {
-        self.inner()
-            .payloads
-            .insert(payload_id, (block, block_value, blobs_bundle, completed));
+
+    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+        self.inner().payloads.insert(payload_id, payload);
         Ok(())
     }
 
@@ -490,6 +520,24 @@ impl StoreEngine for Store {
             .entry(account_hash)
             .or_default()
             .extend(storage_keys.into_iter().zip(storage_values));
+        Ok(())
+    }
+    fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
+    ) -> Result<(), StoreError> {
+        for (account_hash, (storage_keys, storage_values)) in account_hashes
+            .into_iter()
+            .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
+        {
+            self.inner()
+                .storage_snapshot
+                .entry(account_hash)
+                .or_default()
+                .extend(storage_keys.into_iter().zip(storage_values));
+        }
         Ok(())
     }
 

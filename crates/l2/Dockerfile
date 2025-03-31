@@ -25,7 +25,8 @@ COPY . .
 RUN cargo build --release --features l2
 
 FROM ubuntu:24.04
-WORKDIR /usr/local/bin
+ENV CI_ETHREX_WORKDIR=$CI_ETHREX_WORKDIR
+WORKDIR $CI_ETHREX_WORKDIR
 
 COPY --from=builder ethrex/target/release/ethrex .
 EXPOSE 1729

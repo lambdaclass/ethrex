@@ -4,9 +4,13 @@ use crate::{
 };
 use ethrex_common::{types::Genesis, H256, U256};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::db::{evm_state, EvmState};
+use ethrex_vm::{
+    backends::revm::db::{evm_state, EvmState},
+    StoreWrapper,
+};
 use spinoff::Spinner;
 
+/// Loads initial state, used for REVM as it contains EvmState.
 pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
     let genesis = Genesis::from(test);
 
@@ -20,6 +24,21 @@ pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
         ),
         genesis.get_block().header.compute_block_hash(),
     )
+}
+
+/// Loads initial state, function for LEVM as it does not require EvmState
+pub fn load_initial_state_levm(test: &EFTest) -> StoreWrapper {
+    let genesis = Genesis::from(test);
+
+    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    storage.add_initial_state(genesis.clone()).unwrap();
+
+    let block_hash = genesis.get_block().header.compute_block_hash();
+
+    StoreWrapper {
+        store: storage,
+        block_hash,
+    }
 }
 
 pub fn spinner_update_text_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {

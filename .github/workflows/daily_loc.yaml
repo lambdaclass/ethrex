@@ -6,9 +6,6 @@ on:
     - cron: "0 0 * * 1,2,3,4,5"
   workflow_dispatch:
 
-env:
-  RUST_VERSION: 1.82.0
-
 jobs:
   loc:
     name: Count ethrex loc and generate report
@@ -19,8 +16,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -29,30 +24,30 @@ jobs:
         id: cache-loc-report
         uses: actions/cache@v4
         with:
-          path: loc_report.json
+          path: cmd/loc/loc_report.json
           key: loc-report-${{ github.ref_name }}
           restore-keys: |
             loc-report-
 
       - name: Rename cached loc_report.json to loc_report.json.old
         if: steps.cache-loc-report.outputs.cache-hit != ''
-        run: mv loc_report.json loc_report.json.old
+        run: mv cmd/loc/loc_report.json cmd/loc/loc_report.json.old
 
       - name: Generate the loc report
         run: |
-          make loc
+          cd cmd/loc && make loc
 
       - name: Save new loc_report.json to cache
         if: success()
         uses: actions/cache@v4
         with:
-          path: loc_report.json
+          path: cmd/loc/loc_report.json
           key: loc-report-${{ github.ref_name }}
 
       - name: Post results in summary
         run: |
           echo "# 'ethrex' lines of code report" >> $GITHUB_STEP_SUMMARY
-          cat loc_report_github.txt >> $GITHUB_STEP_SUMMARY
+          cat cmd/loc/loc_report_github.txt >> $GITHUB_STEP_SUMMARY
 
       - name: Post results to Slack
         env:

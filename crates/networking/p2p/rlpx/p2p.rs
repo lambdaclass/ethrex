@@ -102,39 +102,95 @@ impl RLPxMessage for HelloMessage {
     }
 }
 
+// Create disconnectreason enum
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DisconnectReason {
+    DisconnectRequested = 0x00,
+    NetworkError = 0x01,
+    ProtocolError = 0x02,
+    UselessPeer = 0x03,
+    TooManyPeers = 0x04,
+    AlreadyConnected = 0x05,
+    IncompatibleVersion = 0x06,
+    InvalidIdentity = 0x07,
+    ClientQuitting = 0x08,
+    UnexpectedIdentity = 0x09,
+    SelfIdentity = 0x0a,
+    PingTimeout = 0x0b,
+    SubprotocolError = 0x10,
+    InvalidReason = 0xff,
+}
+
+// impl display for disconnectreason
+impl std::fmt::Display for DisconnectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DisconnectReason::DisconnectRequested => write!(f, "Disconnect Requested"),
+            DisconnectReason::NetworkError => write!(f, "TCP Subsystem Error"),
+            DisconnectReason::ProtocolError => write!(f, "Breach of Protocol"),
+            DisconnectReason::UselessPeer => write!(f, "Useless Peer"),
+            DisconnectReason::TooManyPeers => write!(f, "Too Many Peers"),
+            DisconnectReason::AlreadyConnected => write!(f, "Already Connected"),
+            DisconnectReason::IncompatibleVersion => {
+                write!(f, "Incompatible P2P Protocol Version")
+            }
+            DisconnectReason::InvalidIdentity => write!(f, "Null Node Identity Received"),
+            DisconnectReason::ClientQuitting => write!(f, "Client Quitting"),
+            DisconnectReason::UnexpectedIdentity => {
+                write!(f, "Unexpected Identity in Handshake")
+            }
+            DisconnectReason::SelfIdentity => {
+                write!(f, "Identity is the Same as This Node")
+            }
+            DisconnectReason::PingTimeout => write!(f, "Ping Timeout"),
+            DisconnectReason::SubprotocolError => {
+                write!(f, "Some Other Reason Specific to a Subprotocol")
+            }
+            DisconnectReason::InvalidReason => write!(f, "Invalid Disconnect Reason"),
+        }
+    }
+}
+
+impl From<u8> for DisconnectReason {
+    fn from(value: u8) -> Self {
+        match value {
+            0x00 => DisconnectReason::DisconnectRequested,
+            0x01 => DisconnectReason::NetworkError,
+            0x02 => DisconnectReason::ProtocolError,
+            0x03 => DisconnectReason::UselessPeer,
+            0x04 => DisconnectReason::TooManyPeers,
+            0x05 => DisconnectReason::AlreadyConnected,
+            0x06 => DisconnectReason::IncompatibleVersion,
+            0x07 => DisconnectReason::InvalidIdentity,
+            0x08 => DisconnectReason::ClientQuitting,
+            0x09 => DisconnectReason::UnexpectedIdentity,
+            0x0a => DisconnectReason::SelfIdentity,
+            0x0b => DisconnectReason::PingTimeout,
+            0x10 => DisconnectReason::SubprotocolError,
+            _ => DisconnectReason::InvalidReason,
+        }
+    }
+}
+
+impl From<DisconnectReason> for u8 {
+    fn from(val: DisconnectReason) -> Self {
+        val as u8
+    }
+}
 #[derive(Debug)]
 pub(crate) struct DisconnectMessage {
-    pub(crate) reason: Option<u8>,
+    pub(crate) reason: Option<DisconnectReason>,
 }
 
 impl DisconnectMessage {
-    pub fn new(reason: Option<u8>) -> Self {
+    pub fn new(reason: Option<DisconnectReason>) -> Self {
         Self { reason }
     }
 
     /// Returns the meaning of the disconnect reason's error code
     /// The meaning of each error code is defined by the spec: https://github.com/ethereum/devp2p/blob/master/rlpx.md#disconnect-0x01
-    pub fn reason(&self) -> &str {
-        if let Some(reason) = self.reason {
-            match reason {
-                0x00 => "Disconnect requested",
-                0x01 => "TCP sub-system error",
-                0x02 => "Breach of protocol, e.g. a malformed message, bad RLP, ...",
-                0x03 => "Useless peer",
-                0x04 => "Too many peers",
-                0x05 => "Already connected",
-                0x06 => "Incompatible P2P protocol version",
-                0x07 => "Null node identity received - this is automatically invalid",
-                0x08 => "Client quitting",
-                0x09 => "Unexpected identity in handshake",
-                0x0a => "Identity is the same as this node (i.e. connected to itself)",
-                0x0b => "Ping timeout",
-                0x10 => "Some other reason specific to a subprotocol",
-                _ => "Unknown Reason",
-            }
-        } else {
-            "Reason Not Provided"
-        }
+    pub fn reason(&self) -> DisconnectReason {
+        self.reason.unwrap_or(DisconnectReason::InvalidReason)
     }
 }
 
@@ -142,7 +198,7 @@ impl RLPxMessage for DisconnectMessage {
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Disconnect msg_data is reason or none
-        match self.reason {
+        match self.reason.map(Into::<u8>::into) {
             Some(value) => Encoder::new(&mut encoded_data)
                 .encode_field(&value)
                 .finish(),
@@ -174,7 +230,7 @@ impl RLPxMessage for DisconnectMessage {
             }
         };
 
-        Ok(Self::new(reason))
+        Ok(Self::new(reason.map(|r| r.into())))
     }
 }
 

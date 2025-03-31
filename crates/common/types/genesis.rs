@@ -4,7 +4,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
@@ -19,7 +19,8 @@ pub struct Genesis {
     /// Chain configuration
     pub config: ChainConfig,
     /// The initial state of the accounts in the genesis block.
-    pub alloc: HashMap<Address, GenesisAccount>,
+    /// This is a BTreeMap because: https://github.com/lambdaclass/ethrex/issues/2070
+    pub alloc: BTreeMap<Address, GenesisAccount>,
     /// Genesis header values
     pub coinbase: Address,
     pub difficulty: U256,
@@ -134,7 +135,7 @@ pub struct ChainConfig {
     #[serde(default)]
     pub blob_schedule: BlobSchedule,
     // Deposits system contract address
-    pub deposit_contract_address: Option<Address>,
+    pub deposit_contract_address: Address,
 }
 
 #[repr(u8)]
@@ -377,6 +378,8 @@ mod tests {
     use std::str::FromStr;
     use std::{fs::File, io::BufReader};
 
+    use ethereum_types::H160;
+
     use crate::types::INITIAL_BASE_FEE;
 
     use super::*;
@@ -409,6 +412,8 @@ mod tests {
             prague_time: Some(1718232101),
             terminal_total_difficulty: Some(0),
             terminal_total_difficulty_passed: true,
+            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+                .unwrap(),
             // Note this BlobSchedule config is not the default
             blob_schedule: BlobSchedule {
                 cancun: ForkBlobSchedule {
@@ -576,7 +581,8 @@ mod tests {
                     "max": 4,
                     "baseFeeUpdateFraction": 20000
                   }
-                }
+                },
+                "depositContractAddress": "0x4242424242424242424242424242424242424242"
             }
             "#;
 
@@ -596,6 +602,8 @@ mod tests {
                     base_fee_update_fraction: 20000,
                 },
             },
+            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+                .unwrap(),
             ..Default::default()
         };
         assert_eq!(&config, &expected_chain_config);
@@ -605,7 +613,8 @@ mod tests {
     fn deserialize_chain_config_missing_entire_blob_schedule() {
         let json = r#"
             {
-                "chainId": 123
+                "chainId": 123,
+                "depositContractAddress": "0x4242424242424242424242424242424242424242"
             }
             "#;
 
@@ -625,6 +634,8 @@ mod tests {
                     base_fee_update_fraction: 5007716,
                 },
             },
+            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+                .unwrap(),
             ..Default::default()
         };
         assert_eq!(&config, &expected_chain_config);
@@ -641,7 +652,8 @@ mod tests {
                       "max": 4,
                       "baseFeeUpdateFraction": 20000
                     }
-                }
+                },
+                "depositContractAddress": "0x4242424242424242424242424242424242424242"
             }
             "#;
 
@@ -661,6 +673,8 @@ mod tests {
                     base_fee_update_fraction: 20000,
                 },
             },
+            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+                .unwrap(),
             ..Default::default()
         };
         assert_eq!(&config, &expected_chain_config);
@@ -677,7 +691,8 @@ mod tests {
                     "max": 2,
                     "baseFeeUpdateFraction": 10000
                   }
-                }
+                },
+                "depositContractAddress": "0x4242424242424242424242424242424242424242"
             }
             "#;
 
@@ -697,8 +712,26 @@ mod tests {
                     base_fee_update_fraction: 5007716,
                 },
             },
+            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+                .unwrap(),
             ..Default::default()
         };
         assert_eq!(&config, &expected_chain_config);
+    }
+
+    #[test]
+    fn deserialize_chain_config_missing_deposit_contract_address() {
+        let json = r#"
+            {
+                "chainId": 123
+            }
+            "#;
+
+        let result: Result<ChainConfig, _> = serde_json::from_str(json);
+
+        assert!(result.is_err());
+
+        let error_message = result.unwrap_err().to_string();
+        assert!(error_message.contains("missing field `depositContractAddress`"),);
     }
 }

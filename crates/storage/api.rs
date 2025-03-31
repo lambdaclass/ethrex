@@ -1,15 +1,22 @@
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::{
-    AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-    Index, Receipt, Transaction,
+    payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+    ChainConfig, Index, Receipt, Transaction,
 };
-use std::{fmt::Debug, panic::RefUnwindSafe};
+use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
 pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
+    /// Add a batch of blocks in a single transaction.
+    /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
+    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError>;
+
+    /// Sets the blocks as part of the canonical chain
+    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError>;
+
     /// Add block header
     fn add_block_header(
         &self,
@@ -93,9 +100,15 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         receipt: Receipt,
     ) -> Result<(), StoreError>;
 
-    /// Add receipt
+    /// Add receipts
     fn add_receipts(&self, block_hash: BlockHash, receipts: Vec<Receipt>)
         -> Result<(), StoreError>;
+
+    /// Adds receipts for a batch of blocks
+    fn add_receipts_for_blocks(
+        &self,
+        receipts: HashMap<BlockHash, Vec<Receipt>>,
+    ) -> Result<(), StoreError>;
 
     /// Obtain receipt for a canonical block represented by the block number.
     fn get_receipt(
@@ -210,19 +223,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
 
-    fn get_payload(
-        &self,
-        payload_id: u64,
-    ) -> Result<Option<(Block, U256, BlobsBundle, bool)>, StoreError>;
+    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
 
-    fn update_payload(
-        &self,
-        payload_id: u64,
-        block: Block,
-        block_value: U256,
-        blobs_bundle: BlobsBundle,
-        completed: bool,
-    ) -> Result<(), StoreError>;
+    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError>;
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
 
@@ -279,6 +282,14 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         account_hash: H256,
         storage_keys: Vec<H256>,
         storage_values: Vec<U256>,
+    ) -> Result<(), StoreError>;
+
+    /// Write multiple storage batches belonging to different accounts into the current storage snapshot
+    fn write_snapshot_storage_batches(
+        &self,
+        account_hashes: Vec<H256>,
+        storage_keys: Vec<Vec<H256>>,
+        storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError>;
 
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment

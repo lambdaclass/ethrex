@@ -3,7 +3,9 @@ use std::marker::PhantomData;
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt},
+    types::{
+        payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt,
+    },
     H256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -27,10 +29,14 @@ pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;
 
 // Receipt types
+#[allow(unused)]
 pub type ReceiptRLP = Rlp<Receipt>;
 
 // Transaction types
 pub type TransactionHashRLP = Rlp<H256>;
+
+// Payload type
+pub type PayloadBundleRLP = Rlp<PayloadBundle>;
 
 // Wrapper for tuples. Used mostly for indexed keys.
 pub type TupleRLP<A, B> = Rlp<(A, B)>;

@@ -1,19 +1,14 @@
-name: PR Lines of Code
+name: PR Lines of Code Analysis
 
 on:
   pull_request:
     branches: ["**"]
 
 jobs:
-  detailed-loc-pr:
-    name: Detailed Lines of Code Count for PR
+  report-loc-changes:
+    name: Report PR Line Changes
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.82.0
         with:
@@ -21,70 +16,45 @@ jobs:
 
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Checkout Base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Run Lines of Code Counter for base
+        run: cd cmd/loc && make loc-detailed
+        # This creates current_detailed_loc_report.json for the base branch
+
+      - name: Rename base report to previous_detailed_loc_report.json
+        run: mv cmd/loc/current_detailed_loc_report.json cmd/loc/previous_detailed_loc_report.json
+
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          clean: "false" # Don't clean the workspace, so we can keep the previous report
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Run Lines of Code Counter for PR
-        run: make loc-detailed
-
-      - name: Upload PR Detailed Lines of Code Count Data
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr-loc-data
-          path: current_detailed_loc_report.json
-
-  detailed-loc-main:
-    name: Detailed Lines of Code Count for main
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.82.0
-        with:
-          components: rustfmt, clippy
-
-      - name: Set up cargo cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run Lines of Code Counter for main
-        run: |
-          make loc-detailed
-          mv current_detailed_loc_report.json previous_detailed_loc_report.json
-
-      - name: Upload main Detailed Lines of Code Count Data
-        uses: actions/upload-artifact@v4
-        with:
-          name: main-loc-data
-          path: previous_detailed_loc_report.json
-
-  detailed-loc-comparison:
-    name: Compare Detailed Lines of Code Count
-    runs-on: ubuntu-latest
-    needs: [detailed-loc-pr, detailed-loc-main]
-    steps:
-      - name: Checkout PR
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-
-      - name: Download PR Detailed Lines of Code Count Data
-        uses: actions/download-artifact@v4
-        with:
-          name: pr-loc-data
-          path: .
-
-      - name: Download main Detailed Lines of Code Count Data
-        uses: actions/download-artifact@v4
-        with:
-          name: main-loc-data
-          path: .
+        run: cd cmd/loc && make loc-detailed
+        # This creates current_detailed_loc_report.json
 
       - name: Compare Detailed Lines of Code Count
-        run: make loc-compare-detailed
+        run: cd cmd/loc && make loc-compare-detailed
+        # This reads current_detailed_loc_report.json and previous_detailed_loc_report.json
+        # and outputs detailed_loc_report.txt
+
+      - name: Check if report exists
+        id: check_report
+        run: |
+          if [ -s cmd/loc/detailed_loc_report.txt ]; then
+            echo "report_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "report_exists=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Find comment
+        if: steps.check_report.outputs.report_exists == 'true'
         continue-on-error: true
         uses: peter-evans/find-comment@v3
         id: fc
@@ -94,10 +64,11 @@ jobs:
           body-includes: "Total lines changed"
 
       - name: Create Comment
+        if: steps.check_report.outputs.report_exists == 'true'
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: detailed_loc_report.txt
+          body-path: cmd/loc/detailed_loc_report.txt
           edit-mode: replace

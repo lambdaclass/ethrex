@@ -3,20 +3,33 @@ use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::H160;
 use ethrex_l2_sdk::calldata::{self, Value};
-use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
-use ethrex_rpc::clients::EthClientError;
+use ethrex_rpc::{
+    clients::{
+        eth::{eth_sender::Overrides, BlockByNumber, EthClient},
+        EthClientError,
+    },
+    types::receipt::RpcReceipt,
+};
 use eyre::bail;
+use itertools::Itertools;
 use keccak_hash::keccak;
-use secp256k1::SecretKey;
-use std::time::Instant;
+use secp256k1::{PublicKey, SecretKey};
 use std::{
     fs::File,
     io::{self, BufRead},
     path::Path,
-    thread::sleep,
-    time::Duration,
+    time::{Duration, Instant},
 };
+use tokio::{task::JoinSet, time::sleep};
+
+// ERC20 compiled artifact generated from this tutorial:
+// https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
+// If you want to modify the behaviour of the contract, edit the ERC20.sol file,
+// and compile it with solc.
+const ERC20: &str =
+    include_str!("../../../../test_data/ERC20/ERC20.bin/TestToken.bin").trim_ascii();
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
@@ -64,6 +77,21 @@ pub(crate) enum Command {
         #[clap(long = "io", default_value = "false", help = "Run I/O-heavy load test")]
         i_o_heavy: bool,
     },
+    #[clap(about = "Load test that deploys an ERC20 and runs transactions")]
+    ERC20 {
+        #[clap(
+            short = 't',
+            long = "transactions_amount",
+            help = "How many transactions each given account will do"
+        )]
+        transactions: u64,
+        #[clap(
+            short = 'p',
+            long = "path",
+            help = "Path to the file containing private keys."
+        )]
+        path: String,
+    },
 }
 
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
@@ -72,6 +100,14 @@ where
 {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
+}
+
+fn address_from_pub_key(public_key: PublicKey) -> H160 {
+    let bytes = public_key.serialize_uncompressed();
+    let hash = keccak(&bytes[1..]);
+    let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
+
+    Address::from(address_bytes)
 }
 
 async fn transfer_from(
@@ -95,7 +131,10 @@ async fn transfer_from(
     let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
 
     let address = Address::from(address_bytes);
-    let nonce = client.get_nonce(address).await.unwrap();
+    let nonce = client
+        .get_nonce(address, BlockByNumber::Latest)
+        .await
+        .unwrap();
 
     let mut retries = 0;
 
@@ -111,18 +150,15 @@ async fn transfer_from(
                 calldata.clone(),
                 Overrides {
                     chain_id: Some(cfg.network.l2_chain_id),
-                    nonce: Some(i),
                     value: if calldata.is_empty() {
                         Some(value)
                     } else {
                         None
                     },
-                    max_fee_per_gas: Some(3121115334),
-                    max_priority_fee_per_gas: Some(3000000000),
                     gas_limit: Some(TX_GAS_COST * 100),
+                    nonce: Some(i),
                     ..Default::default()
                 },
-                10,
             )
             .await
             .unwrap();
@@ -130,9 +166,9 @@ async fn transfer_from(
         while let Err(e) = client.send_eip1559_transaction(&tx, &private_key).await {
             println!("Transaction failed (PK: {pk} - Nonce: {}): {e}", tx.nonce);
             retries += 1;
-            sleep(std::time::Duration::from_secs(2));
+            sleep(std::time::Duration::from_secs(2)).await;
         }
-        sleep(Duration::from_millis(3));
+        sleep(Duration::from_millis(3)).await;
     }
 
     retries
@@ -153,11 +189,159 @@ async fn test_connection(cfg: EthrexL2Config) -> Result<(), EthClientError> {
             }
             Err(err) => {
                 println!("Couldn't establish connection to L2: {err}, retrying {retry}/{RETRIES}");
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                sleep(Duration::from_secs(1)).await;
                 retry += 1
             }
         }
     }
+}
+
+async fn wait_receipt(
+    client: EthClient,
+    tx_hash: H256,
+    retries: Option<u64>,
+) -> eyre::Result<RpcReceipt> {
+    let retries = retries.unwrap_or(10_u64);
+    for _ in 0..retries {
+        match client.get_transaction_receipt(tx_hash).await {
+            Err(_) | Ok(None) => {
+                let _ = sleep(Duration::from_secs(1)).await;
+            }
+            Ok(Some(receipt)) => return Ok(receipt),
+        };
+    }
+    Err(eyre::eyre!(
+        "Failed to fetch receipt for tx with hash: {}",
+        tx_hash
+    ))
+}
+
+// Deploy the ERC20 from the raw bytecode.
+async fn erc20_deploy(config: &EthrexL2Config) -> eyre::Result<Address> {
+    let client = EthClient::new(&config.network.l2_rpc_url);
+    let erc20_bytecode = hex::decode(ERC20)?;
+    let (tx_hash, contract_address) = client
+        .deploy(
+            config.wallet.address,
+            config.wallet.private_key,
+            erc20_bytecode.into(),
+            Overrides::default(),
+        )
+        .await
+        .expect("Failed to deploy ERC20 with config: {config}");
+    let receipt = wait_receipt(client, tx_hash, None).await?;
+    match receipt {
+        RpcReceipt { receipt, .. } if receipt.status => Ok(contract_address),
+        _ => Err(eyre::eyre!("ERC20 deploy failed: deploy tx failed")),
+    }
+}
+
+// Given a vector of private keys, derive an address and claim
+// ERC20 balance for each one of them.
+async fn claim_erc20_balances(
+    cfg: &EthrexL2Config,
+    contract_address: Address,
+    private_keys: &[SecretKey],
+) -> eyre::Result<()> {
+    let accounts = private_keys
+        .iter()
+        .map(|pk| (*pk, pk.public_key(secp256k1::SECP256K1)))
+        .collect_vec();
+    let mut tasks = JoinSet::new();
+
+    for (sk, pk) in accounts {
+        let contract = contract_address;
+        let url = cfg.network.l2_rpc_url.clone();
+        tasks.spawn(async move {
+            let client = EthClient::new(url.as_str());
+            let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
+            let claim_tx = client
+                .build_eip1559_transaction(
+                    contract,
+                    address_from_pub_key(pk),
+                    claim_balance_calldata.into(),
+                    Default::default(),
+                )
+                .await
+                .unwrap();
+            let tx_hash = client
+                .send_eip1559_transaction(&claim_tx, &sk)
+                .await
+                .unwrap();
+            wait_receipt(client, tx_hash, None).await
+        });
+    }
+    for response in tasks.join_all().await {
+        match response {
+            Ok(RpcReceipt { receipt, .. }) if !receipt.status => {
+                return Err(eyre::eyre!(
+                    "Failed to assign balance to an account, tx failed with receipt: {receipt:?}"
+                ))
+            }
+            Err(err) => {
+                return Err(eyre::eyre!(
+                    "Failed to assign balance to an account, tx failed: {err}"
+                ))
+            }
+            Ok(_) => {
+                continue;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn erc20_load_test(
+    config: &EthrexL2Config,
+    tx_amount: u64,
+    contract_address: Address,
+    senders: &[SecretKey],
+) -> eyre::Result<()> {
+    let client = EthClient::new(&config.network.l2_rpc_url);
+    let mut tasks = JoinSet::new();
+    let accounts = senders
+        .iter()
+        .map(|pk| (*pk, pk.public_key(secp256k1::SECP256K1)))
+        .collect_vec();
+    for (sk, pk) in accounts {
+        let nonce = client
+            .get_nonce(address_from_pub_key(pk), BlockByNumber::Latest)
+            .await
+            .unwrap();
+        for i in 0..tx_amount {
+            let send_calldata = calldata::encode_calldata(
+                "transfer(address,uint256)",
+                &[Value::Address(H160::random()), Value::Uint(U256::one())],
+            )
+            .unwrap();
+            let send_tx = client
+                .build_eip1559_transaction(
+                    contract_address,
+                    address_from_pub_key(pk),
+                    send_calldata.into(),
+                    Overrides {
+                        chain_id: Some(config.network.l2_chain_id),
+                        nonce: Some(nonce + i),
+                        max_fee_per_gas: Some(3121115334),
+                        max_priority_fee_per_gas: Some(3000000000),
+                        gas_limit: Some(TX_GAS_COST * 100),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            let client = client.clone();
+            sleep(Duration::from_micros(800)).await;
+            tasks.spawn(async move {
+                let _sent = client
+                    .send_eip1559_transaction(&send_tx, &sk)
+                    .await
+                    .unwrap();
+                println!("ERC-20 transfer number {} sent!", nonce + i + 1);
+            });
+        }
+    }
+    tasks.join_all().await;
+    Ok(())
 }
 
 impl Command {
@@ -253,6 +437,24 @@ impl Command {
                 println!("Total retries: {retries}");
                 println!("Total time elapsed: {:.2?}", now.elapsed());
 
+                Ok(())
+            }
+            Command::ERC20 {
+                transactions: transaction_count,
+                path,
+            } => {
+                let contract_address = erc20_deploy(&cfg).await?;
+                let private_keys: Result<Vec<_>, _> = read_lines(path)?
+                    .map(|pk| {
+                        pk.unwrap()
+                            .parse::<H256>()
+                            .expect("One of the private keys is invalid")
+                    })
+                    .map(|pk| SecretKey::from_slice(pk.as_bytes()))
+                    .collect();
+                let private_keys = private_keys?;
+                claim_erc20_balances(&cfg, contract_address, &private_keys).await?;
+                erc20_load_test(&cfg, transaction_count, contract_address, &private_keys).await?;
                 Ok(())
             }
         }

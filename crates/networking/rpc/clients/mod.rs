@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod beacon;
 pub mod eth;
 
 pub use auth::{config::EngineApiConfig, errors::EngineClientError, EngineClient};

@@ -4,7 +4,7 @@ use std::{
 };
 
 use ethrex_common::types::{Block, BlockHeader};
-use ethrex_vm::execution_db::ExecutionDB;
+use ethrex_vm::ExecutionDB;
 
 use serde::{Deserialize, Serialize};
 

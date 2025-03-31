@@ -26,8 +26,7 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use std::{
-    cmp::max,
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fmt::Debug,
     sync::Arc,
 };
@@ -37,7 +36,7 @@ pub type Storage = HashMap<U256, H256>;
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
-    pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
+    pub touched_storage_slots: HashMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
 }
 
@@ -203,12 +202,12 @@ impl VM {
             default_touched_accounts.insert(env.coinbase);
         }
 
-        let mut default_touched_storage_slots: HashMap<Address, HashSet<H256>> = HashMap::new();
+        let mut default_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
 
         // Add access lists contents to cache
         for (address, keys) in access_list.clone() {
             default_touched_accounts.insert(address);
-            let mut warm_slots = HashSet::new();
+            let mut warm_slots = BTreeSet::new();
             for slot in keys {
                 warm_slots.insert(slot);
             }
@@ -233,9 +232,15 @@ impl VM {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
-                let bytecode = get_account_no_push_cache(&cache, db.clone(), address_to)
-                    .info
-                    .bytecode;
+                let mut substate = Substate {
+                    selfdestruct_set: HashSet::new(),
+                    touched_accounts: default_touched_accounts,
+                    touched_storage_slots: default_touched_storage_slots,
+                    created_accounts: HashSet::new(),
+                };
+
+                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytecode) =
+                    eip7702_get_code(&mut cache, db.clone(), &mut substate, address_to)?;
 
                 // CALL tx
                 let initial_call_frame = CallFrame::new(
@@ -251,13 +256,6 @@ impl VM {
                     0,
                     false,
                 );
-
-                let substate = Substate {
-                    selfdestruct_set: HashSet::new(),
-                    touched_accounts: default_touched_accounts,
-                    touched_storage_slots: default_touched_storage_slots,
-                    created_accounts: HashSet::new(),
-                };
 
                 Ok(Self {
                     call_frames: vec![initial_call_frame],
@@ -361,42 +359,33 @@ impl VM {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    fn gas_used(
-        &self,
-        initial_call_frame: &CallFrame,
-        report: &ExecutionReport,
-    ) -> Result<u64, VMError> {
-        if self.env.config.fork >= Fork::Prague {
-            // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
-            let calldata = if self.is_create() {
-                &initial_call_frame.bytecode
-            } else {
-                &initial_call_frame.calldata
-            };
-
-            // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
-            // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
-            // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
-            // see it in https://eips.ethereum.org/EIPS/eip-7623
-            let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
-                .map_err(VMError::OutOfGas)?
-                .checked_div(STANDARD_TOKEN_COST)
-                .ok_or(VMError::Internal(InternalError::DivisionError))?;
-
-            // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-            let mut floor_gas_price: u64 = tokens_in_calldata
-                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
-                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-
-            floor_gas_price = floor_gas_price
-                .checked_add(TX_BASE_COST)
-                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-
-            let gas_used = max(floor_gas_price, report.gas_used);
-            Ok(gas_used)
+    pub fn get_floor_gas_price(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
+        // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
+        let calldata = if self.is_create() {
+            &initial_call_frame.bytecode
         } else {
-            Ok(report.gas_used)
-        }
+            &initial_call_frame.calldata
+        };
+
+        // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
+        // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
+        // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
+        // see it in https://eips.ethereum.org/EIPS/eip-7623
+        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
+            .map_err(VMError::OutOfGas)?
+            .checked_div(STANDARD_TOKEN_COST)
+            .ok_or(VMError::Internal(InternalError::DivisionError))?;
+
+        // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+        let mut floor_gas_price: u64 = tokens_in_calldata
+            .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+        floor_gas_price = floor_gas_price
+            .checked_add(TX_BASE_COST)
+            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+        Ok(floor_gas_price)
     }
 
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
@@ -434,8 +423,6 @@ impl VM {
         }
 
         let mut report = self.run_execution(&mut initial_call_frame)?;
-
-        report.gas_used = self.gas_used(&initial_call_frame, &report)?;
 
         self.finalize_execution(&initial_call_frame, &mut report)?;
 

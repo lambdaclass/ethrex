@@ -6,9 +6,6 @@ on:
     - cron: "0 0 * * 1,2,3,4,5"
   workflow_dispatch:
 
-env:
-  RUST_VERSION: 1.82.0
-
 jobs:
   hive-report-creation-levm:
     uses: ./.github/workflows/common_hive_reports.yaml
@@ -50,7 +47,7 @@ jobs:
           bash .github/scripts/hive_levm_revm_diff.sh results_revm.md results_levm.md >> diff.md
           cat diff.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Post results to Slack
+      - name: Post Hive results to Slack
         env:
           SLACK_WEBHOOKS: >
             ${{ github.event_name == 'workflow_dispatch'
@@ -64,8 +61,24 @@ jobs:
             }}
         run: |
           for webhook in $SLACK_WEBHOOKS; do
-            sh .github/scripts/publish_levm_hive.sh "$webhook"
             sh .github/scripts/publish_hive.sh "$webhook"
+          done
+          echo "Sending Results" >> $GITHUB_STEP_SUMMARY
+
+      - name: Post Hive LEVM results to Slack
+        env:
+          SLACK_WEBHOOK: >
+            ${{ github.event_name == 'workflow_dispatch'
+              && secrets.TEST_CHANNEL_SLACK
+              || format(
+                  '{0} {1}',
+                  secrets.ETHREX_L2_SLACK_WEBHOOK,
+                  secrets.LEVM_SLACK_WEBHOOK
+                )
+            }}
+        run: |
+          for webhook in $SLACK_WEBHOOK; do
+            sh .github/scripts/publish_levm_hive.sh "$webhook"
           done
           echo "Sending Results" >> $GITHUB_STEP_SUMMARY
 
@@ -94,8 +107,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
@@ -150,8 +161,7 @@ jobs:
             ${{ github.event_name == 'workflow_dispatch'
               && secrets.TEST_CHANNEL_SLACK
               || format(
-                  '{0} {1} {2}',
-                  secrets.ETHREX_L1_SLACK_WEBHOOK,
+                  '{0} {1}',
                   secrets.ETHREX_L2_SLACK_WEBHOOK,
                   secrets.LEVM_SLACK_WEBHOOK
                 )

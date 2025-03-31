@@ -1,6 +1,6 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
-	setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs loc-detailed \
-	loc-compare-detailed load-test-fibonacci load-test-io
+		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
+		load-test-fibonacci load-test-io
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -9,7 +9,7 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
@@ -40,12 +40,12 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 5b49d02ee556232a73ea1e28000ec5b3fca1073f
+ETHEREUM_PACKAGE_REVISION := 42963f52f3cfc4eb9deb5248c8529ff97acc709c
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
 ethereum-package:
-	git clone --single-branch --branch ethrex-integration https://github.com/lambdaclass/ethereum-package
+	git clone --single-branch --branch ethrex-integration-pectra https://github.com/lambdaclass/ethereum-package
 
 checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum package revision
 	cd ethereum-package && \
@@ -76,7 +76,7 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := b21c217ba5f48949b6b64ef28f7fb11e40584652
+HIVE_REVISION := d98bcfa37f501f4ea1869d0a79fde35ed472937f
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -109,67 +109,34 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 4
+EVM_BACKEND := revm
+SIM_PARALLELISM := 16
+
+L1_CLIENT       ?= ethrex
+
+display-hive-alternatives:
+	@echo ""
+	@echo "Running L1 with ${L1_CLIENT} as client. Other clients are available in order to compare tests results."
+	@echo "In order to use a different client, use the environment variable 'L1_CLIENT' with one of the follwoing values:"
+	@echo "   - ethrex: https://github.com/lambdaclass/ethrex"
+	@echo "   - go-ethereum: https://github.com/ethereum/go-ethereum"
+	@echo ""
 
 # Runs a hive testing suite
 # The endpoints tested may be limited by supplying a test pattern in the form "/endpoint_1|enpoint_2|..|enpoint_n"
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
-run-hive: build-image setup-hive ## 🧪 Run Hive testing suite
-	cd hive && ./hive --client ethrex --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
+run-hive: display-hive-alternatives build-image setup-hive ## 🧪 Run Hive testing suite
+	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
 
-run-hive-levm: build-image setup-hive ## 🧪 Run Hive testing suite with LEVM
-	cd hive && ./hive --client ethrex --ethrex.flags "--evm levm" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)"
+run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all Hive testing suites
+	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
 
-run-hive-all: build-image setup-hive ## 🧪 Run all Hive testing suites
-	cd hive && ./hive --client ethrex --sim ".*" --sim.parallelism 4
-
-run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client ethrex --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --docker.output
+run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
+	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
-
-SIM_PARALLELISM := 48
-EVM_BACKEND := revm
-# `make run-hive-report SIM_PARALLELISM=24 EVM_BACKEND="levm"`
-run-hive-report: build-image setup-hive clean-hive-logs ## 🐝 Run Hive and Build report
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/rpc-compat --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim devp2p --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/engine --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cd hive && ./hive --ethrex.flags "--evm $(EVM_BACKEND)" --sim ethereum/sync --client ethrex --sim.limit "$(TEST_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) || exit 0
-	cargo run --release -p hive_report
-
-loc:
-	cargo run -p loc
-
-loc-stats:
-	if [ "$(QUIET)" = "true" ]; then \
-		cargo run --quiet -p loc -- --summary;\
-	else \
-		cargo run -p loc -- --summary;\
-	fi
-
-loc-detailed:
-	cargo run --release -p loc --bin loc -- --detailed
-
-loc-compare-detailed:
-	cargo run --release -p loc --bin loc -- --compare-detailed
-
-hive-stats:
-	make hive QUIET=true
-	make setup-hive QUIET=true
-	rm -rf hive/workspace $(FILE_NAME)_logs
-	make run-hive-all SIMULATION=ethereum/rpc-compat || exit 0
-	make run-hive-all SIMULATION=devp2p || exit 0
-	make run-hive-all SIMULATION=ethereum/engine || exit 0
-	make run-hive-all SIMULATION=ethereum/sync || exit 0
-
-stats:
-	make loc-stats QUIET=true && echo
-	cd crates/vm/levm && make download-evm-ef-tests
-	cd crates/vm/levm && make run-evm-ef-tests QUIET=true && echo
-	make hive-stats
-	cargo run --quiet --release -p hive_report
 
 install-cli: ## 🛠️ Installs the ethrex-l2 cli
 	cargo install --path cmd/ethrex_l2/ --force
@@ -206,4 +173,9 @@ rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
 
 flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
-	sudo bash scripts/flamegraph.sh
+	sudo bash bench/scripts/flamegraph.sh
+
+test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
+	solc ./test_data/ERC20.sol -o $@
+load-test-erc20: test_data/ERC20/ERC20.bin install-cli
+	ethrex_l2 test erc20 --path test_data/private_keys.txt -t 100

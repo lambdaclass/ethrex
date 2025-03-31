@@ -20,7 +20,9 @@ hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 k256.workspace = true
-clap = { version = "4.5.4", features = ["cargo"] }
+clap = { version = "4.3", features = ["derive", "env"] }
+clap_complete = "4.5.17"
+eyre = "0.6.12"
 directories = "5.0.1"
 serde_json.workspace = true
 tokio = { version = "1.38.0", features = ["full"] }
@@ -30,6 +32,7 @@ local-ip-address = "0.6"
 tokio-util.workspace = true
 redb = { workspace = true, optional = true }
 lazy_static.workspace = true
+secp256k1 = { workspace = true, optional = true }
 
 cfg-if = "1.0.0"
 
@@ -40,13 +43,37 @@ ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 name = "ethrex"
 path = "./ethrex.rs"
 
+[lib]
+name = "ethrex"
+path = "./lib.rs"
+
 [features]
 default = ["libmdbx", "c-kzg", "blst"]
 dev = ["dep:ethrex-dev"]
-c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg", "ethrex-blockchain/c-kzg", "ethrex-p2p/c-kzg"]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2/metrics"]
+c-kzg = [
+    "ethrex-vm/c-kzg",
+    "ethrex-common/c-kzg",
+    "ethrex-blockchain/c-kzg",
+    "ethrex-p2p/c-kzg",
+]
+metrics = ["ethrex-blockchain/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
-l2 = ["dep:ethrex-l2", "ethrex-vm/l2"]
+l2 = [
+    "dep:ethrex-l2",
+    "ethrex-vm/l2",
+    "ethrex-blockchain/l2",
+    "ethrex-rpc/l2",
+    "dep:secp256k1",
+]
 based = ["l2", "ethrex-rpc/based"]
+
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
+[[bench]]
+path = "../../bench/criterion_benchmark.rs"
+name = "criterion_benchmark"
+harness = false

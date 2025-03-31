@@ -36,7 +36,7 @@ pub(crate) async fn storage_healer(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
-    while incoming || !pending_paths.is_empty() {
+    while incoming {
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
@@ -114,15 +114,17 @@ async fn heal_storage_batch(
         for (acc_path, paths) in batch.iter_mut() {
             let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
             // Get the corresponding nodes
-            for node in nodes.drain(..paths.len().min(nodes.len())) {
-                let path = paths.remove(0);
-                // Add children to batch
-                let children = node_missing_children(&node, &path, trie.state())?;
-                paths.extend(children);
-                let hash = node.compute_hash();
-                trie.state_mut().write_node(node, hash)?;
-            }
-            // Cut the loop if we ran out of nodes
+            let trie_nodes: Vec<ethrex_trie::Node> =
+                nodes.drain(..paths.len().min(nodes.len())).collect();
+            // Add children to batch
+            let children = trie_nodes
+                .iter()
+                .zip(paths.drain(..paths.len().min(nodes.len())))
+                .map(|(node, path)| node_missing_children(node, &path, trie.state()))
+                .collect::<Result<Vec<_>, _>>()?;
+            paths.extend(children.into_iter().flatten());
+            // Write nodes to trie
+            trie.state_mut().write_node_batch(&nodes)?;
             if nodes.is_empty() {
                 break;
             }

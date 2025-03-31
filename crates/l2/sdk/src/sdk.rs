@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
-use ethrex_common::types::{Transaction, TxKind};
+use ethrex_common::types::{GenericTransaction, Transaction, TxKind};
 use ethrex_rpc::clients::eth::{
     errors::{EthClientError, GetTransactionReceiptError},
     eth_sender::Overrides,
@@ -37,7 +37,7 @@ pub enum SdkError {
 
 /// BRIDGE_ADDRESS or 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
 pub fn bridge_address() -> Result<Address, SdkError> {
-    std::env::var("BRIDGE_ADDRESS")
+    std::env::var("L1_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
         .parse()
         .map_err(|_| SdkError::FailedToParseAddressFromHex)
@@ -82,18 +82,32 @@ pub async fn transfer(
         from = from,
         to = to
     );
-    let tx = client
+    let gas_price = client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
+    let mut tx = client
         .build_eip1559_transaction(
             to,
             from,
             Default::default(),
             Overrides {
                 value: Some(amount),
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
                 ..Default::default()
             },
-            10,
         )
         .await?;
+
+    let mut tx_generic: GenericTransaction = tx.clone().into();
+    tx_generic.from = from;
+    let gas_limit = client.estimate_gas(tx_generic).await?;
+    tx.gas_limit = gas_limit;
     client.send_eip1559_transaction(&tx, &private_key).await
 }
 
@@ -138,7 +152,6 @@ pub async fn withdraw(
                 gas_limit: Some(21000 * 2),
                 ..Default::default()
             },
-            10,
         )
         .await?;
 
@@ -208,7 +221,6 @@ pub async fn claim_withdraw(
                 from: Some(from),
                 ..Default::default()
             },
-            10,
         )
         .await?;
 
