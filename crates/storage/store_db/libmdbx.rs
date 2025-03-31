@@ -533,8 +533,6 @@ impl StoreEngine for Store {
         &self,
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        // (QuickFix) Move storage heal paths to their own table
-        tracing::info!("Fetching state heal paths");
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StorageHealPaths>()
@@ -544,14 +542,12 @@ impl StoreEngine for Store {
             .map_while(|res| res.ok().map(|(hash, paths)| (hash.to(), paths.to())))
             .take(limit)
             .collect::<Vec<_>>();
-        tracing::info!("Fetched state heal paths");
         // Delete fetched entries from the table
         let txn = self.db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
         for (hash, _) in res.iter() {
             txn.delete::<StorageHealPaths>((*hash).into(), None).map_err(StoreError::LibmdbxError)?;
         }
         txn.commit().map_err(StoreError::LibmdbxError)?;
-        tracing::info!("Deleted fetched state heal paths");
         Ok(res)
     }
 
