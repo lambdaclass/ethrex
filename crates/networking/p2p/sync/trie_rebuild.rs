@@ -25,6 +25,11 @@ use super::{
     SHOW_PROGRESS_INTERVAL_DURATION, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
 };
 
+/// The storage root used to indicate that the storage to be rebuilt is not complete
+/// This will tell the rebuilder to skip storage root validations for this trie
+/// The storage should be queued for rebuilding by the sender
+pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
+
 /// Represents the permanently ongoing background trie rebuild process
 /// This process will be started whenever a state sync is initiated and will be
 /// kept alive throughout sync cycles, only stopping once the tries are fully rebuilt or the node is stopped
@@ -236,6 +241,7 @@ async fn rebuild_storage_trie_in_background(
 
 /// Rebuilds a storage trie by reading from the storage snapshot
 /// Assumes that the storage has been fully downloaded and will only emit a warning if there is a mismatch between the expected root and the rebuilt root, as this is considered a bug
+/// If the expected_root is `REBUILDER_INCOMPLETE_STORAGE_ROOT` then this validation will be skipped, the sender should make sure to queue said storage for healing
 async fn rebuild_storage_trie(
     account_hash: H256,
     expected_root: H256,
@@ -262,7 +268,7 @@ async fn rebuild_storage_trie(
             break;
         }
     }
-    if storage_trie.hash()? != expected_root {
+    if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
         warn!("Mismatched storage root for account {account_hash}");
         store.set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])?;
     }
