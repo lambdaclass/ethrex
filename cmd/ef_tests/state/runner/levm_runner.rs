@@ -9,7 +9,7 @@ use ethrex_common::{
     H256, U256,
 };
 use ethrex_levm::{
-    db::CacheDB,
+    db::AccountsCache,
     errors::{ExecutionReport, TxValidationError, VMError},
     vm::{EVMConfig, VM},
     Environment,
@@ -153,7 +153,7 @@ pub fn prepare_vm_for_tx(
         tx.value,
         tx.data.clone(),
         db,
-        CacheDB::default(),
+        AccountsCache::default(),
         access_lists,
         authorization_list,
     )
@@ -163,7 +163,7 @@ pub fn prepare_vm_for_tx(
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db;
     for (address, pre_value) in &test.pre.0 {
-        let account = world_state.get_account_info(*address);
+        let account = world_state.get_account(*address);
         ensure_pre_state_condition(
             account.nonce == pre_value.nonce.as_u64(),
             format!(

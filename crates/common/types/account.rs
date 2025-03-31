@@ -30,7 +30,7 @@ lazy_static! {
 }
 
 #[allow(unused)]
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Default, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub info: AccountInfo,
     pub code: Bytes,
@@ -70,6 +70,23 @@ impl Default for AccountState {
             storage_root: *EMPTY_TRIE_HASH,
             code_hash: *EMPTY_KECCACK_HASH,
         }
+    }
+}
+
+impl Account {
+    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: HashMap<H256, U256>) -> Self {
+        Self {
+            info: AccountInfo {
+                balance,
+                code_hash: keccak_hash::keccak(code.as_ref()),
+                nonce,
+            },
+            code,
+            storage,
+        }
+    }
+    pub fn has_code(&self) -> bool {
+        !(self.code.is_empty() || self.info.code_hash == *EMPTY_KECCACK_HASH)
     }
 }
 

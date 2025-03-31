@@ -1,10 +1,9 @@
 use crate::{
-    account::{Account, StorageSlot},
     call_frame::CallFrame,
     constants::*,
     db::{
-        cache::{self},
-        CacheDB, Database,
+        cache::{self, CacheDB},
+        Database,
     },
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
@@ -15,13 +14,13 @@ use crate::{
         SIZE_PRECOMPILES_PRE_CANCUN,
     },
     utils::*,
-    TransientStorage,
+    StorageSlot, TransientStorage,
 };
 use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, TxKind,
+        Account, BlockHeader, ChainConfig, Fork, ForkBlobSchedule, TxKind,
     },
     Address, H256, U256,
 };
@@ -456,17 +455,8 @@ impl VM {
                 .or_default()
                 .insert(key);
         }
-        let storage_slot = match cache::get_account(&self.cache, &address) {
-            Some(account) => match account.storage.get(&key) {
-                Some(storage_slot) => storage_slot.clone(),
-                None => {
-                    let value = self.db.get_storage_slot(address, key);
-                    StorageSlot {
-                        original_value: value,
-                        current_value: value,
-                    }
-                }
-            },
+        let storage_slot = match self.cache.get_storage_slot(&address, key) {
+            Some(storage_slot) => storage_slot.clone(),
             None => {
                 let value = self.db.get_storage_slot(address, key);
                 StorageSlot {

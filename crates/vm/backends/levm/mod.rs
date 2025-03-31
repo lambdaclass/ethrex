@@ -30,7 +30,7 @@ use std::cmp::min;
 use std::{collections::HashMap, sync::Arc};
 
 // Export needed types
-pub use ethrex_levm::db::CacheDB;
+pub use ethrex_levm::db::AccountsCache;
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
 /// [LEVM::execute_tx]
@@ -45,7 +45,7 @@ impl LEVM {
         db: Arc<dyn LevmDatabase>,
         chain_config: ChainConfig,
     ) -> Result<BlockExecutionResult, EvmError> {
-        let mut block_cache: CacheDB = HashMap::new();
+        let mut block_cache: AccountsCache = HashMap::new();
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 let block_header = &block.header;
@@ -118,7 +118,7 @@ impl LEVM {
             {
                 // We check if it was in block_cache, if not, we get it from DB.
                 let mut account = block_cache.get(&address).cloned().unwrap_or({
-                    let acc_info = db.get_account_info(address);
+                    let acc_info = db.get_account(address);
                     Account::from(acc_info)
                 });
 
@@ -161,7 +161,7 @@ impl LEVM {
         // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
         db: Arc<dyn LevmDatabase>,
         // A cache database for intermediate state changes during execution.
-        block_cache: CacheDB,
+        block_cache: AccountsCache,
         // The EVM configuration to use.
         chain_config: &ChainConfig,
     ) -> Result<ExecutionReport, EvmError> {
@@ -216,7 +216,7 @@ impl LEVM {
         // EVM StoreWrapper database.
         store: &StoreWrapper,
         // A cache database for intermediate state changes during execution.
-        block_cache: CacheDB,
+        block_cache: AccountsCache,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, store)?;
 
@@ -238,11 +238,11 @@ impl LEVM {
         db: Arc<dyn LevmDatabase>,
         chain_config: ChainConfig,
         block_header: &BlockHeader,
-        new_state: &CacheDB,
+        new_state: &AccountsCache,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (new_state_account_address, new_state_account) in new_state {
-            let initial_account_state = db.get_account_info(*new_state_account_address);
+            let initial_account_state = db.get_account(*new_state_account_address);
             let mut updates = 0;
             if initial_account_state.balance != new_state_account.info.balance {
                 updates += 1;
@@ -255,7 +255,7 @@ impl LEVM {
                 None
             } else {
                 // Look into the current database to see if the bytecode hash is already present
-                let current_bytecode = db.get_account_info(*new_state_account_address).bytecode;
+                let current_bytecode = db.get_account(*new_state_account_address).bytecode;
                 let code = new_state_account.info.bytecode.clone();
                 // The code is present in the current database
                 if current_bytecode != Bytes::new() {
@@ -300,7 +300,7 @@ impl LEVM {
             let fork_from_config = chain_config.fork(block_header.timestamp);
             // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
             let fork = ef_tests.unwrap_or(fork_from_config);
-            let old_info = db.get_account_info(account_update.address);
+            let old_info = db.get_account(account_update.address);
             // https://eips.ethereum.org/EIPS/eip-161
             // if an account was empty and is now empty, after spurious dragon, it should be removed
             if account_update.removed
@@ -318,7 +318,7 @@ impl LEVM {
     }
 
     pub fn process_withdrawals(
-        block_cache: &mut CacheDB,
+        block_cache: &mut AccountsCache,
         withdrawals: &[Withdrawal],
         store: &Store,
         parent_hash: H256,
@@ -362,7 +362,7 @@ impl LEVM {
         block_header: &BlockHeader,
         chain_config: ChainConfig,
         db: Arc<dyn LevmDatabase>,
-        new_state: &mut CacheDB,
+        new_state: &mut AccountsCache,
     ) -> Result<(), EvmError> {
         let beacon_root = match block_header.parent_beacon_block_root {
             None => {
@@ -389,7 +389,7 @@ impl LEVM {
         block_header: &BlockHeader,
         chain_config: ChainConfig,
         db: Arc<dyn LevmDatabase>,
-        new_state: &mut CacheDB,
+        new_state: &mut AccountsCache,
     ) -> Result<(), EvmError> {
         generic_system_contract_levm(
             block_header,
@@ -406,7 +406,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: Arc<dyn LevmDatabase>,
         chain_config: ChainConfig,
-        new_state: &mut CacheDB,
+        new_state: &mut AccountsCache,
     ) -> Option<ExecutionReport> {
         let report = generic_system_contract_levm(
             block_header,
@@ -428,7 +428,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: Arc<dyn LevmDatabase>,
         chain_config: ChainConfig,
-        new_state: &mut CacheDB,
+        new_state: &mut AccountsCache,
     ) -> Option<ExecutionReport> {
         let report = generic_system_contract_levm(
             block_header,
@@ -451,7 +451,7 @@ impl LEVM {
         mut tx: GenericTransaction,
         header: &BlockHeader,
         store: &StoreWrapper,
-        block_cache: &CacheDB,
+        block_cache: &AccountsCache,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, store)?;
 
@@ -478,7 +478,7 @@ pub fn generic_system_contract_levm(
     calldata: Bytes,
     db: Arc<dyn LevmDatabase>,
     chain_config: ChainConfig,
-    new_state: &mut CacheDB,
+    new_state: &mut AccountsCache,
     contract_address: Address,
     system_address: Address,
 ) -> Result<ExecutionReport, EvmError> {
@@ -546,7 +546,7 @@ pub fn extract_all_requests_levm(
     db: Arc<dyn LevmDatabase>,
     chain_config: ChainConfig,
     header: &BlockHeader,
-    cache: &mut CacheDB,
+    cache: &mut AccountsCache,
 ) -> Result<Vec<Requests>, EvmError> {
     let fork = chain_config.fork(header.timestamp);
 
@@ -666,7 +666,7 @@ fn vm_from_generic(
     tx: &GenericTransaction,
     env: Environment,
     store: &StoreWrapper,
-    block_cache: CacheDB,
+    block_cache: AccountsCache,
 ) -> Result<VM, VMError> {
     VM::new(
         tx.to.clone(),

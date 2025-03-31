@@ -11,7 +11,7 @@ use ethrex_levm::precompiles::p_256_verify;
 use ethrex_levm::{
     account::Account,
     constants::*,
-    db::{cache, CacheDB, Db},
+    db::{cache, AccountsCache, Db},
     errors::{OutOfGasError, TxResult, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECPAIRING_BASE_COST,
@@ -1739,7 +1739,7 @@ fn call_returns_if_bytecode_empty() {
     let mut db = Db::new();
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(&mut cache, callee_address, callee_account);
 
     let mut vm = new_vm_with_ops_addr_bal_db(
@@ -1786,7 +1786,7 @@ fn call_changes_callframe_and_stores() {
     let mut db = Db::new();
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(&mut cache, callee_address, callee_account);
 
     let mut vm = new_vm_with_ops_addr_bal_db(
@@ -1881,7 +1881,7 @@ fn nested_calls() {
         (callee3_address, callee3_account.clone()),
     ]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(&mut cache, callee2_address, callee2_account);
     cache::insert_account(&mut cache, callee3_address, callee3_account);
 
@@ -1950,7 +1950,7 @@ fn staticcall_changes_callframe_is_static() {
     let mut db = Db::new();
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(&mut cache, callee_address, callee_account);
 
     let mut vm = new_vm_with_ops_addr_bal_db(
@@ -2473,7 +2473,7 @@ fn calldataload_being_set_by_parent() {
     let mut db = Db::new();
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(&mut cache, callee_address, callee_account);
 
     let mut vm = new_vm_with_ops_addr_bal_db(
@@ -2616,7 +2616,7 @@ fn returndatacopy_being_set_by_parent() {
     let mut db = Db::new();
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(&mut cache, callee_address, callee_account);
 
     let mut vm = new_vm_with_ops_addr_bal_db(
@@ -2659,7 +2659,7 @@ fn blockhash_op() {
         Address::default(),
         U256::MAX,
         db,
-        CacheDB::default(),
+        AccountsCache::default(),
     )
     .unwrap();
 
@@ -2727,7 +2727,7 @@ fn blockhash_block_number_not_from_recent_256() {
         Address::default(),
         U256::MAX,
         db,
-        CacheDB::default(),
+        AccountsCache::default(),
     )
     .unwrap();
 
@@ -3455,7 +3455,7 @@ fn logs_from_multiple_callers() {
     let mut db = Db::new();
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(&mut cache, callee_address, callee_account);
 
     let mut vm = new_vm_with_ops_addr_bal_db(
@@ -3818,7 +3818,7 @@ fn create_happy_path() {
         sender_addr,
         sender_balance,
         Db::new(),
-        CacheDB::default(),
+        AccountsCache::default(),
     )
     .unwrap();
 
@@ -3880,7 +3880,7 @@ fn caller_op() {
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
     )]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(
         &mut cache,
         address_that_has_the_code,
@@ -3924,7 +3924,7 @@ fn origin_op() {
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
     )]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(
         &mut cache,
         msg_sender,
@@ -3970,7 +3970,7 @@ fn balance_op() {
         Address::from_low_u64_be(address),
         U256::from(1234),
         Db::new(),
-        CacheDB::default(),
+        AccountsCache::default(),
     )
     .unwrap();
 
@@ -3995,7 +3995,7 @@ fn address_op() {
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
     )]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(
         &mut cache,
         address_that_has_the_code,
@@ -4041,7 +4041,7 @@ fn selfbalance_op() {
             .with_balance(balance),
     )]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(
         &mut cache,
         address_that_has_the_code,
@@ -4088,7 +4088,7 @@ fn callvalue_op() {
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
     )]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(
         &mut cache,
         address_that_has_the_code,
@@ -4132,7 +4132,7 @@ fn codesize_op() {
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
     )]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(
         &mut cache,
         address_that_has_the_code,
@@ -4174,7 +4174,7 @@ fn gasprice_op() {
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
     )]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(
         &mut cache,
         address_that_has_the_code,
@@ -4234,7 +4234,7 @@ fn codecopy_op() {
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
     )]);
 
-    let mut cache = CacheDB::default();
+    let mut cache = AccountsCache::default();
     cache::insert_account(
         &mut cache,
         address_that_has_the_code,

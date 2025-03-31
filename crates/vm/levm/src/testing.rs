@@ -1,6 +1,6 @@
 use crate::{
     account::{Account, AccountInfo},
-    db::{cache, CacheDB, Db},
+    db::{cache, AccountsCache, Db},
     environment::Environment,
     errors::{InternalError, VMError},
     operations::Operation,
@@ -27,7 +27,7 @@ pub fn new_vm_with_bytecode(bytecode: Bytes) -> Result<VM, VMError> {
         Address::from_low_u64_be(100),
         U256::MAX,
         Db::new(),
-        CacheDB::default(),
+        AccountsCache::default(),
     )
 }
 
@@ -38,7 +38,7 @@ pub fn new_vm_with_ops(operations: &[Operation]) -> Result<VM, VMError> {
         Address::from_low_u64_be(100),
         U256::MAX,
         Db::new(),
-        CacheDB::default(),
+        AccountsCache::default(),
     )
 }
 
@@ -49,7 +49,7 @@ pub fn new_vm_with_ops_db(operations: &[Operation], db: Db) -> Result<VM, VMErro
         Address::from_low_u64_be(100),
         U256::MAX,
         db,
-        CacheDB::default(),
+        AccountsCache::default(),
     )
 }
 
@@ -59,7 +59,7 @@ pub fn new_vm_with_ops_addr_bal_db(
     sender_address: Address,
     sender_balance: U256,
     mut db: Db,
-    mut cache: CacheDB,
+    mut cache: AccountsCache,
 ) -> Result<VM, VMError> {
     let accounts = [
         // This is the contract account that is going to be executed

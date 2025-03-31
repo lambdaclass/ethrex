@@ -5,7 +5,7 @@ use ethrex_levm::db::Database as LevmDatabase;
 use crate::db::{ExecutionDB, StoreWrapper};
 
 impl LevmDatabase for StoreWrapper {
-    fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
+    fn get_account(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
         let acc_info = self
             .store
             .get_account_info_by_hash(self.block_hash, address)
@@ -49,7 +49,7 @@ impl LevmDatabase for StoreWrapper {
 }
 
 impl LevmDatabase for ExecutionDB {
-    fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::AccountInfo {
+    fn get_account(&self, address: CoreAddress) -> ethrex_levm::AccountInfo {
         let Some(acc_info) = self.accounts.get(&address) else {
             return ethrex_levm::AccountInfo::default();
         };
