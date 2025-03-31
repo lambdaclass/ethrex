@@ -1,7 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::*,
-    db::AccountsCache,
+    db::cache::CacheDB,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
@@ -44,7 +44,7 @@ impl VM {
 
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
-                    new_state: AccountsCache::default(),
+                    new_state: CacheDB::default(),
                     gas_used: current_call_frame.gas_limit,
                     gas_refunded: 0,
                     output: Bytes::new(),
@@ -222,7 +222,7 @@ impl VM {
 
                     return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
-                        new_state: AccountsCache::default(),
+                        new_state: CacheDB::default(),
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output),
@@ -234,7 +234,7 @@ impl VM {
 
         Ok(ExecutionReport {
             result: TxResult::Success,
-            new_state: AccountsCache::default(),
+            new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output),
@@ -266,7 +266,7 @@ impl VM {
 
         Ok(ExecutionReport {
             result: TxResult::Revert(error),
-            new_state: AccountsCache::default(),
+            new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode

@@ -85,8 +85,37 @@ impl Account {
             storage,
         }
     }
+    pub fn has_nonce(&self) -> bool {
+        self.info.has_nonce()
+    }
     pub fn has_code(&self) -> bool {
         !(self.code.is_empty() || self.info.code_hash == *EMPTY_KECCACK_HASH)
+    }
+    pub fn has_code_or_nonce(&self) -> bool {
+        self.has_code() || self.has_nonce()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.info.balance.is_zero() && self.info.nonce == 0 && self.code.is_empty()
+    }
+    pub fn with_balance(mut self, balance: U256) -> Self {
+        self.info.balance = balance;
+        self
+    }
+
+    pub fn with_bytecode(mut self, bytecode: Bytes) -> Self {
+        self.code = bytecode;
+        self
+    }
+
+    pub fn with_nonce(mut self, nonce: u64) -> Self {
+        self.info.nonce = nonce;
+        self
+    }
+}
+
+impl AccountInfo {
+    pub fn has_nonce(&self) -> bool {
+        self.nonce != 0
     }
 }
 

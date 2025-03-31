@@ -1,16 +1,17 @@
 use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
-    db::cache,
     errors::{InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
     memory::{self, calculate_memory_size},
     utils::{address_to_word, word_to_address, *},
     vm::VM,
-    Account,
 };
 use bytes::Bytes;
-use ethrex_common::{types::Fork, Address, U256};
+use ethrex_common::{
+    types::{Account, Fork},
+    Address, U256,
+};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -535,13 +536,13 @@ impl VM {
             target_address,
         );
 
-        let (current_account_info, _current_account_is_cold) = access_account(
+        let (current_account, _current_account_is_cold) = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
             current_call_frame.to,
         );
-        let balance_to_transfer = current_account_info.balance;
+        let balance_to_transfer = current_account.info.balance;
 
         let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
             target_account_info.is_empty()
@@ -647,7 +648,7 @@ impl VM {
 
         let deployer_address = current_call_frame.to;
 
-        let deployer_account_info = access_account(
+        let deployer_account = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
@@ -666,7 +667,7 @@ impl VM {
 
         let new_address = match salt {
             Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
-            None => calculate_create_address(deployer_address, deployer_account_info.nonce)?,
+            None => calculate_create_address(deployer_address, deployer_account.info.nonce)?,
         };
 
         // touch account
@@ -680,9 +681,9 @@ impl VM {
         // 1. Sender doesn't have enough balance to send value.
         // 2. Depth limit has been reached
         // 3. Sender nonce is max.
-        if deployer_account_info.balance < value_in_wei_to_send
+        if deployer_account.info.balance < value_in_wei_to_send
             || new_depth > 1024
-            || deployer_account_info.nonce == u64::MAX
+            || deployer_account.info.nonce == u64::MAX
         {
             // Return reserved gas
             current_call_frame.gas_used = current_call_frame
@@ -716,7 +717,7 @@ impl VM {
         } else {
             Account::new(new_balance, Bytes::new(), 1, Default::default())
         };
-        cache::insert_account(&mut self.cache, new_address, new_account);
+        self.cache.insert_account(new_address, new_account);
 
         // 2. Increment sender's nonce.
         increment_account_nonce(&mut self.cache, self.db.clone(), deployer_address)?;
@@ -774,7 +775,7 @@ impl VM {
                 )?;
 
                 // Deployment failed so account shouldn't exist
-                cache::remove_account(&mut self.cache, &new_address);
+                self.cache.remove_account(&new_address);
                 self.accrued_substate.created_accounts.remove(&new_address);
 
                 // If revert we have to copy the return_data
@@ -816,14 +817,14 @@ impl VM {
             memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
 
         // 1. Validate sender has enough value
-        let sender_account_info = access_account(
+        let sender_account = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
             msg_sender,
         )
         .0;
-        if should_transfer_value && sender_account_info.balance < value {
+        if should_transfer_value && sender_account.info.balance < value {
             current_call_frame.gas_used = current_call_frame
                 .gas_used
                 .checked_sub(gas_limit)

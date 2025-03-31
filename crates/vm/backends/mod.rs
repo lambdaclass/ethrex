@@ -10,7 +10,7 @@ use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
 };
 use ethrex_common::{Address, H256};
-use ethrex_levm::db::AccountsCache;
+use ethrex_levm::db::cache::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
@@ -44,7 +44,7 @@ pub enum Evm {
     },
     LEVM {
         store_wrapper: StoreWrapper,
-        block_cache: AccountsCache,
+        block_cache: CacheDB,
     },
 }
 
@@ -71,7 +71,7 @@ impl Evm {
                     store: store.clone(),
                     block_hash: parent_hash,
                 },
-                block_cache: AccountsCache::new(),
+                block_cache: CacheDB::default(),
             },
         }
     }
@@ -163,12 +163,17 @@ impl Evm {
 
                 // Now original_value is going to be the same as the current_value, for the next transaction.
                 // It should have only one value but it is convenient to keep on using our CacheDB structure
-                for account in new_state.values_mut() {
-                    for storage_slot in account.storage.values_mut() {
+                for storage in new_state.cached_storages.values_mut() {
+                    for storage_slot in storage.values_mut() {
                         storage_slot.original_value = storage_slot.current_value;
                     }
                 }
-                block_cache.extend(new_state);
+                block_cache
+                    .cached_accounts
+                    .extend(new_state.cached_accounts);
+                block_cache
+                    .cached_storages
+                    .extend(new_state.cached_storages);
 
                 let receipt = Receipt::new(
                     tx.tx_type(),
@@ -204,7 +209,7 @@ impl Evm {
             } => {
                 let chain_config = store_wrapper.store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
-                let mut new_state = AccountsCache::new();
+                let mut new_state = CacheDB::default();
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     LEVM::beacon_root_contract_call(
@@ -226,13 +231,18 @@ impl Evm {
 
                 // Now original_value is going to be the same as the current_value, for the next transaction.
                 // It should have only one value but it is convenient to keep on using our CacheDB structure
-                for account in new_state.values_mut() {
-                    for storage_slot in account.storage.values_mut() {
+                for storage in new_state.cached_storages.values_mut() {
+                    for storage_slot in storage.values_mut() {
                         storage_slot.original_value = storage_slot.current_value;
                     }
                 }
 
-                block_cache.extend(new_state);
+                block_cache
+                    .cached_accounts
+                    .extend(new_state.cached_accounts);
+                block_cache
+                    .cached_storages
+                    .extend(new_state.cached_storages);
                 Ok(())
             }
         }
@@ -286,14 +296,19 @@ impl Evm {
                 block_cache,
             } => {
                 let parent_hash = block_header.parent_hash;
-                let mut new_state = AccountsCache::new();
+                let mut new_state = CacheDB::default();
                 LEVM::process_withdrawals(
                     &mut new_state,
                     withdrawals,
                     &store_wrapper.store,
                     parent_hash,
                 )?;
-                block_cache.extend(new_state);
+                block_cache
+                    .cached_accounts
+                    .extend(new_state.cached_accounts);
+                block_cache
+                    .cached_storages
+                    .extend(new_state.cached_storages);
                 Ok(())
             }
         }

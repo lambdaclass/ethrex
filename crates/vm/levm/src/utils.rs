@@ -1,10 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::*,
-    db::{
-        cache::{self},
-        AccountsCache, Database,
-    },
+    db::{cache::CacheDB, Database},
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -12,6 +9,7 @@ use crate::{
     },
     opcodes::Opcode,
     vm::{EVMConfig, Substate},
+    StorageSlot,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -127,24 +125,24 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
 // ================== Account related functions =====================
 /// Gets account, first checking the cache and then the database
 /// (caching in the second case)
-pub fn get_account(cache: &mut AccountsCache, db: Arc<dyn Database>, address: Address) -> Account {
-    match cache::get_account(cache, &address) {
+pub fn get_account(cache: &mut CacheDB, db: Arc<dyn Database>, address: Address) -> Account {
+    match cache.get_account(&address) {
         Some(acc) => acc.clone(),
         None => {
             let account = db.get_account(address);
             // carefull, we were returning an empty storage here.
-            cache::insert_account(cache, address, account.clone());
+            cache.insert_account(address, account.clone());
             account
         }
     }
 }
 
 pub fn get_account_no_push_cache(
-    cache: &AccountsCache,
+    cache: &CacheDB,
     db: Arc<dyn Database>,
     address: Address,
 ) -> Account {
-    match cache::get_account(cache, &address) {
+    match cache.get_account(&address) {
         Some(acc) => acc.clone(),
         None => {
             // same as above
@@ -154,19 +152,65 @@ pub fn get_account_no_push_cache(
 }
 
 pub fn get_account_mut_vm(
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     address: Address,
 ) -> Result<&mut Account, VMError> {
-    if !cache::is_account_cached(cache, &address) {
+    if !cache.is_account_cached(&address) {
         let account = db.get_account(address);
-        cache::insert_account(cache, address, account.clone());
+        cache.insert_account(address, account.clone());
     }
-    cache::get_account_mut(cache, &address).ok_or(VMError::Internal(InternalError::AccountNotFound))
+    cache
+        .get_account_mut(&address)
+        .ok_or(VMError::Internal(InternalError::AccountNotFound))
+}
+
+pub fn get_storage_mut_vm(
+    cache: &mut CacheDB,
+    db: Arc<dyn Database>,
+    address: Address,
+    key: H256,
+) -> Result<&mut HashMap<H256, StorageSlot>, VMError> {
+    if !cache.is_storage_cached(&address) {
+        let value = db.get_storage_slot(address, key);
+        cache.insert_storage_slot(
+            address,
+            key,
+            StorageSlot {
+                original_value: value,
+                current_value: value,
+            },
+        );
+    }
+    cache
+        .get_storage_mut(&address)
+        .ok_or(VMError::Internal(InternalError::StorageNotFound))
+}
+
+/// Gets storage, first checking the cache and then the database
+/// (caching in the second case)
+pub fn get_storage_slot(
+    cache: &mut CacheDB,
+    db: Arc<dyn Database>,
+    address: Address,
+    key: H256,
+) -> StorageSlot {
+    match cache.get_storage_slot(&address, key) {
+        Some(storage_slot) => storage_slot.clone(),
+        None => {
+            let value = db.get_storage_slot(address, key);
+            let storage_slot = StorageSlot {
+                original_value: value,
+                current_value: value,
+            };
+            cache.insert_storage_slot(address, key, storage_slot.clone());
+            storage_slot
+        }
+    }
 }
 
 pub fn increase_account_balance(
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     address: Address,
     increase: U256,
@@ -181,7 +225,7 @@ pub fn increase_account_balance(
 }
 
 pub fn decrease_account_balance(
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     address: Address,
     decrease: U256,
@@ -201,13 +245,13 @@ pub fn decrease_account_balance(
 /// Accessed accounts take place in some gas cost computation.
 #[must_use]
 pub fn access_account(
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     accrued_substate: &mut Substate,
     address: Address,
 ) -> (Account, bool) {
     let address_was_cold = accrued_substate.touched_accounts.insert(address);
-    let account = match cache::get_account(cache, &address) {
+    let account = match cache.get_account(&address) {
         Some(account) => account.clone(),
         None => db.get_account(address),
     };
@@ -216,7 +260,7 @@ pub fn access_account(
 
 // ================== Bytecode related functions =====================
 pub fn update_account_bytecode(
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     address: Address,
     new_bytecode: Bytes,
@@ -418,7 +462,7 @@ pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
 
 // =================== Nonce related functions ======================
 pub fn increment_account_nonce(
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     address: Address,
 ) -> Result<u64, VMError> {
@@ -432,7 +476,7 @@ pub fn increment_account_nonce(
 }
 
 pub fn decrement_account_nonce(
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     address: Address,
 ) -> Result<(), VMError> {
@@ -489,7 +533,7 @@ pub fn get_authorized_address(account: &Account) -> Result<Address, VMError> {
 
 /// Sets the account code as the EIP7702 determines.
 pub fn eip7702_set_access_code(
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     chain_id: U256,
     accrued_substate: &mut Substate,
@@ -541,9 +585,7 @@ pub fn eip7702_set_access_code(
         }
 
         // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-        if cache::is_account_cached(cache, &authority_address)
-            || db_ref.account_exists(authority_address)
-        {
+        if cache.is_account_cached(&authority_address) || db_ref.account_exists(authority_address) {
             let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
             refunded_gas = refunded_gas
                 .checked_add(refunded_gas_if_exists)
@@ -559,7 +601,7 @@ pub fn eip7702_set_access_code(
 
         // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
         // Clear the account’s code and reset the account’s code hash to the empty hash.
-        let auth_account = match cache::get_account_mut(cache, &authority_address) {
+        let auth_account = match cache.get_account_mut(&authority_address) {
             Some(account_mut) => account_mut,
             None => {
                 // This is to add the account to the cache
@@ -693,7 +735,7 @@ pub fn eip7702_recover_address(
 /// The idea of this function comes from ethereum/execution-specs:
 /// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
 pub fn eip7702_get_code(
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
     db: Arc<dyn Database>,
     accrued_substate: &mut Substate,
     address: Address,

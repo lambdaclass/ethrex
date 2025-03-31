@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use ethrex_common::types::Account;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
@@ -5,7 +8,7 @@ use ethrex_levm::db::Database as LevmDatabase;
 use crate::db::{ExecutionDB, StoreWrapper};
 
 impl LevmDatabase for StoreWrapper {
-    fn get_account(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
+    fn get_account(&self, address: CoreAddress) -> Account {
         let acc_info = self
             .store
             .get_account_info_by_hash(self.block_hash, address)
@@ -18,11 +21,8 @@ impl LevmDatabase for StoreWrapper {
             .unwrap()
             .unwrap_or_default();
 
-        ethrex_levm::account::AccountInfo {
-            balance: acc_info.balance,
-            nonce: acc_info.nonce,
-            bytecode: acc_code,
-        }
+        // Carefull here, we are returning an empty storage.
+        Account::new(acc_info.balance, acc_code, acc_info.nonce, HashMap::new())
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
@@ -49,16 +49,17 @@ impl LevmDatabase for StoreWrapper {
 }
 
 impl LevmDatabase for ExecutionDB {
-    fn get_account(&self, address: CoreAddress) -> ethrex_levm::AccountInfo {
+    fn get_account(&self, address: CoreAddress) -> Account {
         let Some(acc_info) = self.accounts.get(&address) else {
-            return ethrex_levm::AccountInfo::default();
+            return Account::default();
         };
         let acc_code = self.code.get(&acc_info.code_hash).unwrap();
-        ethrex_levm::AccountInfo {
-            balance: acc_info.balance,
-            bytecode: acc_code.clone(),
-            nonce: acc_info.nonce,
-        }
+        Account::new(
+            acc_info.balance,
+            acc_code.clone(),
+            acc_info.nonce,
+            HashMap::new(),
+        )
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {

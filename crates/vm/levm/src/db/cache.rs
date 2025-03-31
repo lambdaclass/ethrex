@@ -1,13 +1,23 @@
 use ethrex_common::{types::Account, Address};
 use keccak_hash::H256;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::StorageSlot;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct CacheDB {
-    cached_accounts: HashMap<Address, Account>,
-    cached_storages: HashMap<Address, HashMap<H256, StorageSlot>>,
+    pub cached_accounts: HashMap<Address, Account>,
+    pub cached_storages: HashMap<Address, HashMap<H256, StorageSlot>>,
+}
+
+impl Default for CacheDB {
+    fn default() -> Self {
+        Self {
+            cached_accounts: HashMap::new(),
+            cached_storages: HashMap::new(),
+        }
+    }
 }
 
 impl CacheDB {
@@ -35,5 +45,31 @@ impl CacheDB {
         self.cached_storages
             .get(address)
             .and_then(|storage| storage.get(&key))
+    }
+
+    pub fn get_storage_mut(
+        &mut self,
+        address: &Address,
+    ) -> Option<&mut HashMap<H256, StorageSlot>> {
+        self.cached_storages.get_mut(address)
+    }
+    pub fn get_storage(&self, address: &Address) -> Option<&HashMap<H256, StorageSlot>> {
+        self.cached_storages.get(address)
+    }
+
+    pub fn is_storage_cached(&self, address: &Address) -> bool {
+        self.cached_storages.contains_key(address)
+    }
+
+    pub fn insert_storage_slot(
+        &mut self,
+        address: Address,
+        key: H256,
+        storage_slot: StorageSlot,
+    ) -> Option<StorageSlot> {
+        self.cached_storages
+            .entry(address)
+            .or_insert_with(HashMap::new)
+            .insert(key, storage_slot)
     }
 }

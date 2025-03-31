@@ -1,8 +1,6 @@
 use crate::{
-    account::Account,
     call_frame::CallFrame,
     constants::*,
-    db::cache::remove_account,
     errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
@@ -10,7 +8,10 @@ use crate::{
     vm::VM,
 };
 
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::{
+    types::{Account, Fork},
+    U256,
+};
 
 use std::cmp::max;
 
@@ -201,7 +202,7 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        if sender_account.has_code() && !has_delegation(&sender_account.info)? {
+        if sender_account.has_code() && !has_delegation(&sender_account)? {
             return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 
@@ -332,7 +333,7 @@ impl Hook for DefaultHook {
         if let TxResult::Revert(_) = report.result {
             let existing_account = get_account(&mut vm.cache, vm.db.clone(), receiver_address); //TO Account
 
-            if has_delegation(&existing_account.info)? {
+            if has_delegation(&existing_account)? {
                 // This is the case where the "to" address and the
                 // "signer" address are the same. We are setting the code
                 // and sending some balance to the "to"/"signer"
@@ -350,7 +351,7 @@ impl Hook for DefaultHook {
                 )?;
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
-                remove_account(&mut vm.cache, &receiver_address);
+                vm.cache.remove_account(&receiver_address);
             }
 
             increase_account_balance(

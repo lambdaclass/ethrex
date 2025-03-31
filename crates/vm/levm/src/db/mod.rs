@@ -3,7 +3,6 @@ use ethrex_common::{types::Account, Address, H256, U256};
 use std::collections::HashMap;
 
 pub mod cache;
-pub use cache::AccountsCache;
 
 pub trait Database {
     fn get_account(&self, address: Address) -> Account;

@@ -1,13 +1,15 @@
 use crate::{
-    account::{Account, AccountInfo},
-    db::{cache, AccountsCache, Db},
+    db::{cache::CacheDB, Db},
     environment::Environment,
     errors::{InternalError, VMError},
     operations::Operation,
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{types::TxKind, Address, U256};
+use ethrex_common::{
+    types::{Account, TxKind},
+    Address, U256,
+};
 use std::{collections::HashMap, sync::Arc};
 
 pub fn ops_to_bytecode(operations: &[Operation]) -> Result<Bytes, VMError> {
@@ -27,7 +29,7 @@ pub fn new_vm_with_bytecode(bytecode: Bytes) -> Result<VM, VMError> {
         Address::from_low_u64_be(100),
         U256::MAX,
         Db::new(),
-        AccountsCache::default(),
+        CacheDB::default(),
     )
 }
 
@@ -38,7 +40,7 @@ pub fn new_vm_with_ops(operations: &[Operation]) -> Result<VM, VMError> {
         Address::from_low_u64_be(100),
         U256::MAX,
         Db::new(),
-        AccountsCache::default(),
+        CacheDB::default(),
     )
 }
 
@@ -49,7 +51,7 @@ pub fn new_vm_with_ops_db(operations: &[Operation], db: Db) -> Result<VM, VMErro
         Address::from_low_u64_be(100),
         U256::MAX,
         db,
-        AccountsCache::default(),
+        CacheDB::default(),
     )
 }
 
@@ -59,40 +61,26 @@ pub fn new_vm_with_ops_addr_bal_db(
     sender_address: Address,
     sender_balance: U256,
     mut db: Db,
-    mut cache: AccountsCache,
+    mut cache: CacheDB,
 ) -> Result<VM, VMError> {
     let accounts = [
         // This is the contract account that is going to be executed
         (
             Address::from_low_u64_be(42),
-            Account {
-                info: AccountInfo {
-                    nonce: 0,
-                    balance: U256::MAX,
-                    bytecode: contract_bytecode,
-                },
-                storage: HashMap::new(),
-            },
+            Account::new(U256::MAX, contract_bytecode, 0, HashMap::new()),
         ),
         (
             // This is the sender account
             sender_address,
-            Account {
-                info: AccountInfo {
-                    nonce: 0,
-                    balance: sender_balance,
-                    bytecode: Bytes::default(),
-                },
-                storage: HashMap::new(),
-            },
+            Account::new(sender_balance, Bytes::default(), 0, HashMap::new()),
         ),
     ];
 
     db.add_accounts(accounts.to_vec());
 
     // add to cache accounts from list accounts
-    cache::insert_account(&mut cache, accounts[0].0, accounts[0].1.clone());
-    cache::insert_account(&mut cache, accounts[1].0, accounts[1].1.clone());
+    cache.insert_account(accounts[0].0, accounts[0].1.clone());
+    cache.insert_account(accounts[1].0, accounts[1].1.clone());
 
     let env = Environment::default_from_address(sender_address);
 

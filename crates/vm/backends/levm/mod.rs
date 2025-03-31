@@ -9,7 +9,7 @@ use crate::{EvmError, ExecutionResult, StoreWrapper};
 use bytes::Bytes;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
-    AccessList, AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE,
+    AccessList, Account, AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE,
 };
 use ethrex_common::{
     types::{
@@ -23,14 +23,14 @@ use ethrex_levm::{
     db::Database as LevmDatabase,
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, VM},
-    Account, AccountInfo as LevmAccountInfo, Environment,
+    Environment,
 };
 use ethrex_storage::{AccountUpdate, Store};
 use std::cmp::min;
 use std::{collections::HashMap, sync::Arc};
 
 // Export needed types
-pub use ethrex_levm::db::AccountsCache;
+pub use ethrex_levm::db::cache::CacheDB;
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
 /// [LEVM::execute_tx]
@@ -45,7 +45,7 @@ impl LEVM {
         db: Arc<dyn LevmDatabase>,
         chain_config: ChainConfig,
     ) -> Result<BlockExecutionResult, EvmError> {
-        let mut block_cache: AccountsCache = HashMap::new();
+        let mut block_cache: CacheDB = CacheDB::default();
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 let block_header = &block.header;
@@ -87,13 +87,20 @@ impl LEVM {
             let mut new_state = report.new_state.clone();
             // Now original_value is going to be the same as the current_value, for the next transaction.
             // It should have only one value but it is convenient to keep on using our CacheDB structure
-            for account in new_state.values_mut() {
-                for storage_slot in account.storage.values_mut() {
-                    storage_slot.original_value = storage_slot.current_value;
+            for (address, _account) in new_state.cached_accounts.iter_mut() {
+                if let Some(account_storage) = new_state.cached_storages.get_mut(address) {
+                    for storage_slot in account_storage.values_mut() {
+                        storage_slot.original_value = storage_slot.current_value;
+                    }
                 }
             }
 
-            block_cache.extend(new_state);
+            block_cache
+                .cached_accounts
+                .extend(new_state.cached_accounts);
+            block_cache
+                .cached_storages
+                .extend(new_state.cached_storages);
 
             // Currently, in LEVM, we don't substract refunded gas to used gas, but that can change in the future.
             let gas_used = report.gas_used - report.gas_refunded;
@@ -117,14 +124,15 @@ impl LEVM {
                 .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
             {
                 // We check if it was in block_cache, if not, we get it from DB.
-                let mut account = block_cache.get(&address).cloned().unwrap_or({
-                    let acc_info = db.get_account(address);
-                    Account::from(acc_info)
-                });
+                let mut account = block_cache
+                    .cached_accounts
+                    .get(&address)
+                    .cloned()
+                    .unwrap_or(db.get_account(address));
 
                 account.info.balance += increment.into();
 
-                block_cache.insert(address, account);
+                block_cache.cached_accounts.insert(address, account);
             }
         }
 
@@ -161,7 +169,7 @@ impl LEVM {
         // The database to use for EVM state access.  This is wrapped in an `Arc` for shared ownership.
         db: Arc<dyn LevmDatabase>,
         // A cache database for intermediate state changes during execution.
-        block_cache: AccountsCache,
+        block_cache: CacheDB,
         // The EVM configuration to use.
         chain_config: &ChainConfig,
     ) -> Result<ExecutionReport, EvmError> {
@@ -216,7 +224,7 @@ impl LEVM {
         // EVM StoreWrapper database.
         store: &StoreWrapper,
         // A cache database for intermediate state changes during execution.
-        block_cache: AccountsCache,
+        block_cache: CacheDB,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, store)?;
 
@@ -238,25 +246,25 @@ impl LEVM {
         db: Arc<dyn LevmDatabase>,
         chain_config: ChainConfig,
         block_header: &BlockHeader,
-        new_state: &AccountsCache,
+        new_state: &CacheDB,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (new_state_account_address, new_state_account) in new_state {
+        for (new_state_account_address, new_state_account) in &new_state.cached_accounts {
             let initial_account_state = db.get_account(*new_state_account_address);
             let mut updates = 0;
-            if initial_account_state.balance != new_state_account.info.balance {
+            if initial_account_state.info.balance != new_state_account.info.balance {
                 updates += 1;
             }
-            if initial_account_state.nonce != new_state_account.info.nonce {
+            if initial_account_state.info.nonce != new_state_account.info.nonce {
                 updates += 1;
             }
-            let code = if new_state_account.info.bytecode.is_empty() {
+            let code = if new_state_account.code.is_empty() {
                 // The new state account has no code
                 None
             } else {
                 // Look into the current database to see if the bytecode hash is already present
-                let current_bytecode = db.get_account(*new_state_account_address).bytecode;
-                let code = new_state_account.info.bytecode.clone();
+                let current_bytecode = initial_account_state.code;
+                let code = new_state_account.code.clone();
                 // The code is present in the current database
                 if current_bytecode != Bytes::new() {
                     if current_bytecode != code {
@@ -276,9 +284,11 @@ impl LEVM {
                 updates += 1;
             }
             let mut added_storage = HashMap::new();
-            for (key, value) in &new_state_account.storage {
-                added_storage.insert(*key, value.current_value);
-                updates += 1;
+            if let Some(storage) = new_state.get_storage(&new_state_account_address) {
+                for (key, value) in storage {
+                    added_storage.insert(*key, value.current_value);
+                    updates += 1;
+                }
             }
 
             if updates == 0 && !new_state_account.is_empty() {
@@ -289,7 +299,7 @@ impl LEVM {
                 address: *new_state_account_address,
                 removed: new_state_account.is_empty(),
                 info: Some(AccountInfo {
-                    code_hash: code_hash(&new_state_account.info.bytecode),
+                    code_hash: code_hash(&new_state_account.code),
                     balance: new_state_account.info.balance,
                     nonce: new_state_account.info.nonce,
                 }),
@@ -300,13 +310,12 @@ impl LEVM {
             let fork_from_config = chain_config.fork(block_header.timestamp);
             // Here we take the passed fork through the ef_tests variable, or we set it to the fork based on the timestamp.
             let fork = ef_tests.unwrap_or(fork_from_config);
-            let old_info = db.get_account(account_update.address);
             // https://eips.ethereum.org/EIPS/eip-161
             // if an account was empty and is now empty, after spurious dragon, it should be removed
             if account_update.removed
-                && old_info.balance.is_zero()
-                && old_info.nonce == 0
-                && old_info.bytecode_hash() == code_hash(&Bytes::new())
+                && initial_account_state.info.balance.is_zero()
+                && initial_account_state.info.nonce == 0
+                && initial_account_state.info.code_hash == code_hash(&Bytes::new())
                 && fork < Fork::SpuriousDragon
             {
                 continue;
@@ -318,7 +327,7 @@ impl LEVM {
     }
 
     pub fn process_withdrawals(
-        block_cache: &mut AccountsCache,
+        block_cache: &mut CacheDB,
         withdrawals: &[Withdrawal],
         store: &Store,
         parent_hash: H256,
@@ -330,28 +339,24 @@ impl LEVM {
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
             // We check if it was in block_cache, if not, we get it from DB.
-            let mut account = block_cache.get(&address).cloned().unwrap_or({
-                let acc_info = store
-                    .get_account_info_by_hash(parent_hash, address)?
-                    .unwrap_or_default();
-                let acc_code = store
-                    .get_account_code(acc_info.code_hash)?
-                    .unwrap_or_default();
+            let mut account = block_cache
+                .cached_accounts
+                .get(&address)
+                .cloned()
+                .unwrap_or({
+                    let acc_info = store
+                        .get_account_info_by_hash(parent_hash, address)?
+                        .unwrap_or_default();
+                    let acc_code = store
+                        .get_account_code(acc_info.code_hash)?
+                        .unwrap_or_default();
 
-                Account {
-                    info: LevmAccountInfo {
-                        balance: acc_info.balance,
-                        bytecode: acc_code,
-                        nonce: acc_info.nonce,
-                    },
-                    // This is the added_storage for the withdrawal.
                     // If not involved in the TX, there won't be any updates in the storage
-                    storage: HashMap::new(),
-                }
-            });
+                    Account::new(acc_info.balance, acc_code, acc_info.nonce, HashMap::new())
+                });
 
             account.info.balance += increment.into();
-            block_cache.insert(address, account);
+            block_cache.cached_accounts.insert(address, account);
         }
         Ok(())
     }
@@ -362,7 +367,7 @@ impl LEVM {
         block_header: &BlockHeader,
         chain_config: ChainConfig,
         db: Arc<dyn LevmDatabase>,
-        new_state: &mut AccountsCache,
+        new_state: &mut CacheDB,
     ) -> Result<(), EvmError> {
         let beacon_root = match block_header.parent_beacon_block_root {
             None => {
@@ -389,7 +394,7 @@ impl LEVM {
         block_header: &BlockHeader,
         chain_config: ChainConfig,
         db: Arc<dyn LevmDatabase>,
-        new_state: &mut AccountsCache,
+        new_state: &mut CacheDB,
     ) -> Result<(), EvmError> {
         generic_system_contract_levm(
             block_header,
@@ -406,7 +411,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: Arc<dyn LevmDatabase>,
         chain_config: ChainConfig,
-        new_state: &mut AccountsCache,
+        new_state: &mut CacheDB,
     ) -> Option<ExecutionReport> {
         let report = generic_system_contract_levm(
             block_header,
@@ -428,7 +433,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: Arc<dyn LevmDatabase>,
         chain_config: ChainConfig,
-        new_state: &mut AccountsCache,
+        new_state: &mut CacheDB,
     ) -> Option<ExecutionReport> {
         let report = generic_system_contract_levm(
             block_header,
@@ -451,7 +456,7 @@ impl LEVM {
         mut tx: GenericTransaction,
         header: &BlockHeader,
         store: &StoreWrapper,
-        block_cache: &AccountsCache,
+        block_cache: &CacheDB,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
         let mut env = env_from_generic(&tx, header, store)?;
 
@@ -478,7 +483,7 @@ pub fn generic_system_contract_levm(
     calldata: Bytes,
     db: Arc<dyn LevmDatabase>,
     chain_config: ChainConfig,
-    new_state: &mut AccountsCache,
+    new_state: &mut CacheDB,
     contract_address: Address,
     system_address: Address,
 ) -> Result<ExecutionReport, EvmError> {
@@ -514,7 +519,8 @@ pub fn generic_system_contract_levm(
 
     let mut report = vm.execute().map_err(EvmError::from)?;
 
-    report.new_state.remove(&system_address);
+    report.new_state.cached_accounts.remove(&system_address);
+    report.new_state.cached_storages.remove(&system_address);
 
     match report.result {
         TxResult::Success => {}
@@ -526,15 +532,23 @@ pub fn generic_system_contract_levm(
     }
 
     // new_state is a CacheDB coming from outside the function
-    for (address, account) in report.new_state.iter_mut() {
-        if let Some(existing_account) = new_state.get(address) {
-            let mut existing_storage = existing_account.storage.clone();
-            existing_storage.extend(account.storage.clone());
-            account.storage = existing_storage;
+    for (address, storage) in report.new_state.cached_storages.iter_mut() {
+        if let Some(existing_storage) = new_state.cached_storages.get(address) {
+            let mut existing_storage = existing_storage.clone();
+
+            existing_storage.extend(storage.clone());
+            *storage = existing_storage;
+        }
+    }
+
+    for (address, account) in report.new_state.cached_accounts.iter_mut() {
+        if let Some(existing_account) = new_state.cached_accounts.get(address) {
             account.info.balance = existing_account.info.balance;
         }
     }
-    new_state.extend(report.new_state.clone());
+    new_state
+        .cached_accounts
+        .extend(report.new_state.cached_accounts.clone());
 
     Ok(report)
 }
@@ -546,7 +560,7 @@ pub fn extract_all_requests_levm(
     db: Arc<dyn LevmDatabase>,
     chain_config: ChainConfig,
     header: &BlockHeader,
-    cache: &mut AccountsCache,
+    cache: &mut CacheDB,
 ) -> Result<Vec<Requests>, EvmError> {
     let fork = chain_config.fork(header.timestamp);
 
@@ -666,7 +680,7 @@ fn vm_from_generic(
     tx: &GenericTransaction,
     env: Environment,
     store: &StoreWrapper,
-    block_cache: AccountsCache,
+    block_cache: CacheDB,
 ) -> Result<VM, VMError> {
     VM::new(
         tx.to.clone(),

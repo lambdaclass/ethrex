@@ -1,10 +1,7 @@
 use crate::{
     call_frame::CallFrame,
     constants::*,
-    db::{
-        cache::{self, CacheDB},
-        Database,
-    },
+    db::{cache::CacheDB, Database},
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
@@ -418,7 +415,8 @@ impl VM {
             } else {
                 Account::new(balance, Bytes::new(), 1, HashMap::new())
             };
-            cache::insert_account(&mut self.cache, new_contract_address, created_contract);
+            self.cache
+                .insert_account(new_contract_address, created_contract);
         }
 
         let mut report = self.run_execution(&mut initial_call_frame)?;
@@ -455,21 +453,8 @@ impl VM {
                 .or_default()
                 .insert(key);
         }
-        let storage_slot = match self.cache.get_storage_slot(&address, key) {
-            Some(storage_slot) => storage_slot.clone(),
-            None => {
-                let value = self.db.get_storage_slot(address, key);
-                StorageSlot {
-                    original_value: value,
-                    current_value: value,
-                }
-            }
-        };
 
-        // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
-        // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
-        account.storage.insert(key, storage_slot.clone());
+        let storage_slot = get_storage_slot(&mut self.cache, self.db.clone(), address, key);
 
         Ok((storage_slot, storage_slot_was_cold))
     }
@@ -480,12 +465,11 @@ impl VM {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
-        let account_original_storage_slot_value = account
-            .storage
+        let storage = get_storage_mut_vm(&mut self.cache, self.db.clone(), address, key)?;
+        let account_original_storage_slot_value = storage
             .get(&key)
             .map_or(U256::zero(), |slot| slot.original_value);
-        let slot = account.storage.entry(key).or_insert(StorageSlot {
+        let slot = storage.entry(key).or_insert(StorageSlot {
             original_value: account_original_storage_slot_value,
             current_value: new_value,
         });
@@ -502,7 +486,7 @@ impl VM {
             gas_used: self.env.gas_limit,
             gas_refunded: 0,
             logs: vec![],
-            new_state: HashMap::default(),
+            new_state: CacheDB::default(),
             output: Bytes::new(),
         };
 

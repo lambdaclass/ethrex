@@ -1,11 +1,9 @@
 use bytes::Bytes;
-use ethrex_common::{
-    types::{Account, Log},
-    Address,
-};
+use ethrex_common::types::Log;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use thiserror;
+
+use crate::db::cache::CacheDB;
 
 /// Errors that halt the program
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -180,6 +178,8 @@ pub enum InternalError {
     CouldNotPopCallframe,
     #[error("Account not found")]
     AccountNotFound,
+    #[error("Storage slot not found")]
+    StorageNotFound,
     #[error("ExcessBlobGas should not be None")]
     ExcessBlobGasShouldNotBeNone,
     #[error("Error in utils file")]
@@ -234,7 +234,7 @@ pub enum TxResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
     pub result: TxResult,
-    pub new_state: HashMap<Address, Account>,
+    pub new_state: CacheDB,
     pub gas_used: u64,
     pub gas_refunded: u64,
     pub output: Bytes,
