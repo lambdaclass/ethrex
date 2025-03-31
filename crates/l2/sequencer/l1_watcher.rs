@@ -251,7 +251,7 @@ impl L1Watcher {
                 ),
             )?);
 
-            let deposit_tx_hash = H256::from_slice(
+            let _deposit_tx_hash = H256::from_slice(
                 log.log
                     .data
                     .get(128..160)

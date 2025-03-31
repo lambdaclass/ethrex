@@ -892,7 +892,7 @@ impl Signable for Transaction {
             Transaction::EIP1559Transaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP4844Transaction(tx) => tx.sign_inplace(private_key),
             Transaction::EIP7702Transaction(tx) => tx.sign_inplace(private_key),
-            Transaction::PrivilegedL2Transaction(tx) => tx.sign_inplace(private_key),
+            Transaction::PrivilegedL2Transaction(_) => (), // Privileged Transactions are not signed
         }
     }
 }
@@ -969,20 +969,6 @@ impl Signable for EIP7702Transaction {
             &mut self.signature_s,
             &mut self.signature_y_parity,
         );
-    }
-}
-
-impl Signable for PrivilegedL2Transaction {
-    fn sign_inplace(&mut self, _private_key: &SecretKey) {
-        // let mut payload = vec![TxType::Privileged as u8];
-        // payload.append(self.encode_payload_to_vec().as_mut());
-        // sing_inplace(
-        //     &payload,
-        //     private_key,
-        //     &mut self.signature_r,
-        //     &mut self.signature_s,
-        //     &mut self.signature_y_parity,
-        // );
     }
 }
 

@@ -171,7 +171,7 @@ impl EthClient {
                     .await
             }
             WrappedTransaction::L2(privileged_l2_transaction) => {
-                self.send_privileged_l2_transaction(privileged_l2_transaction, private_key)
+                self.send_privileged_l2_transaction(privileged_l2_transaction)
                     .await
             }
         }
@@ -263,11 +263,8 @@ impl EthClient {
     pub async fn send_privileged_l2_transaction(
         &self,
         tx: &PrivilegedL2Transaction,
-        private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let signed_tx = tx.sign(private_key);
-
-        let mut encoded_tx = signed_tx.encode_to_vec();
+        let mut encoded_tx = tx.encode_to_vec();
         encoded_tx.insert(0, TxType::Privileged.into());
 
         self.send_raw_transaction(encoded_tx.as_slice()).await

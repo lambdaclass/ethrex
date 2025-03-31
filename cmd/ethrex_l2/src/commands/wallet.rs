@@ -450,7 +450,7 @@ impl Command {
                     .await?;
 
                 let tx_hash = rollup_client
-                    .send_privileged_l2_transaction(&withdraw_transaction, &cfg.wallet.private_key)
+                    .send_privileged_l2_transaction(&withdraw_transaction)
                     .await?;
 
                 println!("Withdrawal sent: {tx_hash:#x}");
