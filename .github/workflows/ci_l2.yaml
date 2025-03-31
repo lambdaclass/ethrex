@@ -52,7 +52,7 @@ jobs:
       - name: Build prover
         run: |
           cd crates/l2
-          PROVER=sp1 make build-prover
+          PROVER=exec make build-prover
 
       - name: Build L2 integration test
         run: |
