@@ -465,13 +465,13 @@ impl StoreEngine for Store {
 
     fn set_storage_heal_paths(
         &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
+        paths: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
         self.inner()
             .snap_state
             .storage_heal_paths
             .get_or_insert(Default::default())
-            .extend(accounts);
+            .extend(paths);
         Ok(())
     }
 

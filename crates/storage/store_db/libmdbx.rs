@@ -585,10 +585,10 @@ impl StoreEngine for Store {
 
     fn set_storage_heal_paths(
         &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
+        paths: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
         self.write_batch::<StorageHealPaths>(
-            accounts
+            paths
                 .into_iter()
                 .map(|(hash, paths)| (hash.into(), paths.into())),
         )

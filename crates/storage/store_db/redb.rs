@@ -773,9 +773,9 @@ impl StoreEngine for RedBStore {
 
     fn set_storage_heal_paths(
         &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
+        paths: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        let key_values = accounts
+        let key_values = paths
             .into_iter()
             .map(|(hash, paths)| {
                 (

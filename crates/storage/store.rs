@@ -933,9 +933,9 @@ impl Store {
     /// This will overwite previously stored paths for the received storages but will not remove other storage's paths
     pub fn set_storage_heal_paths(
         &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
+        paths: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_storage_heal_paths(accounts)
+        self.engine.set_storage_heal_paths(paths)
     }
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
