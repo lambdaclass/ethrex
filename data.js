@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743435099658,
+  "lastUpdate": 1743440460390,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1945,6 +1945,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183532074688,
             "range": "± 572310191",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "67e1fa89d5ed5f86bfce59d3eaad0f9b4f465890",
+          "message": "perf(l1,l2): trie benchmark (#2272)\n\n**Motivation**\n\nWe want to speed-up our trie implementation, for that, we\nwant reproducible benchmarks and a baseline for comparison.\n\n**Description**\n- Add benchmark for Ethrex's Trie, compared against citra.\n- Add UUID dependency to generate random data, a dev-only dep.\n\n\n\nCloses #2262.\n\n---------\n\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-03-31T16:10:26Z",
+          "tree_id": "9f01749764791a04f711a6fb5aced1bf2df1c0da",
+          "url": "https://github.com/lambdaclass/ethrex/commit/67e1fa89d5ed5f86bfce59d3eaad0f9b4f465890"
+        },
+        "date": 1743440458334,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 187077770228,
+            "range": "± 727464219",
             "unit": "ns/iter"
           }
         ]
