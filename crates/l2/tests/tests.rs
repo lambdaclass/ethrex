@@ -669,6 +669,7 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
 
     let deposit_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, &eth_client, 30).await?;
+    println!("Deposit tx receipt: {deposit_tx_receipt:?}");
 
     let l2_contract_balance = proposer_client
         .get_balance(contract_address, BlockByNumber::Latest)

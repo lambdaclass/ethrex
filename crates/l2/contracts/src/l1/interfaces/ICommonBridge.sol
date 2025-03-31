@@ -22,6 +22,8 @@ interface ICommonBridge {
         address indexed to,
         uint256 indexed depositId,
         address recipient,
+        address from,
+        uint256 gasLimit,
         bytes data,
         bytes32 l2MintTxHash
     );

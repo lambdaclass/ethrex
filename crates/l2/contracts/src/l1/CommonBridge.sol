@@ -98,6 +98,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
                     bytes32(msg.value),
                     bytes32(depositId),
                     bytes20(recipient),
+                    bytes20(msg.sender),
+                    bytes32(gasLimit),
                     bytes32(keccak256(data))
                 )
             )
@@ -107,6 +109,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             to,
             depositId,
             recipient,
+            msg.sender,
+            gasLimit,
             data,
             l2MintTxHash
         );
