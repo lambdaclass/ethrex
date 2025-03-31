@@ -24,9 +24,17 @@ use crate::{
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
 };
 
-const HEADER_FIELDS_SIZE: usize = 96; // transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64) + base_fee_per_gas(u64).
-const L2_WITHDRAWAL_SIZE: usize = 84; // address(H160) + amount(U256) + tx_hash(H256).
-const L2_DEPOSIT_SIZE: usize = 52; // address(H160) + amount(U256).
+// transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64) + base_fee_per_gas(u64).
+// 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes
+const HEADER_FIELDS_SIZE: usize = 96;
+
+// address(H160) + amount(U256) + tx_hash(H256).
+// 20bytes + 32bytes + 32bytes.
+const L2_WITHDRAWAL_SIZE: usize = 84;
+
+// address(H160) + amount(U256).
+// 20bytes + 32bytes
+const L2_DEPOSIT_SIZE: usize = 52;
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -197,6 +205,14 @@ pub fn fill_transactions(
 /// Calculates the size of the current `StateDiff` of the block.
 /// If the current size exceeds the blob size limit, returns `Ok(false)`.
 /// If there is still space in the blob, returns `Ok(true)`.
+/// StateDiff:
+/// +-------------------+
+/// | Version           |
+/// | HeaderFields      |
+/// | AccountsStateDiff |
+/// | Withdrawals       |
+/// | Deposits          |
+/// +-------------------+
 fn check_state_diff_size(
     acc_withdrawals_size: &mut usize,
     acc_deposits_size: &mut usize,
@@ -236,7 +252,7 @@ fn calc_modified_accounts_size(
     context: &mut PayloadBuildContext,
     accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
 ) -> Result<usize, BlockProducerError> {
-    let mut modified_accounts_size: usize = 2; // modified_accounts_len(u16)
+    let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
 
     // We use a temporary_context because revm mutates it in `get_state_transitions`
     // TODO: remove when we stop using revm
@@ -245,9 +261,9 @@ fn calc_modified_accounts_size(
         .vm
         .get_state_transitions(context.payload.header.parent_hash)?;
     for account_update in account_updates {
-        modified_accounts_size += 1 + 20; // r#type(u8) + address(H160)
+        modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
         if account_update.info.is_some() {
-            modified_accounts_size += 32; // new_balance(U256)
+            modified_accounts_size += 32; // 32bytes | new_balance(U256)
         }
 
         let nonce_diff = get_nonce_diff(
@@ -260,14 +276,14 @@ fn calc_modified_accounts_size(
             BlockProducerError::Custom(format!("Block Producer failed to get nonce diff: {e}"))
         })?;
         if nonce_diff != 0 {
-            modified_accounts_size += 2; // nonce_diff(u16)
+            modified_accounts_size += 2; // 2bytes | nonce_diff(u16)
         }
-        // for each added_storage: key(H256) + value(U256)
+        // for each added_storage: 32bytes + 32bytes | key(H256) + value(U256)
         modified_accounts_size += account_update.added_storage.len() * 2 * 32;
 
         if let Some(bytecode) = &account_update.code {
-            modified_accounts_size += 2; // bytecode_len(u16)
-            modified_accounts_size += bytecode.len(); // bytecode(Bytes)
+            modified_accounts_size += 2; // 2bytes | bytecode_len(u16)
+            modified_accounts_size += bytecode.len(); // (len)bytes | bytecode(Bytes)
         }
     }
     Ok(modified_accounts_size)

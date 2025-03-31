@@ -168,7 +168,7 @@ pub enum StateDiffError {
     DbError(#[from] TrieError),
     #[error("Store Error: {0}")]
     StoreError(#[from] StoreError),
-    #[error("StateDiff registered a negative nonce in AccountUpdate")]
+    #[error("New nonce is lower than the previous one")]
     FailedToCalculateNonce,
 }
 
