@@ -14,6 +14,7 @@ use cita_trie::{PatriciaTrie, Trie};
 use ethrex_trie::InMemoryTrieDB as EthrexMemDB;
 use ethrex_trie::Trie as EthrexTrie;
 
+#[allow(clippy::unit_arg)]
 fn insert_worse_case_benchmark(c: &mut Criterion) {
     let (keys_1k, values_1k) = random_data(1000);
     let (keys_10k, values_10k) = random_data(10000);
