@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::{peer_handler::PeerHandler, sync::node_missing_children};
@@ -26,6 +27,7 @@ pub(crate) async fn storage_healer(
     state_root: H256,
     peers: PeerHandler,
     store: Store,
+    cancel_token: CancellationToken,
 ) -> Result<bool, SyncError> {
     // Retrieve a batch of pending paths from the store
     // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
@@ -36,7 +38,7 @@ pub(crate) async fn storage_healer(
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
-    while !stale {
+    while !(stale || cancel_token.is_cancelled()) {
         // If we have few storages in queue, fetch more from the store
         if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
             pending_paths.extend(

@@ -20,7 +20,7 @@ use std::{array, collections::HashMap, sync::Arc};
 use storage_healing::storage_healer;
 use tokio::{
     sync::{
-        mpsc::{self, error::SendError},
+        mpsc::error::SendError,
         Mutex,
     },
     time::{Duration, Instant},
@@ -588,10 +588,13 @@ impl SyncManager {
             ));
         };
         // Spawn storage healer earlier so we can start healing stale storages
+        // Create a cancellation token so we can tell the storage healer to end, make it a child do that it also ends upon shutdown
+        let storage_healer_cancell_token = self.cancel_token.child_token();
         let storage_healer_handler = tokio::spawn(storage_healer(
             state_root,
             self.peers.clone(),
             store.clone(),
+            storage_healer_cancell_token.clone()
         ));
         // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
@@ -618,6 +621,7 @@ impl SyncManager {
             .await?;
             if stale_pivot {
                 warn!("Stale Pivot, aborting state sync");
+                storage_healer_cancell_token.cancel();
                 storage_healer_handler.await??;
                 return Ok(false);
             }
@@ -641,6 +645,7 @@ impl SyncManager {
         )
         .await?;
         // Wait for storage healer to end
+        storage_healer_cancell_token.cancel();
         let storage_heal_complete = storage_healer_handler.await??;
         if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");
