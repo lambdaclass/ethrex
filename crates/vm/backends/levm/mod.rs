@@ -284,7 +284,7 @@ impl LEVM {
                 updates += 1;
             }
             let mut added_storage = HashMap::new();
-            if let Some(storage) = new_state.get_storage(&new_state_account_address) {
+            if let Some(storage) = new_state.get_storage(new_state_account_address) {
                 for (key, value) in storage {
                     added_storage.insert(*key, value.current_value);
                     updates += 1;
