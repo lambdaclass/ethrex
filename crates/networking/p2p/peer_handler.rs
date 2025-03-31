@@ -415,7 +415,7 @@ impl PeerHandler {
             let lock_peer = lock_peer_time.elapsed().as_millis();
             let send_req_await_res_time = Instant::now();
             peer.sender.send(request).await.ok()?;
-            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            if let Some((mut slots, proof)) = match tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
@@ -429,8 +429,10 @@ impl PeerHandler {
                     }
                 }
             })
-            .await
-            .unwrap()
+            .await {
+                Ok(res) => res,
+                Err(_) => {info!("Timeout, retry count: {i}"); None},
+            }
             {
                 let send_req_await_res = send_req_await_res_time.elapsed().as_millis();
                 let validate_res_time = Instant::now();
