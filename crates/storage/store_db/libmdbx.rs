@@ -606,7 +606,6 @@ impl StoreEngine for Store {
             .map_while(|res| res.ok().map(|(hash, paths)| (hash.to(), paths.to())))
             .take(limit)
             .collect::<Vec<_>>();
-        tracing::info!("Fetched state heal paths");
         // Delete fetched entries from the table
         let txn = self
             .db
@@ -617,7 +616,6 @@ impl StoreEngine for Store {
                 .map_err(StoreError::LibmdbxError)?;
         }
         txn.commit().map_err(StoreError::LibmdbxError)?;
-        tracing::info!("Deleted fetched state heal paths");
         Ok(res)
     }
 
