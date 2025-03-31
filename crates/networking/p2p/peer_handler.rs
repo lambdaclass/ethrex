@@ -30,7 +30,7 @@ use crate::{
     },
     snap::encodable_to_proof,
 };
-use tracing::info;
+use tracing::{info, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
@@ -414,7 +414,10 @@ impl PeerHandler {
             let mut receiver = peer.receiver.lock().await;
             let lock_peer = lock_peer_time.elapsed().as_millis();
             let send_req_await_res_time = Instant::now();
-            peer.sender.send(request).await.ok()?;
+            if let Err(e) = peer.sender.send(request).await {
+                warn!("Failed to send message to peer: {e:?}");
+                continue;
+            }
             if let Some((mut slots, proof)) = match tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
