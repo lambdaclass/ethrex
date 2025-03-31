@@ -36,6 +36,10 @@ const L2_WITHDRAWAL_SIZE: usize = 84;
 // 20bytes + 32bytes
 const L2_DEPOSIT_SIZE: usize = 52;
 
+// State diff size for a simple transfer.
+// Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
+const TX_STATE_DIFF_SIZE: usize = 116;
+
 /// L2 payload builder
 /// Completes the payload building process, return the block value
 /// Same as `blockchain::build_payload` without applying system operations and using a different `fill_transactions`
@@ -81,6 +85,7 @@ pub fn fill_transactions(
 ) -> Result<(), BlockProducerError> {
     // Two bytes for the len
     let (mut acc_withdrawals_size, mut acc_deposits_size): (usize, usize) = (2, 2);
+    let mut acc_state_diff_size = 0;
     let mut accounts_info_cache = HashMap::new();
 
     let chain_config = store.get_chain_config()?;
@@ -99,6 +104,12 @@ pub fn fill_transactions(
         // Check if we have enough gas to run more transactions
         if context.remaining_gas < TX_GAS_COST {
             debug!("No more gas to run transactions");
+            break;
+        };
+
+        // Check if we have enough space for the StateDiff to run more transactions
+        if acc_state_diff_size + TX_STATE_DIFF_SIZE > SAFE_BYTES_PER_BLOB {
+            debug!("No more StateDiff space to run transactions");
             break;
         };
         if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block {
@@ -158,6 +169,7 @@ pub fn fill_transactions(
                 if !check_state_diff_size(
                     &mut acc_withdrawals_size,
                     &mut acc_deposits_size,
+                    &mut acc_state_diff_size,
                     head_tx.clone().into(),
                     &receipt,
                     context,
@@ -216,6 +228,7 @@ pub fn fill_transactions(
 fn check_state_diff_size(
     acc_withdrawals_size: &mut usize,
     acc_deposits_size: &mut usize,
+    acc_state_diff_size: &mut usize,
     tx: Transaction,
     receipt: &Receipt,
     context: &mut PayloadBuildContext,
@@ -245,6 +258,7 @@ fn check_state_diff_size(
         );
         return Ok(false);
     }
+    *acc_state_diff_size = current_state_diff_size;
     Ok(true)
 }
 
