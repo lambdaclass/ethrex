@@ -14,7 +14,7 @@ use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::{
     peer_handler::{PeerHandler, RequestRangesMetrics},
@@ -222,6 +222,7 @@ async fn fetch_storage_batch(
         return Ok((batch, false));
     }
     // Pivot became stale
+    warn!("STORAGE PIVOT BECAME STALE");
     Ok((batch, true))
 }
 
