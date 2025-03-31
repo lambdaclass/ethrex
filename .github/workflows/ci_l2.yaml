@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUST_VERSION: 1.82.0
+  CI_ETHREX_WORKDIR: /usr/local/bin
 
 jobs:
   test:
@@ -23,16 +23,48 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
+      - name: RISC-V SP1 toolchain install
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 4.1.0
+
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Caching
+      - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+            cache-on-failure: "true"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Bake docker images
+        uses: docker/bake-action@v6
+        with:
+          workdir: "crates/l2"
+          files: "crates/l2/docker-compose-l2.yaml"
+          load: true
+          set: |
+            *.cache-to=type=gha,mode=max
+            *.cache-from=type=gha
+
+      - name: Build prover
+        run: |
+          cd crates/l2
+          PROVER=exec make build-prover
+
+      - name: Build L2 integration test
+        run: |
+          cargo test l2 --no-run --release
 
       - name: Run L2 integration test
         run: |
           cd crates/l2
-          cp config_example.toml config.toml
-          make ci_test
+          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
+          cp configs/sequencer_config_docker_example.toml configs/sequencer_config.toml
+
+          touch .env
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach
+
+          RUST_LOG=info,ethrex_prover=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1

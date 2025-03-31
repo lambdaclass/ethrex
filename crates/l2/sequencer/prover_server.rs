@@ -1,4 +1,5 @@
-use crate::sequencer::errors::{ProverServerError, SigIntError};
+use crate::sequencer::errors::ProverServerError;
+use crate::sequencer::utils::sleep_random;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -17,24 +18,15 @@ use ethrex_common::{
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
-use ethrex_vm::{
-    backends::revm::execution_db::{ExecutionDB, ToExecDB},
-    db::StoreWrapper,
-    EvmError,
-};
+use ethrex_vm::backends::revm::execution_db::ToExecDB;
+use ethrex_vm::{EvmError, ExecutionDB, StoreWrapper};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::Debug,
-    net::IpAddr,
-    sync::mpsc::{self, Receiver},
-    time::Duration,
-};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use std::{fmt::Debug, net::IpAddr, time::Duration};
 use tokio::{
-    signal::unix::{signal, SignalKind},
-    time::sleep,
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::TryAcquireError,
 };
 use tracing::{debug, error, info, warn};
 
@@ -198,16 +190,12 @@ impl ProverServer {
 
     pub async fn run(&mut self, server_config: &ProverServerConfig) {
         loop {
-            let result = if server_config.dev_mode {
-                self.main_logic_dev().await
-            } else {
-                self.clone().main_logic(server_config).await
-            };
+            let result = self.clone().main_logic().await;
 
             match result {
-                Ok(_) => {
+                Ok(()) => {
                     if !server_config.dev_mode {
-                        warn!("Prover Server shutting down");
+                        info!("Prover Server shutting down");
                         break;
                     }
                 }
@@ -221,73 +209,78 @@ impl ProverServer {
                 }
             }
 
-            sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
     }
 
-    async fn main_logic(
-        mut self,
-        server_config: &ProverServerConfig,
-    ) -> Result<(), ProverServerError> {
-        let (tx, rx) = mpsc::channel();
+    async fn main_logic(self) -> Result<(), ProverServerError> {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        tokio::task::spawn(async move {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                error!("Error handling ctrl_c: {e}");
+            };
+            if let Err(e) = shutdown_tx.send(0) {
+                error!("Error sending shutdown message through the oneshot::channel {e}");
+            };
+        });
 
-        // It should never exit the start() fn, handling errors inside the for loop of the function.
-        let server_handle = tokio::spawn(async move { self.start(rx).await });
-
-        ProverServer::handle_sigint(tx, server_config).await?;
-
-        match server_handle.await {
-            Ok(result) => match result {
-                Ok(_) => (),
-                Err(e) => return Err(e),
-            },
-            Err(e) => return Err(e.into()),
-        };
-
-        Ok(())
-    }
-
-    async fn handle_sigint(
-        tx: mpsc::Sender<()>,
-        config: &ProverServerConfig,
-    ) -> Result<(), ProverServerError> {
-        let mut sigint = signal(SignalKind::interrupt())?;
-        sigint.recv().await.ok_or(SigIntError::Recv)?;
-        tx.send(()).map_err(SigIntError::Send)?;
-        TcpStream::connect(format!("{}:{}", config.listen_ip, config.listen_port))
-            .await?
-            .shutdown()
-            .await
-            .map_err(SigIntError::Shutdown)?;
-
-        Ok(())
-    }
-
-    pub async fn start(&mut self, rx: Receiver<()>) -> Result<(), ProverServerError> {
         let listener = TcpListener::bind(format!("{}:{}", self.ip, self.port)).await?;
 
-        info!("Starting TCP server at {}:{}", self.ip, self.port);
+        let concurent_clients = 3;
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurent_clients));
+        info!(
+            "Starting TCP server at {}:{} accepting {concurent_clients} concurrent clients.",
+            self.ip, self.port
+        );
 
         loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    debug!("Connection established!");
-
-                    if let Ok(()) = rx.try_recv() {
-                        info!("Shutting down Prover Server");
-                        break;
-                    }
-
-                    if let Err(e) = self.handle_connection(stream).await {
-                        error!("Error handling connection: {}", e);
-                    }
+            tokio::select! {
+                _ = &mut shutdown_rx => {
+                    debug!("Shutting down...");
+                    // It will return from the main_logic() with an `Ok(())`
+                    // And inside the run() function the loop will break
+                    // and the prover_server task will finish gracefully.
+                    break;
                 }
-                Err(e) => {
-                    error!("Failed to accept connection: {}", e);
+                res = listener.accept() => {
+                    match res {
+                        Ok((stream, addr)) => {
+
+                            match sem.clone().try_acquire_owned(){
+                                Ok(permit) => {
+                                    // Cloning the ProverServer structure to use the handle_connection() fn
+                                    // in every spawned task.
+                                    // The important fields are `Store` and `EthClient`
+                                    // Both fields are wrapped with an Arc, making it possible to clone
+                                    // the entire structure.
+                                    let mut self_clone = self.clone();
+                                    tokio::task::spawn(async move {
+                                        if let Err(e) = self_clone.handle_connection(stream).await {
+                                            error!("Error handling connection from {addr}: {e}");
+                                        } else {
+                                            debug!("Connection from {addr} handled successfully");
+                                        }
+                                        drop(permit);
+                                    });
+                                },
+                                Err(e) => {
+                                    match e {
+                                        TryAcquireError::Closed => error!("Fatal error the semaphore has been closed: {e}"),
+                                        TryAcquireError::NoPermits => warn!("Connection limit reached. Closing connection from {addr}."),
+                                    }
+                                }
+                            }
+
+                        }
+                        Err(e) => {
+                            error!("Failed to accept connection: {e}");
+                        }
+                    }
                 }
             }
             warn!("end incoming");
         }
+
         Ok(())
     }
 
@@ -388,6 +381,7 @@ impl ProverServer {
                 }
 
                 // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
+                self.handle_proof_submission(block_number).await?;
             }
             Err(e) => {
                 warn!("Failed to parse request: {e}");
@@ -562,111 +556,38 @@ impl ProverServer {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
+        let gas_price = self
+            .eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                ProverServerError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            })?;
+
         let verify_tx = self
             .eth_client
             .build_eip1559_transaction(
                 self.on_chain_proposer_address,
                 self.verifier_address,
                 calldata.into(),
-                Overrides::default(),
-                10,
+                Overrides {
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
             )
             .await?;
 
+        let mut tx = WrappedTransaction::EIP1559(verify_tx);
+
         let verify_tx_hash = self
             .eth_client
-            .send_wrapped_transaction_with_retry(
-                &WrappedTransaction::EIP1559(verify_tx),
-                &self.verifier_private_key,
-                3 * 60,
-                10,
-            )
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
             .await?;
 
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
 
         Ok(verify_tx_hash)
-    }
-
-    pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
-        loop {
-            tokio::time::sleep(Duration::from_millis(self.dev_interval_ms)).await;
-
-            let last_committed_block = EthClient::get_last_committed_block(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
-
-            let last_verified_block = EthClient::get_last_verified_block(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
-
-            if last_committed_block == last_verified_block {
-                debug!("No new blocks to prove");
-                continue;
-            }
-
-            info!("Last committed: {last_committed_block} - Last verified: {last_verified_block}");
-
-            let calldata_values = vec![
-                // blockNumber
-                Value::Uint(U256::from(last_verified_block + 1)),
-                // risc0BlockProof
-                Value::Bytes(vec![].into()),
-                // risc0ImageId
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // risco0JournalDigest
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // sp1ProgramVKey
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // sp1PublicValues
-                Value::Bytes(vec![].into()),
-                // sp1Bytes
-                Value::Bytes(vec![].into()),
-                // picoRiscvVkey
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // picoPublicValues
-                Value::Bytes(vec![].into()),
-                // picoProof
-                Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
-            ];
-
-            let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
-
-            let verify_tx = self
-                .eth_client
-                .build_eip1559_transaction(
-                    self.on_chain_proposer_address,
-                    self.verifier_address,
-                    calldata.into(),
-                    Overrides {
-                        ..Default::default()
-                    },
-                    10,
-                )
-                .await?;
-
-            info!("Sending verify transaction.");
-
-            let verify_tx_hash = self
-                .eth_client
-                .send_wrapped_transaction_with_retry(
-                    &WrappedTransaction::EIP1559(verify_tx),
-                    &self.verifier_private_key,
-                    3 * 60,
-                    10,
-                )
-                .await?;
-
-            info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");
-
-            info!(
-                "Mocked verify transaction sent for block {}",
-                last_verified_block + 1
-            );
-        }
     }
 }
