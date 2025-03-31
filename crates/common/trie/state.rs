@@ -105,7 +105,7 @@ impl TrieState {
     pub fn write_node_batch(&mut self, nodes: &[Node]) -> Result<(), TrieError> {
         // Don't insert the node if it is already inlined on the parent
         let key_values = nodes
-            .into_iter()
+            .iter()
             .filter_map(|node| {
                 let hash = node.compute_hash();
                 matches!(hash, NodeHash::Hashed(_)).then(|| (hash.into(), node.encode_to_vec()))
