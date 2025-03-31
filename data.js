@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743457621175,
+  "lastUpdate": 1743459129197,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2005,6 +2005,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184452727576,
             "range": "± 1177277487",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c19b0a046c396f1b6613ce7ed96505c39126c0de",
+          "message": "fix(l1, l2): add \"data\" as an alias to the tx input field (#2364)\n\n**Motivation**\n\nOur `GenericTransaction` struct calls the field where calldata goes\n`input`, but some (especially old) eth clients call it `data` instead.\nThis was giving me problems when integrating with some of those clients.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-03-31T21:22:35Z",
+          "tree_id": "cd9657709e01fb7305901f1ef55bda58eda676b9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c19b0a046c396f1b6613ce7ed96505c39126c0de"
+        },
+        "date": 1743459127059,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184701597004,
+            "range": "± 1116702907",
             "unit": "ns/iter"
           }
         ]
