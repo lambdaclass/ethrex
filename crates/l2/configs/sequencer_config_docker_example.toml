@@ -13,7 +13,7 @@ risc0_contract_verifier = "0x00000000000000000000000000000000000000AA"
 # If set to 0xAA skip proof verification.
 # Only use in dev mode.
 sp1_contract_verifier = "0x00000000000000000000000000000000000000AA"
-sp1_deploy_verifier = false
+sp1_deploy_verifier = true
 # If set to false, the salt will be randomized.
 salt_is_zero = true
 
