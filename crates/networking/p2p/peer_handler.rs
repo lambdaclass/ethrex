@@ -396,7 +396,8 @@ impl PeerHandler {
         start: H256,
     ) -> Option<(Vec<Vec<H256>>, Vec<Vec<U256>>, bool, RequestRangesMetrics)> {
         let full = Instant::now();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+        for i in 0..REQUEST_RETRY_ATTEMPTS {
+            info!("Fetching storages, retry count: {i}");
             let request_id = rand::random();
             let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
                 id: request_id,
@@ -423,20 +424,20 @@ impl PeerHandler {
                             return Some((slots, proof))
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
+                        Some(_) => {info!("Mismatched Response, retry count: {i}"); continue},
+                        None => return {info!("None response, retry count: {i}");None},
                     }
                 }
             })
             .await
-            .ok()
-            .flatten()
+            .unwrap()
             {
                 let send_req_await_res = send_req_await_res_time.elapsed().as_millis();
                 let validate_res_time = Instant::now();
                 // Check we got a reasonable amount of storage ranges
                 if slots.len() > storage_roots.len() || slots.is_empty() {
-                    return None;
+                    info!("No/TooMany Slots, retry count: {i}");
+                    continue;
                 }
                 // Unzip & validate response
                 let proof = encodable_to_proof(&proof);
@@ -455,6 +456,7 @@ impl PeerHandler {
                         .unzip();
                     // We won't accept empty storage ranges
                     if hashed_keys.is_empty() {
+                        info!("Empty storage range, retry count: {i}");
                         continue;
                     }
                     let encoded_values = values
