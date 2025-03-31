@@ -101,7 +101,12 @@ async fn state_sync_segment(
     ));
     // Skip state sync if we are already on healing
     if start_account_hash == STATE_TRIE_SEGMENTS_END[segment_number] {
-        // Update sync progress (this task is not vital so we can detach it)
+        // Update sync progress (these tasks are not vital so we can detach it)
+        tokio::task::spawn(StateSyncProgress::update_key(
+            state_sync_progress.clone(),
+            segment_number,
+            start_account_hash,
+        ));
         tokio::task::spawn(StateSyncProgress::end_segment(
             state_sync_progress.clone(),
             segment_number,
@@ -242,9 +247,7 @@ impl StateSyncProgress {
         progress.data.lock().await.current_keys[segment_number] = current_key
     }
     async fn end_segment(progress: StateSyncProgress, segment_number: usize) {
-        progress.data.lock().await.ended[segment_number] = true;
-        progress.data.lock().await.current_keys[segment_number] =
-            STATE_TRIE_SEGMENTS_END[segment_number]
+        progress.data.lock().await.ended[segment_number] = true
     }
 
     // Returns true if the state sync ended
