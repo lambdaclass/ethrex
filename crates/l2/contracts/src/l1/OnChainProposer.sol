@@ -53,6 +53,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
+    /// @notice Indicates whether the contract operates in validium mode.
+    /// @dev This value is immutable and can only be set during contract deployment.
+    bool public immutable VALIDIUM;
+
+    /// @notice Constructor to initialize the immutable validium value.
+    /// @param _validium A boolean indicating if the contract operates in validium mode.
+    constructor(bool _validium) {
+        VALIDIUM = _validium;
+    }
+
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -145,10 +155,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             blockNumber == lastCommittedBlock + 1,
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
-        require(
-            blockCommitments[blockNumber].commitmentHash == bytes32(0),
-            "OnChainProposer: block already committed"
-        );
+        if (!VALIDIUM) {
+            require(
+                blockCommitments[blockNumber].commitmentHash == bytes32(0),
+                "OnChainProposer: block already committed"
+            );
+        }
         // Check if commitment is equivalent to blob's KZG commitment.
 
         if (depositLogs != bytes32(0)) {
@@ -165,12 +177,15 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
                 withdrawalsLogsMerkleRoot
             );
         }
-        blockCommitments[blockNumber] = BlockCommitmentInfo(
+        if (!VALIDIUM) {
+            blockCommitments[blockNumber] = BlockCommitmentInfo(
             commitment,
             depositLogs
-        );
+            );
+            emit BlockCommitted(commitment);
+        }
+
         lastCommittedBlock = blockNumber;
-        emit BlockCommitted(commitment);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -201,10 +216,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: block already verified"
         );
 
-        require(
-            blockCommitments[blockNumber].commitmentHash != bytes32(0),
-            "OnChainProposer: block not committed"
-        );
+        if (!VALIDIUM) {
+            require(
+                blockCommitments[blockNumber].commitmentHash != bytes32(0),
+                "OnChainProposer: block not committed"
+            );
+        }
 
         if (PICOVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
@@ -234,16 +251,18 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
 
         lastVerifiedBlock = blockNumber;
-        // The first 2 bytes are the number of deposits.
-        uint16 deposits_amount = uint16(
-            bytes2(blockCommitments[blockNumber].depositLogs)
-        );
-        if (deposits_amount > 0) {
-            ICommonBridge(BRIDGE).removeDepositLogs(deposits_amount);
-        }
 
-        // Remove previous block commitment as it is no longer needed.
-        delete blockCommitments[blockNumber - 1];
+        if (!VALIDIUM) {
+            // The first 2 bytes are the number of deposits.
+            uint16 deposits_amount = uint16(
+                bytes2(blockCommitments[blockNumber].depositLogs)
+            );
+            if (deposits_amount > 0) {
+                ICommonBridge(BRIDGE).removeDepositLogs(deposits_amount);
+            }
+            // Remove previous block commitment as it is no longer needed.
+            delete blockCommitments[blockNumber - 1];
+        }
 
         emit BlockVerified(blockNumber);
     }

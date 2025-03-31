@@ -373,7 +373,7 @@ impl Committer {
                 .to_vec()
                 .into()
         } else {
-            Bytes::new() // TODO: See what to do here.
+            Bytes::from(vec![0; 32]) // Validium doesn't need to send commitment.
         };
 
         let calldata_values = vec![
