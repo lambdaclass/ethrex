@@ -231,7 +231,6 @@ impl Hook for L2Hook {
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
         // POST-EXECUTION Changes
-        let sender_address = initial_call_frame.msg_sender;
         let receiver_address = initial_call_frame.to;
 
         // 1. Undo value transfer if the transaction has reverted
