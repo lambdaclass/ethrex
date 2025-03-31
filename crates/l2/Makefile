@@ -14,6 +14,11 @@ help: ## 📚 Show help for each of the Makefile recipes
 
 init: init-local-l1 deploy-l1 update-system-contracts init-l2 ## 🚀 Initializes a localnet with Lambda ethrex client as both L1 and L2
 
+init-tmux: down rm-db-l1 rm-db-l2 init-local-l1 deploy-l1 update-system-contracts
+	tmux new-session -d -s 'ethrex-l2' make init-l2 \; set -w remain-on-exit on
+	tmux split-window -h 'make init-prover;bash -i'
+	tmux attach
+
 ## Same as init but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 init-testnet: deploy-l1-testnet update-system-contracts  init-l2
 
@@ -222,7 +227,7 @@ ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
 	# cargo test state_reconstruct --release
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
+	CONFIG_FILE=config.toml cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
 # Purge L2's state
 UNAME_S:=$(shell uname -s)
