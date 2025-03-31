@@ -160,14 +160,17 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--dev \
 	--datadir test_ethrex
 
-load-test: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000
+load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
+	cargo run --release --bin loadtest --manifest-path cmd/ethrex_l2/Cargo.toml \
+	-- --path test_data/private_keys.txt -v
 
 load-test-fibonacci:
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --fibonacci
+	cargo run --release --bin loadtest --manifest-path cmd/ethrex_l2/Cargo.toml \
+	-- --path test_data/private_keys.txt -v --fibonacci
 
 load-test-io:
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --io
+	cargo run --release --bin loadtest --manifest-path cmd/ethrex_l2/Cargo.toml \
+	-- --path test_data/private_keys.txt -v --io
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
@@ -177,5 +180,6 @@ flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in
 
 test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./test_data/ERC20.sol -o $@
-load-test-erc20: test_data/ERC20/ERC20.bin install-cli
-	ethrex_l2 test erc20 --path test_data/private_keys.txt -t 100
+load-test-erc20: test_data/ERC20/ERC20.bin
+	cargo run --release --bin loadtest --manifest-path cmd/ethrex_l2/Cargo.toml \
+	-- erc20 --path test_data/private_keys.txt -t 100

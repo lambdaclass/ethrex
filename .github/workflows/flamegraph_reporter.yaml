@@ -183,6 +183,7 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/inferno-*
           key: ${{ runner.os }}-extra-binaries
 
+      # TODO: remove when we have rex implemented
       - name: Cache ethrex_l2
         id: cache-ethrex-l2
         uses: actions/cache@v4
@@ -236,6 +237,7 @@ jobs:
             echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
 
+      # TODO: replace with rex
       - name: Install ethrex_l2 cli
         run: |
           if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
@@ -316,6 +318,7 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/inferno-*
           key: ${{ runner.os }}-extra-binaries
 
+      # TODO: remove when we have rex implemented
       - name: Cache ethrex_l2
         id: cache-ethrex-l2
         uses: actions/cache@v4
@@ -369,6 +372,7 @@ jobs:
             echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
 
+      # TODO: replace with rex
       - name: Install ethrex_l2 cli
         run: |
           if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
