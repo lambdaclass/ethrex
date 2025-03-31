@@ -152,7 +152,10 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--http.addr 0.0.0.0 \
 	--authrpc.port ${L2_AUTH_PORT} \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
-	--datadir ${ethrex_L2_DEV_LIBMDBX}
+	--datadir ${ethrex_L2_DEV_LIBMDBX} \
+	--sponsorable-addresses sponsorable.txt \
+	--sponsor-private-key 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
+	--evm levm
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d

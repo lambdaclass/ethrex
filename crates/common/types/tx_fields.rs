@@ -14,13 +14,21 @@ pub type AuthorizationList = Vec<AuthorizationTuple>;
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorizationTuple {
+    #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     pub chain_id: U256,
     pub address: Address,
     pub nonce: u64,
+    #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     pub y_parity: U256,
-    #[serde(rename = "r")]
+    #[serde(
+        rename = "r",
+        deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str"
+    )]
     pub r_signature: U256,
-    #[serde(rename = "s")]
+    #[serde(
+        rename = "s",
+        deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str"
+    )]
     pub s_signature: U256,
 }
 
