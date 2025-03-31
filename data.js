@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743199879498,
+  "lastUpdate": 1743434170401,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1885,6 +1885,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186577284621,
             "range": "± 700543628",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c18d692f640abbc540f73fe288ace5760314e94c",
+          "message": "perf(levm): remove repeated `get_account_info` calls in LEVM (#2357)\n\n**Motivation**\n\nNoticed on #2292 that the majority of the time in\n`LEVM::get_state_transitions()` was spent on calls to\n`get_account_info()`. While looking for areas to improve, I found that\nwe were calling `get_account_info()` three times instead of reusing the\nvalue returned in the first call.\n\n**Description**\n\nRemoves the repeated calls to `get_account_info`.\n\nTesting locally shows a `2x` speed improvement in\n`payload_builder::build_payload()` implemented in #2292.\n\nCloses None",
+          "timestamp": "2025-03-31T14:24:48Z",
+          "tree_id": "914ec1e5c4c92b93dcc44c3cccd62f29a48af3e6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c18d692f640abbc540f73fe288ace5760314e94c"
+        },
+        "date": 1743434167700,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 192357867237,
+            "range": "± 680639721",
             "unit": "ns/iter"
           }
         ]
