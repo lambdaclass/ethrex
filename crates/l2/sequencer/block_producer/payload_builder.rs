@@ -164,7 +164,7 @@ pub fn fill_transactions(
                     &mut accounts_info_cache,
                 )? {
                     debug!(
-                        "Skipping transaction: {}, doesn't feet in blob_size",
+                        "Skipping transaction: {}, doesn't fit in blob_size",
                         head_tx.tx.compute_hash()
                     );
                     // We don't have enough space in the blob for the transaction, so we skip all txs from this account
