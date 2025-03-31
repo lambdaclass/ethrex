@@ -15,6 +15,8 @@ use tracing::debug;
 
 use crate::{peer_handler::PeerHandler, sync::node_missing_children};
 
+/// Minumum amount of storages to keep in the storage healer queue
+/// More paths will be read from the Store if the amount goes below this value
 const MINUMUM_STORAGES_IN_QUEUE: usize = 400;
 
 use super::{SyncError, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
