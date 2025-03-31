@@ -19,10 +19,7 @@ use state_sync::state_sync;
 use std::{array, collections::HashMap, sync::Arc};
 use storage_healing::storage_healer;
 use tokio::{
-    sync::{
-        mpsc::error::SendError,
-        Mutex,
-    },
+    sync::{mpsc::error::SendError, Mutex},
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -594,7 +591,7 @@ impl SyncManager {
             state_root,
             self.peers.clone(),
             store.clone(),
-            storage_healer_cancell_token.clone()
+            storage_healer_cancell_token.clone(),
         ));
         // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
@@ -638,12 +635,8 @@ impl SyncManager {
         store.clear_snapshot()?;
 
         // Perform Healing
-        let state_heal_complete = heal_state_trie(
-            state_root,
-            store.clone(),
-            self.peers.clone()
-        )
-        .await?;
+        let state_heal_complete =
+            heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
         // Wait for storage healer to end
         storage_healer_cancell_token.cancel();
         let storage_heal_complete = storage_healer_handler.await??;

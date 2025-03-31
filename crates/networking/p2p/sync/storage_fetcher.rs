@@ -91,7 +91,12 @@ pub(crate) async fn storage_fetcher(
         pending_storage.len()
     );
     if !pending_storage.is_empty() {
-        store.set_storage_heal_paths(pending_storage.into_iter().map(|(hash, _)| (hash, vec![Nibbles::default()])).collect())?;
+        store.set_storage_heal_paths(
+            pending_storage
+                .into_iter()
+                .map(|(hash, _)| (hash, vec![Nibbles::default()]))
+                .collect(),
+        )?;
     }
     Ok(())
 }
