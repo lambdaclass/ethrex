@@ -463,10 +463,7 @@ impl StoreEngine for Store {
         Ok(self.inner().snap_state.state_trie_key_checkpoint)
     }
 
-    fn set_storage_heal_paths(
-        &self,
-        paths: Vec<(H256, Vec<Nibbles>)>,
-    ) -> Result<(), StoreError> {
+    fn set_storage_heal_paths(&self, paths: Vec<(H256, Vec<Nibbles>)>) -> Result<(), StoreError> {
         self.inner()
             .snap_state
             .storage_heal_paths

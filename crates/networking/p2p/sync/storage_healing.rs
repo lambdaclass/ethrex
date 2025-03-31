@@ -31,17 +31,14 @@ pub(crate) async fn storage_healer(
     store: Store,
     cancel_token: CancellationToken,
 ) -> Result<bool, SyncError> {
-    // Retrieve a batch of pending paths from the store
-    // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
-    let mut pending_paths: BTreeMap<H256, Vec<Nibbles>> = store
-        .get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?
-        .into_iter()
-        .collect();
+    // List of paths in need of healing, grouped by hashed address
+    let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     while !(stale || cancel_token.is_cancelled()) {
         // If we have few storages in queue, fetch more from the store
+        // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
         if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
             pending_paths.extend(
                 store

@@ -771,10 +771,7 @@ impl StoreEngine for RedBStore {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_storage_heal_paths(
-        &self,
-        paths: Vec<(H256, Vec<Nibbles>)>,
-    ) -> Result<(), StoreError> {
+    fn set_storage_heal_paths(&self, paths: Vec<(H256, Vec<Nibbles>)>) -> Result<(), StoreError> {
         let key_values = paths
             .into_iter()
             .map(|(hash, paths)| {
