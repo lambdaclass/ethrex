@@ -415,7 +415,7 @@ impl PeerHandler {
             let lock_peer = lock_peer_time.elapsed().as_millis();
             let send_req_await_res_time = Instant::now();
             if let Err(e) = peer.sender.send(request).await {
-                warn!("Failed to send message to peer: {e:?}");
+                warn!("Failed to send message to peer: {}", e.to_string());
                 continue;
             }
             if let Some((mut slots, proof)) = match tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
