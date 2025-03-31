@@ -1,0 +1,77 @@
+name: L2 (without proving)
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CI_ETHREX_WORKDIR: /usr/local/bin
+
+jobs:
+  integration-test:
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Bake docker images
+        uses: docker/bake-action@v6
+        with:
+          workdir: "crates/l2"
+          files: "crates/l2/docker-compose-l2.yaml"
+          load: true
+          set: |
+            *.cache-to=type=gha,mode=max
+            *.cache-from=type=gha
+
+      - name: Build prover
+        run: |
+          cd crates/l2
+          PROVER=exec make build-prover
+
+      - name: Build test
+        run: |
+          cargo test l2 --no-run --release
+
+      - name: Run test
+        run: |
+          cd crates/l2
+          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
+          cp configs/sequencer_config_docker_example.toml configs/sequencer_config.toml
+
+          PROVER=exec make integration-test
+
+  state-diff-test:
+    # "State Reconstruction Tests" is a required check, don't change the name
+    name: State Reconstruction Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: |
+          cd crates/l2
+          make state-diff-test

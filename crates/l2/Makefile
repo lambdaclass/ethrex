@@ -197,32 +197,24 @@ build-prover:
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
 
-# Testing
-# cargo test l2 will match tests that has l2 in the function.
-# Tests are at `crates/l2/tests/tests.rs`
-# https://doc.rust-lang.org/book/ch11-02-running-tests.html#filtering-to-run-multiple-tests
-ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
-	@echo "\n\033[0;33mWARNING: \033[0m Running the tests inside docker takes \033[1mA LOT\033[0m of time. If possible (especially when running the tests locally), consider running the tests with the 'make test' directive\n"
-
+integration-test: build-prover rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
 	touch .env
-	# Integration tests
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
-	RUST_LOG=info,ethrex_prover=debug ../../target/release/ethrex_prover & cargo test l2 --release -- --nocapture --test-threads=1
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach
+	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
+	killall ethrex_prover
 
-	# State reconstruction tests
-	# rm -rf $$PWD/store
-	# cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
-	# cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
-	# cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
-	# cargo b --manifest-path ../../Cargo.toml --release
-	# make init-l2-no-metrics ethrex_L2_DEV_LIBMDBX=$$PWD/store 2>&1 >/dev/null &
-	# cargo test state_reconstruct --release
-
-test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
+# State reconstruction tests
+state-diff-test:
+	rm -rf $$PWD/store
+	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
+	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
+	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
+	cargo b --manifest-path ../../Cargo.toml --release
+	make init-l2-no-metrics ethrex_L2_DEV_LIBMDBX=$$PWD/store 2>&1 >/dev/null &
+	cargo test state_reconstruct --release
 
 # Purge L2's state
 UNAME_S:=$(shell uname -s)

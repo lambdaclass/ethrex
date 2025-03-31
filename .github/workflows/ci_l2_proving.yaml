@@ -1,11 +1,7 @@
-name: L2
+name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["**"]
-    paths:
-      - "crates/l2/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -16,7 +12,6 @@ env:
 
 jobs:
   test:
-    # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
     steps:
@@ -52,19 +47,16 @@ jobs:
       - name: Build prover
         run: |
           cd crates/l2
-          PROVER=exec make build-prover
+          PROVER=sp1 make build-prover
 
-      - name: Build L2 integration test
+      - name: Build test
         run: |
           cargo test l2 --no-run --release
 
-      - name: Run L2 integration test
+      - name: Run test
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          cp configs/sequencer_config_docker_example.toml configs/sequencer_config.toml
+          cp configs/sequencer_config_docker_sp1_example.toml configs/sequencer_config.toml
 
-          touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach
-
-          RUST_LOG=info,ethrex_prover=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
+          PROVER=sp1 make integration-test
