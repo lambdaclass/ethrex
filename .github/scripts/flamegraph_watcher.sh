@@ -13,7 +13,7 @@ start_time=$(date +%s)
 
 cargo run --release --bin loadtest \
     --manifest-path /home/runner/work/ethrex/ethrex/cmd/ethrex_l2/Cargo.toml -- \
-    load --path /home/runner/work/ethrex/ethrex/test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
+    --path /home/runner/work/ethrex/ethrex/test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
 
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "balance: $output"

@@ -12,7 +12,7 @@ end_val=$((171 * $iterations * $value))
 start_time=$(date +%s)
 cargo run --release --bin loadtest \
     --manifest-path cmd/ethrex_l2/Cargo.toml -- \
-    load --path../test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
+    --path../test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
 
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 

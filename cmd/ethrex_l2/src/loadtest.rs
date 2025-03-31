@@ -49,57 +49,53 @@ pub enum TestType {
 }
 
 #[derive(Parser)]
-pub(crate) enum Command {
-    #[clap(about = "Make a load test sending transactions from a list of private keys.")]
-    Load {
-        #[clap(
-            short = 'p',
-            long = "path",
-            help = "Path to the file containing private keys."
-        )]
-        path: String,
-        #[clap(
-            short = 't',
-            long = "to",
-            help = "Address to send the transactions. Defaults to random."
-        )]
-        to: Option<Address>,
-        #[clap(
+struct Command {
+    #[clap(
+        short = 'p',
+        long = "path",
+        help = "Path to the file containing private keys."
+    )]
+    path: String,
+    #[clap(
+        short = 't',
+        long = "to",
+        help = "Address to send the transactions. Defaults to random."
+    )]
+    to: Option<Address>,
+    #[clap(
             short = 'a',
             long = "value",
             default_value = "1000",
             value_parser = U256::from_dec_str,
             help = "Value to send in each transaction."
         )]
-        value: U256,
-        #[clap(
-            short = 'i',
-            long = "iterations",
-            default_value = "1000",
-            help = "Number of transactions per private key."
-        )]
-        iterations: u64,
-        #[clap(
-            short = 'v',
-            long = "verbose",
-            default_value = "false",
-            help = "Prints each transaction."
-        )]
-        verbose: bool,
-        #[clap(
-            long = "test_type",
-            short = 'y',
-            default_value = "plain-transactions",
-            help = "Specify the type of test."
-        )]
-        test_type: TestType,
-    },
+    value: U256,
+    #[clap(
+        short = 'i',
+        long = "iterations",
+        default_value = "1000",
+        help = "Number of transactions per private key."
+    )]
+    iterations: u64,
+    #[clap(
+        short = 'v',
+        long = "verbose",
+        default_value = "false",
+        help = "Prints each transaction."
+    )]
+    verbose: bool,
+    #[clap(
+        long = "test_type",
+        short = 'y',
+        default_value = "plain-transactions",
+        help = "Specify the type of test."
+    )]
+    test_type: TestType,
 }
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     let command = Command::parse();
-
     command.run().await?;
     Ok(())
 }
@@ -367,97 +363,94 @@ async fn _generic_load_test(
 
 impl Command {
     pub async fn run(self) -> eyre::Result<()> {
-        match self {
-            Command::Load {
-                path,
-                to,
-                value,
-                iterations,
-                verbose,
-                test_type,
-            } => {
-                let private_keys: Vec<SecretKey> = read_lines(path)?
-                    .map(|pk| SecretKey::from_str(&pk.unwrap().trim_start_matches("0x")).unwrap())
-                    .collect();
+        let Command {
+            path,
+            to,
+            value,
+            iterations,
+            verbose,
+            test_type,
+        } = self;
 
-                if let Err(err) = test_connection(&L2_CLIENT).await {
-                    bail!("Couldn't establish connection to L2: {err}")
-                }
+        let private_keys: Vec<SecretKey> = read_lines(path)?
+            .map(|pk| SecretKey::from_str(&pk.unwrap().trim_start_matches("0x")).unwrap())
+            .collect();
 
-                let chain_id = L2_CLIENT.get_chain_id().await?.as_u64();
-
-                let (calldata, to_address) = match test_type {
-                    TestType::PlainTransactions => {
-                        let calldata = Bytes::new();
-                        let to_address = match to {
-                            Some(address) => address,
-                            None => Address::random(),
-                        };
-                        (calldata, to_address)
-                    }
-                    TestType::Fibonacci => {
-                        // This is the bytecode for the contract with the following functions
-                        // version() -> always returns 2
-                        // function fibonacci(uint n) public pure returns (uint) -> returns the nth fib number
-                        let init_code = hex::decode("6080604052348015600e575f5ffd5b506103198061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c806354fd4d501461003857806361047ff414610056575b5f5ffd5b610040610086565b60405161004d9190610152565b60405180910390f35b610070600480360381019061006b9190610199565b61008b565b60405161007d9190610152565b60405180910390f35b600281565b5f5f8210156100cf576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016100c69061021e565b60405180910390fd5b5f82036100de575f9050610135565b600182036100ef5760019050610135565b5f5f90505f600190505f600290505b84811161012e575f82905083836101159190610269565b92508093505080806101269061029c565b9150506100fe565b5080925050505b919050565b5f819050919050565b61014c8161013a565b82525050565b5f6020820190506101655f830184610143565b92915050565b5f5ffd5b6101788161013a565b8114610182575f5ffd5b50565b5f813590506101938161016f565b92915050565b5f602082840312156101ae576101ad61016b565b5b5f6101bb84828501610185565b91505092915050565b5f82825260208201905092915050565b7f496e707574206d757374206265206e6f6e2d6e656761746976650000000000005f82015250565b5f610208601a836101c4565b9150610213826101d4565b602082019050919050565b5f6020820190508181035f830152610235816101fc565b9050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6102738261013a565b915061027e8361013a565b92508282019050808211156102965761029561023c565b5b92915050565b5f6102a68261013a565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036102d8576102d761023c565b5b60018201905091905056fea264697066735822122021e2c2b56b7e23b9555cc95390dfb2979a8526595038818d133d5bb772c01a6564736f6c634300081c0033")?;
-
-                        let (_, contract_address) = L2_CLIENT
-                            .deploy(
-                                *RICH_ADDRESS,
-                                *RICH_PRIVATE_KEY,
-                                init_code.into(),
-                                Overrides::default(),
-                            )
-                            .await?;
-
-                        let calldata = calldata::encode_calldata(
-                            "fibonacci(uint256)",
-                            &[Value::Uint(100000000000000_u64.into())],
-                        )?
-                        .into();
-                        let to_address = contract_address;
-                        (calldata, to_address)
-                    }
-                    TestType::IoHeavy => {
-                        // Contract with a function that touches 100 storage slots on every transaction.
-                        // See `test_data/IOHeavyContract.sol` for the code.
-                        let init_code = hex::decode("6080604052348015600e575f5ffd5b505f5f90505b6064811015603e57805f8260648110602d57602c6043565b5b018190555080806001019150506014565b506070565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b6102728061007d5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c8063431aabc21461004357806358faa02f1461007357806362f8e72a1461007d575b5f5ffd5b61005d6004803603810190610058919061015c565b61009b565b60405161006a9190610196565b60405180910390f35b61007b6100b3565b005b61008561010a565b6040516100929190610196565b60405180910390f35b5f81606481106100a9575f80fd5b015f915090505481565b5f5f90505b60648110156101075760015f82606481106100d6576100d56101af565b5b01546100e29190610209565b5f82606481106100f5576100f46101af565b5b018190555080806001019150506100b8565b50565b5f5f5f6064811061011e5761011d6101af565b5b0154905090565b5f5ffd5b5f819050919050565b61013b81610129565b8114610145575f5ffd5b50565b5f8135905061015681610132565b92915050565b5f6020828403121561017157610170610125565b5b5f61017e84828501610148565b91505092915050565b61019081610129565b82525050565b5f6020820190506101a95f830184610187565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61021382610129565b915061021e83610129565b9250828201905080821115610236576102356101dc565b5b9291505056fea264697066735822122055f6d7149afdb56c745a203d432710eaa25a8ccdb030503fb970bf1c964ac03264736f6c634300081b0033")?;
-
-                        let (_, contract_address) = L2_CLIENT
-                            .deploy(
-                                *RICH_ADDRESS,
-                                *RICH_PRIVATE_KEY,
-                                init_code.into(),
-                                Overrides::default(),
-                            )
-                            .await?;
-
-                        let calldata = calldata::encode_calldata("incrementNumbers()", &[])?.into();
-                        let to_address = contract_address;
-
-                        (calldata, to_address)
-                    }
-                    TestType::Erc20 => {
-                        let contract_address = erc20_deploy().await?;
-                        claim_erc20_balances(contract_address, private_keys.clone()).await?;
-                        erc20_load_test(iterations, chain_id, contract_address, private_keys)
-                            .await?;
-                        return Ok(());
-                    }
-                };
-
-                _generic_load_test(
-                    test_type,
-                    iterations,
-                    chain_id,
-                    private_keys,
-                    to_address,
-                    value,
-                    verbose,
-                    calldata,
-                )
-                .await
-            }
+        if let Err(err) = test_connection(&L2_CLIENT).await {
+            bail!("Couldn't establish connection to L2: {err}")
         }
+
+        let chain_id = L2_CLIENT.get_chain_id().await?.as_u64();
+
+        let (calldata, to_address) = match test_type {
+            TestType::PlainTransactions => {
+                let calldata = Bytes::new();
+                let to_address = match to {
+                    Some(address) => address,
+                    None => Address::random(),
+                };
+                (calldata, to_address)
+            }
+            TestType::Fibonacci => {
+                // This is the bytecode for the contract with the following functions
+                // version() -> always returns 2
+                // function fibonacci(uint n) public pure returns (uint) -> returns the nth fib number
+                let init_code = hex::decode("6080604052348015600e575f5ffd5b506103198061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c806354fd4d501461003857806361047ff414610056575b5f5ffd5b610040610086565b60405161004d9190610152565b60405180910390f35b610070600480360381019061006b9190610199565b61008b565b60405161007d9190610152565b60405180910390f35b600281565b5f5f8210156100cf576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016100c69061021e565b60405180910390fd5b5f82036100de575f9050610135565b600182036100ef5760019050610135565b5f5f90505f600190505f600290505b84811161012e575f82905083836101159190610269565b92508093505080806101269061029c565b9150506100fe565b5080925050505b919050565b5f819050919050565b61014c8161013a565b82525050565b5f6020820190506101655f830184610143565b92915050565b5f5ffd5b6101788161013a565b8114610182575f5ffd5b50565b5f813590506101938161016f565b92915050565b5f602082840312156101ae576101ad61016b565b5b5f6101bb84828501610185565b91505092915050565b5f82825260208201905092915050565b7f496e707574206d757374206265206e6f6e2d6e656761746976650000000000005f82015250565b5f610208601a836101c4565b9150610213826101d4565b602082019050919050565b5f6020820190508181035f830152610235816101fc565b9050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6102738261013a565b915061027e8361013a565b92508282019050808211156102965761029561023c565b5b92915050565b5f6102a68261013a565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036102d8576102d761023c565b5b60018201905091905056fea264697066735822122021e2c2b56b7e23b9555cc95390dfb2979a8526595038818d133d5bb772c01a6564736f6c634300081c0033")?;
+
+                let (_, contract_address) = L2_CLIENT
+                    .deploy(
+                        *RICH_ADDRESS,
+                        *RICH_PRIVATE_KEY,
+                        init_code.into(),
+                        Overrides::default(),
+                    )
+                    .await?;
+
+                let calldata = calldata::encode_calldata(
+                    "fibonacci(uint256)",
+                    &[Value::Uint(100000000000000_u64.into())],
+                )?
+                .into();
+                let to_address = contract_address;
+                (calldata, to_address)
+            }
+            TestType::IoHeavy => {
+                // Contract with a function that touches 100 storage slots on every transaction.
+                // See `test_data/IOHeavyContract.sol` for the code.
+                let init_code = hex::decode("6080604052348015600e575f5ffd5b505f5f90505b6064811015603e57805f8260648110602d57602c6043565b5b018190555080806001019150506014565b506070565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b6102728061007d5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c8063431aabc21461004357806358faa02f1461007357806362f8e72a1461007d575b5f5ffd5b61005d6004803603810190610058919061015c565b61009b565b60405161006a9190610196565b60405180910390f35b61007b6100b3565b005b61008561010a565b6040516100929190610196565b60405180910390f35b5f81606481106100a9575f80fd5b015f915090505481565b5f5f90505b60648110156101075760015f82606481106100d6576100d56101af565b5b01546100e29190610209565b5f82606481106100f5576100f46101af565b5b018190555080806001019150506100b8565b50565b5f5f5f6064811061011e5761011d6101af565b5b0154905090565b5f5ffd5b5f819050919050565b61013b81610129565b8114610145575f5ffd5b50565b5f8135905061015681610132565b92915050565b5f6020828403121561017157610170610125565b5b5f61017e84828501610148565b91505092915050565b61019081610129565b82525050565b5f6020820190506101a95f830184610187565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61021382610129565b915061021e83610129565b9250828201905080821115610236576102356101dc565b5b9291505056fea264697066735822122055f6d7149afdb56c745a203d432710eaa25a8ccdb030503fb970bf1c964ac03264736f6c634300081b0033")?;
+
+                let (_, contract_address) = L2_CLIENT
+                    .deploy(
+                        *RICH_ADDRESS,
+                        *RICH_PRIVATE_KEY,
+                        init_code.into(),
+                        Overrides::default(),
+                    )
+                    .await?;
+
+                let calldata = calldata::encode_calldata("incrementNumbers()", &[])?.into();
+                let to_address = contract_address;
+
+                (calldata, to_address)
+            }
+            TestType::Erc20 => {
+                let contract_address = erc20_deploy().await?;
+                claim_erc20_balances(contract_address, private_keys.clone()).await?;
+                erc20_load_test(iterations, chain_id, contract_address, private_keys).await?;
+                return Ok(());
+            }
+        };
+
+        _generic_load_test(
+            test_type,
+            iterations,
+            chain_id,
+            private_keys,
+            to_address,
+            value,
+            verbose,
+            calldata,
+        )
+        .await
     }
 }
