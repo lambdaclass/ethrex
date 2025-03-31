@@ -65,7 +65,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
                     )
                     .unwrap()
             }
-            trie.root()
+            trie.root().unwrap()
         });
     });
 
@@ -77,10 +77,12 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
 
         b.iter(|| {
             for i in 0..keys_10k.len() {
-                trie.insert(keys_10k[i].clone(), values_10k[i].clone())
-                    .unwrap()
+                black_box(
+                    trie.insert(keys_10k[i].clone(), values_10k[i].clone())
+                        .unwrap(),
+                )
             }
-            trie.root()
+            trie.root().unwrap()
         });
     });
 }
