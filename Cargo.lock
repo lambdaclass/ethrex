@@ -3128,14 +3128,8 @@ dependencies = [
  "secp256k1",
  "serde",
  "serde_json",
-<<<<<<< HEAD
- "thiserror 2.0.12",
-||||||| 652ffd35
- "thiserror 2.0.11",
-=======
  "test-casing",
  "thiserror 2.0.12",
->>>>>>> main
  "tokio",
  "tokio-util",
  "toml 0.8.20",
@@ -3290,15 +3284,9 @@ dependencies = [
  "serde_json",
  "sha2 0.10.8",
  "sha3",
-<<<<<<< HEAD
- "thiserror 2.0.12",
-||||||| 652ffd35
- "thiserror 2.0.11",
-=======
  "ssz_types",
  "strum_macros 0.24.3",
  "thiserror 2.0.12",
->>>>>>> main
  "tokio",
  "tokio-util",
  "tower-http",
