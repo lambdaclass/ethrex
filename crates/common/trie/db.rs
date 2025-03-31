@@ -20,6 +20,11 @@ impl InMemoryTrieDB {
     pub fn new(map: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>) -> Self {
         Self { inner: map }
     }
+    pub fn new_empty() -> Self {
+        Self {
+            inner: Default::default(),
+        }
+    }
 }
 
 impl TrieDB for InMemoryTrieDB {
