@@ -54,20 +54,10 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let l1_initial_balance = eth_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
-    let mut l2_initial_balance = proposer_client
+    let l2_initial_balance = proposer_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
-    println!("Waiting for L2 to update for initial deposit");
-    let mut retries = 0;
-    while retries < 30 && l2_initial_balance.is_zero() {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        println!("[{retries}/30] Waiting for L2 balance to update");
-        l2_initial_balance = proposer_client
-            .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
-            .await?;
-        retries += 1;
-    }
-    assert_ne!(retries, 30, "L2 balance is zero");
+    assert_eq!(l2_initial_balance, U256::zero(), "L2 balance is not zero");
     let common_bridge_initial_balance = eth_client
         .get_balance(common_bridge_address(), BlockByNumber::Latest)
         .await?;

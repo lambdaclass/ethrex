@@ -29,7 +29,6 @@ services:
       - PRIVATE_KEYS_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
     depends_on:
       - ethrex
-    command: --deposit_rich
     restart: on-failure:3
 
   ethrex_l2:
