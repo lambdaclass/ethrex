@@ -347,16 +347,23 @@ pub fn block_number_has_state_file(
     Ok(false)
 }
 
-/// CHECK if the given block_number has all the proofs needed
-/// This function will check if the path: ../../../<block_number>/ contains the proofs
-/// Make sure to add all new proving_systems in the [ProverType::all] function
-pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateError> {
+/// Check if the given block_number has all the proofs needed
+/// This function will check if the path: ../../../<block_number>/
+/// contains the needed_proof_types passed as parameter.
+pub fn block_number_has_all_needed_proofs(
+    block_number: u64,
+    needed_proof_types: &[ProverType],
+) -> Result<bool, SaveStateError> {
+    if needed_proof_types.is_empty() {
+        return Ok(true);
+    }
+
     let block_state_path = get_block_state_path(block_number)?;
 
     let mut has_all_proofs = true;
-    for prover_type in ProverType::all() {
+    for prover_type in needed_proof_types {
         let file_name_to_seek: OsString =
-            get_state_file_name(block_number, &StateFileType::Proof(prover_type)).into();
+            get_state_file_name(block_number, &StateFileType::Proof(*prover_type)).into();
 
         // Check if the proof exists
         let proof_exists = std::fs::read_dir(&block_state_path)?
@@ -378,14 +385,21 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
 mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
-    use ethrex_vm::backends::revm::execution_db::ExecutionDB;
+    use ethrex_vm::{
+        backends::{Evm, EvmEngine},
+        ExecutionDB,
+    };
+    use test_casing::test_casing;
 
     use super::*;
     use crate::utils::test_data_io;
     use std::fs::{self};
 
+    #[test_casing(2, [EvmEngine::LEVM, EvmEngine::REVM])]
     #[test]
-    fn test_state_file_integration() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_state_file_integration(
+        evm_engine: EvmEngine,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = fs::remove_dir_all(default_datadir()?) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 eprintln!("Directory NotFound: {:?}", default_datadir()?);
@@ -395,7 +409,7 @@ mod tests {
         let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_data"));
 
         let chain_file_path = path.join("l2-loadtest.rlp");
-        let genesis_file_path = path.join("genesis-l2.json");
+        let genesis_file_path = path.join("genesis-l2-ci.json");
 
         // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
         let store = Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
@@ -431,8 +445,9 @@ mod tests {
 
         // Write all the account_updates and proofs for each block
         for block in &blocks {
+            let mut evm = Evm::new(evm_engine, store.clone(), block.hash());
             let account_updates =
-                ExecutionDB::get_account_updates(blocks.last().unwrap(), &store).unwrap();
+                ExecutionDB::get_account_updates(blocks.last().unwrap(), &mut evm).unwrap();
 
             account_updates_vec.push(account_updates.clone());
 
@@ -443,7 +458,7 @@ mod tests {
 
             write_state(
                 block.header.number,
-                &StateType::Proof(pico_calldata.clone()),
+                &StateType::Proof(exec_calldata.clone()),
             )?;
 
             write_state(

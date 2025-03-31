@@ -1,6 +1,6 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_storage::error::StoreError;
-use ethrex_vm::errors::ExecutionDBError;
+use ethrex_vm::ExecutionDBError;
 use keccak_hash::H256;
 
 #[derive(Debug, thiserror::Error)]

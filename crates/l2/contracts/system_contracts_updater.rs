@@ -6,13 +6,13 @@ use bytes::Bytes;
 use ethrex_common::types::Genesis;
 use ethrex_common::types::GenesisAccount;
 use ethrex_common::U256;
-use ethrex_l2::utils::config::read_env_file;
+use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
 use utils::compile_contract;
 use utils::ContractCompilationError;
 
 fn main() -> Result<(), ContractCompilationError> {
-    read_env_file()?;
+    read_env_file_by_config(ConfigMode::Sequencer)?;
     #[allow(clippy::expect_fun_call, clippy::expect_used)]
     let contracts_path = Path::new(
         &std::env::var("DEPLOYER_CONTRACTS_PATH").expect(
