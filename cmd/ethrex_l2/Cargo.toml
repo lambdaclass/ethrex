@@ -39,3 +39,7 @@ sha2.workspace = true
 [[bin]]
 name = "ethrex_l2"
 path = "./src/main.rs"
+
+[[bin]]
+name = "loadtest"
+path = "./src/loadtest.rs"
