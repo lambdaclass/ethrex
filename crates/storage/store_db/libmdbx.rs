@@ -595,8 +595,6 @@ impl StoreEngine for Store {
         &self,
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        // (QuickFix) Move storage heal paths to their own table
-        tracing::info!("Fetching state heal paths");
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StorageHealPaths>()
