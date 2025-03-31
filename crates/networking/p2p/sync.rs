@@ -585,7 +585,7 @@ impl SyncManager {
             ));
         };
         // Spawn storage healer earlier so we can start healing stale storages
-        // Create a cancellation token so we can tell the storage healer to end, make it a child do that it also ends upon shutdown
+        // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
         let storage_healer_cancell_token = self.cancel_token.child_token();
         let storage_healer_handler = tokio::spawn(storage_healer(
             state_root,
