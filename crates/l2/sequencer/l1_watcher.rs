@@ -294,11 +294,11 @@ impl L1Watcher {
                 ]
                 .concat(),
             )) {
-                warn!("Deposit already processed (to: {to_address:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
+                warn!("Deposit already processed (to: {recipient:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
                 continue;
             }
 
-            info!("Initiating mint transaction for {to_address:#x} with value {mint_value:#x} and depositId: {deposit_id:#}",);
+            info!("Initiating mint transaction for {recipient:#x} with value {mint_value:#x} and depositId: {deposit_id:#}",);
 
             let gas_price = self.l2_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()

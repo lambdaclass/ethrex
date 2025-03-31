@@ -490,6 +490,7 @@ impl RpcHandler for EstimateGasRequest {
             blockchain.clone(),
             fork,
         )?;
+
         let gas_used = result.gas_used();
         let gas_refunded = result.gas_refunded();
 

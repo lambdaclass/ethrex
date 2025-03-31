@@ -81,13 +81,13 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
 
         bytes32 l2MintTxHash = keccak256(
             abi.encodePacked(
-                msg.sender, // from
-                to, // to
-                recipient, // recipient
-                msg.value, // value
-                gasLimit, // gasLimit
-                depositId, // nonce
-                data // data
+                msg.sender,
+                to,
+                recipient,
+                msg.value,
+                gasLimit,
+                depositId,
+                data
             )
         );
 

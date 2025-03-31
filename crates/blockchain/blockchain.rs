@@ -29,11 +29,6 @@ use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
 use fork_choice::apply_fork_choice;
 use tracing::{error, info, warn};
 
-pub const DEFAULT_ADDRESS_L2: H160 = H160([
-    0x3d, 0x1e, 0x15, 0xa1, 0xa5, 0x55, 0x78, 0xf7, 0xc9, 0x20, 0x88, 0x4a, 0x99, 0x43, 0xb3, 0xb3,
-    0x5d, 0x0d, 0x88, 0x5b,
-]);
-
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
@@ -472,12 +467,6 @@ impl Blockchain {
             }
         };
 
-        if let Some(chain_id) = tx.chain_id() {
-            if chain_id != config.chain_id {
-                return Err(MempoolError::InvalidChainId(config.chain_id));
-            }
-        }
-
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender)?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
@@ -495,6 +484,12 @@ impl Blockchain {
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
+        }
+
+        if let Some(chain_id) = tx.chain_id() {
+            if chain_id != config.chain_id {
+                return Err(MempoolError::InvalidChainId(config.chain_id));
+            }
         }
 
         Ok(())
