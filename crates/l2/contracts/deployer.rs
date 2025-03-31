@@ -460,16 +460,14 @@ async fn deploy_on_chain_proposer(
     eth_client: &EthClient,
     contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
-    let mut init_code: Vec<u8> =
-        hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
-            DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
-        })?)
-        .map_err(|err| {
-            DeployError::DecodingError(format!(
-                "Failed to decode on_chain_proposer_init_code: {err}"
-            ))
-        })?
-        .into();
+    let mut init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
+        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
+    })?)
+    .map_err(|err| {
+        DeployError::DecodingError(format!(
+            "Failed to decode on_chain_proposer_init_code: {err}"
+        ))
+    })?;
 
     let validium: bool = read_env_var("COMMITTER_VALIDIUM")?
         .trim()
