@@ -165,7 +165,7 @@ impl Committer {
         let blobs_bundle = if !self.validium {
             self.generate_blobs_bundle(&state_diff)?
         } else {
-            BlobsBundle::default() // Just empty fields. Maybe an Option<> would be better though.
+            BlobsBundle::default()
         };
 
         let head_block_hash = block_to_commit.hash();

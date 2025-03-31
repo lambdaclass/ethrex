@@ -476,12 +476,11 @@ async fn deploy_on_chain_proposer(
         .parse()
         .map_err(|err| DeployError::ParseError(format!("Malformed COMMITTER_VALIDIUM: {err}")))?;
 
-    let validium_value = if validium { vec![0x01] } else { vec![0x00] };
-
-    let offset = 32 - validium_value.len() % 32;
-    let mut encoded_validium = vec![0; offset];
-    encoded_validium.extend_from_slice(&validium_value);
-    init_code.extend_from_slice(&encoded_validium);
+    let validium_value = if validium { 1u8 } else { 0u8 };
+    let encoded_validium = vec![0; 31]
+        .into_iter()
+        .chain(std::iter::once(validium_value));
+    init_code.extend(encoded_validium);
 
     let (deploy_tx_hash, contract_address) = create2_deploy(
         deployer,
