@@ -42,18 +42,23 @@ async fn main() {
             .map_or(set_datadir(DEFAULT_DATADIR), |datadir| set_datadir(datadir));
         let path = Path::new(&data_dir);
 
-        if path.exists() {
-            print!("Are you sure you want to remove the database? (y/n): ");
-            io::stdout().flush().unwrap();
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
-
-            if input.trim().eq_ignore_ascii_case("y") {
+        if !path.exists() {
+            if matches.get_flag("force") {
                 std::fs::remove_dir_all(path).expect("Failed to remove data directory");
                 println!("Database removed successfully.");
             } else {
-                println!("Operation canceled.");
+                print!("Are you sure you want to remove the database? (y/n): ");
+                io::stdout().flush().unwrap();
+
+                let mut input = String::new();
+                io::stdin().read_line(&mut input).unwrap();
+
+                if input.trim().eq_ignore_ascii_case("y") {
+                    std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+                    println!("Database removed successfully.");
+                } else {
+                    println!("Operation canceled.");
+                }
             }
         } else {
             warn!("Data directory does not exist: {}", data_dir);

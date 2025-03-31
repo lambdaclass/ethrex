@@ -142,12 +142,20 @@ pub fn cli() -> Command {
                 .help("Has to be `levm` or `revm`"),
         )
         .subcommand(
-            Command::new("removedb").about("Remove the database").arg(
-                Arg::new("datadir")
-                    .long("datadir")
-                    .value_name("DATABASE_DIRECTORY")
-                    .action(ArgAction::Set),
-            ),
+            Command::new("removedb")
+                .about("Remove the database")
+                .arg(
+                    Arg::new("datadir")
+                        .long("datadir")
+                        .value_name("DATABASE_DIRECTORY")
+                        .action(ArgAction::Set),
+                )
+                .arg(
+                    Arg::new("force")
+                        .long("force")
+                        .help("Force remove database without confirmation")
+                        .action(ArgAction::SetTrue), // Makes it a boolean flag
+                ),
         );
 
     cfg_if::cfg_if! {
