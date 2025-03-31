@@ -235,7 +235,6 @@ impl L1Watcher {
                             .to_owned(),
                     ))?;
             let recipient = Address::from_slice(recipient);
-            println!("recipient: {recipient:#x}");
 
             let from = log
                 .log
@@ -245,14 +244,12 @@ impl L1Watcher {
                     "Failed to parse from from log: log.data[44..64] out of bounds".to_owned(),
                 ))?;
             let from = Address::from_slice(from);
-            println!("from: {from:#x}");
 
             let gas_limit = U256::from_big_endian(log.log.data.get(64..96).ok_or(
                 L1WatcherError::FailedToDeserializeLog(
                     "Failed to parse gas_limit from log: log.data[64..96] out of bounds".to_owned(),
                 ),
             )?);
-            println!("gas_limit: {gas_limit:#x}");
 
             let deposit_tx_hash = H256::from_slice(
                 log.log
@@ -263,7 +260,6 @@ impl L1Watcher {
                             .to_owned(),
                     ))?,
             );
-            info!("deposit_tx_hash: {deposit_tx_hash:#x}");
 
             let calldata_len = U256::from_big_endian(
                 log.log
@@ -282,8 +278,6 @@ impl L1Watcher {
                 "Failed to parse calldata from log: log.data[128..128 + calldata_len] out of bounds"
                     .to_owned(),
             ))?;
-            println!("calldata_len: {calldata_len:#x}");
-            println!("calldata: {:x?}", hex::decode(calldata));
 
             let value_bytes = mint_value.to_big_endian();
             let id_bytes = deposit_id.to_big_endian();
@@ -317,7 +311,7 @@ impl L1Watcher {
                 .build_privileged_transaction(
                     to_address,
                     recipient,
-                    recipient,
+                    from,
                     Bytes::copy_from_slice(calldata),
                     Overrides {
                         chain_id: Some(

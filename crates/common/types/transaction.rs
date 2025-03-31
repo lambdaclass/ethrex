@@ -251,9 +251,7 @@ pub struct PrivilegedL2Transaction {
     pub value: U256,
     pub data: Bytes,
     pub access_list: AccessList,
-    pub signature_y_parity: bool,
-    pub signature_r: U256,
-    pub signature_s: U256,
+    pub from: Address,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -567,9 +565,7 @@ impl RLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
-            .encode_field(&self.signature_y_parity)
-            .encode_field(&self.signature_r)
-            .encode_field(&self.signature_s)
+            .encode_field(&self.from)
             .finish()
     }
 }
@@ -679,6 +675,7 @@ impl PayloadRLPEncode for PrivilegedL2Transaction {
             .encode_field(&self.value)
             .encode_field(&self.data)
             .encode_field(&self.access_list)
+            .encode_field(&self.from)
             .finish();
     }
 }
@@ -868,9 +865,7 @@ impl RLPDecode for PrivilegedL2Transaction {
         let (value, decoder) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let (access_list, decoder) = decoder.decode_field("access_list")?;
-        let (signature_y_parity, decoder) = decoder.decode_field("signature_y_parity")?;
-        let (signature_r, decoder) = decoder.decode_field("signature_r")?;
-        let (signature_s, decoder) = decoder.decode_field("signature_s")?;
+        let (from, decoder) = decoder.decode_field("from")?;
 
         let tx = PrivilegedL2Transaction {
             chain_id,
@@ -883,9 +878,7 @@ impl RLPDecode for PrivilegedL2Transaction {
             value,
             data,
             access_list,
-            signature_y_parity,
-            signature_r,
-            signature_s,
+            from,
         };
         Ok((tx, decoder.finish()?))
     }
@@ -980,16 +973,16 @@ impl Signable for EIP7702Transaction {
 }
 
 impl Signable for PrivilegedL2Transaction {
-    fn sign_inplace(&mut self, private_key: &SecretKey) {
-        let mut payload = vec![TxType::Privileged as u8];
-        payload.append(self.encode_payload_to_vec().as_mut());
-        sing_inplace(
-            &payload,
-            private_key,
-            &mut self.signature_r,
-            &mut self.signature_s,
-            &mut self.signature_y_parity,
-        );
+    fn sign_inplace(&mut self, _private_key: &SecretKey) {
+        // let mut payload = vec![TxType::Privileged as u8];
+        // payload.append(self.encode_payload_to_vec().as_mut());
+        // sing_inplace(
+        //     &payload,
+        //     private_key,
+        //     &mut self.signature_r,
+        //     &mut self.signature_s,
+        //     &mut self.signature_y_parity,
+        // );
     }
 }
 
@@ -1132,7 +1125,7 @@ impl Transaction {
                     &Bytes::from(buf),
                 )
             }
-            Transaction::PrivilegedL2Transaction(tx) => tx.recipient,
+            Transaction::PrivilegedL2Transaction(tx) => tx.from,
         }
     }
 
@@ -1862,12 +1855,7 @@ mod serde_impl {
                     .collect::<Vec<_>>(),
             )?;
             struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
-            struct_serializer
-                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity as u8))?;
-            struct_serializer
-                .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?; // added to match Hive tests
-            struct_serializer.serialize_field("r", &self.signature_r)?;
-            struct_serializer.serialize_field("s", &self.signature_s)?;
+            struct_serializer.serialize_field("from", &self.from)?;
             struct_serializer.end()
         }
     }
@@ -2169,14 +2157,7 @@ mod serde_impl {
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
-                signature_y_parity: u8::from_str_radix(
-                    deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
-                    16,
-                )
-                .map_err(serde::de::Error::custom)?
-                    != 0,
-                signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
-                signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
+                from: deserialize_field::<Address, D>(&mut map, "from")?,
             })
         }
     }
@@ -2327,7 +2308,7 @@ mod serde_impl {
                 blob_versioned_hashes: vec![],
                 blobs: vec![],
                 chain_id: Some(value.chain_id),
-                from: Address::default(),
+                from: value.from,
             }
         }
     }
@@ -2805,9 +2786,7 @@ mod tests {
             value: U256::from(500000000000000000000000000u128),
             data: Bytes::new(),
             access_list: vec![],
-            signature_y_parity: false,
-            signature_r: U256::zero(),
-            signature_s: U256::zero(),
+            from: Address::from_str("0x8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap(),
         };
 
         let encoded = PrivilegedL2Transaction::encode_to_vec(&privileged_l2);
