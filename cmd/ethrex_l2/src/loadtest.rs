@@ -30,9 +30,9 @@ static RICH_PRIVATE_KEY: LazyLock<SecretKey> = LazyLock::new(|| {
     SecretKey::from_str("385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924").unwrap()
 });
 static RICH_ADDRESS: LazyLock<Address> =
-    LazyLock::new(|| get_address_from_secret_key(&*RICH_PRIVATE_KEY).unwrap());
+    LazyLock::new(|| get_address_from_secret_key(&RICH_PRIVATE_KEY).unwrap());
 
-static L2_CLIENT: LazyLock<EthClient> = LazyLock::new(|| EthClient::new(&*L2_RPC_URL));
+static L2_CLIENT: LazyLock<EthClient> = LazyLock::new(|| EthClient::new(L2_RPC_URL));
 
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
@@ -322,11 +322,12 @@ async fn erc20_load_test(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn _generic_load_test(
     test_type: TestType,
     iterations: u64,
     chain_id: u64,
-    private_keys: Vec<SecretKey>,
+    private_keys: &Vec<SecretKey>,
     to_address: Address,
     value: U256,
     verbose: bool,
@@ -339,7 +340,7 @@ async fn _generic_load_test(
     let mut threads = vec![];
     for pk in private_keys {
         let thread = tokio::spawn(transfer_from(
-            pk,
+            *pk,
             to_address,
             value,
             iterations,
@@ -373,7 +374,7 @@ impl Command {
         } = self;
 
         let private_keys: Vec<SecretKey> = read_lines(path)?
-            .map(|pk| SecretKey::from_str(&pk.unwrap().trim_start_matches("0x")).unwrap())
+            .map(|pk| SecretKey::from_str(pk.unwrap().trim_start_matches("0x")).unwrap())
             .collect();
 
         if let Err(err) = test_connection(&L2_CLIENT).await {
@@ -445,7 +446,7 @@ impl Command {
             test_type,
             iterations,
             chain_id,
-            private_keys,
+            &private_keys,
             to_address,
             value,
             verbose,
