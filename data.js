@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743440460390,
+  "lastUpdate": 1743457621175,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1975,6 +1975,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 187077770228,
             "range": "± 727464219",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "156438142+fborello-lambda@users.noreply.github.com",
+            "name": "Federico Borello",
+            "username": "fborello-lambda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b3e3705e7252a3dde1c6edc6da3750ed77b9ac91",
+          "message": "chore(l2): remove deprecated EngineApiConfig (#2356)\n\n**Motivation**\n\nThe `EnigneApiConfig` isn't used anymore.\n\n**Description**\n\n- Remove the struct and all the deprecated code related to it.\n\nCloses #2351",
+          "timestamp": "2025-03-31T20:57:31Z",
+          "tree_id": "0f8781b21c0fad2067f9ee0768d5dd09cc2b6db6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b3e3705e7252a3dde1c6edc6da3750ed77b9ac91"
+        },
+        "date": 1743457619243,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184452727576,
+            "range": "± 1177277487",
             "unit": "ns/iter"
           }
         ]
