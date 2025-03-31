@@ -561,6 +561,140 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
+/// Test the deployment of a contract on L2 and call it from L1 using the CommonBridge contract.
+/// The call to the contract should revert but the deposit should be successful.
+#[tokio::test]
+async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error::Error>> {
+    let eth_client = eth_client();
+    let proposer_client = proposer_client();
+
+    read_env_file_by_config(ConfigMode::Sequencer)?;
+
+    // Check balances on L1 and L2
+    println!("Checking initial balances on L1 and L2");
+    let l1_rich_wallet_address = l1_rich_wallet_address();
+    let l1_rich_pk = H256::from_slice(&l1_rich_wallet_private_key().secret_bytes());
+    println!("l1_rich_wallet_private_key: {l1_rich_pk:x?}");
+
+    let l1_initial_balance = eth_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    let mut l2_initial_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    println!("Waiting for L2 to update for initial deposit");
+    let mut retries = 0;
+    while retries < 30 && l2_initial_balance.is_zero() {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        println!("[{retries}/30] Waiting for L2 balance to update");
+        l2_initial_balance = proposer_client
+            .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+            .await?;
+        retries += 1;
+    }
+    assert_ne!(retries, 30, "L2 balance is zero");
+    let common_bridge_initial_balance = eth_client
+        .get_balance(common_bridge_address(), BlockByNumber::Latest)
+        .await?;
+
+    println!("L1 initial balance: {l1_initial_balance}");
+    println!("L2 initial balance: {l2_initial_balance}");
+    println!("Common Bridge initial balance: {common_bridge_initial_balance}");
+
+    println!("Deploying contract on L2...");
+
+    // pragma solidity ^0.8.27;
+    // contract RevertTest {
+    //     function revert_call() public {
+    //         revert("Reverted");
+    //     }
+    // }
+    let init_code = hex::decode("6080604052348015600e575f5ffd5b506101138061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806311ebce9114602a575b5f5ffd5b60306032565b005b6040517f08c379a000000000000000000000000000000000000000000000000000000000815260040160629060c1565b60405180910390fd5b5f82825260208201905092915050565b7f52657665727465640000000000000000000000000000000000000000000000005f82015250565b5f60ad600883606b565b915060b682607b565b602082019050919050565b5f6020820190508181035f83015260d68160a3565b905091905056fea2646970667358221220903f571921ce472f979989f9135b8637314b68e080fd70d0da6ede87ad8b5bd564736f6c634300081c0033")?;
+    let (_, contract_address) = proposer_client
+        .deploy(
+            l1_rich_wallet_address,
+            l1_rich_wallet_private_key(),
+            init_code.into(),
+            Overrides::default(),
+        )
+        .await?;
+
+    println!("Contract deployed on L2: {contract_address:?}");
+
+    let l2_balance_after_deploy = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    println!("L2 balance after deploy: {l2_balance_after_deploy}");
+
+    let calldata_to_contract: Bytes = calldata::encode_calldata("revert_call()", &[])?.into();
+
+    println!("calldata: {:?}", hex::encode(calldata_to_contract.as_ref()));
+
+    let values = vec![
+        Value::Address(contract_address),       // to
+        Value::Address(l1_rich_wallet_address), // recipient
+        Value::Uint(U256::from(21000 * 5)),     // gasLimit
+        Value::Bytes(calldata_to_contract),     // data
+    ];
+
+    let calldata =
+        calldata::encode_calldata("deposit(address,address,uint256,bytes)", &values)?.into();
+
+    let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
+        EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+    })?;
+
+    let overrides = Overrides {
+        value: Some(U256::from(100000000000000000000u128)), // value to deposit in the recipient
+        from: Some(l1_rich_wallet_address),
+        gas_limit: Some(21000 * 5),
+        max_fee_per_gas: Some(gas_price),
+        max_priority_fee_per_gas: Some(gas_price),
+        ..Overrides::default()
+    };
+
+    let deposit_tx = eth_client
+        .build_eip1559_transaction(
+            common_bridge_address(),
+            l1_rich_wallet_address,
+            calldata,
+            overrides,
+        )
+        .await?;
+
+    let deposit_tx_hash = eth_client
+        .send_eip1559_transaction(&deposit_tx, &l1_rich_wallet_private_key())
+        .await?;
+    println!("Deposit tx hash: {deposit_tx_hash:?}");
+
+    let deposit_tx_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, &eth_client, 30).await?;
+
+    let l2_contract_balance = proposer_client
+        .get_balance(contract_address, BlockByNumber::Latest)
+        .await?;
+
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    // Check balances on L1 and L2 after deposit
+    let l2_after_deposit_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    assert_eq!(
+        l2_after_deposit_balance,
+        l2_balance_after_deploy + U256::from(100000000000000000000u128),
+        "L2 balance should increase with deposit value"
+    );
+
+    assert_eq!(
+        l2_contract_balance,
+        U256::zero(),
+        "Contract balance should not increase"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn l2_sdk_deploy() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
