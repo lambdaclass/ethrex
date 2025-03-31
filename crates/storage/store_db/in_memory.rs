@@ -480,8 +480,8 @@ impl StoreEngine for Store {
             .inner()
             .snap_state
             .storage_heal_paths
-            .as_ref()
-            .map(|paths| paths.iter().take(limit).cloned().collect::<Vec<_>>())
+            .as_mut()
+            .map(|paths| paths.drain(..limit).collect())
             .unwrap_or_default())
     }
 
