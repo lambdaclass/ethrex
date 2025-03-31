@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_common::H160;
@@ -32,11 +32,21 @@ static RICH_PRIVATE_KEY: LazyLock<SecretKey> = LazyLock::new(|| {
 static RICH_ADDRESS: LazyLock<Address> =
     LazyLock::new(|| get_address_from_secret_key(&*RICH_PRIVATE_KEY).unwrap());
 
+static L2_CLIENT: LazyLock<EthClient> = LazyLock::new(|| EthClient::new(&*L2_RPC_URL));
+
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
 // If you want to modify the behaviour of the contract, edit the ERC20.sol file,
 // and compile it with solc.
 const ERC20: &str = include_str!("../../../test_data/ERC20/ERC20.bin/TestToken.bin").trim_ascii();
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum TestType {
+    PlainTransactions,
+    Fibonacci,
+    IoHeavy,
+    Erc20,
+}
 
 #[derive(Parser)]
 pub(crate) enum Command {
@@ -77,28 +87,12 @@ pub(crate) enum Command {
         )]
         verbose: bool,
         #[clap(
-            long = "fibonacci",
-            default_value = "false",
-            help = "Run fibonacci load test"
+            long = "test_type",
+            short = 'y',
+            default_value = "plain-transactions",
+            help = "Specify the type of test."
         )]
-        fibonacci: bool,
-        #[clap(long = "io", default_value = "false", help = "Run I/O-heavy load test")]
-        i_o_heavy: bool,
-    },
-    #[clap(about = "Load test that deploys an ERC20 and runs transactions")]
-    ERC20 {
-        #[clap(
-            short = 't',
-            long = "transactions_amount",
-            help = "How many transactions each given account will do"
-        )]
-        transactions: u64,
-        #[clap(
-            short = 'p',
-            long = "path",
-            help = "Path to the file containing private keys."
-        )]
-        path: String,
+        test_type: TestType,
     },
 }
 
@@ -138,9 +132,9 @@ async fn transfer_from(
 
     let mut retries = 0;
 
-    for i in nonce..nonce + iterations {
+    for i in nonce..(nonce + iterations) {
         if verbose {
-            println!("transfer {i} from {pk:?}");
+            println!("transfer {i:04} from address: {address:#x}");
         }
 
         let tx = client
@@ -174,14 +168,12 @@ async fn transfer_from(
     eyre::Ok(retries)
 }
 
-async fn test_connection(l2_rpc_url: &str) -> Result<(), EthClientError> {
+async fn test_connection(eth_client: &EthClient) -> Result<(), EthClientError> {
     const RETRIES: usize = 5;
-
-    let client = EthClient::new(l2_rpc_url);
 
     let mut retry = 1;
     loop {
-        match client.get_chain_id().await {
+        match eth_client.get_chain_id().await {
             Ok(_) => break Ok(()),
             Err(err) if retry == RETRIES => {
                 dbg!(retry);
@@ -197,13 +189,13 @@ async fn test_connection(l2_rpc_url: &str) -> Result<(), EthClientError> {
 }
 
 async fn wait_receipt(
-    client: EthClient,
     tx_hash: H256,
     retries: Option<u64>,
+    eth_client: &EthClient,
 ) -> eyre::Result<RpcReceipt> {
     let retries = retries.unwrap_or(10_u64);
     for _ in 0..retries {
-        match client.get_transaction_receipt(tx_hash).await {
+        match eth_client.get_transaction_receipt(tx_hash).await {
             Err(_) | Ok(None) => {
                 let _ = sleep(Duration::from_secs(1)).await;
             }
@@ -218,9 +210,8 @@ async fn wait_receipt(
 
 // Deploy the ERC20 from the raw bytecode.
 async fn erc20_deploy() -> eyre::Result<Address> {
-    let client = EthClient::new(L2_RPC_URL);
     let erc20_bytecode = hex::decode(ERC20)?;
-    let (tx_hash, contract_address) = client
+    let (tx_hash, contract_address) = L2_CLIENT
         .deploy(
             *RICH_ADDRESS,
             *RICH_PRIVATE_KEY,
@@ -229,7 +220,7 @@ async fn erc20_deploy() -> eyre::Result<Address> {
         )
         .await
         .expect("Failed to deploy ERC20 with config");
-    let receipt = wait_receipt(client, tx_hash, None).await?;
+    let receipt = wait_receipt(tx_hash, None, &L2_CLIENT).await?;
     match receipt {
         RpcReceipt { receipt, .. } if receipt.status => Ok(contract_address),
         _ => Err(eyre::eyre!("ERC20 deploy failed: deploy tx failed")),
@@ -247,9 +238,8 @@ async fn claim_erc20_balances(
     for pk in private_keys {
         let contract = contract_address;
         tasks.spawn(async move {
-            let client = EthClient::new(L2_RPC_URL);
             let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
-            let claim_tx = client
+            let claim_tx = L2_CLIENT
                 .build_eip1559_transaction(
                     contract,
                     get_address_from_secret_key(&pk).unwrap(),
@@ -258,11 +248,11 @@ async fn claim_erc20_balances(
                 )
                 .await
                 .unwrap();
-            let tx_hash = client
+            let tx_hash = L2_CLIENT
                 .send_eip1559_transaction(&claim_tx, &pk)
                 .await
                 .unwrap();
-            wait_receipt(client, tx_hash, None).await
+            wait_receipt(tx_hash, None, &L2_CLIENT).await
         });
     }
     for response in tasks.join_all().await {
@@ -286,28 +276,27 @@ async fn claim_erc20_balances(
 }
 
 async fn erc20_load_test(
-    tx_amount: u64,
+    iterations: u64,
     chain_id: u64,
     contract_address: Address,
     senders: Vec<SecretKey>,
 ) -> eyre::Result<()> {
-    let client = EthClient::new(L2_RPC_URL);
     let mut tasks = JoinSet::new();
 
     let mut counter = 0;
     for pk in senders {
         let address = get_address_from_secret_key(&pk)?;
-        let nonce = client
+        let nonce = L2_CLIENT
             .get_nonce(address, BlockByNumber::Latest)
             .await
             .unwrap();
-        for i in 0..tx_amount {
+        for i in 0..iterations {
             let send_calldata = calldata::encode_calldata(
                 "transfer(address,uint256)",
                 &[Value::Address(H160::random()), Value::Uint(U256::one())],
             )
             .unwrap();
-            let send_tx = client
+            let send_tx = L2_CLIENT
                 .build_eip1559_transaction(
                     contract_address,
                     address,
@@ -322,19 +311,57 @@ async fn erc20_load_test(
                     },
                 )
                 .await?;
-            let client = client.clone();
             sleep(Duration::from_micros(800)).await;
             tasks.spawn(async move {
-                let _sent = client
+                let _sent = L2_CLIENT
                     .send_eip1559_transaction(&send_tx, &pk)
                     .await
                     .unwrap();
             });
         }
         counter += 1;
-        println!("ERC-20 transfer for account number {} sent!", counter);
+        println!("ERC-20 transfers for account number {} sent!", counter);
     }
     tasks.join_all().await;
+    Ok(())
+}
+
+async fn _generic_load_test(
+    test_type: TestType,
+    iterations: u64,
+    chain_id: u64,
+    private_keys: Vec<SecretKey>,
+    to_address: Address,
+    value: U256,
+    verbose: bool,
+    calldata: Bytes,
+) -> eyre::Result<()> {
+    println!("TEST_TYPE: {test_type:?}");
+    println!("Sending to: {to_address:#x}");
+
+    let now = Instant::now();
+    let mut threads = vec![];
+    for pk in private_keys {
+        let thread = tokio::spawn(transfer_from(
+            pk,
+            to_address,
+            value,
+            iterations,
+            chain_id,
+            verbose,
+            calldata.clone(),
+        ));
+        threads.push(thread);
+    }
+
+    let mut retries = 0;
+    for thread in threads {
+        retries += thread.await??;
+    }
+
+    println!("Total retries: {retries}");
+    println!("Total time elapsed: {:.2?}", now.elapsed());
+
     Ok(())
 }
 
@@ -347,119 +374,89 @@ impl Command {
                 value,
                 iterations,
                 verbose,
-                fibonacci,
-                i_o_heavy,
+                test_type,
             } => {
                 let private_keys: Vec<SecretKey> = read_lines(path)?
                     .map(|pk| SecretKey::from_str(&pk.unwrap().trim_start_matches("0x")).unwrap())
                     .collect();
 
-                if let Err(err) = test_connection(L2_RPC_URL).await {
+                if let Err(err) = test_connection(&L2_CLIENT).await {
                     bail!("Couldn't establish connection to L2: {err}")
                 }
 
-                let client: EthClient = EthClient::new(L2_RPC_URL);
-                let chain_id = client.get_chain_id().await?.as_u64();
+                let chain_id = L2_CLIENT.get_chain_id().await?.as_u64();
 
-                let mut to_address = match to {
-                    Some(address) => address,
-                    None => Address::random(),
+                let (calldata, to_address) = match test_type {
+                    TestType::PlainTransactions => {
+                        let calldata = Bytes::new();
+                        let to_address = match to {
+                            Some(address) => address,
+                            None => Address::random(),
+                        };
+                        (calldata, to_address)
+                    }
+                    TestType::Fibonacci => {
+                        // This is the bytecode for the contract with the following functions
+                        // version() -> always returns 2
+                        // function fibonacci(uint n) public pure returns (uint) -> returns the nth fib number
+                        let init_code = hex::decode("6080604052348015600e575f5ffd5b506103198061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c806354fd4d501461003857806361047ff414610056575b5f5ffd5b610040610086565b60405161004d9190610152565b60405180910390f35b610070600480360381019061006b9190610199565b61008b565b60405161007d9190610152565b60405180910390f35b600281565b5f5f8210156100cf576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016100c69061021e565b60405180910390fd5b5f82036100de575f9050610135565b600182036100ef5760019050610135565b5f5f90505f600190505f600290505b84811161012e575f82905083836101159190610269565b92508093505080806101269061029c565b9150506100fe565b5080925050505b919050565b5f819050919050565b61014c8161013a565b82525050565b5f6020820190506101655f830184610143565b92915050565b5f5ffd5b6101788161013a565b8114610182575f5ffd5b50565b5f813590506101938161016f565b92915050565b5f602082840312156101ae576101ad61016b565b5b5f6101bb84828501610185565b91505092915050565b5f82825260208201905092915050565b7f496e707574206d757374206265206e6f6e2d6e656761746976650000000000005f82015250565b5f610208601a836101c4565b9150610213826101d4565b602082019050919050565b5f6020820190508181035f830152610235816101fc565b9050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6102738261013a565b915061027e8361013a565b92508282019050808211156102965761029561023c565b5b92915050565b5f6102a68261013a565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036102d8576102d761023c565b5b60018201905091905056fea264697066735822122021e2c2b56b7e23b9555cc95390dfb2979a8526595038818d133d5bb772c01a6564736f6c634300081c0033")?;
+
+                        let (_, contract_address) = L2_CLIENT
+                            .deploy(
+                                *RICH_ADDRESS,
+                                *RICH_PRIVATE_KEY,
+                                init_code.into(),
+                                Overrides::default(),
+                            )
+                            .await?;
+
+                        let calldata = calldata::encode_calldata(
+                            "fibonacci(uint256)",
+                            &[Value::Uint(100000000000000_u64.into())],
+                        )?
+                        .into();
+                        let to_address = contract_address;
+                        (calldata, to_address)
+                    }
+                    TestType::IoHeavy => {
+                        // Contract with a function that touches 100 storage slots on every transaction.
+                        // See `test_data/IOHeavyContract.sol` for the code.
+                        let init_code = hex::decode("6080604052348015600e575f5ffd5b505f5f90505b6064811015603e57805f8260648110602d57602c6043565b5b018190555080806001019150506014565b506070565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b6102728061007d5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c8063431aabc21461004357806358faa02f1461007357806362f8e72a1461007d575b5f5ffd5b61005d6004803603810190610058919061015c565b61009b565b60405161006a9190610196565b60405180910390f35b61007b6100b3565b005b61008561010a565b6040516100929190610196565b60405180910390f35b5f81606481106100a9575f80fd5b015f915090505481565b5f5f90505b60648110156101075760015f82606481106100d6576100d56101af565b5b01546100e29190610209565b5f82606481106100f5576100f46101af565b5b018190555080806001019150506100b8565b50565b5f5f5f6064811061011e5761011d6101af565b5b0154905090565b5f5ffd5b5f819050919050565b61013b81610129565b8114610145575f5ffd5b50565b5f8135905061015681610132565b92915050565b5f6020828403121561017157610170610125565b5b5f61017e84828501610148565b91505092915050565b61019081610129565b82525050565b5f6020820190506101a95f830184610187565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61021382610129565b915061021e83610129565b9250828201905080821115610236576102356101dc565b5b9291505056fea264697066735822122055f6d7149afdb56c745a203d432710eaa25a8ccdb030503fb970bf1c964ac03264736f6c634300081b0033")?;
+
+                        let (_, contract_address) = L2_CLIENT
+                            .deploy(
+                                *RICH_ADDRESS,
+                                *RICH_PRIVATE_KEY,
+                                init_code.into(),
+                                Overrides::default(),
+                            )
+                            .await?;
+
+                        let calldata = calldata::encode_calldata("incrementNumbers()", &[])?.into();
+                        let to_address = contract_address;
+
+                        (calldata, to_address)
+                    }
+                    TestType::Erc20 => {
+                        let contract_address = erc20_deploy().await?;
+                        claim_erc20_balances(contract_address, private_keys.clone()).await?;
+                        erc20_load_test(iterations, chain_id, contract_address, private_keys)
+                            .await?;
+                        return Ok(());
+                    }
                 };
 
-                let calldata: Bytes = if fibonacci {
-                    // This is the bytecode for the contract with the following functions
-                    // version() -> always returns 2
-                    // function fibonacci(uint n) public pure returns (uint) -> returns the nth fib number
-                    let init_code = hex::decode("6080604052348015600e575f5ffd5b506103198061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610034575f3560e01c806354fd4d501461003857806361047ff414610056575b5f5ffd5b610040610086565b60405161004d9190610152565b60405180910390f35b610070600480360381019061006b9190610199565b61008b565b60405161007d9190610152565b60405180910390f35b600281565b5f5f8210156100cf576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016100c69061021e565b60405180910390fd5b5f82036100de575f9050610135565b600182036100ef5760019050610135565b5f5f90505f600190505f600290505b84811161012e575f82905083836101159190610269565b92508093505080806101269061029c565b9150506100fe565b5080925050505b919050565b5f819050919050565b61014c8161013a565b82525050565b5f6020820190506101655f830184610143565b92915050565b5f5ffd5b6101788161013a565b8114610182575f5ffd5b50565b5f813590506101938161016f565b92915050565b5f602082840312156101ae576101ad61016b565b5b5f6101bb84828501610185565b91505092915050565b5f82825260208201905092915050565b7f496e707574206d757374206265206e6f6e2d6e656761746976650000000000005f82015250565b5f610208601a836101c4565b9150610213826101d4565b602082019050919050565b5f6020820190508181035f830152610235816101fc565b9050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6102738261013a565b915061027e8361013a565b92508282019050808211156102965761029561023c565b5b92915050565b5f6102a68261013a565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036102d8576102d761023c565b5b60018201905091905056fea264697066735822122021e2c2b56b7e23b9555cc95390dfb2979a8526595038818d133d5bb772c01a6564736f6c634300081c0033")?;
-                    let client: EthClient = EthClient::new(L2_RPC_URL);
-
-                    let (_, contract_address) = client
-                        .deploy(
-                            *RICH_ADDRESS,
-                            *RICH_PRIVATE_KEY,
-                            init_code.into(),
-                            Overrides::default(),
-                        )
-                        .await?;
-
-                    to_address = contract_address;
-
-                    calldata::encode_calldata(
-                        "fibonacci(uint256)",
-                        &[Value::Uint(100000000000000_u64.into())],
-                    )?
-                    .into()
-                } else if i_o_heavy {
-                    // Contract with a function that touches 100 storage slots on every transaction.
-                    // See `test_data/IOHeavyContract.sol` for the code.
-                    let init_code = hex::decode("6080604052348015600e575f5ffd5b505f5f90505b6064811015603e57805f8260648110602d57602c6043565b5b018190555080806001019150506014565b506070565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b6102728061007d5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c8063431aabc21461004357806358faa02f1461007357806362f8e72a1461007d575b5f5ffd5b61005d6004803603810190610058919061015c565b61009b565b60405161006a9190610196565b60405180910390f35b61007b6100b3565b005b61008561010a565b6040516100929190610196565b60405180910390f35b5f81606481106100a9575f80fd5b015f915090505481565b5f5f90505b60648110156101075760015f82606481106100d6576100d56101af565b5b01546100e29190610209565b5f82606481106100f5576100f46101af565b5b018190555080806001019150506100b8565b50565b5f5f5f6064811061011e5761011d6101af565b5b0154905090565b5f5ffd5b5f819050919050565b61013b81610129565b8114610145575f5ffd5b50565b5f8135905061015681610132565b92915050565b5f6020828403121561017157610170610125565b5b5f61017e84828501610148565b91505092915050565b61019081610129565b82525050565b5f6020820190506101a95f830184610187565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61021382610129565b915061021e83610129565b9250828201905080821115610236576102356101dc565b5b9291505056fea264697066735822122055f6d7149afdb56c745a203d432710eaa25a8ccdb030503fb970bf1c964ac03264736f6c634300081b0033")?;
-                    let client = EthClient::new(L2_RPC_URL);
-
-                    let (_, contract_address) = client
-                        .deploy(
-                            *RICH_ADDRESS,
-                            *RICH_PRIVATE_KEY,
-                            init_code.into(),
-                            Overrides::default(),
-                        )
-                        .await?;
-
-                    to_address = contract_address;
-
-                    calldata::encode_calldata("incrementNumbers()", &[])?.into()
-                } else {
-                    Bytes::new()
-                };
-
-                println!("Sending to: {to_address:#x}");
-
-                let now = Instant::now();
-                let mut threads = vec![];
-                for pk in private_keys {
-                    let thread = tokio::spawn(transfer_from(
-                        pk,
-                        to_address,
-                        value,
-                        iterations,
-                        chain_id,
-                        verbose,
-                        calldata.clone(),
-                    ));
-                    threads.push(thread);
-                }
-
-                let mut retries = 0;
-                for thread in threads {
-                    retries += thread.await??;
-                }
-
-                println!("value {value:?}");
-                println!("Total retries: {retries}");
-                println!("Total time elapsed: {:.2?}", now.elapsed());
-
-                Ok(())
-            }
-            Command::ERC20 {
-                transactions: transaction_count,
-                path,
-            } => {
-                let client: EthClient = EthClient::new(L2_RPC_URL);
-                let chain_id = client.get_chain_id().await?.as_u64();
-
-                let contract_address = erc20_deploy().await?;
-                let private_keys: Result<Vec<_>, _> = read_lines(path)?
-                    .map(|pk| {
-                        pk.unwrap()
-                            .parse::<H256>()
-                            .expect("One of the private keys is invalid")
-                    })
-                    .map(|pk| SecretKey::from_slice(pk.as_bytes()))
-                    .collect();
-                let private_keys = private_keys?;
-                claim_erc20_balances(contract_address, private_keys.clone()).await?;
-                erc20_load_test(transaction_count, chain_id, contract_address, private_keys)
-                    .await?;
-                Ok(())
+                _generic_load_test(
+                    test_type,
+                    iterations,
+                    chain_id,
+                    private_keys,
+                    to_address,
+                    value,
+                    verbose,
+                    calldata,
+                )
+                .await
             }
         }
     }

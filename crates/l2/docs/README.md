@@ -65,7 +65,7 @@ make cli
 To run the load-test, use the following command on the root of this repo:
 
 ```bash
-cargo run --release --bin loadtest --manifest-path cmd/ethrex_l2/Cargo.toml -- load --path ./test_data/private_keys.txt -i 1000 -v  --value 1
+make load-test
 ```
 
 The command will, for each private key in the `private_keys.txt` file, send 1000 transactions with a value of `1` to a random account. If you want to send all transfers to the same account, pass
