@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743434170401,
+  "lastUpdate": 1743435099658,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -1915,6 +1915,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 192357867237,
             "range": "± 680639721",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f3063f124020f239617ea2d30de689209ac68e3a",
+          "message": "feat(l1): write state nodes in batches during state healing (#2309)\n\n**Motivation**\nIn a similar fashion to #2288, this PR aims to reduce the time spent\nwriting data to the DB by writing data in batches. In this case the\nnodes received during storage healing are written all at once using the\n`write_node_batch` method introduced in #2288\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Refactor state healer code to write all nodes for a trie in a single\noperation\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Rodrigo Oliveri <rodrigooliveri10@gmail.com>",
+          "timestamp": "2025-03-31T14:42:21Z",
+          "tree_id": "6182c78c84c86b7b3f8d97ebd099ff2eb007d5bd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f3063f124020f239617ea2d30de689209ac68e3a"
+        },
+        "date": 1743435097610,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183532074688,
+            "range": "± 572310191",
             "unit": "ns/iter"
           }
         ]
