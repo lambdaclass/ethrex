@@ -263,11 +263,11 @@ impl LEVM {
                 None
             } else {
                 // Look into the current database to see if the bytecode hash is already present
-                let current_bytecode = initial_account_state.code;
-                let code = new_state_account.code.clone();
+                let current_bytecode = &initial_account_state.bytecode;
+                let code = new_state_account.info.bytecode.clone();
                 // The code is present in the current database
-                if current_bytecode != Bytes::new() {
-                    if current_bytecode != code {
+                if *current_bytecode != Bytes::new() {
+                    if *current_bytecode != code {
                         // The code has changed
                         Some(code)
                     } else {
