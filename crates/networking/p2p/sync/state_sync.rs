@@ -101,15 +101,11 @@ async fn state_sync_segment(
     ));
     // Skip state sync if we are already on healing
     if start_account_hash == STATE_TRIE_SEGMENTS_END[segment_number] {
-        // Update sync progress (these tasks are not vital so we can detach it)
-        tokio::task::spawn(StateSyncProgress::update_key(
-            state_sync_progress.clone(),
-            segment_number,
-            start_account_hash,
-        ));
+        // Update sync progress (this task is not vital so we can detach it)
         tokio::task::spawn(StateSyncProgress::end_segment(
             state_sync_progress.clone(),
             segment_number,
+            start_account_hash,
         ));
         return Ok((segment_number, false, start_account_hash));
     }
@@ -202,6 +198,7 @@ async fn state_sync_segment(
     tokio::task::spawn(StateSyncProgress::end_segment(
         state_sync_progress.clone(),
         segment_number,
+        start_account_hash,
     ));
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
@@ -246,8 +243,9 @@ impl StateSyncProgress {
     async fn update_key(progress: StateSyncProgress, segment_number: usize, current_key: H256) {
         progress.data.lock().await.current_keys[segment_number] = current_key
     }
-    async fn end_segment(progress: StateSyncProgress, segment_number: usize) {
-        progress.data.lock().await.ended[segment_number] = true
+    async fn end_segment(progress: StateSyncProgress, segment_number: usize, last_key: H256) {
+        progress.data.lock().await.ended[segment_number] = true;
+        progress.data.lock().await.current_keys[segment_number] = last_key;
     }
 
     // Returns true if the state sync ended
