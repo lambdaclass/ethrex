@@ -5,19 +5,10 @@ use std::collections::HashMap;
 
 use crate::StorageSlot;
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
 pub struct CacheDB {
     pub cached_accounts: HashMap<Address, Account>,
     pub cached_storages: HashMap<Address, HashMap<H256, StorageSlot>>,
-}
-
-impl Default for CacheDB {
-    fn default() -> Self {
-        Self {
-            cached_accounts: HashMap::new(),
-            cached_storages: HashMap::new(),
-        }
-    }
 }
 
 impl CacheDB {
@@ -69,7 +60,7 @@ impl CacheDB {
     ) -> Option<StorageSlot> {
         self.cached_storages
             .entry(address)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(key, storage_slot)
     }
 }
