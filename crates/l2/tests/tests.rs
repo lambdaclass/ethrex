@@ -454,6 +454,11 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     println!("Contract deployed on L2: {contract_address:?}");
 
+    let l2_balance_after_deploy = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    println!("L2 balance after deploy: {l2_balance_after_deploy}");
+
     // We call the contract to emit an event with the number 424242
     let calldata_to_contract: Bytes =
         calldata::encode_calldata("emitNumber(uint256)", &[Value::Uint(U256::from(424242))])?
@@ -543,7 +548,7 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     assert_eq!(
         l2_after_deposit_balance,
-        l2_initial_balance + U256::from(100000000000000000000u128),
+        l2_balance_after_deploy + U256::from(100000000000000000000u128),
         "L2 balance should increase with deposit value"
     );
 
