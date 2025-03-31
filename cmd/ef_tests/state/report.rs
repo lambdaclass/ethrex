@@ -1,9 +1,12 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
-use ethrex_common::{types::Fork, Address, H256};
+use ethrex_common::{
+    types::{Account, Fork},
+    Address, H256,
+};
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
-    Account, StorageSlot,
+    StorageSlot,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use itertools::Itertools;
@@ -616,7 +619,7 @@ impl fmt::Display for ComparisonReport {
                 .iter()
                 .find(|account_update| &account_update.address == levm_updated_account_only)
                 .unwrap();
-            let updated_account_storage = updated_account_update
+            let updated_account_storage: HashMap<H256, StorageSlot> = updated_account_update
                 .added_storage
                 .iter()
                 .map(|(key, value)| {
@@ -625,8 +628,7 @@ impl fmt::Display for ComparisonReport {
                             .storage
                             .get(key)
                             .cloned()
-                            .unwrap_or_default()
-                            .original_value,
+                            .unwrap_or_default(),
                         current_value: *value,
                     };
                     (*key, storage_slot)
@@ -637,7 +639,7 @@ impl fmt::Display for ComparisonReport {
                 updated_account_info.balance,
                 updated_account_update.code.clone().unwrap_or_default(),
                 updated_account_info.nonce,
-                updated_account_storage,
+                HashMap::new(),
             );
             let mut updates = 0;
             if initial_account.info.balance != updated_account.info.balance {
@@ -658,20 +660,20 @@ impl fmt::Display for ComparisonReport {
                 )?;
                 updates += 1;
             }
-            if initial_account.info.bytecode != updated_account.info.bytecode {
+            if initial_account.code != updated_account.code {
                 writeln!(
                     f,
                     "      Code updated: {initial_code}, {updated_code}",
-                    initial_code = if initial_account.info.bytecode.is_empty() {
+                    initial_code = if initial_account.code.is_empty() {
                         "was empty".to_string()
                     } else {
-                        hex::encode(&initial_account.info.bytecode)
+                        hex::encode(&initial_account.code)
                     },
-                    updated_code = hex::encode(&updated_account.info.bytecode)
+                    updated_code = hex::encode(&updated_account.code)
                 )?;
                 updates += 1;
             }
-            for (added_storage_address, added_storage_slot) in updated_account.storage.iter() {
+            for (added_storage_address, added_storage_slot) in updated_account_storage.iter() {
                 writeln!(
                     f,
                     "      Storage slot added: {added_storage_address}: {} -> {}",
@@ -696,7 +698,7 @@ impl fmt::Display for ComparisonReport {
                 .iter()
                 .find(|account_update| &account_update.address == revm_updated_account_only)
                 .unwrap();
-            let updated_account_storage = updated_account_update
+            let updated_account_storage: HashMap<H256, StorageSlot> = updated_account_update
                 .added_storage
                 .iter()
                 .map(|(key, value)| {
@@ -705,8 +707,7 @@ impl fmt::Display for ComparisonReport {
                             .storage
                             .get(key)
                             .cloned()
-                            .unwrap_or_default()
-                            .original_value,
+                            .unwrap_or_default(),
                         current_value: *value,
                     };
                     (*key, storage_slot)
@@ -719,7 +720,7 @@ impl fmt::Display for ComparisonReport {
                 updated_account_info.balance,
                 updated_account_update.code.clone().unwrap_or_default(),
                 updated_account_info.nonce,
-                updated_account_storage,
+                HashMap::new(),
             );
             let mut updates = 0;
             if initial_account.info.balance != updated_account.info.balance {
@@ -740,20 +741,20 @@ impl fmt::Display for ComparisonReport {
                 )?;
                 updates += 1;
             }
-            if initial_account.info.bytecode != updated_account.info.bytecode {
+            if initial_account.code != updated_account.code {
                 writeln!(
                     f,
                     "      Code updated: {initial_code}, {updated_code}",
-                    initial_code = if initial_account.info.bytecode.is_empty() {
+                    initial_code = if initial_account.code.is_empty() {
                         "was empty".to_string()
                     } else {
-                        hex::encode(&initial_account.info.bytecode)
+                        hex::encode(&initial_account.code)
                     },
-                    updated_code = hex::encode(&updated_account.info.bytecode)
+                    updated_code = hex::encode(&updated_account.code)
                 )?;
                 updates += 1;
             }
-            for (added_storage_address, added_storage_slot) in updated_account.storage.iter() {
+            for (added_storage_address, added_storage_slot) in updated_account_storage.iter() {
                 writeln!(
                     f,
                     "      Storage slot added: {added_storage_address}: {} -> {}",
