@@ -21,7 +21,6 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub mod config;
 pub mod errors;
 
 #[derive(Deserialize, Debug)]

@@ -66,11 +66,6 @@ The following environment variables are available to configure the Proposer cons
 
   - `rpc_url`: URL of the L1 RPC.
 
-- Under the [engine] section:
-
-  - `rpc_url`: URL of the EngineAPI.
-  - `jwt_path`: Path to the JWT authentication file, required to connect to the EngineAPI.
-
 - Under the [watcher] section:
 
   - `bridge_address`: Address of the bridge contract on L1.
