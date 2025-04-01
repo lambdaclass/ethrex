@@ -473,8 +473,18 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
         Value::Bytes(calldata_to_contract),     // data
     ];
 
-    let calldata =
-        calldata::encode_calldata("deposit(address,address,uint256,bytes)", &values)?.into();
+    // This should be changed once https://github.com/lambdaclass/ethrex/issues/2384 is addressed
+    let calldata = calldata::encode_calldata("deposit((address,address,uint256,bytes))", &values)?;
+    let mut data = vec![];
+    data.extend_from_slice(calldata.get(..4).ok_or(EthClientError::Custom(
+        "Invalid function selector".to_string(),
+    ))?);
+    data.extend_from_slice(&U256::from(32).to_big_endian());
+    data.extend_from_slice(
+        calldata
+            .get(4..)
+            .ok_or(EthClientError::Custom("Invalid calldata".to_string()))?,
+    );
 
     let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
         EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
@@ -493,7 +503,7 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
         .build_eip1559_transaction(
             common_bridge_address(),
             l1_rich_wallet_address,
-            calldata,
+            Bytes::from(data),
             overrides,
         )
         .await?;
@@ -647,8 +657,18 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
         Value::Bytes(calldata_to_contract),     // data
     ];
 
-    let calldata =
-        calldata::encode_calldata("deposit(address,address,uint256,bytes)", &values)?.into();
+    // This should be changed once https://github.com/lambdaclass/ethrex/issues/2384 is addressed
+    let calldata = calldata::encode_calldata("deposit((address,address,uint256,bytes))", &values)?;
+    let mut data = vec![];
+    data.extend_from_slice(calldata.get(..4).ok_or(EthClientError::Custom(
+        "Invalid function selector".to_string(),
+    ))?);
+    data.extend_from_slice(&U256::from(32).to_big_endian());
+    data.extend_from_slice(
+        calldata
+            .get(4..)
+            .ok_or(EthClientError::Custom("Invalid calldata".to_string()))?,
+    );
 
     let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
         EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
@@ -667,7 +687,7 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
         .build_eip1559_transaction(
             common_bridge_address(),
             l1_rich_wallet_address,
-            calldata,
+            Bytes::from(data),
             overrides,
         )
         .await?;

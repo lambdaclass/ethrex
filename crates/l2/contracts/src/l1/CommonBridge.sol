@@ -71,69 +71,60 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         return depositLogs;
     }
 
-    function _deposit(
-        address to,
-        address recipient,
-        uint256 gasLimit,
-        bytes memory data
-    ) private {
+    function _deposit(DepositValues memory depositValues) private {
         require(msg.value > 0, "CommonBridge: amount to deposit is zero");
 
         bytes32 l2MintTxHash = keccak256(
             abi.encodePacked(
                 msg.sender,
-                to,
-                recipient,
+                depositValues.to,
+                depositValues.recipient,
                 msg.value,
-                gasLimit,
+                depositValues.gasLimit,
                 depositId,
-                data
+                depositValues.data
             )
         );
 
         depositLogs.push(
             keccak256(
                 bytes.concat(
-                    bytes20(to),
+                    bytes20(depositValues.to),
                     bytes32(msg.value),
                     bytes32(depositId),
-                    bytes20(recipient),
+                    bytes20(depositValues.recipient),
                     bytes20(msg.sender),
-                    bytes32(gasLimit),
-                    bytes32(keccak256(data))
+                    bytes32(depositValues.gasLimit),
+                    bytes32(keccak256(depositValues.data))
                 )
             )
         );
         emit DepositInitiated(
             msg.value,
-            to,
+            depositValues.to,
             depositId,
-            recipient,
+            depositValues.recipient,
             msg.sender,
-            gasLimit,
-            data,
+            depositValues.gasLimit,
+            depositValues.data,
             l2MintTxHash
         );
         depositId += 1;
     }
 
     /// @inheritdoc ICommonBridge
-    function deposit(
-        address to,
-        address recipient,
-        uint256 gasLimit,
-        bytes calldata data
-    ) public payable {
-        _deposit(to, recipient, gasLimit, data);
-    }
-
-    fallback() external payable {
-        deposit(msg.sender, msg.sender, 21000 * 5, msg.data);
+    function deposit(DepositValues calldata depositValues) public payable {
+        _deposit(depositValues);
     }
 
     receive() external payable {
-        bytes memory data = bytes("");
-        _deposit(msg.sender, msg.sender, 21000 * 5, data);
+        DepositValues memory depositValues = DepositValues({
+            to: msg.sender,
+            recipient: msg.sender,
+            gasLimit: 21000 * 5,
+            data: bytes("")
+        });
+        _deposit(depositValues);
     }
 
     /// @inheritdoc ICommonBridge
