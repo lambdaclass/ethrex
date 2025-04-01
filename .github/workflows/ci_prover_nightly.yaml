@@ -1,5 +1,5 @@
 # The reason this exists is because the Pico zkVM compiles in nightly only.
-name: L2 Prover (nightly)
+name: Prover (nightly)
 on:
   push:
     branches: ["main"]

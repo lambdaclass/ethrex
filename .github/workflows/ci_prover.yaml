@@ -1,4 +1,4 @@
-name: L2 Prover
+name: Prover
 on:
   push:
     branches: ["main"]
