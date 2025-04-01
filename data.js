@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743522109766,
+  "lastUpdate": 1743522670991,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2065,6 +2065,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183601995227,
             "range": "± 513683522",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e9f9112b01dc30f0b4d651a33c8241a46807db39",
+          "message": "docs(l2): make simple changes/nits to docs (#2370)\n\n**Motivation**\n- Improve existing docs a little bit with things I'm noticing while\nreading it.\n\n**Description**\n- Avoid saying we are updating storage in a basic transaction; we are\nactually just updating the balances of the accounts.\n- Make some other small and unimportant changes that improve docs\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-01T14:56:29Z",
+          "tree_id": "b18489be910f4ac5320cf98188e15bf9ece95fdf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e9f9112b01dc30f0b4d651a33c8241a46807db39"
+        },
+        "date": 1743522668900,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 188754922429,
+            "range": "± 1394860791",
             "unit": "ns/iter"
           }
         ]
