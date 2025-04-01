@@ -1,4 +1,7 @@
-use bytes::{BufMut, Bytes};
+use bytes::{
+    buf::UninitSlice,
+    BufMut, Bytes,
+};
 use ethereum_types::U256;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use tinyvec::ArrayVec;
@@ -17,9 +20,17 @@ pub trait RLPEncode {
     fn encode(&self, buf: &mut dyn BufMut);
 
     fn length(&self) -> usize {
-        let mut buf = Vec::new();
+        struct Counter(usize, [u8; 128]);
+
+        unsafe impl BufMut for Counter {
+            fn remaining_mut(&self) -> usize { usize::MAX }
+            unsafe fn advance_mut(&mut self, cnt: usize) { self.0 += cnt }
+            fn chunk_mut(&mut self) -> &mut UninitSlice { UninitSlice::new(&mut self.1) }
+        }
+
+        let mut buf = Counter(0, [0u8; 128]);
         self.encode(&mut buf);
-        buf.len()
+        buf.0
     }
 
     fn encode_to_vec(&self) -> Vec<u8> {
