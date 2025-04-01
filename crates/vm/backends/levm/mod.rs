@@ -85,7 +85,14 @@ impl LEVM {
             Self::process_withdrawals(db, withdrawals, block.header.parent_hash)?;
         }
 
-        let requests = extract_all_requests_levm(&receipts, db, &block.header)?;
+        cfg_if::cfg_if! {
+            if #[cfg(not(feature = "l2"))] {
+                let requests = extract_all_requests_levm(&receipts, db, &block.header)?;
+            } else {
+                let requests = Default::default();
+            }
+        }
+
         let account_updates = Self::get_state_transitions(db, fork)?;
 
         Ok(BlockExecutionResult {
@@ -421,8 +428,7 @@ pub fn generic_system_contract_levm(
     .map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
-    db.cache.remove(&SYSTEM_ADDRESS);
-    db.cache.remove(&block_header.coinbase);
+    db.cache.remove(&system_address);
 
     Ok(report)
 }
