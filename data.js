@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743459129197,
+  "lastUpdate": 1743522109766,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2035,6 +2035,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184701597004,
             "range": "± 1116702907",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ab8f5c324b9999994eb8002497ab667bdd1223ff",
+          "message": "build(l2): enable exec prover by default. (#2372)\n\n**Motivation**\nRunning `cargo build --workspace` should work by default, without having\nto explicitly set a feature flag. Without this change, it errors because\nno prover backend was selected. Unless we're working on the prover, we\ndon't really care about the backend and we should reduce the friction to\npeople working in the project.\n\n---------\n\nCo-authored-by: fborello-lambda <federicoborello@lambdaclass.com>",
+          "timestamp": "2025-04-01T14:51:03Z",
+          "tree_id": "67e19d03eb045812a1a615c5cb45f7f36b115d27",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ab8f5c324b9999994eb8002497ab667bdd1223ff"
+        },
+        "date": 1743522107191,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183601995227,
+            "range": "± 513683522",
             "unit": "ns/iter"
           }
         ]
