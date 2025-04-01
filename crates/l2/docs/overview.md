@@ -90,7 +90,7 @@ The solution is through a [proof of equivalence](https://ethresear.ch/t/easy-pro
 
 If we turn the first one into a polynomial commitment, we can take a random evaluation point through Fiat Shamir and prove that it evaluates to the same value as the KZG blob commitment at that point. The `commit` transaction then sends the blob commitment and, through the point evaluation precompile, verifies that the given blob evaluates to that same value. If it does, the underlying blob is indeed the correct state diff.
 
-Our proof of equivalence implementation follows Method 1 [here](https://notes.ethereum.org/@dankrad/kzg_commitments_in_proofs). What we do is the following.
+Our proof of equivalence implementation follows Method 1 [here](https://notes.ethereum.org/@dankrad/kzg_commitments_in_proofs). What we do is the following:
 
 ### Prover side
 
@@ -135,10 +135,10 @@ The public input to the proof is then the hash of the previous block commitment 
 
 ### Commit transaction
 
-For the `commit` transaction, the L1 verifier contract then receives the following things from the sequencer:
+For the `commit` transaction, the L1 verifier contract receives the following things from the sequencer:
 
 - The L2 block number to be commited.
-- The new L2 state root/
+- The new L2 state root.
 - The Withdrawal logs merkle root.
 - The state diffs hash or polynomial commitment scheme accordingly.
 
