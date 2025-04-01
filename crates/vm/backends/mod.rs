@@ -156,6 +156,7 @@ impl Evm {
                     block_header.gas_limit - *remaining_gas,
                     execution_report.logs.clone(),
                 );
+
                 Ok((receipt, execution_report.gas_used))
             }
         }
@@ -176,6 +177,7 @@ impl Evm {
                 if spec_id >= SpecId::PRAGUE {
                     REVM::process_block_hash_history(block_header, state)?;
                 }
+
                 Ok(())
             }
             Evm::LEVM { db } => {
@@ -220,8 +222,7 @@ impl Evm {
         match self {
             Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
             Evm::LEVM { db } => {
-                LEVM::process_withdrawals(db, withdrawals, block_header.parent_hash)?;
-                Ok(())
+                LEVM::process_withdrawals(db, withdrawals, block_header.parent_hash)
             }
         }
     }
