@@ -25,13 +25,24 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: RISC-V SP1 toolchain install
+        if: ${{ matrix.backend == 'sp1' }}
         run: |
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 4.1.0
       - name: Check
-        run: cargo check -p ethrex-prover -F ${{ matrix.backend }}
+        run: |
+          if [ "${{ matrix.backend }}" == "exec" ]; then
+            cargo check -p ethrex-prover
+          else
+            cargo check -p ethrex-prover -F ${{ matrix.backend }}
+          fi
       - name: Clippy
-        run: cargo clippy -p ethrex-prover --all-targets -F ${{ matrix.backend }}
+        run: |
+          if [ "${{ matrix.backend }}" == "exec" ]; then
+            cargo clippy -p ethrex-prover --all-targets
+          else
+            cargo clippy -p ethrex-prover --all-targets -F ${{ matrix.backend }}
+          fi
 
   test:
     # "Test" is a required check, don't change the name
