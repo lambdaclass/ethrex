@@ -71,6 +71,11 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install solc
+        run: |
+          sudo add-apt-repository ppa:ethereum/ethereum
+          sudo apt-get update && sudo apt-get -y install solc
+
       - name: Run tests
         run: |
           cd crates/l2
