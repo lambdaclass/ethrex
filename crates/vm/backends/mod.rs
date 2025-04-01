@@ -109,10 +109,7 @@ impl Evm {
     ) -> Result<BlockExecutionResult, EvmError> {
         match self {
             Evm::REVM { state } => REVM::execute_block(block, state),
-            Evm::LEVM { .. } => {
-                // TODO(#2218): LEVM does not support a way  persist the state between block executions
-                todo!();
-            }
+            Evm::LEVM { db } => LEVM::execute_block(block, db),
         }
     }
 
@@ -246,10 +243,9 @@ impl Evm {
         header: &BlockHeader,
         fork: Fork,
     ) -> Result<ExecutionResult, EvmError> {
-        let spec_id = fork_to_spec_id(fork);
-
         match self {
             Evm::REVM { state } => {
+                let spec_id = fork_to_spec_id(fork);
                 self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
             }
             Evm::LEVM { db } => LEVM::simulate_tx_from_generic(tx, header, db),
@@ -262,10 +258,9 @@ impl Evm {
         header: &BlockHeader,
         fork: Fork,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
-        let spec_id = fork_to_spec_id(fork);
-
         let result = match self {
             Evm::REVM { state } => {
+                let spec_id = fork_to_spec_id(fork);
                 self::revm::helpers::create_access_list(tx, header, state, spec_id)?
             }
 
