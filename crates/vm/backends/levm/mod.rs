@@ -81,6 +81,10 @@ impl LEVM {
             receipts.push(receipt);
         }
 
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, &withdrawals, block.header.parent_hash)?;
+        }
+
         let requests = extract_all_requests_levm(&receipts, db, &block.header)?;
         let account_updates = Self::get_state_transitions(db, fork)?;
 
