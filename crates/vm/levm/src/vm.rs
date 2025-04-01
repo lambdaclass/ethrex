@@ -270,7 +270,7 @@ impl<'a> VM<'a> {
                 })
             }
             TxKind::Create => {
-                let sender_nonce = get_account_no_push_cache(db, env.origin).info.nonce;
+                let sender_nonce = get_account_no_push_cache(db, env.origin)?.info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -397,7 +397,7 @@ impl<'a> VM<'a> {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(self.db, new_contract_address);
+            let new_account = get_account(self.db, new_contract_address)?;
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -455,7 +455,7 @@ impl<'a> VM<'a> {
             Some(account) => match account.storage.get(&key) {
                 Some(storage_slot) => storage_slot.clone(),
                 None => {
-                    let value = self.db.store.get_storage_slot(address, key);
+                    let value = self.db.store.get_storage_slot(address, key)?;
                     StorageSlot {
                         original_value: value,
                         current_value: value,
@@ -463,7 +463,7 @@ impl<'a> VM<'a> {
                 }
             },
             None => {
-                let value = self.db.store.get_storage_slot(address, key);
+                let value = self.db.store.get_storage_slot(address, key)?;
                 StorageSlot {
                     original_value: value,
                     current_value: value,

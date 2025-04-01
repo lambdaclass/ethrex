@@ -3,6 +3,8 @@ use ethrex_common::types::Log;
 use serde::{Deserialize, Serialize};
 use thiserror;
 
+use crate::db::error::DatabaseError;
+
 /// Errors that halt the program
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum VMError {
@@ -72,6 +74,8 @@ pub enum VMError {
     OutOfBounds,
     #[error("Precompile execution error: {0}")]
     PrecompileError(#[from] PrecompileError),
+    #[error("Database access error: {0}")]
+    DatabaseError(#[from] DatabaseError),
 }
 
 impl VMError {

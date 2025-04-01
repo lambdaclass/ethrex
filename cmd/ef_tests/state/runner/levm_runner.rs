@@ -161,7 +161,7 @@ pub fn prepare_vm_for_tx<'a>(
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
-        let account = world_state.get_account_info(*address);
+        let account = world_state.get_account_info(*address).unwrap();
         ensure_pre_state_condition(
             account.nonce == pre_value.nonce.as_u64(),
             format!(
@@ -177,8 +177,9 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             ),
         )?;
         for (k, v) in &pre_value.storage {
-            let storage_slot =
-                world_state.get_storage_slot(*address, H256::from_slice(&k.to_big_endian()));
+            let storage_slot = world_state
+                .get_storage_slot(*address, H256::from_slice(&k.to_big_endian()))
+                .unwrap();
             ensure_pre_state_condition(
                 &storage_slot == v,
                 format!(

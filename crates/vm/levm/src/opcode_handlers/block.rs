@@ -40,7 +40,7 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
-        if let Some(block_hash) = self.db.store.get_block_hash(block_number) {
+        if let Some(block_hash) = self.db.store.get_block_hash(block_number)? {
             current_call_frame
                 .stack
                 .push(U256::from_big_endian(block_hash.as_bytes()))?;
@@ -150,7 +150,7 @@ impl<'a> VM<'a> {
         }
         current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        let balance = get_account(self.db, current_call_frame.to).info.balance;
+        let balance = get_account(self.db, current_call_frame.to)?.info.balance;
 
         current_call_frame.stack.push(balance)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })

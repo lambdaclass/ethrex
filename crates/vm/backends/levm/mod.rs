@@ -25,6 +25,7 @@ use ethrex_levm::{
     vm::{EVMConfig, VM},
     Account, Environment,
 };
+use ethrex_storage::error::StoreError;
 use ethrex_storage::AccountUpdate;
 use std::cmp::min;
 use std::collections::HashMap;
@@ -45,10 +46,10 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<BlockExecutionResult, EvmError> {
         let chain_config = db.store.get_chain_config();
+        let block_header = &block.header;
+        let fork = chain_config.fork(block_header.timestamp);
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
-                let block_header = &block.header;
-                let fork = chain_config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     Self::beacon_root_contract_call(block_header, db)?;
                 }
@@ -60,8 +61,6 @@ impl LEVM {
             }
         }
 
-        // Account updates are initialized like this because of the beacon_root_contract_call, it is going to be empty if it wasn't called.
-        // Here we get the state_transitions from the db and then we get the state_transitions from the cache_db.
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -83,9 +82,6 @@ impl LEVM {
         }
 
         let requests = extract_all_requests_levm(&receipts, db, &block.header)?;
-
-        let fork = chain_config.fork(block.header.timestamp);
-
         let account_updates = Self::get_state_transitions(db, fork)?;
 
         Ok(BlockExecutionResult {
@@ -173,7 +169,7 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (new_state_account_address, new_state_account) in db.cache.drain() {
-            let initial_account_state = db.store.get_account_info(new_state_account_address);
+            let initial_account_state = db.store.get_account_info(new_state_account_address)?;
             let mut updates = 0;
             if initial_account_state.balance != new_state_account.info.balance {
                 updates += 1;
@@ -187,7 +183,7 @@ impl LEVM {
                 // Look into the current database to see if the bytecode hash is already present
                 let current_bytecode = db
                     .store
-                    .get_account_info(new_state_account_address)
+                    .get_account_info(new_state_account_address)?
                     .bytecode;
                 let code = new_state_account.info.bytecode.clone();
                 // The code is present in the current database
@@ -230,7 +226,7 @@ impl LEVM {
                 added_storage,
             };
 
-            let old_info = db.store.get_account_info(account_update.address);
+            let old_info = db.store.get_account_info(account_update.address)?;
             // https://eips.ethereum.org/EIPS/eip-161
             // if an account was empty and is now empty, after spurious dragon, it should be removed
             if account_update.removed
@@ -263,10 +259,12 @@ impl LEVM {
                 let acc_info = db
                     .store
                     .get_account_info_by_hash(parent_hash, address)
+                    .map_err(|e| StoreError::Custom(e.to_string()))?
                     .unwrap_or_default();
                 let acc_code = db
                     .store
                     .get_account_code(acc_info.code_hash)
+                    .map_err(|e| StoreError::Custom(e.to_string()))?
                     .unwrap_or_default();
 
                 Account {

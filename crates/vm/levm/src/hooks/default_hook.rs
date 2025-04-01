@@ -34,7 +34,7 @@ impl Hook for DefaultHook {
         initial_call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let sender_account = get_account(vm.db, sender_address);
+        let sender_account = get_account(vm.db, sender_address)?;
 
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
@@ -324,7 +324,7 @@ impl Hook for DefaultHook {
 
         // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            let existing_account = get_account(vm.db, receiver_address); //TO Account
+            let existing_account = get_account(vm.db, receiver_address)?; //TO Account
 
             if has_delegation(&existing_account.info)? {
                 // This is the case where the "to" address and the
