@@ -25,6 +25,7 @@ impl CacheDB {
     }
 
     pub fn remove_account(&mut self, address: &Address) -> Option<Account> {
+        self.cached_storages.remove(address);
         self.cached_accounts.remove(address)
     }
 
