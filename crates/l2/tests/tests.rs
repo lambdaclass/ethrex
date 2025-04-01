@@ -504,8 +504,23 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     println!("Deposit tx hash: {deposit_tx_hash:?}");
 
-    // Wait for the event to be emitted
+    // Check balances on L2 after deposit
+    let mut l2_after_deposit_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+    while l2_after_deposit_balance == l2_balance_after_deploy {
+        println!("Waiting for L2 balance to update after deposit");
+        l2_after_deposit_balance = proposer_client
+            .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+            .await?;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
 
+    l2_after_deposit_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+
+    // Wait for the event to be emitted
     let mut blk_number = U256::zero();
     let topic = keccak(b"NumberSet(uint256)");
     while proposer_client
@@ -536,11 +551,6 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     // Check that the number emitted is correct
     assert_eq!(number, U256::from(424242));
-
-    // Check balances on L1 and L2 after deposit
-    let l2_after_deposit_balance = proposer_client
-        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
-        .await?;
 
     let l2_contract_balance = proposer_client
         .get_balance(contract_address, BlockByNumber::Latest)
@@ -675,12 +685,21 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
         .get_balance(contract_address, BlockByNumber::Latest)
         .await?;
 
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-    // Check balances on L1 and L2 after deposit
-    let l2_after_deposit_balance = proposer_client
+    // Check balances on L2 after deposit
+    let mut l2_after_deposit_balance = proposer_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
+    while l2_after_deposit_balance == l2_balance_after_deploy {
+        println!("Waiting for L2 balance to update after deposit");
+        l2_after_deposit_balance = proposer_client
+            .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+            .await?;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    l2_after_deposit_balance = proposer_client
+        .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
+        .await?;
+
     assert_eq!(
         l2_after_deposit_balance,
         l2_balance_after_deploy + U256::from(100000000000000000000u128),
