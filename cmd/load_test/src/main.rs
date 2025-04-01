@@ -29,6 +29,9 @@ struct Cli {
     pkeys: String,
 }
 
+const RETRIES: u64 = 1000;
+
+// Private key for the rich account present in the gesesis_l2.json file.
 const RICH_ACCOUNT: &str = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
 
 // TODO: this should be in common utils.
@@ -40,32 +43,12 @@ fn address_from_pub_key(public_key: PublicKey) -> H160 {
     Address::from(address_bytes)
 }
 
-async fn wait_receipt(
-    client: EthClient,
-    tx_hash: H256,
-    retries: Option<u64>,
-) -> eyre::Result<RpcReceipt> {
-    let retries = retries.unwrap_or(10_u64);
-    for _ in 0..retries {
-        match client.get_transaction_receipt(tx_hash).await {
-            Err(_) | Ok(None) => {
-                let _ = sleep(Duration::from_secs(1)).await;
-            }
-            Ok(Some(receipt)) => return Ok(receipt),
-        };
-    }
-    Err(eyre::eyre!(
-        "Failed to fetch receipt for tx with hash: {}",
-        tx_hash
-    ))
-}
-
 async fn deploy_contract(
     client: EthClient,
     deployer: (PublicKey, SecretKey),
     contract: Vec<u8>,
 ) -> eyre::Result<Address> {
-    let (tx_hash, contract_address) = client
+    let (_, contract_address) = client
         .deploy(
             address_from_pub_key(deployer.0),
             deployer.1,
@@ -74,11 +57,7 @@ async fn deploy_contract(
         )
         .await?;
 
-    let receipt = wait_receipt(client, tx_hash, None).await?;
-    match receipt {
-        RpcReceipt { receipt, .. } if receipt.status => Ok(contract_address),
-        _ => Err(eyre::eyre!("ERC20 deploy failed: deploy tx failed")),
-    }
+    eyre::Ok(contract_address)
 }
 
 async fn erc20_deploy(
@@ -118,7 +97,7 @@ async fn claim_erc20_balances(
                 .send_eip1559_transaction(&claim_tx, &sk)
                 .await
                 .unwrap();
-            wait_receipt(client, tx_hash, None).await
+            client.wait_for_transaction_receipt(tx_hash, RETRIES).await
         });
     }
     for response in tasks.join_all().await {
@@ -230,6 +209,7 @@ async fn main() {
     let deployer = parse_private_key_into_account(RICH_ACCOUNT);
 
     // TODO: does this need the chain id as well?
+    println!("Deploying ERC20 contract...");
     let contract_address = erc20_deploy(client.clone(), deployer)
         .await
         .expect("Failed to deploy ERC20 contract");
