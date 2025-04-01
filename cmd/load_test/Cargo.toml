@@ -1,0 +1,20 @@
+[package]
+name = "load_test"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+clap = { version = "4.3", features = ["derive"] }
+hex.workspace = true
+secp256k1.workspace = true
+ethereum-types.workspace = true
+ethrex-rpc.workspace = true
+ethrex-sdk.workspace = true
+ethrex-blockchain.workspace = true
+eyre = "0.6"
+keccak-hash.workspace = true
+tokio.workspace = true
+
+[[bin]]
+name = "load_test"
+path = "./src/main.rs"

@@ -5050,6 +5050,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23fb14cb19457329c82206317a5663005a4d404783dc74f4252769b0d5f42856"
 
 [[package]]
+name = "load_test"
+version = "0.1.0"
+dependencies = [
+ "clap 4.5.32",
+ "ethereum-types",
+ "ethrex-blockchain",
+ "ethrex-rpc",
+ "ethrex-sdk",
+ "eyre",
+ "hex",
+ "keccak-hash",
+ "secp256k1",
+ "tokio",
+]
+
+[[package]]
 name = "loc"
 version = "0.1.0"
 dependencies = [
