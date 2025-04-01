@@ -58,7 +58,6 @@ struct ProverServer {
     on_chain_proposer_address: Address,
     verifier_address: Address,
     verifier_private_key: SecretKey,
-    dev_interval_ms: u64,
     needed_proof_types: Vec<ProverType>,
 }
 
@@ -183,8 +182,6 @@ impl ProverServer {
             verifier_address: config.verifier_address,
             verifier_private_key: config.verifier_private_key,
             needed_proof_types,
-
-            dev_interval_ms: config.dev_interval_ms,
         })
     }
 

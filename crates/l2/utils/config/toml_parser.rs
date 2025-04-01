@@ -159,7 +159,6 @@ struct ProverServer {
     verifier_address: String,
     verifier_private_key: String,
     dev_mode: bool,
-    dev_interval_ms: u64,
 }
 
 impl ProverServer {
@@ -172,14 +171,12 @@ impl ProverServer {
 {prefix}_VERIFIER_ADDRESS={}
 {prefix}_VERIFIER_PRIVATE_KEY={}
 {prefix}_DEV_MODE={}
-{prefix}_DEV_INTERVAL_MS={}
 ",
             self.listen_ip,
             self.listen_port,
             self.verifier_address,
             self.verifier_private_key,
             self.dev_mode,
-            self.dev_interval_ms
         )
     }
 }
