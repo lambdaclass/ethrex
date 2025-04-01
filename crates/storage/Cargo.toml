@@ -33,6 +33,7 @@ reth-mdbx-sys = { git = "https://github.com/paradigmxyz/reth", package = "reth-m
 reth-nippy-jar = { git = "https://github.com/paradigmxyz/reth", package = "reth-nippy-jar" , tag = "v1.1.0"}
 reth-provider = { git = "https://github.com/paradigmxyz/reth", package = "reth-provider" , tag = "v1.1.0"}
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth", package = "reth-storage-api" , tag = "v1.1.0"}
+alloy-consensus = "0.4.2"
 
 [features]
 default = []

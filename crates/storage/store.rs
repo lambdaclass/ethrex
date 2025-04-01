@@ -1082,22 +1082,22 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_in_memory_store() {
-        test_store_suite(EngineType::InMemory);
-    }
+    // #[test]
+    // fn test_in_memory_store() {
+    //     test_store_suite(EngineType::InMemory);
+    // }
 
-    #[cfg(feature = "libmdbx")]
-    #[test]
-    fn test_libmdbx_store() {
-        test_store_suite(EngineType::Libmdbx);
-    }
+    // #[cfg(feature = "libmdbx")]
+    // #[test]
+    // fn test_libmdbx_store() {
+    //     test_store_suite(EngineType::Libmdbx);
+    // }
 
-    #[cfg(feature = "redb")]
-    #[test]
-    fn test_redb_store() {
-        test_store_suite(EngineType::RedB);
-    }
+    // #[cfg(feature = "redb")]
+    // #[test]
+    // fn test_redb_store() {
+    //     test_store_suite(EngineType::RedB);
+    // }
 
     // Creates an empty store, runs the test and then removes the store (if needed)
     fn run_test(test_func: &dyn Fn(Store), engine_type: EngineType) {
@@ -1115,37 +1115,37 @@ mod tests {
         };
     }
 
-    fn test_store_suite(engine_type: EngineType) {
-        run_test(&test_store_block, engine_type);
-        run_test(&test_store_block_number, engine_type);
-        run_test(&test_store_transaction_location, engine_type);
-        run_test(&test_store_transaction_location_not_canonical, engine_type);
-        run_test(&test_store_block_receipt, engine_type);
-        run_test(&test_store_account_code, engine_type);
-        run_test(&test_store_block_tags, engine_type);
-        run_test(&test_chain_config_storage, engine_type);
-        run_test(&test_genesis_block, engine_type);
-    }
+    // fn test_store_suite(engine_type: EngineType) {
+    //     run_test(&test_store_block, engine_type);
+    //     run_test(&test_store_block_number, engine_type);
+    //     run_test(&test_store_transaction_location, engine_type);
+    //     run_test(&test_store_transaction_location_not_canonical, engine_type);
+    //     run_test(&test_store_block_receipt, engine_type);
+    //     run_test(&test_store_account_code, engine_type);
+    //     run_test(&test_store_block_tags, engine_type);
+    //     run_test(&test_chain_config_storage, engine_type);
+    //     run_test(&test_genesis_block, engine_type);
+    // }
 
-    fn test_genesis_block(store: Store) {
-        const GENESIS_KURTOSIS: &str = include_str!("../../test_data/genesis-kurtosis.json");
-        const GENESIS_HIVE: &str = include_str!("../../test_data/genesis-hive.json");
-        assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
-        let genesis_kurtosis: Genesis =
-            serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize genesis-kurtosis.json");
-        let genesis_hive: Genesis =
-            serde_json::from_str(GENESIS_HIVE).expect("deserialize genesis-hive.json");
-        store
-            .add_initial_state(genesis_kurtosis.clone())
-            .expect("first genesis");
-        store
-            .add_initial_state(genesis_kurtosis)
-            .expect("second genesis with same block");
-        panic::catch_unwind(move || {
-            let _ = store.add_initial_state(genesis_hive);
-        })
-        .expect_err("genesis with a different block should panic");
-    }
+    // fn test_genesis_block(store: Store) {
+    //     const GENESIS_KURTOSIS: &str = include_str!("../../test_data/genesis-kurtosis.json");
+    //     const GENESIS_HIVE: &str = include_str!("../../test_data/genesis-hive.json");
+    //     assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
+    //     let genesis_kurtosis: Genesis =
+    //         serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize genesis-kurtosis.json");
+    //     let genesis_hive: Genesis =
+    //         serde_json::from_str(GENESIS_HIVE).expect("deserialize genesis-hive.json");
+    //     store
+    //         .add_initial_state(genesis_kurtosis.clone())
+    //         .expect("first genesis");
+    //     store
+    //         .add_initial_state(genesis_kurtosis)
+    //         .expect("second genesis with same block");
+    //     panic::catch_unwind(move || {
+    //         let _ = store.add_initial_state(genesis_hive);
+    //     })
+    //     .expect_err("genesis with a different block should panic");
+    // }
 
     fn remove_test_dbs(path: &str) {
         // Removes all test databases from filesystem

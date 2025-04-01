@@ -1,3 +1,5 @@
+// Storage implementation using reth's fork of libmdbx
+// to compare against our own.
 use std::sync::{Arc, Mutex};
 
 use crate::api::StoreEngine;
@@ -8,6 +10,7 @@ use crate::rlp::{
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::utils::{ChainDataIndex, SnapStateIndex};
+use alloy_consensus::Header;
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
@@ -15,11 +18,17 @@ use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
 };
+use ethrex_common::{Bloom, H160};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
 use reth_db::mdbx::{init_db, DatabaseArguments, DatabaseEnv};
+use reth_db::tables;
+use reth_db::{
+    transaction::{DbTx, DbTxMut},
+    Database,
+};
 
 #[derive(Debug)]
 pub struct MDBXFork {
@@ -34,13 +43,77 @@ impl MDBXFork {
         Ok(Self { env })
     }
 }
+
+// Blame the orphan rule
+fn ethrex_header_to_ret_header(header: BlockHeader) -> Header {
+    Header {
+        parent_hash: header.parent_hash.0.into(),
+        ommers_hash: header.ommers_hash.0.into(),
+        beneficiary: header.coinbase.0.into(),
+        state_root: header.state_root.0.into(),
+        transactions_root: header.transactions_root.0.into(),
+        receipts_root: header.receipts_root.0.into(),
+        withdrawals_root: header.withdrawals_root.map(|root| root.0.into()),
+        logs_bloom: header.logs_bloom.0.into(),
+        // FIXME: Review this later
+        difficulty: Default::default(),
+        number: header.number,
+        gas_limit: header.gas_limit,
+        gas_used: header.gas_used,
+        timestamp: header.timestamp,
+        mix_hash: header.prev_randao.0.into(),
+        nonce: header.nonce.to_be_bytes().into(),
+        base_fee_per_gas: header.base_fee_per_gas,
+        blob_gas_used: header.blob_gas_used,
+        excess_blob_gas: header.excess_blob_gas,
+        parent_beacon_block_root: header.parent_beacon_block_root.map(|root| root.0.into()),
+        requests_root: header.requests_hash.map(|hash| hash.0.into()),
+        extra_data: header.extra_data.into(),
+    }
+}
+fn reth_header_to_ethrex_header(header: Header) -> BlockHeader {
+    BlockHeader {
+        parent_hash: H256(header.parent_hash.0),
+        ommers_hash: H256(header.ommers_hash.0),
+        coinbase: H160(header.beneficiary.0 .0),
+        state_root: H256(header.state_root.0),
+        transactions_root: H256(header.transactions_root.0),
+        receipts_root: H256(header.receipts_root.0),
+        withdrawals_root: header.withdrawals_root.map(|root| H256(root.0)),
+        logs_bloom: ethrex_common::Bloom(*header.logs_bloom.0),
+        // FIXME: Review this later
+        difficulty: Default::default(),
+        number: header.number,
+        gas_limit: header.gas_limit,
+        gas_used: header.gas_used,
+        timestamp: header.timestamp,
+        extra_data: header.extra_data.into(),
+        prev_randao: H256(header.mix_hash.0),
+        nonce: u64::from_be_bytes(header.nonce.0),
+        base_fee_per_gas: header.base_fee_per_gas,
+        blob_gas_used: header.blob_gas_used,
+        excess_blob_gas: header.excess_blob_gas,
+        parent_beacon_block_root: header.parent_beacon_block_root.map(|root| H256(root.0)),
+        requests_hash: header.requests_root.map(|hash| H256(hash.0)),
+    }
+}
+
 impl StoreEngine for MDBXFork {
     fn add_block_header(
         &self,
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        todo!()
+        let tx = self
+            .env
+            .tx_mut()
+            .expect("Could not start TX for block headers");
+        let block_number = block_header.number;
+        tx.put::<tables::HeaderNumbers>(block_hash.0.into(), block_number)
+            .unwrap();
+        tx.put::<tables::Headers>(block_number, ethrex_header_to_ret_header(block_header))
+            .unwrap();
+        Ok(())
     }
 
     fn add_block_headers(
@@ -48,14 +121,27 @@ impl StoreEngine for MDBXFork {
         block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        todo!()
+        let tx = self
+            .env
+            .tx_mut()
+            .expect("Could not start tx for block headers (batched)");
+        for (header, hash) in block_headers.into_iter().zip(block_hashes) {
+            let block_number = header.number;
+            tx.put::<tables::HeaderNumbers>(hash.0.into(), block_number)
+                .unwrap();
+            tx.put::<tables::Headers>(block_number, ethrex_header_to_ret_header(header))
+                .unwrap();
+        }
+        Ok(())
     }
 
     fn get_block_header(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        todo!()
+        let tx = self.env.tx().expect("Could not start tx for block headers");
+        let header = tx.get::<tables::Headers>(block_number).unwrap();
+        Ok(header.map(|header| reth_header_to_ethrex_header(header)))
     }
 
     fn add_block_body(
