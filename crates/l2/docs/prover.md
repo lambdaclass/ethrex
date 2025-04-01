@@ -7,7 +7,7 @@
   - [What](#what)
   - [Workflow](#workflow)
   - [How](#how)
-      - [Quick Test](#quick-test)
+    - [Quick Test](#quick-test)
     - [Dev Mode](#dev-mode)
       - [Run the whole system with the prover - In one Machine](#run-the-whole-system-with-the-prover---in-one-machine)
     - [GPU mode](#gpu-mode)
@@ -60,7 +60,7 @@ sequenceDiagram
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
 
-#### Quick Test
+### Quick Test
 
 To test the `zkvm` execution quickly, the following test can be run:
 
@@ -79,10 +79,8 @@ Then run any of the targets:
 To run the blockchain (`proposer`) and prover in conjunction, start the `prover_client`, use the following command:
 
 ```sh
-make init-prover T="prover_type (pico,risc0,sp1,exec) G=true"
+make init-prover T="prover_type (pico,risc0,sp1) G=true"
 ```
-
-select the "exec" backend whenever it's not desired to generate proofs, like in a CI environment.
 
 #### Run the whole system with the prover - In one Machine
 
@@ -92,14 +90,14 @@ select the "exec" backend whenever it's not desired to generate proofs, like in 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp configs/config_example.toml configs/config.toml` &rarr; check if you want to change any config.
+3. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` &rarr; check if you want to change any config.
 4. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` &rarr; check if you want to change any config.
 5. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-6. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico,exec)`.
+6. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico)`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
@@ -156,11 +154,11 @@ prover_server_endpoint=<ip-address>:3900
 ```
 
 - `Finally`, to start the `prover_client`/`zkvm`, run:
-  - `make init-prover T=(sp1,risc0,pico,exec) G=true`
+  - `make init-prover T=(sp1,risc0,pico) G=true`
 
 2. `prover_server`/`proposer` &rarr; this server just needs rust installed.
    1. `cd ethrex/crates/l2`
-   2. `cp configs/config_example.toml configs/config.toml` and change the addresses and the following fields:
+   2. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` and change the addresses and the following fields:
       - [prover_server]
         - `listen_ip=0.0.0.0` &rarr; Used to handle TCP communication with other servers from any network interface.
       - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.

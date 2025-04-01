@@ -244,11 +244,11 @@ impl LEVM {
                 None
             } else {
                 // Look into the current database to see if the bytecode hash is already present
-                let current_bytecode = db.get_account_info(*new_state_account_address).bytecode;
+                let current_bytecode = &initial_account_state.bytecode;
                 let code = new_state_account.info.bytecode.clone();
                 // The code is present in the current database
-                if current_bytecode != Bytes::new() {
-                    if current_bytecode != code {
+                if *current_bytecode != Bytes::new() {
+                    if *current_bytecode != code {
                         // The code has changed
                         Some(code)
                     } else {
@@ -286,13 +286,12 @@ impl LEVM {
                 added_storage,
             };
 
-            let old_info = db.get_account_info(account_update.address);
             // https://eips.ethereum.org/EIPS/eip-161
             // if an account was empty and is now empty, after spurious dragon, it should be removed
             if account_update.removed
-                && old_info.balance.is_zero()
-                && old_info.nonce == 0
-                && old_info.bytecode_hash() == code_hash(&Bytes::new())
+                && initial_account_state.balance.is_zero()
+                && initial_account_state.nonce == 0
+                && initial_account_state.bytecode_hash() == code_hash(&Bytes::new())
                 && fork < Fork::SpuriousDragon
             {
                 continue;
