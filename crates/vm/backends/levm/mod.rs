@@ -182,7 +182,6 @@ impl LEVM {
                 updates += 1;
             }
             let code = if new_state_account.info.bytecode.is_empty() {
-                // The new state account has no code
                 None
             } else {
                 // Look into the current database to see if the bytecode hash is already present
@@ -289,7 +288,6 @@ impl LEVM {
     }
 
     // SYSTEM CONTRACTS
-    /// `new_state` is being modified inside [generic_system_contract_levm].
     pub fn beacon_root_contract_call(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
@@ -312,7 +310,7 @@ impl LEVM {
         )?;
         Ok(())
     }
-    /// `new_state` is being modified inside [generic_system_contract_levm].
+
     pub fn process_block_hash_history(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
@@ -387,7 +385,6 @@ impl LEVM {
     }
 }
 
-/// `new_state` is being modified at the end.
 pub fn generic_system_contract_levm(
     block_header: &BlockHeader,
     calldata: Bytes,
