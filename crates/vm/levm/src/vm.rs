@@ -465,7 +465,7 @@ impl VM {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let storage = get_storage_mut_vm(&mut self.cache, self.db.clone(), address, key)?;
+        let storage = get_storage_mut_vm(&mut self.cache, self.db.clone(), address)?;
         let account_original_storage_slot_value = storage
             .get(&key)
             .map_or(U256::zero(), |slot| slot.original_value);

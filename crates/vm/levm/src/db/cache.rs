@@ -21,6 +21,7 @@ impl CacheDB {
     }
 
     pub fn insert_account(&mut self, address: Address, account: Account) -> Option<Account> {
+        self.cached_storages.insert(address, HashMap::new());
         self.cached_accounts.insert(address, account)
     }
 
@@ -63,5 +64,11 @@ impl CacheDB {
             .entry(address)
             .or_default()
             .insert(key, storage_slot)
+    }
+
+    // check this behavior
+    pub fn extend_cache(&mut self, new_state: CacheDB) {
+        self.cached_accounts.extend(new_state.cached_accounts);
+        self.cached_storages.extend(new_state.cached_storages);
     }
 }

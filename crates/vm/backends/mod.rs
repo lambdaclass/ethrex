@@ -168,12 +168,7 @@ impl Evm {
                         storage_slot.original_value = storage_slot.current_value;
                     }
                 }
-                block_cache
-                    .cached_accounts
-                    .extend(new_state.cached_accounts);
-                block_cache
-                    .cached_storages
-                    .extend(new_state.cached_storages);
+                block_cache.extend_cache(new_state);
 
                 let receipt = Receipt::new(
                     tx.tx_type(),
@@ -237,12 +232,7 @@ impl Evm {
                     }
                 }
 
-                block_cache
-                    .cached_accounts
-                    .extend(new_state.cached_accounts);
-                block_cache
-                    .cached_storages
-                    .extend(new_state.cached_storages);
+                block_cache.extend_cache(new_state);
                 Ok(())
             }
         }
@@ -303,12 +293,7 @@ impl Evm {
                     &store_wrapper.store,
                     parent_hash,
                 )?;
-                block_cache
-                    .cached_accounts
-                    .extend(new_state.cached_accounts);
-                block_cache
-                    .cached_storages
-                    .extend(new_state.cached_storages);
+                block_cache.extend_cache(new_state);
                 Ok(())
             }
         }

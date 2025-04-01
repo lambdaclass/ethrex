@@ -18,6 +18,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::utils::get_account_mut_vm;
 use ethrex_levm::vm::Substate;
 use ethrex_levm::{
     db::Database as LevmDatabase,
@@ -95,12 +96,7 @@ impl LEVM {
                 }
             }
 
-            block_cache
-                .cached_accounts
-                .extend(new_state.cached_accounts);
-            block_cache
-                .cached_storages
-                .extend(new_state.cached_storages);
+            block_cache.extend_cache(new_state);
 
             // Currently, in LEVM, we don't substract refunded gas to used gas, but that can change in the future.
             let gas_used = report.gas_used - report.gas_refunded;
@@ -124,15 +120,8 @@ impl LEVM {
                 .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
             {
                 // We check if it was in block_cache, if not, we get it from DB.
-                let mut account = block_cache
-                    .cached_accounts
-                    .get(&address)
-                    .cloned()
-                    .unwrap_or(db.get_account(address));
-
+                let account = get_account_mut_vm(&mut block_cache, db.clone(), address)?;
                 account.info.balance += increment.into();
-
-                block_cache.cached_accounts.insert(address, account);
             }
         }
 
@@ -351,7 +340,7 @@ impl LEVM {
                         .get_account_code(acc_info.code_hash)?
                         .unwrap_or_default();
 
-                    // If not involved in the TX, there won't be any updates in the storage
+                    // We handle storage updates separately
                     Account::new(acc_info.balance, acc_code, acc_info.nonce, HashMap::new())
                 });
 
@@ -519,8 +508,7 @@ pub fn generic_system_contract_levm(
 
     let mut report = vm.execute().map_err(EvmError::from)?;
 
-    report.new_state.cached_accounts.remove(&system_address);
-    report.new_state.cached_storages.remove(&system_address);
+    report.new_state.remove_account(&system_address);
 
     match report.result {
         TxResult::Success => {}
@@ -546,9 +534,7 @@ pub fn generic_system_contract_levm(
             account.info.balance = existing_account.info.balance;
         }
     }
-    new_state
-        .cached_accounts
-        .extend(report.new_state.cached_accounts.clone());
+    new_state.extend_cache(report.new_state.clone());
 
     Ok(report)
 }

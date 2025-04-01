@@ -169,19 +169,12 @@ pub fn get_storage_mut_vm(
     cache: &mut CacheDB,
     db: Arc<dyn Database>,
     address: Address,
-    key: H256,
 ) -> Result<&mut HashMap<H256, StorageSlot>, VMError> {
-    if !cache.is_storage_cached(&address) {
-        let value = db.get_storage_slot(address, key);
-        cache.insert_storage_slot(
-            address,
-            key,
-            StorageSlot {
-                original_value: value,
-                current_value: value,
-            },
-        );
-    }
+    // Cache account.
+    if !cache.is_account_cached(&address) {
+        let account = db.get_account(address);
+        cache.insert_account(address, account.clone());
+    };
     cache
         .get_storage_mut(&address)
         .ok_or(VMError::Internal(InternalError::StorageNotFound))
@@ -195,6 +188,10 @@ pub fn get_storage_slot(
     address: Address,
     key: H256,
 ) -> StorageSlot {
+    if !cache.is_account_cached(&address) {
+        let account = db.get_account(address);
+        cache.insert_account(address, account.clone());
+    };
     match cache.get_storage_slot(&address, key) {
         Some(storage_slot) => storage_slot.clone(),
         None => {
