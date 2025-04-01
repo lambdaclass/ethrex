@@ -170,47 +170,6 @@ pub fn get_account_mut_vm(
         .ok_or(VMError::Internal(InternalError::AccountNotFound))
 }
 
-// pub fn get_storage_mut_vm(
-//     cache: &mut CacheDB,
-//     db: Arc<dyn Database>,
-//     address: Address,
-// ) -> Result<&mut HashMap<H256, StorageSlot>, VMError> {
-//     // Cache account.
-//     if !cache.is_account_cached(&address) {
-//         let account = db.get_account(address);
-//         cache.insert_account(address, account.clone());
-//     };
-//     cache
-//         .get_storage_mut(&address)
-//         .ok_or(VMError::Internal(InternalError::StorageNotFound))
-// }
-
-/// Gets storage, first checking the cache and then the database
-/// (caching in the second case)
-// pub fn get_storage_slot(
-//     cache: &mut CacheDB,
-//     db: Arc<dyn Database>,
-//     address: Address,
-//     key: H256,
-// ) -> StorageSlot {
-//     if !cache.is_account_cached(&address) {
-//         let account = db.get_account(address);
-//         cache.insert_account(address, account.clone());
-//     };
-//     match cache.get_storage_slot(&address, key) {
-//         Some(storage_slot) => storage_slot.clone(),
-//         None => {
-//             let value = db.get_storage_slot(address, key);
-//             let storage_slot = StorageSlot {
-//                 original_value: value,
-//                 current_value: value,
-//             };
-//             cache.insert_storage_slot(address, key, storage_slot.clone());
-//             storage_slot
-//         }
-//     }
-// }
-
 pub fn increase_account_balance(
     cache: &mut CacheDB,
     db: Arc<dyn Database>,

@@ -55,38 +55,6 @@ impl CacheDB {
         self.cached_accounts.contains_key(address)
     }
 
-    // pub fn get_storage_slot(&self, address: &Address, key: H256) -> Option<&StorageSlot> {
-    //     self.cached_storages
-    //         .get(address)
-    //         .and_then(|storage| storage.get(&key))
-    // }
-
-    // pub fn get_storage_mut(
-    //     &mut self,
-    //     address: &Address,
-    // ) -> Option<&mut HashMap<H256, StorageSlot>> {
-    //     self.cached_storages.get_mut(address)
-    // }
-    // pub fn get_storage(&self, address: &Address) -> Option<&HashMap<H256, StorageSlot>> {
-    //     self.cached_storages.get(address)
-    // }
-
-    // pub fn is_storage_cached(&self, address: &Address) -> bool {
-    //     self.cached_storages.contains_key(address)
-    // }
-
-    // pub fn insert_storage_slot(
-    //     &mut self,
-    //     address: Address,
-    //     key: H256,
-    //     storage_slot: StorageSlot,
-    // ) -> Option<StorageSlot> {
-    //     self.cached_storages
-    //         .entry(address)
-    //         .or_default()
-    //         .insert(key, storage_slot)
-    // }
-
     // check this behavior
     pub fn extend_cache(&mut self, new_state: CacheDB) {
         self.cached_accounts.extend(new_state.cached_accounts);
