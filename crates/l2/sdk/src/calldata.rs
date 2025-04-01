@@ -34,7 +34,8 @@ fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEnc
         .split_once('(')
         .ok_or(CalldataEncodeError::ParseError(signature.to_owned()))?;
     let params: Vec<String> = params
-        .trim_end_matches(')')
+        .rsplit_once(')')
+        .map_or(params, |(left, _)| left)
         .split(',')
         .map(|x| x.trim().split_once(' ').unzip().0.unwrap_or(x).to_string())
         .collect();
@@ -306,4 +307,32 @@ fn calldata_test() {
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         ]
     );
+}
+
+#[test]
+fn raw_function_selector() {
+    let raw_function_signature = "deposit((address,address,uint256,bytes))";
+
+    let (name, params) = parse_signature(raw_function_signature).unwrap();
+    let selector = compute_function_selector(&name, &params).unwrap();
+
+    assert_eq!(selector, H32::from(&[0x02, 0xe8, 0x6b, 0xbe]));
+}
+
+#[test]
+fn dynamic_size_struct() {
+    let bytes = hex::decode("8943545177806ed17b9f23f0a21ee5948ecaa776").unwrap();
+    let address = Address::from_slice(&bytes);
+
+    let values = vec![
+        Value::Address(address),
+        Value::Address(address),
+        Value::Uint(U256::from(21000 * 5)),
+        Value::Bytes(Bytes::from_static(b"")),
+    ];
+    let calldata = encode_calldata("deposit((address,address,uint256,bytes))", &values).unwrap();
+    assert_eq!(
+        &hex::encode(calldata),
+        "0x02e86bbe00000000000000000000000000000000000000000000000000000000000000200000000000000000000000008943545177806ed17b9f23f0a21ee5948ecaa7760000000000000000000000008943545177806ed17b9f23f0a21ee5948ecaa7760000000000000000000000000000000000000000000000000000000000019a2800000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000000"
+    )
 }
