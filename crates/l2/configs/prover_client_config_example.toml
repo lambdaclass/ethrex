@@ -1,6 +1,5 @@
-[prover_client]
 prover_server_endpoint = "localhost:3900"
-interval_ms = 5000
+proving_time_ms = 5000
 # mock, cpu, cuda
 sp1_prover = "mock"
 # 1 for dev_mode

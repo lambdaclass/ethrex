@@ -41,7 +41,7 @@ For more information about the Prover Server, the [Prover Docs](./prover.md) pro
 
 ## Configuration
 
-Configuration is done through environment variables. The easiest way to configure the Sequencer is by creating a `config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
+Configuration is done through environment variables. The easiest way to configure the Sequencer is by creating a `sequencer_config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
 
 > [!NOTE]
 > The deployer.rs is in charge of parsing the `.toml` and creating/updating the `.env`
@@ -52,45 +52,41 @@ The following environment variables are available to configure the Proposer cons
 <!-- NOTE: Mantain the sections in the same order as present in [config_example.toml](../configs/config_example.toml). -->
 
 - Under the [deployer] section:
-    - `address`: L1 account which will deploy the common bridge contracts in L1.
-    - `private key`: Its private key.
-    - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
-    - `sp1_contract_verifier`: Address which will verify the `sp1` proofs.
-    - `sp1_deploy_verifier`: Whether to deploy the `sp1` verifier contract or not. 
-    - `pico_contract_verifier`: Address which will verify the `pico` proofs.
-    - `pico_deploy_verifier`: Whether to deploy the `pico` verifier contract or not.
-    - `salt_is_zero`: Whether a 0 value salt will be used. Keep as true for deterministic `create2` operations.
+
+  - `address`: L1 account which will deploy the common bridge contracts in L1.
+  - `private key`: Its private key.
+  - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
+  - `sp1_contract_verifier`: Address which will verify the `sp1` proofs.
+  - `sp1_deploy_verifier`: Whether to deploy the `sp1` verifier contract or not.
+  - `pico_contract_verifier`: Address which will verify the `pico` proofs.
+  - `pico_deploy_verifier`: Whether to deploy the `pico` verifier contract or not.
+  - `salt_is_zero`: Whether a 0 value salt will be used. Keep as true for deterministic `create2` operations.
 
 - Under the [eth] section:
-    - `rpc_url`: URL of the L1 RPC.
 
-- Under the [engine] section:
-    - `rpc_url`: URL of the EngineAPI.
-    - `jwt_path`: Path to the JWT authentication file, required to connect to the EngineAPI.
+  - `rpc_url`: URL of the L1 RPC.
 
 - Under the [watcher] section:
-    - `bridge_address`: Address of the bridge contract on L1.
-    - `check_interval_ms`: Interval in milliseconds to check for new events.
-    - `max_block_step`: Maximum number of blocks to look for when checking for new events.
-    - `l2_proposer_private_key`: Private key of the L2 proposer.
+
+  - `bridge_address`: Address of the bridge contract on L1.
+  - `check_interval_ms`: Interval in milliseconds to check for new events.
+  - `max_block_step`: Maximum number of blocks to look for when checking for new events.
+  - `l2_proposer_private_key`: Private key of the L2 proposer.
 
 - Under the [proposer] section:
-    - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
-    - `coinbase address`: Address which will receive the execution fees.
+  - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
+  - `coinbase address`: Address which will receive the execution fees.
 
-Under the [committer] section:
-    - `l1_address`: Address of the L1 committer.
-    - `l1_private_key`: Private key of the L1 committer.
-    - `on_chain_proposer_address`: Address of the on-chain committer.
+Under the [committer] section: - `l1_address`: Address of the L1 committer. - `l1_private_key`: Private key of the L1 committer. - `on_chain_proposer_address`: Address of the on-chain committer.
 
 - Under the [prover_server] section:
-    - `listen_ip`: IP to listen for proof data requests.
-    - `listen_port`: Port to listen for proof data requests.
-    - `verifier_address`: Address of the account that sends verify transaction to L1.
-    - `verifier_private_key`: Private key for the account that sends verify transaction to L1.
-    - `dev_mode`: whether `dev_mode` is activated.
-
+  - `listen_ip`: IP to listen for proof data requests.
+  - `listen_port`: Port to listen for proof data requests.
+  - `verifier_address`: Address of the account that sends verify transaction to L1.
+  - `verifier_private_key`: Private key for the account that sends verify transaction to L1.
+  - `dev_mode`: whether `dev_mode` is activated.
 
 If you want to use a different configuration file, you can set the:
+
 - `CONFIGS_PATH`: The path where the `SEQUENCER_CONFIG_FILE` is located at.
 - `SEQUENCER_CONFIG_FILE`: The `.toml` that contains the config for the `sequencer`.
