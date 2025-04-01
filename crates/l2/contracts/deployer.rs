@@ -761,7 +761,8 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
             Value::Uint(U256::from(21000 * 5)),
             Value::Bytes(Bytes::from_static(b"")),
         ];
-        let calldata = encode_calldata("deposit(address,address,uint256,bytes)", &values)?;
+        let calldata = encode_calldata("deposit((address,address,uint256,bytes))", &values)?;
+        println!("data: {:x?}", hex::decode(&calldata));
         let Some(_) = genesis.alloc.get(&address) else {
             println!(
                 "Skipping deposit for address {:?} as it is not in the genesis file",

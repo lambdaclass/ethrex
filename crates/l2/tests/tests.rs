@@ -474,7 +474,7 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     ];
 
     let calldata =
-        calldata::encode_calldata("deposit(address,address,uint256,bytes)", &values)?.into();
+        calldata::encode_calldata("deposit((address,address,uint256,bytes))", &values)?.into();
 
     let gas_price = eth_client.get_gas_price().await?.try_into().map_err(|_| {
         EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())

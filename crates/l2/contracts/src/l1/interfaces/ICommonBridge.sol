@@ -51,6 +51,13 @@ interface ICommonBridge {
         uint256 indexed claimedAmount
     );
 
+    struct DepositValues {
+        address to;
+        address recipient;
+        uint256 gasLimit;
+        bytes data;
+    }
+
     /// @notice Method to retrieve all the deposit logs hashes.
     /// @dev This method is used by the L2 L1_Watcher to get the remaining
     /// deposit logs to be processed.
@@ -66,16 +73,8 @@ interface ICommonBridge {
     /// @dev The deposit process starts here by emitting a DepositInitiated
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
-    /// @param to, the address in L2 to which the tokens will be minted to.
-    /// @param recipient, the address in L1 that will receive the tokens.
-    /// @param gasLimit, the gas limit for the deposit transaction.
-    /// @param data, the calldata for the deposit transaction.
-    function deposit(
-        address to,
-        address recipient,
-        uint256 gasLimit,
-        bytes calldata data
-    ) external payable;
+    /// @param depositValues the values needed to create the deposit.
+    function deposit(DepositValues calldata depositValues) external payable;
 
     /// @notice Method to retrieve the versioned hash of the first `number` deposit logs.
     /// @param number of deposit logs to retrieve the versioned hash.

@@ -279,6 +279,8 @@ impl L1Watcher {
                     .to_owned(),
             ))?;
 
+            println!("{:x?}", calldata);
+
             let value_bytes = mint_value.to_big_endian();
             let id_bytes = deposit_id.to_big_endian();
             let gas_limit_bytes = gas_limit.to_big_endian();
@@ -341,6 +343,8 @@ impl L1Watcher {
                     },
                 )
                 .await?;
+
+            dbg!(&mint_transaction);
 
             match blockchain
                 .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
