@@ -30,6 +30,15 @@ impl Hook for L2Hook {
         vm: &mut crate::vm::VM,
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
+        increase_account_balance(
+            &mut vm.cache,
+            vm.db.clone(),
+            self.recipient,
+            initial_call_frame.msg_value,
+        )?;
+
+        initial_call_frame.msg_value = U256::from(0);
+
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
             let intrinsic_gas: u64 = get_intrinsic_gas(
@@ -210,17 +219,7 @@ impl Hook for L2Hook {
             initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
             initial_call_frame.valid_jump_destinations =
                 get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
-        } else {
-            // Transfer value to receiver
-            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            increase_account_balance(
-                &mut vm.cache,
-                vm.db.clone(),
-                self.recipient,
-                initial_call_frame.msg_value,
-            )?;
         }
-        initial_call_frame.msg_value = U256::from(0);
         Ok(())
     }
 
