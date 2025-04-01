@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743526226069,
+  "lastUpdate": 1743529164404,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2125,6 +2125,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186078010011,
             "range": "± 1250780320",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "98899785+mdqst@users.noreply.github.com",
+            "name": "Dmitry",
+            "username": "mdqst"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5b5a11e135c7d4abd5719d6c69397eed17aa626c",
+          "message": "chore(l1): fix JWT secret decoding issue (#2298)\n\n**Motivation**  \nI noticed that `hex::decode(secret).unwrap().into()` could cause a panic\nif decoding fails. Since `generate_jwt_secret()` returns a `String`,\n`hex::decode(secret)` produces a `Result<Vec<u8>, FromHexError>`, which\nwas being unwrapped unsafely. Ensuring safe error handling improves the\nrobustness of the code.\n\n**Description**  \nReplaced the unsafe `.unwrap().into()` with a safer decoding approach:  \n\n```rust\nhex::decode(secret)\n    .map(Bytes::from)\n    .expect(\"Failed to decode generated JWT secret\")\n```\n\nThis ensures that any decoding errors are properly surfaced instead of\ncausing a panic.\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-04-01T16:48:43Z",
+          "tree_id": "9c7a54eff9e6540b37276ab69db353a676726514",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5b5a11e135c7d4abd5719d6c69397eed17aa626c"
+        },
+        "date": 1743529161926,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185786068027,
+            "range": "± 625343763",
             "unit": "ns/iter"
           }
         ]
