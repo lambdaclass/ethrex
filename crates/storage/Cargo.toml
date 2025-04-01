@@ -21,7 +21,18 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.0" }
+reth-codecs = { git = "https://github.com/paradigmxyz/reth", package = "reth-codecs" , tag = "v1.1.0"}
+reth-codecs-derive = { git = "https://github.com/paradigmxyz/reth", package = "reth-codecs-derive" , tag = "v1.1.0"}
+reth-db-api = { git = "https://github.com/paradigmxyz/reth", package = "reth-db-api" , tag = "v1.1.0"}
+reth-db-common = { git = "https://github.com/paradigmxyz/reth", package = "reth-db-common" , tag = "v1.1.0"}
+reth-db-models = { git = "https://github.com/paradigmxyz/reth", package = "reth-db-models" , tag = "v1.1.0"}
+reth-db = { git = "https://github.com/paradigmxyz/reth", package = "reth-db" , tag = "v1.1.0"}
+reth-storage-errors = { git = "https://github.com/paradigmxyz/reth", package = "reth-storage-errors" , tag = "v1.1.0"}
+reth-libmdbx = { git = "https://github.com/paradigmxyz/reth", package = "reth-libmdbx" , tag = "v1.1.0"}
+reth-mdbx-sys = { git = "https://github.com/paradigmxyz/reth", package = "reth-mdbx-sys" , tag = "v1.1.0"}
+reth-nippy-jar = { git = "https://github.com/paradigmxyz/reth", package = "reth-nippy-jar" , tag = "v1.1.0"}
+reth-provider = { git = "https://github.com/paradigmxyz/reth", package = "reth-provider" , tag = "v1.1.0"}
+reth-storage-api = { git = "https://github.com/paradigmxyz/reth", package = "reth-storage-api" , tag = "v1.1.0"}
 
 [features]
 default = []
