@@ -175,11 +175,10 @@ init-prover: ## 🚀 Initializes the Prover
 
 build-prover:
 	@if [ -z "$$PROVER" ]; then \
-		echo "Error: ProverType (PROVER) is missing."; \
+		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover PROVER=<prover_type: (risc0, sp1, pico, exec)> <G=true>"; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1, pico)> <G=true>"; \
 		echo "The prover can also be run with GPU (G)"; \
-		exit 1; \
 	fi; \
 
 	@if [ -z "$$G" ]; then \
