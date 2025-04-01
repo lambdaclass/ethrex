@@ -23,7 +23,7 @@ use reth_db::mdbx::{init_db, DatabaseArguments, DatabaseEnv};
 
 #[derive(Debug)]
 pub struct MDBXFork {
-    env: Arc<Mutex<DatabaseEnv>>,
+    env: DatabaseEnv,
 }
 
 impl MDBXFork {
@@ -31,9 +31,7 @@ impl MDBXFork {
         let client_version = Default::default();
         let db_args = DatabaseArguments::new(client_version);
         let env = init_db(path, db_args).expect("Failed to initialize MDBX Fork");
-        Ok(Self {
-            env: Arc::new(Mutex::new(env)),
-        })
+        Ok(Self { env })
     }
 }
 impl StoreEngine for MDBXFork {

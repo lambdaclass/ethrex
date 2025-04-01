@@ -9,7 +9,7 @@ use std::{collections::HashMap, fmt::Debug, panic::RefUnwindSafe};
 use crate::{error::StoreError, store::STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, Trie};
 
-pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
+pub trait StoreEngine: Debug + Send + Sync {
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError>;
