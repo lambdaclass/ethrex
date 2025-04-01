@@ -61,25 +61,6 @@ impl Eth {
 }
 
 #[derive(Deserialize, Debug)]
-struct Engine {
-    rpc_url: String,
-    jwt_path: String,
-}
-
-impl Engine {
-    fn to_env(&self) -> String {
-        let prefix = "ENGINE_API";
-        format!(
-            "
-{prefix}_RPC_URL={}
-{prefix}_JWT_PATH={}
-",
-            self.rpc_url, self.jwt_path,
-        )
-    }
-}
-
-#[derive(Deserialize, Debug)]
 struct Watcher {
     bridge_address: String,
     check_interval_ms: u64,
@@ -207,7 +188,6 @@ impl ProverServer {
 struct L2Config {
     deployer: Deployer,
     eth: Eth,
-    engine: Engine,
     watcher: Watcher,
     proposer: Proposer,
     committer: Committer,
@@ -220,7 +200,6 @@ impl L2Config {
 
         env_representation.push_str(&self.deployer.to_env());
         env_representation.push_str(&self.eth.to_env());
-        env_representation.push_str(&self.engine.to_env());
         env_representation.push_str(&self.watcher.to_env());
         env_representation.push_str(&self.proposer.to_env());
         env_representation.push_str(&self.committer.to_env());
