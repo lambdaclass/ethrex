@@ -1,5 +1,4 @@
 use crate::sequencer::errors::ProverServerError;
-use crate::sequencer::utils::sleep_random;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
