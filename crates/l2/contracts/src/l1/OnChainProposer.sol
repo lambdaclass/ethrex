@@ -142,14 +142,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
     /// @inheritdoc IOnChainProposer
     function setSp1Vkey(bytes32 sp1ProgramVKey) external onlySequencer {
-        require(
-            SP1_VKEY == bytes32(0),
-            "OnChainProposer: SP1_VKEY already initialized"
-        );
-        require(
-            sp1ProgramVKey != bytes32(0),
-            "OnChainProposer: sp1ProgramVKey shouldn't be zero"
-        );
         SP1_VKEY = sp1ProgramVKey;
     }
 
@@ -170,11 +162,11 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     function setPicoVkey(bytes32 picoRiscvVkey) external onlySequencer {
         require(
             PICO_VKEY == bytes32(0),
-            "OnChainProposer: RISC0_IMAGE_ID already initialized"
+            "OnChainProposer: PICO_VKEY already initialized"
         );
         require(
             picoRiscvVkey != bytes32(0),
-            "OnChainProposer: risc0ImageId shouldn't be zero"
+            "OnChainProposer: picoRiscvVkey shouldn't be zero"
         );
         PICO_VKEY = picoRiscvVkey;
     }
@@ -254,7 +246,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         if (PICOVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             IPicoVerifier(PICOVERIFIER).verifyPicoProof(
-                picoRiscvVkey,
+                PICO_VKEY,
                 picoPublicValues,
                 picoProof
             );
@@ -264,7 +256,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             // If the verification fails, it will revert.
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
-                risc0ImageId,
+                RISC0_VKEY,
                 risc0JournalDigest
             );
         }
@@ -272,7 +264,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             ISP1Verifier(SP1VERIFIER).verifyProof(
-                sp1ProgramVKey,
+                SP1_VKEY,
                 sp1PublicValues,
                 sp1ProofBytes
             );

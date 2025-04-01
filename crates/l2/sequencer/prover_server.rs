@@ -43,9 +43,10 @@ const VERIFY_FUNCTION_SIGNATURE: &str =
     "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 // Verifying Keys
-const RISC0_VKEY: &str = "RISC0_VKEY";
-const SP1_VKEY: &str = "SP1_VKEY";
-const PICO_VKEY: &str = "PICO_VKEY";
+const RISC0_VKEY: &str = "RISC0_VKEY()";
+const SP1_VKEY: &str = "SP1_VKEY()";
+const PICO_VKEY: &str = "PICO_VKEY()";
+const VERIYING_KEYS: [&str; 3] = [RISC0_VKEY, SP1_VKEY, PICO_VKEY];
 // Setters
 const SET_RISC0_VKEY: &str = "setRisc0Vkey(bytes32)";
 const SET_SP1_VKEY: &str = "setSp1Vkey(bytes32)";
@@ -556,35 +557,15 @@ impl ProverServer {
 
         let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let gas_price = self
-            .eth_client
-            .get_gas_price_with_extra(20)
-            .await?
-            .try_into()
-            .map_err(|_| {
-                ProverServerError::InternalError("Failed to convert gas_price to a u64".to_owned())
-            })?;
-
-        let verify_tx = self
-            .eth_client
-            .build_eip1559_transaction(
-                self.on_chain_proposer_address,
-                self.verifier_address,
-                calldata.into(),
-                Overrides {
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
-        let mut tx = WrappedTransaction::EIP1559(verify_tx);
-
-        let verify_tx_hash = self
-            .eth_client
-            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
-            .await?;
+        let verify_tx_hash = send_generic_tx_to_on_chain_proposer(
+            &self.eth_client,
+            calldata.into(),
+            self.verifier_address,
+            &self.verifier_private_key,
+            self.on_chain_proposer_address,
+            "VERIFY",
+        )
+        .await?;
 
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
 
@@ -598,20 +579,81 @@ impl ProverServer {
         pico_vkey: Bytes,
     ) -> Result<(), ProverServerError> {
         // TODO: query the contract
+
+        let vkeys = EthClient::get_verifying_keys(
+            &self.eth_client,
+            &VERIYING_KEYS,
+            self.on_chain_proposer_address,
+        )
+        .await?;
+
         // Compare with the current vkeys
         // Set only if the vkey from the contract is zero
-
+        // It's done individually to allow only one prover backend at the time.
+        // TODO: We may set the desired one and force the rest to zero.
+        let zero: Bytes = H256::zero().as_bytes().to_vec().into();
         if self.needed_proof_types.contains(&ProverType::SP1) {
-            println!("{sp1_vkey:#x}");
-            //TODO set vkey on contract
+            let contract_sp1_vkey = vkeys.get(SP1_VKEY).ok_or(ProverServerError::Custom(
+                "SP1_VKEY() Not present".to_string(),
+            ))?;
+
+            if *contract_sp1_vkey == zero {
+                info!("Setting SP1_VKEY");
+                let calldata: Vec<u8> =
+                    encode_calldata(SET_SP1_VKEY, &vec![Value::FixedBytes(sp1_vkey)])?;
+
+                send_generic_tx_to_on_chain_proposer(
+                    &self.eth_client,
+                    calldata.into(),
+                    self.verifier_address,
+                    &self.verifier_private_key,
+                    self.on_chain_proposer_address,
+                    "SET_SP1_VKEY",
+                )
+                .await?;
+                info!("SP1_VKEY set to: 0x{sp1_vkey:#x}");
+            }
         }
         if self.needed_proof_types.contains(&ProverType::RISC0) {
-            println!("{risc0_vkey:#x}");
-            //TODO set vkey on contract
+            let contract_risc0_vkey = vkeys.get(RISC0_VKEY).ok_or(ProverServerError::Custom(
+                "RISC0_VKEY() Not present".to_string(),
+            ))?;
+
+            if *contract_risc0_vkey == zero {
+                info!("Setting RISC0_VKEY");
+                let calldata =
+                    encode_calldata(SET_RISC0_VKEY, &vec![Value::FixedBytes(risc0_vkey)])?;
+                send_generic_tx_to_on_chain_proposer(
+                    &self.eth_client,
+                    calldata.into(),
+                    self.verifier_address,
+                    &self.verifier_private_key,
+                    self.on_chain_proposer_address,
+                    "SET_RISC0_VKEY",
+                )
+                .await?;
+                info!("RISC0_VKEY set to: 0x{sp1_vkey:#x}");
+            }
         }
         if self.needed_proof_types.contains(&ProverType::Pico) {
-            println!("{pico_vkey:#x}");
-            //TODO set vkey on contract
+            let contract_pico_vkey = vkeys.get(PICO_VKEY).ok_or(ProverServerError::Custom(
+                "PICO_VKEY() Not present".to_string(),
+            ))?;
+
+            if *contract_pico_vkey == zero {
+                info!("Setting PICO_VKEY");
+                let calldata = encode_calldata(SET_PICO_VKEY, &vec![Value::FixedBytes(pico_vkey)])?;
+                send_generic_tx_to_on_chain_proposer(
+                    &self.eth_client,
+                    calldata.into(),
+                    self.verifier_address,
+                    &self.verifier_private_key,
+                    self.on_chain_proposer_address,
+                    "SET_PICO_VKEY",
+                )
+                .await?;
+                info!("PICO_VKEY set to: 0x{sp1_vkey:#x}");
+            }
         }
 
         Ok(())
@@ -663,42 +705,15 @@ impl ProverServer {
 
             let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
 
-            let gas_price = self
-                .eth_client
-                .get_gas_price_with_extra(20)
-                .await?
-                .try_into()
-                .map_err(|_| {
-                    ProverServerError::InternalError(
-                        "Failed to convert gas_price to a u64".to_owned(),
-                    )
-                })?;
-
-            let verify_tx = self
-                .eth_client
-                .build_eip1559_transaction(
-                    self.on_chain_proposer_address,
-                    self.verifier_address,
-                    calldata.into(),
-                    Overrides {
-                        max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-
-            info!("Sending verify transaction.");
-
-            let mut tx = WrappedTransaction::EIP1559(verify_tx);
-            self.eth_client
-                .set_gas_for_wrapped_tx(&mut tx, self.verifier_address)
-                .await?;
-
-            let verify_tx_hash = self
-                .eth_client
-                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
-                .await?;
+            let verify_tx_hash = send_generic_tx_to_on_chain_proposer(
+                &self.eth_client,
+                calldata.into(),
+                self.verifier_address,
+                &self.verifier_private_key,
+                self.on_chain_proposer_address,
+                "DEV_MODE",
+            )
+            .await?;
 
             info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");
 
@@ -710,4 +725,46 @@ impl ProverServer {
             sleep_random(self.dev_interval_ms).await;
         }
     }
+}
+
+async fn send_generic_tx_to_on_chain_proposer(
+    eth_client: &EthClient,
+    calldata: Bytes,
+    verifier_address: Address,
+    verifier_pk: &SecretKey,
+    on_chain_proposer_address: Address,
+    tx_msg: &str,
+) -> Result<H256, ProverServerError> {
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            ProverServerError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
+    let generic_tx = eth_client
+        .build_eip1559_transaction(
+            on_chain_proposer_address,
+            verifier_address,
+            calldata,
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    info!("Sending `{tx_msg}` transaction.");
+
+    let mut tx = WrappedTransaction::EIP1559(generic_tx);
+    eth_client
+        .set_gas_for_wrapped_tx(&mut tx, verifier_address)
+        .await?;
+
+    let tx_hash = eth_client
+        .send_tx_bump_gas_exponential_backoff(&mut tx, verifier_pk)
+        .await?;
+    Ok(tx_hash)
 }

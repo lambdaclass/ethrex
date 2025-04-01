@@ -383,6 +383,7 @@ pub fn block_number_has_all_needed_proofs(
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
+    use bytes::Bytes;
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
@@ -429,18 +430,22 @@ mod tests {
         let exec_calldata = ProofCalldata {
             prover_type: ProverType::Exec,
             calldata: Vec::new(),
+            vkey: Bytes::new(),
         };
         let risc0_calldata = ProofCalldata {
             prover_type: ProverType::RISC0,
             calldata: Vec::new(),
+            vkey: Bytes::new(),
         };
         let sp1_calldata = ProofCalldata {
             prover_type: ProverType::SP1,
             calldata: Vec::new(),
+            vkey: Bytes::new(),
         };
         let pico_calldata = ProofCalldata {
             prover_type: ProverType::Pico,
             calldata: Vec::new(),
+            vkey: Bytes::new(),
         };
 
         // Write all the account_updates and proofs for each block
