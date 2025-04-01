@@ -242,7 +242,7 @@ impl<'a> VM<'a> {
                 };
 
                 let (_is_delegation, _eip7702_gas_consumed, _code_address, bytecode) =
-                    eip7702_get_code(&db, &mut substate, address_to)?;
+                    eip7702_get_code(db, &mut substate, address_to)?;
 
                 let initial_call_frame = CallFrame::new(
                     env.origin,
@@ -270,7 +270,7 @@ impl<'a> VM<'a> {
                 })
             }
             TxKind::Create => {
-                let sender_nonce = get_account_no_push_cache(&db, env.origin).info.nonce;
+                let sender_nonce = get_account_no_push_cache(db, env.origin).info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -397,7 +397,7 @@ impl<'a> VM<'a> {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(&mut self.db, new_contract_address);
+            let new_account = get_account(self.db, new_contract_address);
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -473,7 +473,7 @@ impl<'a> VM<'a> {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = get_account_mut_vm(&mut self.db, address)?;
+        let account = get_account_mut_vm(self.db, address)?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -485,7 +485,7 @@ impl<'a> VM<'a> {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.db, address)?;
+        let account = get_account_mut_vm(self.db, address)?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)
