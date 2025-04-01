@@ -60,7 +60,7 @@ sequenceDiagram
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
 
-#### Quick Test
+### Quick Test
 
 To test the `zkvm` execution quickly, the following test can be run:
 
