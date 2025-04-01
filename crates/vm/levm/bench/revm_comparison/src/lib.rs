@@ -20,7 +20,7 @@ use std::hint::black_box;
 use std::io::Read;
 use std::{collections::HashMap, fs::File, sync::Arc};
 
-pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
+pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
     let bytecode = Bytes::from(hex::decode(program).unwrap());
     let calldata = Bytes::from(hex::decode(calldata).unwrap());
 
@@ -84,15 +84,15 @@ pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
         ),
     );
 
-    for _ in 0..runs - 1 {
-        let mut vm = new_vm_with_bytecode(&mut db).unwrap();
+    for i in 0..runs - 1 {
+        let mut vm = new_vm_with_bytecode(&mut db, i).unwrap();
         vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
         vm.env.gas_limit = u64::MAX - 1;
         vm.env.block_gas_limit = u64::MAX;
         let tx_report = black_box(vm.execute().unwrap());
         assert!(tx_report.result == TxResult::Success);
     }
-    let mut vm = new_vm_with_bytecode(&mut db).unwrap();
+    let mut vm = new_vm_with_bytecode(&mut db, runs - 1).unwrap();
     vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
     vm.env.gas_limit = u64::MAX - 1;
     vm.env.block_gas_limit = u64::MAX;
@@ -107,7 +107,7 @@ pub fn run_with_levm(program: &str, runs: usize, calldata: &str) {
     }
 }
 
-pub fn run_with_revm(program: &str, runs: usize, calldata: &str) {
+pub fn run_with_revm(program: &str, runs: u64, calldata: &str) {
     let rich_acc_address = address!("1000000000000000000000000000000000000000");
     let bytes = hex::decode(program).unwrap();
     let raw = Bytecode::new_raw(bytes.clone().into());
@@ -170,16 +170,22 @@ fn load_file_bytecode(path: &str) -> String {
     contents
 }
 
-pub fn new_vm_with_bytecode(db: &mut GeneralizedDatabase) -> Result<VM, VMError> {
-    new_vm_with_ops_addr_bal_db(EthrexAddress::from_low_u64_be(100), db)
+pub fn new_vm_with_bytecode(db: &mut GeneralizedDatabase, nonce: u64) -> Result<VM, VMError> {
+    new_vm_with_ops_addr_bal_db(EthrexAddress::from_low_u64_be(100), nonce, db)
 }
 
 /// This function is for testing purposes only.
 fn new_vm_with_ops_addr_bal_db(
     sender_address: EthrexAddress,
+    nonce: u64,
     db: &mut GeneralizedDatabase,
 ) -> Result<VM, VMError> {
-    let env = Environment::default_from_address(sender_address);
+    let env = Environment {
+        origin: sender_address,
+        tx_nonce: nonce,
+        gas_limit: 100000000,
+        ..Default::default()
+    };
 
     VM::new(
         TxKind::Call(EthrexAddress::from_low_u64_be(42)),
