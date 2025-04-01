@@ -208,7 +208,8 @@ integration-test: build-prover rm-db-l2 rm-db-l1
 	killall ethrex_prover
 
 # State reconstruction tests
-state-diff-test: init
+state-diff-test:
+	make restart &
 	rm -rf $$PWD/store
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
