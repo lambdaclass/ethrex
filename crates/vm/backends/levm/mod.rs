@@ -82,26 +82,6 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        // UPDATE BALANCES OF WITHDRAWALS
-
-        // Here we update block_cache with balance increments caused by withdrawals.
-        // if let Some(withdrawals) = &block.body.withdrawals {
-        //     // For every withdrawal we increment the target account's balance
-        //     for (address, increment) in withdrawals
-        //         .iter()
-        //         .filter(|withdrawal| withdrawal.amount > 0)
-        //         .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-        //     {
-        //         // We check if it was in block_cache, if not, we get it from DB.
-        //         let mut account = block_cache.get(&address).cloned().unwrap_or({
-        //             let acc_info = db.store.get_account_info(address);
-        //             Account::from(acc_info)
-        //         });
-
-        //         account.info.balance += increment.into();
-        //     }
-        // }
-
         let requests = extract_all_requests_levm(&receipts, db, &block.header)?;
 
         let fork = chain_config.fork(block.header.timestamp);
