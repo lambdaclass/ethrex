@@ -9,6 +9,7 @@ concurrency:
 
 env:
   CI_ETHREX_WORKDIR: /usr/local/bin
+  PROVER: sp1
 
 jobs:
   test:
@@ -47,7 +48,7 @@ jobs:
       - name: Build prover
         run: |
           cd crates/l2
-          PROVER=sp1 make build-prover
+          make build-prover
 
       - name: Build test
         run: |
@@ -59,4 +60,4 @@ jobs:
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           cp configs/sequencer_config_docker_sp1_example.toml configs/sequencer_config.toml
 
-          PROVER=sp1 make integration-test
+          make integration-test
