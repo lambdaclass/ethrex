@@ -1,16 +1,15 @@
 use clap::Parser;
+use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::BlockByNumber;
-use ethrex_rpc::types::receipt::RpcReceipt;
-use std::path::Path;
-use std::time::Duration;
-use std::{fs, io, path};
-
-use ethereum_types::{Address, Public, Secret, H160, H256, U256};
 use ethrex_rpc::clients::{EthClient, Overrides};
+use ethrex_rpc::types::receipt::RpcReceipt;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
+use std::fs;
+use std::path::Path;
+use std::time::Duration;
 use tokio::{task::JoinSet, time::sleep};
 
 // ERC20 compiled artifact generated from this tutorial:
@@ -23,15 +22,14 @@ type Account = (PublicKey, SecretKey);
 #[command(name = "load_test")]
 #[command(about = "A CLI tool with a single test flag", long_about = None)]
 struct Cli {
-    #[arg(long, value_parser = ["raw", "erc20", "io"])]
-    test: String,
-
     #[arg(long)]
     node: String,
 
     #[arg(long)]
     pkeys: String,
 }
+
+const RICH_ACCOUNT: &str = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
 
 // TODO: this should be in common utils.
 fn address_from_pub_key(public_key: PublicKey) -> H160 {
@@ -194,35 +192,43 @@ async fn erc20_load_test(
     Ok(())
 }
 
-fn parse_pk_file(path: &Path) -> eyre::Result<Vec<SecretKey>> {
+fn parse_pk_file(path: &Path) -> eyre::Result<Vec<Account>> {
     let pkeys_content = fs::read_to_string(path).expect("Unable to read private keys file");
-    let pkeys: Vec<SecretKey> = pkeys_content
+    let accounts: Vec<Account> = pkeys_content
         .lines()
-        .map(|line| SecretKey::from_slice(line.trim().as_bytes()).expect("Invalid private key"))
+        .map(parse_private_key_into_account)
         .collect();
 
-    Ok(pkeys)
+    Ok(accounts)
+}
+
+fn parse_private_key_into_account(pkey: &str) -> Account {
+    let key = pkey
+        .parse::<H256>()
+        .expect(format!("Private key is not a valid hex representation {}", pkey).as_str());
+    let secret_key = SecretKey::from_slice(key.as_bytes())
+        .expect(format!("Invalid private key {}", pkey).as_str());
+    let public_key = secret_key.public_key(secp256k1::SECP256K1).clone();
+    (public_key, secret_key)
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     let pkeys_path = Path::new(&cli.pkeys);
-    let accounts: Vec<Account> = parse_pk_file(pkeys_path)
-        .expect("Failed to parse private keys")
-        .iter()
-        .map(|pk| (pk.public_key(secp256k1::SECP256K1).clone(), pk.clone()))
-        .collect();
+    let accounts = parse_pk_file(pkeys_path)
+        .expect(format!("Failed to parse private keys file {}", pkeys_path.display()).as_str());
     let client = EthClient::new(&cli.node);
-    
+
     // We ask the client for the chain id.
     let chain_id = client
         .get_chain_id()
         .await
         .expect("Failed to get chain id")
         .as_u64();
-    let deployer = accounts[0].clone();
-    
+
+    let deployer = parse_private_key_into_account(RICH_ACCOUNT);
+
     // TODO: does this need the chain id as well?
     let contract_address = erc20_deploy(client.clone(), deployer)
         .await
