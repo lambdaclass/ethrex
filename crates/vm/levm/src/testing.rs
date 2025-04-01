@@ -79,8 +79,8 @@ pub fn new_vm_with_ops_addr_bal_db(
     db.add_accounts(accounts.to_vec());
 
     // add to cache accounts from list accounts
-    cache.insert_account(accounts[0].0, accounts[0].1.clone());
-    cache.insert_account(accounts[1].0, accounts[1].1.clone());
+    cache.insert_account(accounts[0].0, accounts[0].1.clone(), HashMap::new());
+    cache.insert_account(accounts[1].0, accounts[1].1.clone(), HashMap::new());
 
     let env = Environment::default_from_address(sender_address);
 

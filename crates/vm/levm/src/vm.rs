@@ -268,7 +268,8 @@ impl VM {
             TxKind::Create => {
                 // CREATE tx
 
-                let sender_nonce = get_account(&mut cache, db.clone(), env.origin).info.nonce;
+                let (account, _storage) = get_account(&mut cache, db.clone(), env.origin);
+                let sender_nonce = account.info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -396,7 +397,8 @@ impl VM {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(&mut self.cache, self.db.clone(), new_contract_address);
+            let (new_account, _storage) =
+                get_account(&mut self.cache, self.db.clone(), new_contract_address);
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -416,7 +418,7 @@ impl VM {
                 Account::new(balance, Bytes::new(), 1, HashMap::new())
             };
             self.cache
-                .insert_account(new_contract_address, created_contract);
+                .insert_account(new_contract_address, created_contract, HashMap::new());
         }
 
         let mut report = self.run_execution(&mut initial_call_frame)?;
@@ -454,7 +456,28 @@ impl VM {
                 .insert(key);
         }
 
-        let storage_slot = get_storage_slot(&mut self.cache, self.db.clone(), address, key);
+        let storage_slot = match self.cache.get_account(&address) {
+            Some((_account, storage)) => match storage.get(&key) {
+                Some(storage_slot) => storage_slot.clone(),
+                None => {
+                    let value = self.db.get_storage_slot(address, key);
+                    StorageSlot {
+                        original_value: value,
+                        current_value: value,
+                    }
+                }
+            },
+            None => {
+                let value = self.db.get_storage_slot(address, key);
+                StorageSlot {
+                    original_value: value,
+                    current_value: value,
+                }
+            }
+        };
+
+        let (_account, storage) = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
+        storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
     }
@@ -465,7 +488,7 @@ impl VM {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let storage = get_storage_mut_vm(&mut self.cache, self.db.clone(), address)?;
+        let (_account, storage) = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
         let account_original_storage_slot_value = storage
             .get(&key)
             .map_or(U256::zero(), |slot| slot.original_value);

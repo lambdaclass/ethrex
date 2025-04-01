@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
@@ -578,9 +580,9 @@ impl VM {
                 .contains(&current_call_frame.to)
             {
                 // If target is the same as the contract calling, Ether will be burnt.
-                get_account_mut_vm(&mut self.cache, self.db.clone(), current_call_frame.to)?
-                    .info
-                    .balance = U256::zero();
+                let (account, _storage) =
+                    get_account_mut_vm(&mut self.cache, self.db.clone(), current_call_frame.to)?;
+                account.info.balance = U256::zero();
 
                 self.accrued_substate
                     .selfdestruct_set
@@ -593,9 +595,9 @@ impl VM {
                 target_address,
                 balance_to_transfer,
             )?;
-            get_account_mut_vm(&mut self.cache, self.db.clone(), current_call_frame.to)?
-                .info
-                .balance = U256::zero();
+            let (account, _storage) =
+                get_account_mut_vm(&mut self.cache, self.db.clone(), current_call_frame.to)?;
+            account.info.balance = U256::zero();
 
             // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
             // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
@@ -696,7 +698,7 @@ impl VM {
         }
 
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
-        let new_account = get_account(&mut self.cache, self.db.clone(), new_address);
+        let (new_account, _storage) = get_account(&mut self.cache, self.db.clone(), new_address);
         if new_account.has_code_or_nonce() {
             increment_account_nonce(&mut self.cache, self.db.clone(), deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
@@ -717,7 +719,8 @@ impl VM {
         } else {
             Account::new(new_balance, Bytes::new(), 1, Default::default())
         };
-        self.cache.insert_account(new_address, new_account);
+        self.cache
+            .insert_account(new_address, new_account, HashMap::new());
 
         // 2. Increment sender's nonce.
         increment_account_nonce(&mut self.cache, self.db.clone(), deployer_address)?;

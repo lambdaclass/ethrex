@@ -150,9 +150,9 @@ impl VM {
         }
         current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        let balance = get_account(&mut self.cache, self.db.clone(), current_call_frame.to)
-            .info
-            .balance;
+        let (account, _storage) =
+            get_account(&mut self.cache, self.db.clone(), current_call_frame.to);
+        let balance = account.info.balance;
 
         current_call_frame.stack.push(balance)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })

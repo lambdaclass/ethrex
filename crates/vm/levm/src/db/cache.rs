@@ -12,16 +12,37 @@ pub struct CacheDB {
 }
 
 impl CacheDB {
-    pub fn get_account(&self, address: &Address) -> Option<&Account> {
-        self.cached_accounts.get(address)
+    pub fn get_account(
+        &self,
+        address: &Address,
+    ) -> Option<(&Account, &HashMap<H256, StorageSlot>)> {
+        if let Some(account) = self.cached_accounts.get(address) {
+            if let Some(account_storage) = self.cached_storages.get(address) {
+                return Some((account, account_storage));
+            }
+        }
+        None
     }
 
-    pub fn get_account_mut(&mut self, address: &Address) -> Option<&mut Account> {
-        self.cached_accounts.get_mut(address)
+    pub fn get_account_mut(
+        &mut self,
+        address: &Address,
+    ) -> Option<(&mut Account, &mut HashMap<H256, StorageSlot>)> {
+        if let Some(account) = self.cached_accounts.get_mut(address) {
+            if let Some(account_storage) = self.cached_storages.get_mut(address) {
+                return Some((account, account_storage));
+            }
+        }
+        None
     }
 
-    pub fn insert_account(&mut self, address: Address, account: Account) -> Option<Account> {
-        self.cached_storages.insert(address, HashMap::new());
+    pub fn insert_account(
+        &mut self,
+        address: Address,
+        account: Account,
+        storage: HashMap<H256, StorageSlot>,
+    ) -> Option<Account> {
+        self.cached_storages.insert(address, storage);
         self.cached_accounts.insert(address, account)
     }
 
@@ -34,37 +55,37 @@ impl CacheDB {
         self.cached_accounts.contains_key(address)
     }
 
-    pub fn get_storage_slot(&self, address: &Address, key: H256) -> Option<&StorageSlot> {
-        self.cached_storages
-            .get(address)
-            .and_then(|storage| storage.get(&key))
-    }
+    // pub fn get_storage_slot(&self, address: &Address, key: H256) -> Option<&StorageSlot> {
+    //     self.cached_storages
+    //         .get(address)
+    //         .and_then(|storage| storage.get(&key))
+    // }
 
-    pub fn get_storage_mut(
-        &mut self,
-        address: &Address,
-    ) -> Option<&mut HashMap<H256, StorageSlot>> {
-        self.cached_storages.get_mut(address)
-    }
-    pub fn get_storage(&self, address: &Address) -> Option<&HashMap<H256, StorageSlot>> {
-        self.cached_storages.get(address)
-    }
+    // pub fn get_storage_mut(
+    //     &mut self,
+    //     address: &Address,
+    // ) -> Option<&mut HashMap<H256, StorageSlot>> {
+    //     self.cached_storages.get_mut(address)
+    // }
+    // pub fn get_storage(&self, address: &Address) -> Option<&HashMap<H256, StorageSlot>> {
+    //     self.cached_storages.get(address)
+    // }
 
-    pub fn is_storage_cached(&self, address: &Address) -> bool {
-        self.cached_storages.contains_key(address)
-    }
+    // pub fn is_storage_cached(&self, address: &Address) -> bool {
+    //     self.cached_storages.contains_key(address)
+    // }
 
-    pub fn insert_storage_slot(
-        &mut self,
-        address: Address,
-        key: H256,
-        storage_slot: StorageSlot,
-    ) -> Option<StorageSlot> {
-        self.cached_storages
-            .entry(address)
-            .or_default()
-            .insert(key, storage_slot)
-    }
+    // pub fn insert_storage_slot(
+    //     &mut self,
+    //     address: Address,
+    //     key: H256,
+    //     storage_slot: StorageSlot,
+    // ) -> Option<StorageSlot> {
+    //     self.cached_storages
+    //         .entry(address)
+    //         .or_default()
+    //         .insert(key, storage_slot)
+    // }
 
     // check this behavior
     pub fn extend_cache(&mut self, new_state: CacheDB) {

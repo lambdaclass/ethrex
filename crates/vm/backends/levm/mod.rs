@@ -120,7 +120,8 @@ impl LEVM {
                 .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
             {
                 // We check if it was in block_cache, if not, we get it from DB.
-                let account = get_account_mut_vm(&mut block_cache, db.clone(), address)?;
+                let (account, _storage) =
+                    get_account_mut_vm(&mut block_cache, db.clone(), address)?;
                 account.info.balance += increment.into();
             }
         }
@@ -273,7 +274,7 @@ impl LEVM {
                 updates += 1;
             }
             let mut added_storage = HashMap::new();
-            if let Some(storage) = new_state.get_storage(new_state_account_address) {
+            if let Some((_account, storage)) = new_state.get_account(new_state_account_address) {
                 for (key, value) in storage {
                     added_storage.insert(*key, value.current_value);
                     updates += 1;

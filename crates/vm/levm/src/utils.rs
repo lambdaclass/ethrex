@@ -125,14 +125,18 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
 // ================== Account related functions =====================
 /// Gets account, first checking the cache and then the database
 /// (caching in the second case)
-pub fn get_account(cache: &mut CacheDB, db: Arc<dyn Database>, address: Address) -> Account {
+pub fn get_account(
+    cache: &mut CacheDB,
+    db: Arc<dyn Database>,
+    address: Address,
+) -> (Account, HashMap<H256, StorageSlot>) {
     match cache.get_account(&address) {
-        Some(acc) => acc.clone(),
+        Some((acc, storage)) => (acc.clone(), storage.clone()),
         None => {
             let account = db.get_account(address);
             // carefull, we were returning an empty storage here.
-            cache.insert_account(address, account.clone());
-            account
+            cache.insert_account(address, account.clone(), HashMap::new());
+            (account, HashMap::new())
         }
     }
 }
@@ -141,12 +145,13 @@ pub fn get_account_no_push_cache(
     cache: &CacheDB,
     db: Arc<dyn Database>,
     address: Address,
-) -> Account {
+) -> (Account, HashMap<H256, StorageSlot>) {
     match cache.get_account(&address) {
-        Some(acc) => acc.clone(),
+        Some((acc, storage)) => (acc.clone(), storage.clone()),
         None => {
             // same as above
-            db.get_account(address)
+            let account = db.get_account(address);
+            (account, HashMap::new())
         }
     }
 }
@@ -155,56 +160,56 @@ pub fn get_account_mut_vm(
     cache: &mut CacheDB,
     db: Arc<dyn Database>,
     address: Address,
-) -> Result<&mut Account, VMError> {
+) -> Result<(&mut Account, &mut HashMap<H256, StorageSlot>), VMError> {
     if !cache.is_account_cached(&address) {
         let account = db.get_account(address);
-        cache.insert_account(address, account.clone());
+        cache.insert_account(address, account.clone(), HashMap::new());
     }
     cache
         .get_account_mut(&address)
         .ok_or(VMError::Internal(InternalError::AccountNotFound))
 }
 
-pub fn get_storage_mut_vm(
-    cache: &mut CacheDB,
-    db: Arc<dyn Database>,
-    address: Address,
-) -> Result<&mut HashMap<H256, StorageSlot>, VMError> {
-    // Cache account.
-    if !cache.is_account_cached(&address) {
-        let account = db.get_account(address);
-        cache.insert_account(address, account.clone());
-    };
-    cache
-        .get_storage_mut(&address)
-        .ok_or(VMError::Internal(InternalError::StorageNotFound))
-}
+// pub fn get_storage_mut_vm(
+//     cache: &mut CacheDB,
+//     db: Arc<dyn Database>,
+//     address: Address,
+// ) -> Result<&mut HashMap<H256, StorageSlot>, VMError> {
+//     // Cache account.
+//     if !cache.is_account_cached(&address) {
+//         let account = db.get_account(address);
+//         cache.insert_account(address, account.clone());
+//     };
+//     cache
+//         .get_storage_mut(&address)
+//         .ok_or(VMError::Internal(InternalError::StorageNotFound))
+// }
 
 /// Gets storage, first checking the cache and then the database
 /// (caching in the second case)
-pub fn get_storage_slot(
-    cache: &mut CacheDB,
-    db: Arc<dyn Database>,
-    address: Address,
-    key: H256,
-) -> StorageSlot {
-    if !cache.is_account_cached(&address) {
-        let account = db.get_account(address);
-        cache.insert_account(address, account.clone());
-    };
-    match cache.get_storage_slot(&address, key) {
-        Some(storage_slot) => storage_slot.clone(),
-        None => {
-            let value = db.get_storage_slot(address, key);
-            let storage_slot = StorageSlot {
-                original_value: value,
-                current_value: value,
-            };
-            cache.insert_storage_slot(address, key, storage_slot.clone());
-            storage_slot
-        }
-    }
-}
+// pub fn get_storage_slot(
+//     cache: &mut CacheDB,
+//     db: Arc<dyn Database>,
+//     address: Address,
+//     key: H256,
+// ) -> StorageSlot {
+//     if !cache.is_account_cached(&address) {
+//         let account = db.get_account(address);
+//         cache.insert_account(address, account.clone());
+//     };
+//     match cache.get_storage_slot(&address, key) {
+//         Some(storage_slot) => storage_slot.clone(),
+//         None => {
+//             let value = db.get_storage_slot(address, key);
+//             let storage_slot = StorageSlot {
+//                 original_value: value,
+//                 current_value: value,
+//             };
+//             cache.insert_storage_slot(address, key, storage_slot.clone());
+//             storage_slot
+//         }
+//     }
+// }
 
 pub fn increase_account_balance(
     cache: &mut CacheDB,
@@ -212,7 +217,7 @@ pub fn increase_account_balance(
     address: Address,
     increase: U256,
 ) -> Result<(), VMError> {
-    let account = get_account_mut_vm(cache, db, address)?;
+    let (account, _storage) = get_account_mut_vm(cache, db, address)?;
     account.info.balance = account
         .info
         .balance
@@ -227,7 +232,7 @@ pub fn decrease_account_balance(
     address: Address,
     decrease: U256,
 ) -> Result<(), VMError> {
-    let account = get_account_mut_vm(cache, db, address)?;
+    let (account, _storage) = get_account_mut_vm(cache, db, address)?;
     account.info.balance = account
         .info
         .balance
@@ -249,7 +254,7 @@ pub fn access_account(
 ) -> (Account, bool) {
     let address_was_cold = accrued_substate.touched_accounts.insert(address);
     let account = match cache.get_account(&address) {
-        Some(account) => account.clone(),
+        Some((account, _storage)) => account.clone(),
         None => db.get_account(address),
     };
     (account, address_was_cold)
@@ -262,7 +267,7 @@ pub fn update_account_bytecode(
     address: Address,
     new_bytecode: Bytes,
 ) -> Result<(), VMError> {
-    let account = get_account_mut_vm(cache, db, address)?;
+    let (account, _storage) = get_account_mut_vm(cache, db, address)?;
     account.code = new_bytecode;
     Ok(())
 }
@@ -463,7 +468,7 @@ pub fn increment_account_nonce(
     db: Arc<dyn Database>,
     address: Address,
 ) -> Result<u64, VMError> {
-    let account = get_account_mut_vm(cache, db, address)?;
+    let (account, _storage) = get_account_mut_vm(cache, db, address)?;
     account.info.nonce = account
         .info
         .nonce
@@ -477,7 +482,7 @@ pub fn decrement_account_nonce(
     db: Arc<dyn Database>,
     address: Address,
 ) -> Result<(), VMError> {
-    let account = get_account_mut_vm(cache, db, address)?;
+    let (account, _storage) = get_account_mut_vm(cache, db, address)?;
     account.info.nonce = account
         .info
         .nonce
@@ -565,7 +570,8 @@ pub fn eip7702_set_access_code(
 
         // 4. Add authority to accessed_addresses (as defined in EIP-2929).
         accrued_substate.touched_accounts.insert(authority_address);
-        let authority_account = get_account_no_push_cache(cache, db_ref.clone(), authority_address);
+        let (authority_account, _storage) =
+            get_account_no_push_cache(cache, db_ref.clone(), authority_address);
 
         // 5. Verify the code of authority is either empty or already delegated.
         let empty_or_delegated =
@@ -598,7 +604,7 @@ pub fn eip7702_set_access_code(
 
         // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
         // Clear the account’s code and reset the account’s code hash to the empty hash.
-        let auth_account = match cache.get_account_mut(&authority_address) {
+        let (auth_account, _storage) = match cache.get_account_mut(&authority_address) {
             Some(account_mut) => account_mut,
             None => {
                 // This is to add the account to the cache
@@ -738,7 +744,7 @@ pub fn eip7702_get_code(
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = get_account_no_push_cache(cache, db.clone(), address);
+    let (account, _storage) = get_account_no_push_cache(cache, db.clone(), address);
     let bytecode = account.code.clone();
 
     // If the Address doesn't have a delegation code
@@ -760,7 +766,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = get_account(cache, db.clone(), auth_address).code;
+    let (authorized_account, _storage) = get_account(cache, db.clone(), auth_address);
 
-    Ok((true, access_cost, auth_address, authorized_bytecode))
+    Ok((true, access_cost, auth_address, authorized_account.code))
 }
