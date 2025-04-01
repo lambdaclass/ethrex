@@ -10,14 +10,6 @@ pub async fn init_client(config: ProverClientConfig) {
     warn!("Prover finished!");
 }
 
-#[cfg(not(any(feature = "exec", feature = "pico", feature = "risc0", feature = "sp1")))]
-compile_error!(
-    "A prover backend must be chosen by enabling one of the next features: exec, pico, risc0, sp1."
-);
-
-#[cfg(feature = "exec")]
-pub use backends::exec::*;
-
 #[cfg(feature = "pico")]
 pub use backends::pico::*;
 
@@ -26,3 +18,6 @@ pub use backends::risc0::*;
 
 #[cfg(feature = "sp1")]
 pub use backends::sp1::*;
+
+#[cfg(not(any(feature = "pico", feature = "risc0", feature = "sp1")))]
+pub use backends::exec::*;
