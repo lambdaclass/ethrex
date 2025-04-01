@@ -37,6 +37,8 @@ use eth::{
     },
 };
 use ethrex_blockchain::Blockchain;
+#[cfg(feature = "based")]
+use ethrex_common::Public;
 use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
 use serde::Deserialize;
 use serde_json::Value;
@@ -48,6 +50,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tower_http::cors::CorsLayer;
 use tracing::info;
 use types::transaction::SendRawTransactionRequest;
 use utils::{
@@ -78,6 +81,11 @@ use axum::extract::State;
 use ethrex_p2p::types::Node;
 use ethrex_storage::{error::StoreError, Store};
 
+#[cfg(feature = "based")]
+mod based;
+#[cfg(feature = "based")]
+use based::versioned_message::SignedMessage;
+
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RpcRequestWrapper {
@@ -98,6 +106,8 @@ pub struct RpcApiContext {
     gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
     gateway_auth_client: EngineClient,
+    #[cfg(feature = "based")]
+    gateway_pubkey: Public,
     #[cfg(feature = "l2")]
     valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
@@ -174,6 +184,7 @@ pub async fn start_api(
     syncer: SyncManager,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
+    #[cfg(feature = "based")] gateway_pubkey: Public,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
 ) {
@@ -192,6 +203,8 @@ pub async fn start_api(
         gateway_eth_client,
         #[cfg(feature = "based")]
         gateway_auth_client,
+        #[cfg(feature = "based")]
+        gateway_pubkey,
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
@@ -210,8 +223,15 @@ pub async fn start_api(
         }
     });
 
+    // All request headers allowed.
+    // All methods allowed.
+    // All origins allowed.
+    // All headers exposed.
+    let cors = CorsLayer::permissive();
+
     let http_router = Router::new()
         .route("/", post(handle_http_request))
+        .layer(cors)
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr).await.unwrap();
 
@@ -297,9 +317,14 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
+        Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
+            "Engine namespace not allowed in map_http_requests".to_owned(),
+        )),
+        #[cfg(feature = "based")]
+        Ok(RpcNamespace::Based) => map_based_requests(req, context),
+        Err(rpc_err) => Err(rpc_err),
         #[cfg(feature = "l2")]
         Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context),
-        _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
 }
 
@@ -455,6 +480,16 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
     }
 }
 
+#[cfg(feature = "based")]
+pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "based_env" => SignedMessage::call_env(req, context),
+        "based_newFrag" => SignedMessage::call_new_frag(req, context),
+        "based_sealFrag" => SignedMessage::call_seal_frag(req, context),
+        unknown_based_method => Err(RpcErr::MethodNotFound(unknown_based_method.to_owned())),
+    }
+}
+
 #[cfg(feature = "l2")]
 pub fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
@@ -533,6 +568,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
@@ -629,6 +666,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
@@ -670,6 +709,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
@@ -743,6 +784,8 @@ mod tests {
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]

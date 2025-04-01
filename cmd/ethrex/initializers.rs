@@ -1,11 +1,8 @@
 use crate::{
+    cli::Options,
     networks,
-    utils::{
-        parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_known_peers, sync_mode,
-    },
+    utils::{parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_known_peers},
 };
-use bytes::Bytes;
-use clap::ArgMatches;
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
@@ -13,10 +10,8 @@ use ethrex_p2p::{
     sync::SyncManager,
     types::{Node, NodeRecord},
 };
-#[cfg(feature = "based")]
-use ethrex_rpc::{EngineClient, EthClient};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::backends::EvmEngine;
+use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
@@ -25,24 +20,34 @@ use std::{
     future::IntoFuture,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
 };
 use tokio::sync::Mutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
-#[cfg(feature = "l2")]
-use ::{ethrex_common::Address, ethrex_l2::utils::config::read_env_file, secp256k1::SecretKey};
 
-pub fn init_tracing(matches: &ArgMatches) {
-    let log_level = matches
-        .get_one::<String>("log.level")
-        .expect("shouldn't happen, log.level is used with a default value");
+#[cfg(feature = "l2")]
+use crate::l2::L2Options;
+#[cfg(feature = "l2")]
+use ::{
+    ethrex_common::Address,
+    ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
+    secp256k1::SecretKey,
+};
+
+#[cfg(feature = "based")]
+use crate::l2::BasedOptions;
+#[cfg(feature = "based")]
+use ethrex_common::Public;
+#[cfg(feature = "based")]
+use ethrex_rpc::{EngineClient, EthClient};
+#[cfg(feature = "based")]
+use std::str::FromStr;
+
+pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
-        .with_default_directive(
-            Directive::from_str(log_level).expect("Not supported log level provided"),
-        )
+        .with_default_directive(Directive::from(opts.log_level))
         .from_env_lossy();
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(log_filter)
@@ -50,17 +55,12 @@ pub fn init_tracing(matches: &ArgMatches) {
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 }
 
-pub fn init_metrics(matches: &ArgMatches, tracker: TaskTracker) {
-    // Check if the metrics.port is present, else set it to 0
-    let metrics_port = matches
-        .get_one::<String>("metrics.port")
-        .map_or("0".to_owned(), |v| v.clone());
-
-    // Start the metrics_api with the given metrics.port if it's != 0
-    if metrics_port != *"0" {
-        let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(metrics_port);
-        tracker.spawn(metrics_api);
-    }
+pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+    let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(
+        opts.metrics_addr.clone(),
+        opts.metrics_port.clone(),
+    );
+    tracker.spawn(metrics_api);
 }
 
 pub fn init_store(data_dir: &str, network: &str) -> Store {
@@ -94,7 +94,8 @@ pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
 
 #[allow(clippy::too_many_arguments)]
 pub fn init_rpc_api(
-    matches: &ArgMatches,
+    opts: &Options,
+    #[cfg(feature = "l2")] l2_opts: &L2Options,
     signer: &SigningKey,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_p2p_node: Node,
@@ -113,28 +114,30 @@ pub fn init_rpc_api(
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_table.clone(),
-        sync_mode(matches),
+        opts.syncmode.clone(),
         cancel_token,
         blockchain.clone(),
     );
 
     let rpc_api = ethrex_rpc::start_api(
-        get_http_socket_addr(matches),
-        get_authrpc_socket_addr(matches),
+        get_http_socket_addr(opts),
+        get_authrpc_socket_addr(opts),
         store,
         blockchain,
-        get_jwt_secret(matches),
+        read_jwtsecret_file(&opts.authrpc_jwtsecret),
         local_p2p_node,
         local_node_record,
         syncer,
         #[cfg(feature = "based")]
-        get_gateway_http_client(matches),
+        get_gateway_http_client(&l2_opts.based_opts),
         #[cfg(feature = "based")]
-        get_gateway_auth_client(matches),
+        get_gateway_auth_client(&l2_opts.based_opts),
+        #[cfg(feature = "based")]
+        get_gateway_public_key(&l2_opts.based_opts),
         #[cfg(feature = "l2")]
-        get_valid_delegation_addresses(matches),
+        get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
-        get_sponsor_pk(),
+        get_sponsor_pk(l2_opts),
     )
     .into_future();
 
@@ -142,44 +145,33 @@ pub fn init_rpc_api(
 }
 
 #[cfg(feature = "based")]
-fn get_gateway_http_client(matches: &clap::ArgMatches) -> EthClient {
-    let gateway_addr = matches
-        .get_one::<String>("gateway.addr")
-        .expect("gateway.addr is required");
-    let gateway_eth_port = matches
-        .get_one::<String>("gateway.eth_port")
-        .expect("gateway.eth_port is required");
-
-    let gateway_http_socket_addr = parse_socket_addr(gateway_addr, gateway_eth_port)
+fn get_gateway_http_client(opts: &BasedOptions) -> EthClient {
+    let gateway_http_socket_addr = parse_socket_addr(&opts.gateway_addr, &opts.gateway_eth_port)
         .expect("Failed to parse gateway http address and port");
 
     EthClient::new(&gateway_http_socket_addr.to_string())
 }
 
 #[cfg(feature = "based")]
-fn get_gateway_auth_client(matches: &clap::ArgMatches) -> EngineClient {
-    let gateway_addr = matches
-        .get_one::<String>("gateway.addr")
-        .expect("gateway.addr is required");
-    let gateway_auth_port = matches
-        .get_one::<String>("gateway.auth_port")
-        .expect("gateway.auth_port is required");
-    let gateway_authrpc_jwtsecret = matches
-        .get_one::<String>("gateway.jwtsecret")
-        .expect("gateway.jwtsecret is required");
+fn get_gateway_auth_client(opts: &BasedOptions) -> EngineClient {
+    let gateway_authrpc_socket_addr =
+        parse_socket_addr(&opts.gateway_addr, &opts.gateway_auth_port)
+            .expect("Failed to parse gateway authrpc address and port");
 
-    let gateway_authrpc_socket_addr = parse_socket_addr(gateway_addr, gateway_auth_port)
-        .expect("Failed to parse gateway authrpc address and port");
-
-    let gateway_jwtsecret = read_jwtsecret_file(gateway_authrpc_jwtsecret);
+    let gateway_jwtsecret = read_jwtsecret_file(&opts.gateway_jwtsecret);
 
     EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret)
+}
+
+#[cfg(feature = "based")]
+fn get_gateway_public_key(based_opts: &BasedOptions) -> Public {
+    Public::from_str(&based_opts.gateway_pubkey).expect("Failed to parse gateway pubkey")
 }
 
 #[allow(clippy::too_many_arguments)]
 #[allow(dead_code)]
 pub async fn init_network(
-    matches: &ArgMatches,
+    opts: &Options,
     network: &str,
     data_dir: &str,
     local_p2p_node: Node,
@@ -189,16 +181,14 @@ pub async fn init_network(
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
 ) {
-    let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
-
-    if dev_mode {
+    if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
         panic!(
             "Build the binary with the `dev` feature in order to use the `--dev` cli's argument."
         );
     }
 
-    let bootnodes = get_bootnodes(matches, network, data_dir);
+    let bootnodes = get_bootnodes(opts, network, data_dir);
 
     ethrex_p2p::start_network(
         local_p2p_node,
@@ -216,10 +206,8 @@ pub async fn init_network(
 }
 
 #[cfg(feature = "dev")]
-pub fn init_dev_network(matches: &ArgMatches, store: &Store, tracker: TaskTracker) {
-    let dev_mode = *matches.get_one::<bool>("dev").unwrap_or(&false);
-
-    if dev_mode {
+pub fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
+    if opts.dev {
         info!("Running in DEV_MODE");
 
         let head_block_hash = {
@@ -234,12 +222,12 @@ pub fn init_dev_network(matches: &ArgMatches, store: &Store, tracker: TaskTracke
 
         let url = format!(
             "http://{authrpc_socket_addr}",
-            authrpc_socket_addr = get_authrpc_socket_addr(matches)
+            authrpc_socket_addr = get_authrpc_socket_addr(opts)
         );
 
         let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
             url,
-            get_jwt_secret(matches),
+            read_jwtsecret_file(&opts.authrpc_jwtsecret),
             head_block_hash,
             max_tries,
             1000,
@@ -249,11 +237,11 @@ pub fn init_dev_network(matches: &ArgMatches, store: &Store, tracker: TaskTracke
     }
 }
 
-pub fn get_network(matches: &ArgMatches) -> String {
-    let mut network = matches
-        .get_one::<String>("network")
-        .expect("network is required")
-        .clone();
+pub fn get_network(opts: &Options) -> String {
+    let mut network = opts
+        .network
+        .clone()
+        .expect("--network is required and it was not provided");
 
     // Set preset genesis from known networks
     if network == "holesky" {
@@ -270,12 +258,8 @@ pub fn get_network(matches: &ArgMatches) -> String {
 }
 
 #[allow(dead_code)]
-pub fn get_bootnodes(matches: &ArgMatches, network: &str, data_dir: &str) -> Vec<Node> {
-    let mut bootnodes: Vec<Node> = matches
-        .get_many("bootnodes")
-        .map(Iterator::copied)
-        .map(Iterator::collect)
-        .unwrap_or_default();
+pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node> {
+    let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
     if network == networks::HOLESKY_GENESIS_PATH {
         info!("Adding holesky preset bootnodes");
@@ -330,24 +314,11 @@ pub fn get_signer(data_dir: &str) -> SigningKey {
     signer
 }
 
-pub fn get_local_p2p_node(matches: &ArgMatches, signer: &SigningKey) -> Node {
-    let udp_addr = matches
-        .get_one::<String>("discovery.addr")
-        .expect("discovery.addr is required");
-    let udp_port = matches
-        .get_one::<String>("discovery.port")
-        .expect("discovery.port is required");
-    let udp_socket_addr =
-        parse_socket_addr(udp_addr, udp_port).expect("Failed to parse discovery address and port");
-
-    let tcp_addr = matches
-        .get_one::<String>("p2p.addr")
-        .expect("addr is required");
-    let tcp_port = matches
-        .get_one::<String>("p2p.port")
-        .expect("port is required");
+pub fn get_local_p2p_node(opts: &Options, signer: &SigningKey) -> Node {
+    let udp_socket_addr = parse_socket_addr(&opts.discovery_addr, &opts.discovery_port)
+        .expect("Failed to parse discovery address and port");
     let tcp_socket_addr =
-        parse_socket_addr(tcp_addr, tcp_port).expect("Failed to parse addr and port");
+        parse_socket_addr(&opts.p2p_addr, &opts.p2p_port).expect("Failed to parse addr and port");
 
     // TODO: If hhtp.addr is 0.0.0.0 we get the local ip as the one of the node, otherwise we use the provided one.
     // This is fine for now, but we might need to support more options in the future.
@@ -374,36 +345,19 @@ pub fn get_local_p2p_node(matches: &ArgMatches, signer: &SigningKey) -> Node {
     node
 }
 
-pub fn get_jwt_secret(matches: &ArgMatches) -> Bytes {
-    let authrpc_jwtsecret = matches
-        .get_one::<String>("authrpc.jwtsecret")
-        .expect("authrpc.jwtsecret is required");
-    read_jwtsecret_file(authrpc_jwtsecret)
+pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
+    parse_socket_addr(&opts.authrpc_addr, &opts.authrpc_port)
+        .expect("Failed to parse authrpc address and port")
 }
 
-pub fn get_authrpc_socket_addr(matches: &ArgMatches) -> SocketAddr {
-    let authrpc_addr = matches
-        .get_one::<String>("authrpc.addr")
-        .expect("authrpc.addr is required");
-    let authrpc_port = matches
-        .get_one::<String>("authrpc.port")
-        .expect("authrpc.port is required");
-    parse_socket_addr(authrpc_addr, authrpc_port).expect("Failed to parse authrpc address and port")
-}
-
-pub fn get_http_socket_addr(matches: &ArgMatches) -> SocketAddr {
-    let http_addr = matches
-        .get_one::<String>("http.addr")
-        .expect("http.addr is required");
-    let http_port = matches
-        .get_one::<String>("http.port")
-        .expect("http.port is required");
-    parse_socket_addr(http_addr, http_port).expect("Failed to parse http address and port")
+pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
+    parse_socket_addr(&opts.http_addr, &opts.http_port)
+        .expect("Failed to parse http address and port")
 }
 
 #[cfg(feature = "l2")]
-pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
-    let Some(path) = matches.get_one::<String>("sponsorable_addresses") else {
+pub fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
+    let Some(ref path) = l2_opts.sponsorable_addresses_file_path else {
         warn!("No valid addresses provided, ethrex_SendTransaction will always fail");
         return Vec::new();
     };
@@ -421,8 +375,14 @@ pub fn get_valid_delegation_addresses(matches: &ArgMatches) -> Vec<Address> {
 }
 
 #[cfg(feature = "l2")]
-pub fn get_sponsor_pk() -> SecretKey {
-    if let Err(e) = read_env_file() {
+pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
+    if let Some(pk) = opts.sponsor_private_key {
+        return pk;
+    }
+
+    warn!("Sponsor private key not provided. Trying to read from the .env file.");
+
+    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
         panic!("Failed to read .env file: {e}");
     }
     let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();

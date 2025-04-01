@@ -1,4 +1,7 @@
-use crate::errors::*;
+use crate::utils::config::{
+    errors::{ConfigError, TomlParserError},
+    ConfigMode,
+};
 use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -16,11 +19,10 @@ struct Deployer {
 }
 
 impl Deployer {
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         let prefix = "DEPLOYER";
         format!(
-            "
-{prefix}_ADDRESS={}
+            "{prefix}_ADDRESS={}
 {prefix}_PRIVATE_KEY={}
 {prefix}_RISC0_CONTRACT_VERIFIER={}
 {prefix}_SP1_CONTRACT_VERIFIER={}
@@ -47,32 +49,13 @@ struct Eth {
 }
 
 impl Eth {
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         let prefix = "ETH";
         format!(
             "
 {prefix}_RPC_URL={}
 ",
             self.rpc_url,
-        )
-    }
-}
-
-#[derive(Deserialize, Debug)]
-struct Engine {
-    rpc_url: String,
-    jwt_path: String,
-}
-
-impl Engine {
-    pub fn to_env(&self) -> String {
-        let prefix = "ENGINE_API";
-        format!(
-            "
-{prefix}_RPC_URL={}
-{prefix}_JWT_PATH={}
-",
-            self.rpc_url, self.jwt_path,
         )
     }
 }
@@ -105,19 +88,19 @@ impl Watcher {
 
 #[derive(Deserialize, Debug)]
 struct Proposer {
-    interval_ms: u64,
+    block_time_ms: u64,
     coinbase_address: String,
 }
 
 impl Proposer {
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         let prefix = "PROPOSER";
         format!(
             "
-{prefix}_INTERVAL_MS={}
+{prefix}_BLOCK_TIME_MS={}
 {prefix}_COINBASE_ADDRESS={}
 ",
-            self.interval_ms, self.coinbase_address,
+            self.block_time_ms, self.coinbase_address,
         )
     }
 }
@@ -152,26 +135,29 @@ impl Committer {
 }
 
 #[derive(Deserialize, Debug)]
-struct Client {
+struct ProverClient {
     prover_server_endpoint: String,
-    interval_ms: u64,
+    sp1_prover: String,
+    risc0_dev_mode: u64,
+    proving_time_ms: u64,
 }
 
-impl Client {
-    pub fn to_env(&self) -> String {
+impl ProverClient {
+    fn to_env(&self) -> String {
         let prefix = "PROVER_CLIENT";
         format!(
-            "
-{prefix}_PROVER_SERVER_ENDPOINT={}
-{prefix}_INTERVAL_MS={}
+            "{prefix}_PROVER_SERVER_ENDPOINT={}
+{prefix}_PROVING_TIME_MS={}
+RISC0_DEV_MODE={}
+SP1_PROVER={}
 ",
-            self.prover_server_endpoint, self.interval_ms
+            self.prover_server_endpoint, self.proving_time_ms, self.risc0_dev_mode, self.sp1_prover
         )
     }
 }
 
 #[derive(Deserialize, Debug)]
-struct Server {
+struct ProverServer {
     listen_ip: String,
     listen_port: u64,
     verifier_address: String,
@@ -180,8 +166,8 @@ struct Server {
     dev_interval_ms: u64,
 }
 
-impl Server {
-    pub fn to_env(&self) -> String {
+impl ProverServer {
+    fn to_env(&self) -> String {
         let prefix = "PROVER_SERVER";
         format!(
             "
@@ -203,56 +189,41 @@ impl Server {
 }
 
 #[derive(Deserialize, Debug)]
-struct Prover {
-    client: Client,
-    server: Server,
-}
-
-impl Prover {
-    pub fn to_env(&self) -> String {
-        let mut env = String::new();
-        env.push_str(&self.client.to_env());
-        env.push_str(&self.server.to_env());
-        env
-    }
-}
-
-#[derive(Deserialize, Debug)]
 struct L2Config {
     deployer: Deployer,
     eth: Eth,
-    engine: Engine,
     watcher: Watcher,
     proposer: Proposer,
     committer: Committer,
-    prover: Prover,
+    prover_server: ProverServer,
 }
 
 impl L2Config {
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         let mut env_representation = String::new();
+
         env_representation.push_str(&self.deployer.to_env());
         env_representation.push_str(&self.eth.to_env());
-        env_representation.push_str(&self.engine.to_env());
         env_representation.push_str(&self.watcher.to_env());
         env_representation.push_str(&self.proposer.to_env());
         env_representation.push_str(&self.committer.to_env());
-        env_representation.push_str(&self.prover.to_env());
+        env_representation.push_str(&self.prover_server.to_env());
+
         env_representation
     }
 }
 
-pub fn write_to_env(config: String) -> Result<(), ConfigError> {
-    let env_file_name = std::env::var("ENV_FILE").unwrap_or(".env".to_string());
+fn write_to_env(config: String, mode: ConfigMode) -> Result<(), TomlParserError> {
+    let env_file_path = mode.get_env_path_or_default();
     let env_file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(env_file_name);
+        .open(env_file_path);
     match env_file {
         Ok(mut file) => {
             file.write_all(&config.into_bytes()).map_err(|_| {
-                ConfigError::EnvWriteError(format!(
+                TomlParserError::EnvWriteError(format!(
                     "Couldn't write file in {}, line: {}",
                     file!(),
                     line!()
@@ -260,7 +231,7 @@ pub fn write_to_env(config: String) -> Result<(), ConfigError> {
             })?;
         }
         Err(err) => {
-            return Err(ConfigError::EnvWriteError(format!(
+            return Err(TomlParserError::EnvWriteError(format!(
                 "Error: {}. Couldn't write file in {}, line: {}",
                 err,
                 file!(),
@@ -271,9 +242,46 @@ pub fn write_to_env(config: String) -> Result<(), ConfigError> {
     Ok(())
 }
 
-pub fn read_toml(toml_path: String) -> Result<(), ConfigError> {
-    let file = std::fs::read_to_string(toml_path).map_err(|_| ConfigError::TomlFileNotFound)?;
-    let config: L2Config = toml::from_str(&file).map_err(|_| ConfigError::TomlFormat)?;
-    write_to_env(config.to_env())?;
+fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError> {
+    let toml_path = mode.get_config_file_path(&config_path);
+    let toml_file_name = toml_path
+        .file_name()
+        .ok_or(ConfigError::Custom("Invalid CONFIGS_PATH".to_string()))?
+        .to_str()
+        .ok_or(ConfigError::Custom("Couldn't convert to_str()".to_string()))?
+        .to_owned();
+    let file = std::fs::read_to_string(toml_path).map_err(|err| {
+        TomlParserError::TomlFileNotFound(format!("{err}: {}", toml_file_name.clone()), mode)
+    })?;
+    match mode {
+        ConfigMode::Sequencer => {
+            let config: L2Config = toml::from_str(&file).map_err(|err| {
+                TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
+            })?;
+            write_to_env(config.to_env(), mode)?;
+        }
+        ConfigMode::ProverClient => {
+            let config: ProverClient = toml::from_str(&file).map_err(|err| {
+                TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
+            })?;
+            write_to_env(config.to_env(), mode)?;
+        }
+    }
+
     Ok(())
+}
+
+pub fn parse_configs(mode: ConfigMode) -> Result<(), ConfigError> {
+    #[allow(clippy::expect_fun_call, clippy::expect_used)]
+    let config_path = std::env::var("CONFIGS_PATH").expect(
+        format!(
+            "CONFIGS_PATH environment variable not defined. Expected in {}, line: {}
+If running locally, a reasonable value would be CONFIGS_PATH=./configs",
+            file!(),
+            line!()
+        )
+        .as_str(),
+    );
+
+    read_config(config_path, mode).map_err(From::from)
 }

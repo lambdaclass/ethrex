@@ -2,7 +2,7 @@ use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
 
-use crate::db::StoreWrapper;
+use crate::db::{ExecutionDB, StoreWrapper};
 
 impl LevmDatabase for StoreWrapper {
     fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::account::AccountInfo {
@@ -45,5 +45,34 @@ impl LevmDatabase for StoreWrapper {
         let a = self.store.get_block_header(block_number).unwrap();
 
         a.map(|a| CoreH256::from(a.compute_block_hash().0))
+    }
+}
+
+impl LevmDatabase for ExecutionDB {
+    fn get_account_info(&self, address: CoreAddress) -> ethrex_levm::AccountInfo {
+        let Some(acc_info) = self.accounts.get(&address) else {
+            return ethrex_levm::AccountInfo::default();
+        };
+        let acc_code = self.code.get(&acc_info.code_hash).unwrap();
+        ethrex_levm::AccountInfo {
+            balance: acc_info.balance,
+            bytecode: acc_code.clone(),
+            nonce: acc_info.nonce,
+        }
+    }
+
+    fn account_exists(&self, address: CoreAddress) -> bool {
+        self.accounts.contains_key(&address)
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Option<CoreH256> {
+        self.block_hashes.get(&block_number).cloned()
+    }
+
+    fn get_storage_slot(&self, address: CoreAddress, key: CoreH256) -> CoreU256 {
+        let Some(storage) = self.storage.get(&address) else {
+            return CoreU256::default();
+        };
+        *storage.get(&key).unwrap_or(&CoreU256::default())
     }
 }

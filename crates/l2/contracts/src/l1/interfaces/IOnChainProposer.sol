@@ -10,11 +10,6 @@ interface IOnChainProposer {
     /// @return The latest committed block number as a uint256.
     function lastCommittedBlock() external view returns (uint256);
 
-    /// @notice The next block number to commit.
-    /// @dev This value should be equal to `lastCommittedBlock() + 1`.
-    /// @return The next block number to commit as a uint256.
-    function nextBlockToCommit() external view returns (uint256);
-
     /// @notice The latest verified block number.
     /// @return The latest verified block number as a uint256.
     function lastVerifiedBlock() external view returns (uint256);
@@ -61,8 +56,6 @@ interface IOnChainProposer {
     /// verified (this is after proved).
     /// @param blockNumber is the number of the block to be verified.
     /// ----------------------------------------------------------------------
-    /// @param execPublicInputs Values used to perform the execution
-    /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the block to be verified.
     /// @param risc0ImageId Digest of the zkVM imageid.
     /// @param risc0JournalDigest Digest of the public_inputs aka journal
@@ -76,8 +69,6 @@ interface IOnChainProposer {
     /// @param picoProof Groth16 proof
     function verify(
         uint256 blockNumber,
-        //exec
-        bytes calldata execPublicInputs,
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
