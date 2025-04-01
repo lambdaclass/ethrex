@@ -46,9 +46,7 @@ name = "ethrex_prover"
 path = "src/main.rs"
 
 [features]
-default = ["exec"]
 # prover backends
-exec = []
 pico = ["zkvm_interface/pico", "dep:pico-sdk"]
 risc0 = [
   "zkvm_interface/risc0",
