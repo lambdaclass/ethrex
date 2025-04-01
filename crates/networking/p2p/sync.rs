@@ -446,13 +446,12 @@ impl SyncManager {
                 last_valid_hash,
             }) = failure
             {
-                self.invalid_ancestors
-                    .insert(failed_block_hash, last_valid_hash);
+                store.set_invalid_ancestor(failed_block_hash, last_valid_hash)?;
 
                 // TODO(#2127): Just marking the failing ancestor and the sync head is enough
                 // to fix the Missing Ancestors hive test, we want to look at a more robust
                 // solution in the future if needed.
-                self.invalid_ancestors.insert(sync_head, last_valid_hash);
+                store.set_invalid_ancestor(sync_head, last_valid_hash)?;
             }
 
             return Err(error.into());
