@@ -25,7 +25,7 @@ This component handles the L1->L2 messages. Without rest, it is always watching 
 
 In the future, it will also be watching for other L1->L2 messages.
 
-### L1 Transaction Sender
+### L1 Transaction Sender (a.k.a. L1 Committer)
 
 As the name suggests, this component sends transactions to the L1. But not any transaction, only commit and verify transactions.
 
@@ -47,39 +47,42 @@ Configuration is done through environment variables. The easiest way to configur
 > The deployer.rs is in charge of parsing the `.toml` and creating/updating the `.env`
 > If you don't deploy files, the `.toml` will not be parsed.
 
-The following environment variables are available to configure the Proposer consider looking at the provided [config_example.toml](../configs/config_example.toml):
+The following environment variables are available to configure the Proposer consider looking at the provided [sequencer_config_example.toml](../configs/sequencer_config_example.toml):
 
-<!-- NOTE: Mantain the sections in the same order as present in [config_example.toml](../configs/config_example.toml). -->
+<!-- NOTE: Mantain the sections in the same order as present in [sequencer_config_example.toml](../configs/sequencer_config_example.toml). -->
 
-- Under the [deployer] section:
+- Under the `[deployer]` section:
 
   - `address`: L1 account which will deploy the common bridge contracts in L1.
   - `private key`: Its private key.
+  - `pico_contract_verifier`: Address which will verify the `pico` proofs.
+  - `pico_deploy_verifier`: Whether to deploy the `pico` verifier contract or not.
   - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
   - `sp1_contract_verifier`: Address which will verify the `sp1` proofs.
   - `sp1_deploy_verifier`: Whether to deploy the `sp1` verifier contract or not.
-  - `pico_contract_verifier`: Address which will verify the `pico` proofs.
-  - `pico_deploy_verifier`: Whether to deploy the `pico` verifier contract or not.
   - `salt_is_zero`: Whether a 0 value salt will be used. Keep as true for deterministic `create2` operations.
 
-- Under the [eth] section:
+- Under the `[eth]` section:
 
   - `rpc_url`: URL of the L1 RPC.
 
-- Under the [watcher] section:
+- Under the `[watcher]` section:
 
   - `bridge_address`: Address of the bridge contract on L1.
   - `check_interval_ms`: Interval in milliseconds to check for new events.
   - `max_block_step`: Maximum number of blocks to look for when checking for new events.
   - `l2_proposer_private_key`: Private key of the L2 proposer.
 
-- Under the [proposer] section:
-  - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
-  - `coinbase address`: Address which will receive the execution fees.
+- Under the `[proposer]` section:
+  - `block_time_ms`: Interval in milliseconds to produce new blocks for the proposer.
+  - `coinbase_address`: Address which will receive the execution fees.
 
-Under the [committer] section: - `l1_address`: Address of the L1 committer. - `l1_private_key`: Private key of the L1 committer. - `on_chain_proposer_address`: Address of the on-chain committer.
+- Under the `[committer]` section: 
+  - `on_chain_proposer_address`: Address of the on-chain committer.
+  - `l1_address`: Address of the L1 committer. 
+  - `l1_private_key`: Private key of the L1 committer. 
 
-- Under the [prover_server] section:
+- Under the `[prover_server]` section:
   - `listen_ip`: IP to listen for proof data requests.
   - `listen_port`: Port to listen for proof data requests.
   - `verifier_address`: Address of the account that sends verify transaction to L1.
