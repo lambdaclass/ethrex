@@ -51,7 +51,7 @@ services:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
       - ./.env:/.env:ro
       - ./config.toml:/config.toml:ro
-    command: --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8552
+    command: --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8552 --evm levm
     depends_on:
       contract_deployer:
         condition: service_completed_successfully
