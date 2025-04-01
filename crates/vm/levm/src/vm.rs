@@ -270,7 +270,7 @@ impl<'a> VM<'a> {
                 })
             }
             TxKind::Create => {
-                let sender_nonce = get_account_no_push_cache(db, env.origin)?.info.nonce;
+                let sender_nonce = get_account(db, env.origin)?.info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
