@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743522670991,
+  "lastUpdate": 1743526226069,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2095,6 +2095,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 188754922429,
             "range": "± 1394860791",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "65383392d24f31f4a478fe585ab240e534b29528",
+          "message": "ci(core): skip loc job on repository forks. (#2373)\n\n**Motivation**\nExternal contributors don't have permissions to post comments\nprogramatically. So the LOC doesn't make sense in that case.",
+          "timestamp": "2025-04-01T15:59:46Z",
+          "tree_id": "72320c5e6c821e08299b664b050b08317ec20222",
+          "url": "https://github.com/lambdaclass/ethrex/commit/65383392d24f31f4a478fe585ab240e534b29528"
+        },
+        "date": 1743526224231,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186078010011,
+            "range": "± 1250780320",
             "unit": "ns/iter"
           }
         ]
