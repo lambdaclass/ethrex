@@ -1,7 +1,6 @@
 use crate::{
     call_frame::CallFrame,
     constants::*,
-    db::CacheDB,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
@@ -13,7 +12,7 @@ use ethrex_common::types::Fork;
 
 use bytes::Bytes;
 
-impl VM {
+impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,
@@ -26,7 +25,6 @@ impl VM {
 
                 Ok(ExecutionReport {
                     result: TxResult::Success,
-                    new_state: self.cache.clone(),
                     gas_used: current_call_frame.gas_used,
                     gas_refunded: 0,
                     output,
@@ -44,7 +42,6 @@ impl VM {
 
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
-                    new_state: CacheDB::default(),
                     gas_used: current_call_frame.gas_limit,
                     gas_refunded: 0,
                     output: Bytes::new(),
@@ -208,12 +205,7 @@ impl VM {
             match validate_create {
                 Ok(new_address) => {
                     // Set bytecode to new account if success
-                    update_account_bytecode(
-                        &mut self.cache,
-                        self.db.clone(),
-                        new_address,
-                        contract_code,
-                    )?;
+                    update_account_bytecode(&mut self.db, new_address, contract_code)?;
                 }
                 Err(error) => {
                     // Revert if error
@@ -222,7 +214,6 @@ impl VM {
 
                     return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
-                        new_state: CacheDB::default(),
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output),
@@ -234,7 +225,6 @@ impl VM {
 
         Ok(ExecutionReport {
             result: TxResult::Success,
-            new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output),
@@ -266,7 +256,6 @@ impl VM {
 
         Ok(ExecutionReport {
             result: TxResult::Revert(error),
-            new_state: CacheDB::default(),
             gas_used: current_call_frame.gas_used,
             gas_refunded: self.env.refunded_gas,
             output: std::mem::take(&mut current_call_frame.output), // Bytes::new() if error is not RevertOpcode

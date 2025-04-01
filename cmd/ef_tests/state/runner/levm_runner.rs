@@ -9,15 +9,14 @@ use ethrex_common::{
     H256, U256,
 };
 use ethrex_levm::{
-    db::CacheDB,
     errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{EVMConfig, VM},
+    vm::{EVMConfig, GeneralizedDatabase, VM},
     Environment,
 };
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::backends;
 use keccak_hash::keccak;
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -79,20 +78,20 @@ pub fn run_ef_test_tx(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
-    let mut levm = prepare_vm_for_tx(vector, test, fork)?;
+    let mut db = utils::load_initial_state_levm(test);
+    let mut levm = prepare_vm_for_tx(vector, test, fork, &mut db)?;
     ensure_pre_state(&levm, test)?;
     let levm_execution_result = levm.execute();
-    ensure_post_state(&levm_execution_result, vector, test, fork)?;
+    ensure_post_state(&levm_execution_result, vector, test, fork, &mut db)?;
     Ok(())
 }
 
-pub fn prepare_vm_for_tx(
+pub fn prepare_vm_for_tx<'a>(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
-) -> Result<VM, EFTestRunnerError> {
-    let db = Arc::new(utils::load_initial_state_levm(test));
-
+    db: &'a mut GeneralizedDatabase,
+) -> Result<VM<'a>, EFTestRunnerError> {
     let tx = test
         .transactions
         .get(vector)
@@ -153,7 +152,6 @@ pub fn prepare_vm_for_tx(
         tx.value,
         tx.data.clone(),
         db,
-        CacheDB::default(),
         access_lists,
         authorization_list,
     )
@@ -161,7 +159,7 @@ pub fn prepare_vm_for_tx(
 }
 
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
-    let world_state = &evm.db;
+    let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
         let account = world_state.get_account_info(*address);
         ensure_pre_state_condition(
@@ -278,6 +276,7 @@ pub fn ensure_post_state(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
+    db: &mut GeneralizedDatabase,
 ) -> Result<(), EFTestRunnerError> {
     match levm_execution_result {
         Ok(execution_report) => {
@@ -308,18 +307,14 @@ pub fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let store_wrapper = utils::load_initial_state_levm(test);
-                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(
-                        Arc::new(store_wrapper),
-                        *fork,
-                        &execution_report.new_state,
-                    )
-                    .map_err(|_| {
-                        InternalError::Custom(
-                            "Error at LEVM::get_state_transitions in ensure_post_state()"
-                                .to_owned(),
-                        )
-                    })?;
+                    // let mut db = utils::load_initial_state_levm(test);
+                    let levm_account_updates =
+                        backends::levm::LEVM::get_state_transitions(db, *fork).map_err(|_| {
+                            InternalError::Custom(
+                                "Error at LEVM::get_state_transitions in ensure_post_state()"
+                                    .to_owned(),
+                            )
+                        })?;
                     let pos_state_root = post_state_root(&levm_account_updates, test);
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
