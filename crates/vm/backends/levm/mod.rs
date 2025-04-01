@@ -424,7 +424,11 @@ pub fn generic_system_contract_levm(
     )
     .map_err(EvmError::from)?;
 
-    vm.execute().map_err(EvmError::from)
+    let report = vm.execute().map_err(EvmError::from)?;
+    db.cache.remove(&SYSTEM_ADDRESS);
+    db.cache.remove(&block_header.coinbase);
+
+    Ok(report)
 }
 
 #[allow(unreachable_code)]
