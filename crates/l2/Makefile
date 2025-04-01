@@ -171,7 +171,7 @@ init-prover: ## 🚀 Initializes the Prover
 	@if [ -z "$$T" ]; then \
 		echo "Error: ProverType (T) is missing."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover T=<prover_type: (risc0, sp1, pico, exec)> <G=true>."; \
+		echo "make init-prover T=<prover_type: (risc0, sp1, pico)> <G=true>."; \
 		echo "The prover can also be run with GPU (G)"; \
 		exit 1; \
 	fi; \

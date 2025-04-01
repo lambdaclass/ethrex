@@ -79,10 +79,8 @@ Then run any of the targets:
 To run the blockchain (`proposer`) and prover in conjunction, start the `prover_client`, use the following command:
 
 ```sh
-make init-prover T="prover_type (pico,risc0,sp1,exec) G=true"
+make init-prover T="prover_type (pico,risc0,sp1) G=true"
 ```
-
-select the "exec" backend whenever it's not desired to generate proofs, like in a CI environment.
 
 #### Run the whole system with the prover - In one Machine
 
@@ -99,7 +97,7 @@ select the "exec" backend whenever it's not desired to generate proofs, like in 
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-6. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico,exec)`.
+6. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico)`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
@@ -156,7 +154,7 @@ prover_server_endpoint=<ip-address>:3900
 ```
 
 - `Finally`, to start the `prover_client`/`zkvm`, run:
-  - `make init-prover T=(sp1,risc0,pico,exec) G=true`
+  - `make init-prover T=(sp1,risc0,pico) G=true`
 
 2. `prover_server`/`proposer` &rarr; this server just needs rust installed.
    1. `cd ethrex/crates/l2`
