@@ -83,5 +83,18 @@ interface IOnChainProposer {
         uint256[8] calldata picoProof
     ) external;
     // TODO: imageid, programvkey and riscvvkey should be constants
+
+    /// @notice Sets the sp1's verifying key.
+    /// @param sp1ProgramVKey Public verifying key
+    function setSp1Vkey(bytes32 sp1ProgramVKey) external;
+
+    /// @notice Sets the risc0's verifying key.
+    /// @param risc0ImageId Digest of the zkVM imageid. It's the verifying key essentially.
+    function setRisc0Vkey(bytes32 risc0ImageId) external;
+
+    /// @notice Sets the pico's Verifying key.
+    /// @param picoRiscvVkey Public verifying key.
+    function setPicoVkey(bytes32 picoRiscvVkey) external;
+
     // TODO: organize each zkvm proof arguments in their own structs
 }

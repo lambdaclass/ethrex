@@ -69,5 +69,6 @@ pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error
     Ok(ProofCalldata {
         prover_type: ProverType::RISC0,
         calldata,
+        vkey: image_id.into(),
     })
 }

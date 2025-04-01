@@ -1,6 +1,6 @@
 use std::{env::temp_dir, path::PathBuf};
 
-use ethrex_common::U256;
+use ethrex_common::{H256, U256};
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use pico_sdk::vk_client::KoalaBearProveVKClient;
@@ -92,5 +92,7 @@ pub fn to_calldata(output: ProveOutput) -> Result<ProofCalldata, Box<dyn std::er
     Ok(ProofCalldata {
         prover_type: ProverType::Pico,
         calldata,
+        // TODO: check if this is ok
+        vkey: vec![].into(),
     })
 }

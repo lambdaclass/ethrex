@@ -1,4 +1,4 @@
-use ethrex_common::{H256, U256};
+use ethrex_common::{Bytes, H256, U256};
 use ethrex_l2_sdk::calldata::Value;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -59,4 +59,5 @@ impl ProverType {
 pub struct ProofCalldata {
     pub prover_type: ProverType,
     pub calldata: Vec<Value>,
+    pub vkey: Bytes,
 }

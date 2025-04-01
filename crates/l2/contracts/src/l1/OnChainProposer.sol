@@ -42,10 +42,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     mapping(address _authorizedAddress => bool)
         public authorizedSequencerAddresses;
 
+    /// @dev Contracts
     address public BRIDGE;
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
+
+    /// @dev Verifying Keys
+    bytes32 public SP1_VKEY;
+    bytes32 public RISC0_VKEY;
+    bytes32 public PICO_VKEY;
 
     /// @notice Address used to avoid the verification process.
     /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
@@ -132,6 +138,45 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function setSp1Vkey(bytes32 sp1ProgramVKey) external onlySequencer {
+        require(
+            SP1_VKEY == bytes32(0),
+            "OnChainProposer: SP1_VKEY already initialized"
+        );
+        require(
+            sp1ProgramVKey != bytes32(0),
+            "OnChainProposer: sp1ProgramVKey shouldn't be zero"
+        );
+        SP1_VKEY = sp1ProgramVKey;
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function setRisc0Vkey(bytes32 risc0ImageId) external onlySequencer {
+        require(
+            RISC0_VKEY == bytes32(0),
+            "OnChainProposer: RISC0_VKEY already initialized"
+        );
+        require(
+            risc0ImageId != bytes32(0),
+            "OnChainProposer: risc0ImageId shouldn't be zero"
+        );
+        RISC0_VKEY = risc0ImageId;
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function setPicoVkey(bytes32 picoRiscvVkey) external onlySequencer {
+        require(
+            PICO_VKEY == bytes32(0),
+            "OnChainProposer: RISC0_IMAGE_ID already initialized"
+        );
+        require(
+            picoRiscvVkey != bytes32(0),
+            "OnChainProposer: risc0ImageId shouldn't be zero"
+        );
+        PICO_VKEY = picoRiscvVkey;
     }
 
     /// @inheritdoc IOnChainProposer

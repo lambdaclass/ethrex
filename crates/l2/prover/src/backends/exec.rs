@@ -31,6 +31,7 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
     Ok(ProofCalldata {
         prover_type: ProverType::Exec,
         calldata: vec![Value::Bytes(public_inputs.into())],
+        vkey: vec![].into(),
     })
 }
 

@@ -13,7 +13,7 @@ use crate::utils::{
 };
 use ethrex_common::{
     types::{Block, BlockHeader},
-    Address, H160, H256, U256,
+    Address, Bytes, H160, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
@@ -41,6 +41,15 @@ const DEV_MODE_ADDRESS: H160 = H160([
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+
+// Verifying Keys
+const RISC0_VKEY: &str = "RISC0_VKEY";
+const SP1_VKEY: &str = "SP1_VKEY";
+const PICO_VKEY: &str = "PICO_VKEY";
+// Setters
+const SET_RISC0_VKEY: &str = "setRisc0Vkey(bytes32)";
+const SET_SP1_VKEY: &str = "setSp1Vkey(bytes32)";
+const SET_PICO_VKEY: &str = "setPicoVkey(bytes32)";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -489,7 +498,7 @@ impl ProverServer {
         // the structure has to match the one defined in the OnChainProposer.sol contract.
         // It may cause some issues, but the ethrex_prover_lib cannot be imported,
         // this approach is straight-forward for now.
-        let risc0_proof = {
+        let (risc0_proof, risc0_vkey) = {
             if self.needed_proof_types.contains(&ProverType::RISC0) {
                 let risc0_proof =
                     read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
@@ -498,13 +507,13 @@ impl ProverServer {
                         "RISC0 Proof isn't present".to_string(),
                     ));
                 }
-                risc0_proof.calldata
+                (risc0_proof.calldata, risc0_proof.vkey)
             } else {
-                ProverType::RISC0.empty_calldata()
+                (ProverType::RISC0.empty_calldata(), vec![].into())
             }
         };
 
-        let sp1_proof = {
+        let (sp1_proof, sp1_vkey) = {
             if self.needed_proof_types.contains(&ProverType::SP1) {
                 let sp1_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
                 if sp1_proof.prover_type != ProverType::SP1 {
@@ -512,13 +521,13 @@ impl ProverServer {
                         "SP1 Proof isn't present".to_string(),
                     ));
                 }
-                sp1_proof.calldata
+                (sp1_proof.calldata, sp1_proof.vkey)
             } else {
-                ProverType::SP1.empty_calldata()
+                (ProverType::SP1.empty_calldata(), vec![].into())
             }
         };
 
-        let pico_proof = {
+        let (pico_proof, pico_vkey) = {
             if self.needed_proof_types.contains(&ProverType::Pico) {
                 let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::Pico))?;
                 if pico_proof.prover_type != ProverType::Pico {
@@ -526,11 +535,14 @@ impl ProverServer {
                         "Pico Proof isn't present".to_string(),
                     ));
                 }
-                pico_proof.calldata
+                (pico_proof.calldata, pico_proof.vkey)
             } else {
-                ProverType::Pico.empty_calldata()
+                (ProverType::Pico.empty_calldata(), vec![].into())
             }
         };
+
+        self.check_vkeys_or_set(risc0_vkey, sp1_vkey, pico_vkey)
+            .await?;
 
         debug!("Sending proof for block number: {block_number}");
 
@@ -577,6 +589,32 @@ impl ProverServer {
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
 
         Ok(verify_tx_hash)
+    }
+
+    pub async fn check_vkeys_or_set(
+        &self,
+        risc0_vkey: Bytes,
+        sp1_vkey: Bytes,
+        pico_vkey: Bytes,
+    ) -> Result<(), ProverServerError> {
+        // TODO: query the contract
+        // Compare with the current vkeys
+        // Set only if the vkey from the contract is zero
+
+        if self.needed_proof_types.contains(&ProverType::SP1) {
+            println!("{sp1_vkey:#x}");
+            //TODO set vkey on contract
+        }
+        if self.needed_proof_types.contains(&ProverType::RISC0) {
+            println!("{risc0_vkey:#x}");
+            //TODO set vkey on contract
+        }
+        if self.needed_proof_types.contains(&ProverType::Pico) {
+            println!("{pico_vkey:#x}");
+            //TODO set vkey on contract
+        }
+
+        Ok(())
     }
 
     pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
