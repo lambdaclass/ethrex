@@ -127,7 +127,7 @@ async fn main() -> Result<(), DeployError> {
     let args = std::env::args().collect::<Vec<String>>();
 
     if let Some(arg) = args.get(1) {
-        if arg == "--deposit_rich" || std::env::var("DEPOSIT_RICH").is_ok() {
+        if arg == "--deposit_rich" || std::env::var("DEPOSIT_RICH").is_ok_and(|var| var == "1") {
             make_deposits(bridge_address, &setup_result.eth_client).await?;
         }
     }

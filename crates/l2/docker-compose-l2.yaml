@@ -27,6 +27,7 @@ services:
       - CONFIGS_PATH=${CI_ETHREX_WORKDIR}/configs
       - GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
       - PRIVATE_KEYS_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
+      - DEPOSIT_RICH=$DEPOSIT_RICH
     depends_on:
       - ethrex
     restart: on-failure:3
@@ -50,7 +51,7 @@ services:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
       - ./.env:/.env:ro
       - ./config.toml:/config.toml:ro
-    command: l2 init --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8552 --datadir $$DATADIR
+    command: l2 init --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8552 --datadir $DATA_DIR
     depends_on:
       contract_deployer:
         condition: service_completed_successfully

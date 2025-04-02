@@ -202,23 +202,23 @@ integration-test: build-prover rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
 	touch .env
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATADIR=${ethrex_L2_DEV_LIBMDBX} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATADIR=${ethrex_L2_DEV_LIBMDBX} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover
 
 # State reconstruction tests
 state-diff-test:
 	touch .env
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATADIR=${ethrex_L2_DEV_LIBMDBX} DEPOSIT_RICH=1 docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATADIR=${ethrex_L2_DEV_LIBMDBX} DEPOSIT_RICH=1 docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATA_DIR=${ethrex_L2_DEV_LIBMDBX} DEPOSIT_RICH=1 docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATA_DIR=${ethrex_L2_DEV_LIBMDBX} DEPOSIT_RICH=1 docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach
 	rm -rf $$PWD/store
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATADIR=$$PWD/store DEPOSIT_RICH=1 docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATADIR=$$PWD/store DEPOSIT_RICH=1 docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATA_DIR=$$PWD/store DEPOSIT_RICH=1 docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DATA_DIR=$$PWD/store DEPOSIT_RICH=1 docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach
 	cargo test state_reconstruct --release
 
 # Purge L2's state
