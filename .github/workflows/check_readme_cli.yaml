@@ -36,7 +36,7 @@ jobs:
         id: extract_help
         run: |
           # Extract content between markers, remove markers, remove code block fences
-          sed -n '/<!-- BEGIN_CLI_HELP -->/,/<!-- END_CLI_HELP -->/p' ethrex/README.md \
+          sed -n '/<!-- BEGIN_CLI_HELP -->/,/<!-- END_CLI_HELP -->/p' README.md \
             | sed '1d;$d' \
             | sed '/^```/d' \
             > documented_help.txt
@@ -55,9 +55,9 @@ jobs:
           # -B: ignore changes whose lines are all blank
           # This makes the check less sensitive to minor formatting differences.
           if ! diff -ubB documented_help.txt current_help.txt; then
-            echo "::error::CLI help in ethrex/README.md is out of date."
+            echo "::error::CLI help in README.md is out of date."
             echo "Please run 'cargo run --release --bin ethrex -- --help', copy the output,"
-            echo "and update the section between <!-- BEGIN_CLI_HELP --> and <!-- END_CLI_HELP --> in ethrex/README.md."
+            echo "and update the section between <!-- BEGIN_CLI_HELP --> and <!-- END_CLI_HELP --> in README.md."
             echo "(Ignoring differences in spacing and blank lines)."
             exit 1
           else
