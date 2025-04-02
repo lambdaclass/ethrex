@@ -183,6 +183,8 @@ For more information about the different cli arguments check out the next sectio
 
 <!-- BEGIN_CLI_HELP -->
 ```
+ethrex Execution client
+
 Usage: ethrex [OPTIONS] [COMMAND]
 
 Commands:
@@ -196,6 +198,62 @@ Options:
 
   -V, --version
           Print version
+
+Node options:
+      --network <GENESIS_FILE_PATH>
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and mekong.
+
+      --datadir <DATABASE_DIRECTORY>
+          If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
+
+          [default: ethrex]
+
+      --metrics.addr <ADDRESS>
+          [default: 0.0.0.0]
+
+      --metrics.port <PROMETHEUS_METRICS_PORT>
+          [default: 9090]
+
+      --dev
+          If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
+
+      --evm <EVM_BACKEND>
+          Has to be `levm` or `revm`
+
+          [default: revm]
+
+      --log.level <LOG_LEVEL>
+          Possible values: info, debug, trace, warn, error
+
+          [default: INFO]
+
+P2P options:
+      --bootnodes <BOOTNODE_LIST>...
+          Comma separated enode URLs for P2P discovery bootstrap.
+
+      --syncmode <SYNC_MODE>
+          Can be either "full" or "snap" with "full" as default value.
+
+          [default: full]
+
+      --p2p.enabled
+
+
+      --p2p.addr <ADDRESS>
+          [default: 0.0.0.0]
+
+      --p2p.port <PORT>
+          [default: 30303]
+
+      --discovery.addr <ADDRESS>
+          UDP address for P2P discovery.
+
+          [default: 0.0.0.0]
+
+      --discovery.port <PORT>
+          UDP port for P2P discovery.
+
+          [default: 30303]
 
 RPC options:
       --http.addr <ADDRESS>
@@ -222,59 +280,6 @@ RPC options:
           Receives the jwt secret used for authenticated rpc requests.
 
           [default: jwt.hex]
-
-Node options:
-      --log.level <LOG_LEVEL>
-          Possible values: info, debug, trace, warn, error
-
-          [default: INFO]
-
-      --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and ephemery.
-
-      --datadir <DATABASE_DIRECTORY>
-          If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
-
-          [default: ethrex]
-
-      --metrics.port <PROMETHEUS_METRICS_PORT>
-
-
-      --dev
-          If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
-
-      --evm <EVM_BACKEND>
-          Has to be `levm` or `revm`
-
-          [default: revm]
-
-P2P options:
-      --p2p.enabled
-
-
-      --p2p.addr <ADDRESS>
-          [default: 0.0.0.0]
-
-      --p2p.port <PORT>
-          [default: 30303]
-
-      --discovery.addr <ADDRESS>
-          UDP address for P2P discovery.
-
-          [default: 0.0.0.0]
-
-      --discovery.port <PORT>
-          UDP port for P2P discovery.
-
-          [default: 30303]
-
-      --bootnodes <BOOTNODE_LIST>...
-          Comma separated enode URLs for P2P discovery bootstrap.
-
-      --syncmode <SYNC_MODE>
-          Can be either "full" or "snap" with "full" as default value.
-
-          [default: full]
 ```
 <!-- END_CLI_HELP -->
 
