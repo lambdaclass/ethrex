@@ -36,7 +36,7 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = access_account(
+        let (account, address_was_cold) = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
@@ -46,7 +46,7 @@ impl VM {
         current_call_frame
             .increase_consumed_gas(gas_cost::balance(address_was_cold, self.env.config.fork)?)?;
 
-        current_call_frame.stack.push(account_info.balance)?;
+        current_call_frame.stack.push(account.info.balance)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -286,7 +286,7 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = access_account(
+        let (account, address_was_cold) = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
@@ -298,9 +298,7 @@ impl VM {
             self.env.config.fork,
         )?)?;
 
-        current_call_frame
-            .stack
-            .push(account_info.bytecode.len().into())?;
+        current_call_frame.stack.push(account.code.len().into())?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -319,7 +317,7 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let (account_info, address_was_cold) = access_account(
+        let (account, address_was_cold) = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
@@ -342,7 +340,7 @@ impl VM {
 
         // If the bytecode is a delegation designation, it will copy the marker (0xef0100) || address.
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let bytecode = account_info.bytecode;
+        let bytecode = account.code;
 
         let mut data = vec![0u8; size];
         if offset < bytecode.len().into() {
@@ -449,7 +447,7 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = access_account(
+        let (account, address_was_cold) = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
@@ -462,12 +460,12 @@ impl VM {
         )?)?;
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
-        if account_info.is_empty() {
+        if account.is_empty() {
             current_call_frame.stack.push(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
+        let hash = U256::from_big_endian(keccak(account.code).as_fixed_bytes());
         current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })

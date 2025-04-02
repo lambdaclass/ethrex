@@ -1,8 +1,6 @@
 use crate::{
-    account::Account,
     call_frame::CallFrame,
     constants::*,
-    db::cache::remove_account,
     errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
@@ -10,9 +8,12 @@ use crate::{
     vm::VM,
 };
 
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::{
+    types::{Account, Fork},
+    U256,
+};
 
-use std::cmp::max;
+use std::{cmp::max, collections::HashMap};
 
 const MAX_REFUND_QUOTIENT: u64 = 5;
 const MAX_REFUND_QUOTIENT_PRE_LONDON: u64 = 2;
@@ -34,7 +35,7 @@ impl Hook for DefaultHook {
         initial_call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let sender_account = get_account(&mut vm.cache, vm.db.clone(), sender_address);
+        let sender_account = get_account(&mut vm.cache, vm.db.clone(), sender_address).0;
 
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
@@ -201,7 +202,7 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        if sender_account.has_code() && !has_delegation(&sender_account.info)? {
+        if sender_account.has_code() && !has_delegation(&sender_account)? {
             return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 
@@ -330,9 +331,9 @@ impl Hook for DefaultHook {
 
         // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            let existing_account = get_account(&mut vm.cache, vm.db.clone(), receiver_address); //TO Account
+            let existing_account = get_account(&mut vm.cache, vm.db.clone(), receiver_address).0; //TO Account
 
-            if has_delegation(&existing_account.info)? {
+            if has_delegation(&existing_account)? {
                 // This is the case where the "to" address and the
                 // "signer" address are the same. We are setting the code
                 // and sending some balance to the "to"/"signer"
@@ -350,7 +351,7 @@ impl Hook for DefaultHook {
                 )?;
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
-                remove_account(&mut vm.cache, &receiver_address);
+                vm.cache.remove_account(&receiver_address);
             }
 
             increase_account_balance(
@@ -429,8 +430,10 @@ impl Hook for DefaultHook {
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = get_account_mut_vm(&mut vm.cache, vm.db.clone(), address)?;
+            let (account_to_remove, storage_to_remove) =
+                get_account_mut_vm(&mut vm.cache, vm.db.clone(), address)?;
             *account_to_remove = Account::default();
+            *storage_to_remove = HashMap::new();
         }
 
         Ok(())

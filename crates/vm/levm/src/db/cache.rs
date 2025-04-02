@@ -1,35 +1,44 @@
-use crate::Account;
-use ethrex_common::Address;
+use ethrex_common::{types::Account, Address};
+use keccak_hash::H256;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub type CacheDB = HashMap<Address, Account>;
+use crate::StorageSlot;
 
-pub fn get_account<'cache>(
-    cached_accounts: &'cache CacheDB,
-    address: &Address,
-) -> Option<&'cache Account> {
-    cached_accounts.get(address)
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CacheDB {
+    pub cached_accounts: HashMap<Address, (Account, HashMap<H256, StorageSlot>)>,
 }
 
-pub fn get_account_mut<'cache>(
-    cached_accounts: &'cache mut CacheDB,
-    address: &Address,
-) -> Option<&'cache mut Account> {
-    cached_accounts.get_mut(address)
-}
+impl CacheDB {
+    pub fn get_account(&self, address: &Address) -> Option<&(Account, HashMap<H256, StorageSlot>)> {
+        self.cached_accounts.get(address)
+    }
 
-pub fn insert_account(
-    cached_accounts: &mut CacheDB,
-    address: Address,
-    account: Account,
-) -> Option<Account> {
-    cached_accounts.insert(address, account)
-}
+    pub fn get_account_mut(
+        &mut self,
+        address: &Address,
+    ) -> Option<&mut (Account, HashMap<H256, StorageSlot>)> {
+        self.cached_accounts.get_mut(address)
+    }
 
-pub fn remove_account(cached_accounts: &mut CacheDB, address: &Address) -> Option<Account> {
-    cached_accounts.remove(address)
-}
+    pub fn insert_account(
+        &mut self,
+        address: Address,
+        account: Account,
+        storage: HashMap<H256, StorageSlot>,
+    ) -> Option<(Account, HashMap<H256, StorageSlot>)> {
+        self.cached_accounts.insert(address, (account, storage))
+    }
 
-pub fn is_account_cached(cached_accounts: &CacheDB, address: &Address) -> bool {
-    cached_accounts.contains_key(address)
+    pub fn remove_account(
+        &mut self,
+        address: &Address,
+    ) -> Option<(Account, HashMap<H256, StorageSlot>)> {
+        self.cached_accounts.remove(address)
+    }
+
+    pub fn is_account_cached(&self, address: &Address) -> bool {
+        self.cached_accounts.contains_key(address)
+    }
 }

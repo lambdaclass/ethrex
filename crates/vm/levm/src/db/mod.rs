@@ -1,12 +1,11 @@
-use crate::account::{Account, AccountInfo, StorageSlot};
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{types::Account, Address, H256, U256};
 use std::collections::HashMap;
 
 pub mod cache;
 pub use cache::CacheDB;
 
 pub trait Database {
-    fn get_account_info(&self, address: Address) -> AccountInfo;
+    fn get_account_info(&self, address: Address) -> Account;
     fn get_storage_slot(&self, address: Address, key: H256) -> U256;
     fn get_block_hash(&self, block_number: u64) -> Option<H256>;
     fn account_exists(&self, address: Address) -> bool;
@@ -51,11 +50,10 @@ impl Db {
 }
 
 impl Database for Db {
-    fn get_account_info(&self, address: Address) -> AccountInfo {
+    fn get_account_info(&self, address: Address) -> Account {
         self.accounts
             .get(&address)
             .unwrap_or(&Account::default())
-            .info
             .clone()
     }
 
@@ -64,14 +62,13 @@ impl Database for Db {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> U256 {
-        // both `original_value` and `current_value` should work here because they have the same values on Db
         self.accounts
             .get(&address)
             .unwrap_or(&Account::default())
             .storage
             .get(&key)
-            .unwrap_or(&StorageSlot::default())
-            .original_value
+            .unwrap_or(&U256::zero())
+            .clone()
     }
 
     fn get_block_hash(&self, block_number: u64) -> Option<H256> {
