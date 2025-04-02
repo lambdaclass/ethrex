@@ -250,8 +250,8 @@ pub fn get_network(opts: &Options) -> String {
     if network == "sepolia" {
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
     }
-    if network == "ephemery" {
-        network = String::from(networks::EPHEMERY_GENESIS_PATH);
+    if network == "hoodi" {
+        network = String::from(networks::HOODI_GENESIS_PATH);
     }
 
     network
@@ -271,9 +271,9 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
         bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
     }
 
-    if network == networks::EPHEMERY_GENESIS_PATH {
-        info!("Adding ephemery preset bootnodes");
-        bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
+    if network == networks::HOODI_GENESIS_PATH {
+        info!("Adding hoodi preset bootnodes");
+        bootnodes.extend(networks::HOODI_BOOTNODES.iter());
     }
 
     if bootnodes.is_empty() {
