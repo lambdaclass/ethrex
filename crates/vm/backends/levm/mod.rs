@@ -377,14 +377,14 @@ impl LEVM {
 
         let mut vm = vm_from_generic(&tx, env.clone(), db)?;
 
-        vm.execute()?;
+        vm.stateless_execute()?;
         let access_list = build_access_list(&vm.accrued_substate);
 
         // Execute the tx again, now with the created access list.
         tx.access_list = access_list.iter().map(|item| item.into()).collect();
         let mut vm = vm_from_generic(&tx, env.clone(), db)?;
 
-        let report = vm.execute()?;
+        let report = vm.stateless_execute()?;
 
         Ok((report.into(), access_list))
     }

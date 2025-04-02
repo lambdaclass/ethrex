@@ -393,6 +393,16 @@ impl<'a> VM<'a> {
         Ok(floor_gas_price)
     }
 
+    /// Executes without making changes to the cache.
+    pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
+        let cache_backup = self.db.cache.clone();
+        let report = self.execute()?;
+        // Restore the cache to its original state
+        self.db.cache = cache_backup;
+        Ok(report)
+    }
+
+    /// Main function for executing an external transaction
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         let mut initial_call_frame = self
             .call_frames
