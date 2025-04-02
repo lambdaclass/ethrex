@@ -23,10 +23,10 @@ Ensures the advancement of the L2. It is used by the operator to commit blocks a
 
 ### `Verifier`
 
-TODO
+Implements the verification logic for L2 block proofs. It validates the correctness of state transitions in the L2 chain by checking cryptographic proofs submitted by the operator. This ensures that only valid L2 blocks are accepted by the L1 contracts.
 
 ## L2 side
 
 ### `L1MessageSender`
 
-TODO
+Provides functionality for L2 contracts to send messages to L1. It allows L2 smart contracts to initiate cross-chain communication by queuing messages that will be delivered to the L1 CommonBridge contract when blocks are committed and proven.
