@@ -230,6 +230,14 @@ impl<'a> VM<'a> {
 
         let default_hook: Arc<dyn Hook> = Arc::new(DefaultHook);
         let hooks = vec![default_hook];
+
+        // When instantiating a new vm the current value of the storage slots are actually the original values because it is a new transaction
+        for account in db.cache.values_mut() {
+            for storage_slot in account.storage.values_mut() {
+                storage_slot.original_value = storage_slot.current_value;
+            }
+        }
+
         match to {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
