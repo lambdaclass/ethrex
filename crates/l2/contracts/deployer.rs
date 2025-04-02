@@ -126,10 +126,10 @@ async fn main() -> Result<(), DeployError> {
     .await?;
     let args = std::env::args().collect::<Vec<String>>();
 
-    if args.get(1).is_some_and(|arg| arg == "--deposit-rich")
-        || std::env::var("DEPOSIT_RICH").is_ok_and(|var| var == "1")
-    {
-        make_deposits(bridge_address, &setup_result.eth_client).await?;
+    if let Some(arg) = args.get(1) {
+        if arg == "--deposit_rich" {
+            make_deposits(bridge_address, &setup_result.eth_client).await?;
+        }
     }
 
     let env_lines =

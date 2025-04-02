@@ -29,7 +29,6 @@ services:
       - CONFIGS_PATH=${CI_ETHREX_WORKDIR}/configs
       - GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
       - PRIVATE_KEYS_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
-      - DEPOSIT_RICH=$DEPOSIT_RICH
     depends_on:
       - ethrex
     restart: on-failure:3

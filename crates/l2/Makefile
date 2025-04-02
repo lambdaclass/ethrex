@@ -214,8 +214,8 @@ state-diff-test:
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DEPOSIT_RICH=1 docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} DEPOSIT_RICH=1 docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach --build
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
 	cargo test state_reconstruct --release
 
 # Purge L2's state
