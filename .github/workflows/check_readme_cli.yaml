@@ -56,7 +56,7 @@ jobs:
           # This makes the check less sensitive to minor formatting differences.
           if ! diff -ubB documented_help.txt current_help.txt; then
             echo "::error::CLI help in README.md is out of date."
-            echo "Please run 'cargo run --release --bin ethrex -- --help', copy the output,"
+            echo "Please run 'cargo run --bin ethrex -- --help', copy the output,"
             echo "and update the section between <!-- BEGIN_CLI_HELP --> and <!-- END_CLI_HELP --> in README.md."
             echo "(Ignoring differences in spacing and blank lines)."
             exit 1
