@@ -181,9 +181,8 @@ For more information about the different cli arguments check out the next sectio
 
 ### CLI Commands
 
+<!-- BEGIN_CLI_HELP -->
 ```
-> cargo run --release --bin ethrex -- --help
-
 Usage: ethrex [OPTIONS] [COMMAND]
 
 Commands:
@@ -277,6 +276,7 @@ P2P options:
 
           [default: full]
 ```
+<!-- END_CLI_HELP -->
 
 # ethrex L2
 

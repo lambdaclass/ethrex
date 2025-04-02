@@ -1,0 +1,65 @@
+name: Check README CLI Help
+
+on:
+  pull_request:
+    paths:
+      - 'cmd/ethrex/cli.rs'
+      - 'cmd/ethrex/Cargo.toml'
+      - 'README.md'
+      - '.github/workflows/check_readme_cli.yml'
+
+jobs:
+  check-cli-help:
+    name: Verify README CLI Help Consistency
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build ethrex binary
+        run: cargo build --bin ethrex
+
+      - name: Generate current CLI help
+        id: generate_help
+        run: cargo run --bin ethrex -- --help > current_help.txt
+
+      - name: Extract documented CLI help from README
+        id: extract_help
+        run: |
+          # Extract content between markers, remove markers, remove code block fences
+          sed -n '/<!-- BEGIN_CLI_HELP -->/,/<!-- END_CLI_HELP -->/p' ethrex/README.md \
+            | sed '1d;$d' \
+            | sed '/^```/d' \
+            > documented_help.txt
+
+          # Check if extraction was successful (simple check: file not empty)
+          if [ ! -s documented_help.txt ]; then
+            echo "::error::Could not extract CLI help section from README.md. Check markers <!-- BEGIN_CLI_HELP --> and <!-- END_CLI_HELP -->."
+            exit 1
+          fi
+
+      - name: Compare current help with documented help
+        run: |
+          # Use diff with flags:
+          # -u: unified format (standard)
+          # -b: ignore changes in amount of whitespace
+          # -B: ignore changes whose lines are all blank
+          # This makes the check less sensitive to minor formatting differences.
+          if ! diff -ubB documented_help.txt current_help.txt; then
+            echo "::error::CLI help in ethrex/README.md is out of date."
+            echo "Please run 'cargo run --release --bin ethrex -- --help', copy the output,"
+            echo "and update the section between <!-- BEGIN_CLI_HELP --> and <!-- END_CLI_HELP --> in ethrex/README.md."
+            echo "(Ignoring differences in spacing and blank lines)."
+            exit 1
+          else
+            echo "README CLI help is up to date."
+          fi
