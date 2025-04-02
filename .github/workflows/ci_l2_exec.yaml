@@ -77,8 +77,8 @@ jobs:
       - name: Bake docker images
         uses: docker/bake-action@v6
         with:
-          workdir: "crates/blockchain/dev"
-          files: "crates/blockchain/dev/docker-compose-dev.yaml, crates/blockchain/metrics/docker-compose-metrics-l1-dev.overrides.yaml"
+          workdir: "crates/l2"
+          files: "crates/l2/docker-compose-l2.yaml"
           load: true
           set: |
             *.cache-to=type=gha,mode=max
