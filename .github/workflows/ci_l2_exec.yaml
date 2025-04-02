@@ -48,19 +48,6 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Bake docker images
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          load: true
-          set: |
-            *.cache-to=type=gha,mode=max
-            *.cache-from=type=gha
-
       - name: Build prover
         run: |
           cd crates/l2
@@ -92,19 +79,6 @@ jobs:
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Bake docker images
-        uses: docker/bake-action@v6
-        with:
-          workdir: "crates/l2"
-          files: "crates/l2/docker-compose-l2.yaml"
-          load: true
-          set: |
-            *.cache-to=type=gha,mode=max
-            *.cache-from=type=gha
 
       - name: Install solc
         run: |
