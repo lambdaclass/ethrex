@@ -2,23 +2,16 @@ use crate::{config::EthrexL2Config, utils::config::confirm};
 use clap::Subcommand;
 use ethrex_common::{
     types::{bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
-    Address, U256,
+    Address,
 };
 use ethrex_l2::sequencer::state_diff::StateDiff;
-use ethrex_rpc::{
-    clients::{beacon::BeaconClient, eth::BlockByNumber},
-    EthClient,
-};
 use ethrex_storage::{EngineType, Store};
-use eyre::{ContextCompat, OptionExt};
+use eyre::ContextCompat;
 use itertools::Itertools;
-use keccak_hash::keccak;
-use reqwest::Url;
 use secp256k1::SecretKey;
 use std::{
-    fs::{create_dir_all, read_dir},
+    fs::read_dir,
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 pub const CARGO_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
@@ -82,21 +75,6 @@ pub(crate) enum Command {
     Restart {
         #[clap(short = 'y', long, help = "Forces the restart without confirmation.")]
         force: bool,
-    },
-    #[clap(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
-    BlobsSaver {
-        #[clap(
-            short = 'c',
-            long = "contract",
-            help = "The contract address to listen to."
-        )]
-        contract_address: Address,
-        #[clap(short = 'd', long, help = "The directory to save the blobs.")]
-        data_dir: PathBuf,
-        #[clap(short = 'e', long)]
-        l1_eth_rpc: Url,
-        #[clap(short = 'b', long)]
-        l1_beacon_rpc: Url,
     },
     #[clap(about = "Reconstructs the L2 state from L1 blobs.")]
     Reconstruct {
@@ -206,91 +184,6 @@ impl Command {
                     .await?;
                 } else {
                     println!("Aborted.");
-                }
-            }
-            Command::BlobsSaver {
-                l1_eth_rpc,
-                l1_beacon_rpc,
-                contract_address,
-                data_dir,
-            } => {
-                create_dir_all(data_dir.clone())?;
-
-                let eth_client = EthClient::new(l1_eth_rpc.as_str());
-                let beacon_client = BeaconClient::new(l1_beacon_rpc);
-
-                // Keep delay for finality
-                let mut current_block = U256::zero();
-                while current_block < U256::from(64) {
-                    current_block = eth_client.get_block_number().await?;
-                    tokio::time::sleep(Duration::from_secs(12)).await;
-                }
-                current_block = current_block
-                    .checked_sub(U256::from(64))
-                    .ok_or_eyre("Cannot get finalized block")?;
-
-                let event_signature = keccak("BlockCommitted(bytes32)");
-
-                loop {
-                    // Wait for a block
-                    tokio::time::sleep(Duration::from_secs(12)).await;
-
-                    let logs = eth_client
-                        .get_logs(
-                            current_block,
-                            current_block,
-                            contract_address,
-                            event_signature,
-                        )
-                        .await?;
-
-                    if !logs.is_empty() {
-                        // Get parent beacon block root hash from block
-                        let block = eth_client
-                            .get_block_by_number(BlockByNumber::Number(current_block.as_u64()))
-                            .await?;
-                        let parent_beacon_hash = block
-                            .header
-                            .parent_beacon_block_root
-                            .ok_or_eyre("Unknown parent beacon root")?;
-
-                        // Get block slot from parent beacon block
-                        let parent_beacon_block =
-                            beacon_client.get_block_by_hash(parent_beacon_hash).await?;
-                        let target_slot = parent_beacon_block.message.slot + 1;
-
-                        // Get versioned hashes from transactions
-                        let mut l2_blob_hashes = vec![];
-                        for log in logs {
-                            let tx = eth_client
-                                .get_transaction_by_hash(log.transaction_hash)
-                                .await?
-                                .ok_or_eyre(format!(
-                                    "Transaction {:#x} not found",
-                                    log.transaction_hash
-                                ))?;
-                            l2_blob_hashes.extend(tx.blob_versioned_hashes.ok_or_eyre(format!(
-                                "Blobs not found in transaction {:#x}",
-                                log.transaction_hash
-                            ))?);
-                        }
-
-                        // Get blobs from block's slot and only keep L2 commitment's blobs
-                        for blob in beacon_client
-                            .get_blobs_by_slot(target_slot)
-                            .await?
-                            .into_iter()
-                            .filter(|blob| l2_blob_hashes.contains(&blob.versioned_hash()))
-                        {
-                            let blob_path =
-                                data_dir.join(format!("{}-{}.blob", target_slot, blob.index));
-                            std::fs::write(blob_path, blob.blob)?;
-                        }
-
-                        println!("Saved blobs for slot {}", target_slot);
-                    }
-
-                    current_block += U256::one();
                 }
             }
             Command::Reconstruct {
