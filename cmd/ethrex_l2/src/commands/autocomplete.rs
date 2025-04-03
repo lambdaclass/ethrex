@@ -8,12 +8,12 @@ use std::io::{self, BufRead, Write};
 pub(crate) enum Command {
     #[clap(about = "Generate autocomplete shell script.")]
     Generate {
-        #[clap(short = 's', long = "shell", help = "Default: $SHELL")]
+        #[arg(short = 's', long = "shell", help = "Default: $SHELL")]
         shell: Option<Shell>,
     },
     #[clap(about = "Generate and install autocomplete shell script.")]
     Install {
-        #[clap(short = 's', long = "shell", help = "Default: $SHELL")]
+        #[arg(short = 's', long = "shell", help = "Default: $SHELL")]
         shell: Option<Shell>,
     },
 }

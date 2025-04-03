@@ -74,7 +74,7 @@ pub(crate) enum Command {
             help = "Run fibonacci load test"
         )]
         fibonacci: bool,
-        #[clap(long = "io", default_value = "false", help = "Run I/O-heavy load test")]
+        #[arg(long = "io", default_value = "false", help = "Run I/O-heavy load test")]
         i_o_heavy: bool,
     },
     #[clap(about = "Load test that deploys an ERC20 and runs transactions")]
