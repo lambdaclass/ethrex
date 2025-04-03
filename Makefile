@@ -13,7 +13,14 @@ lint: ## 🧹 Linter check
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-prover-bench --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --workspace \
+	--exclude ethrex-prover \
+	--exclude ethrex-prover-bench \
+	--exclude ethrex-levm \
+	--exclude ef_tests-blockchain \
+	--exclude ef_tests-state \
+	--exclude ethrex-l2 \
+	-- --skip test_contract_compilation
 	$(MAKE) -C cmd/ef_tests/blockchain test
 
 clean: clean-vectors ## 🧹 Remove build artifacts
@@ -163,7 +170,7 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test
 	cargo run --release \
 	--manifest-path cmd/load_test/Cargo.toml -- \
-	--path test_data/private_keys.txt -v --test_type fibonacci
+	--path test_data/private_keys.txt -v
 
 load-test-fibonacci: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test-fibonacci
 	cargo run --release \
