@@ -44,19 +44,19 @@ pub enum TestType {
 
 #[derive(Parser)]
 struct Command {
-    #[clap(
+    #[arg(
         short = 'p',
         long = "path",
         help = "Path to the file containing private keys."
     )]
     path: String,
-    #[clap(
+    #[arg(
         short = 't',
         long = "to",
         help = "Address to send the transactions. Defaults to random."
     )]
     to: Option<Address>,
-    #[clap(
+    #[arg(
             short = 'a',
             long = "value",
             default_value = "1000",
@@ -64,35 +64,35 @@ struct Command {
             help = "Value to send in each transaction."
         )]
     value: U256,
-    #[clap(
+    #[arg(
         short = 'i',
         long = "iterations",
         default_value = "1000",
         help = "Number of transactions per private key."
     )]
     iterations: u64,
-    #[clap(
+    #[arg(
         short = 'v',
         long = "verbose",
         default_value = "false",
         help = "Prints each transaction."
     )]
     verbose: bool,
-    #[clap(
+    #[arg(
         long = "test_type",
         short = 'y',
         default_value = "plain-transactions",
         help = "Specify the type of test."
     )]
     test_type: TestType,
-    #[clap(
+    #[arg(
         long = "pk",
         help = "Rich account's private_key.",
         value_parser = ethrex_l2_sdk::secret_key_parser,
         default_value = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
     )]
     private_key: SecretKey,
-    #[clap(
+    #[arg(
         long = "url",
         short = 'u',
         help = "ethrex's RPC URL.",
