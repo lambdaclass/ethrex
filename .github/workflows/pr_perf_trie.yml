@@ -1,4 +1,4 @@
-name: trie benchmark
+name: Benchmark Trie
 
 on:
   workflow_call:
@@ -13,8 +13,6 @@ permissions:
 jobs:
   build-ethrex-trie:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
     steps:
       - name: Populate cache
         uses: actions/cache@v4
