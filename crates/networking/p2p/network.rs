@@ -175,7 +175,7 @@ pub fn node_id_from_signing_key(signer: &SigningKey) -> H512 {
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
 pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>) {
-    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(30);
+    const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(5);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
         // clone peers to keep the lock short
@@ -193,16 +193,16 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
                     && peer.supported_capabilities.contains(&Capability::Snap)
             })
             .count();
-        let snap_active_peers_ids: Vec<String> = peers
+        let snap_active_peers_ids: Vec<(String, bool)> = peers
             .iter()
             .filter(|peer| -> bool {
                 peer.channels.as_ref().is_some()
                     && peer.supported_capabilities.contains(&Capability::Snap)
             })
-            .map(|peer| peer.node.node_id.to_string())
+            .map(|peer| (peer.node.node_id.to_string(), peer.channels.as_ref().unwrap().receiver.try_lock().unwrap().is_closed()))
             .collect();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
-        info!("Snap Active Peer IDs: {snap_active_peers_ids:?}");
+        info!("Snap Active Peer IDs & Channel Closed: {snap_active_peers_ids:?}");
         interval.tick().await;
     }
 }
