@@ -61,25 +61,6 @@ impl Eth {
 }
 
 #[derive(Deserialize, Debug)]
-struct Engine {
-    rpc_url: String,
-    jwt_path: String,
-}
-
-impl Engine {
-    fn to_env(&self) -> String {
-        let prefix = "ENGINE_API";
-        format!(
-            "
-{prefix}_RPC_URL={}
-{prefix}_JWT_PATH={}
-",
-            self.rpc_url, self.jwt_path,
-        )
-    }
-}
-
-#[derive(Deserialize, Debug)]
 struct Watcher {
     bridge_address: String,
     check_interval_ms: u64,
@@ -211,7 +192,6 @@ impl ProverServer {
 struct L2Config {
     deployer: Deployer,
     eth: Eth,
-    engine: Engine,
     watcher: Watcher,
     proposer: Proposer,
     committer: Committer,
@@ -224,7 +204,6 @@ impl L2Config {
 
         env_representation.push_str(&self.deployer.to_env());
         env_representation.push_str(&self.eth.to_env());
-        env_representation.push_str(&self.engine.to_env());
         env_representation.push_str(&self.watcher.to_env());
         env_representation.push_str(&self.proposer.to_env());
         env_representation.push_str(&self.committer.to_env());
@@ -271,17 +250,20 @@ fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError>
         .to_str()
         .ok_or(ConfigError::Custom("Couldn't convert to_str()".to_string()))?
         .to_owned();
-    let file = std::fs::read_to_string(toml_path)
-        .map_err(|_| TomlParserError::TomlFileNotFound(toml_file_name.clone()))?;
+    let file = std::fs::read_to_string(toml_path).map_err(|err| {
+        TomlParserError::TomlFileNotFound(format!("{err}: {}", toml_file_name.clone()), mode)
+    })?;
     match mode {
         ConfigMode::Sequencer => {
-            let config: L2Config = toml::from_str(&file)
-                .map_err(|_| TomlParserError::TomlFormat(toml_file_name.clone()))?;
+            let config: L2Config = toml::from_str(&file).map_err(|err| {
+                TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
+            })?;
             write_to_env(config.to_env(), mode)?;
         }
         ConfigMode::ProverClient => {
-            let config: ProverClient =
-                toml::from_str(&file).map_err(|_| TomlParserError::TomlFormat(toml_file_name))?;
+            let config: ProverClient = toml::from_str(&file).map_err(|err| {
+                TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
+            })?;
             write_to_env(config.to_env(), mode)?;
         }
     }
