@@ -5,7 +5,7 @@ use super::errors::ConfigError;
 
 #[derive(Deserialize)]
 pub struct BlockProducerConfig {
-    pub interval_ms: u64,
+    pub block_time_ms: u64,
     pub coinbase_address: Address,
 }
 

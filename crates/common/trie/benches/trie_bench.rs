@@ -1,5 +1,5 @@
-// This code is originally from https://github.com/citahub/cita_trie/ and
-// modified to suit our needs, and to have a baseline to benchmark our own
+// This code is originally from https://github.com/citahub/cita_trie/ (commit: 9a8659f9f40feb3b89868f3964cdfb250f23a1c4),
+// licensed under Apache-2. Modified to suit our needs, and to have a baseline to benchmark our own
 // trie implementation against an existing one.
 
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use cita_trie::{PatriciaTrie, Trie};
 use ethrex_trie::InMemoryTrieDB as EthrexMemDB;
 use ethrex_trie::Trie as EthrexTrie;
 
+#[allow(clippy::unit_arg)]
 fn insert_worse_case_benchmark(c: &mut Criterion) {
     let (keys_1k, values_1k) = random_data(1000);
     let (keys_10k, values_10k) = random_data(10000);
@@ -31,7 +32,7 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
                     )
                     .unwrap()
             }
-            trie.commit().unwrap()
+            trie.commit().unwrap();
         });
     });
 
@@ -40,10 +41,12 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
 
         b.iter(|| {
             for i in 0..keys_10k.len() {
-                trie.insert(keys_10k[i].clone(), values_10k[i].clone())
-                    .unwrap()
+                black_box(
+                    trie.insert(keys_10k[i].clone(), values_10k[i].clone())
+                        .unwrap(),
+                )
             }
-            trie.commit().unwrap();
+            black_box(trie.commit().unwrap());
         });
     });
 
@@ -74,8 +77,10 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
 
         b.iter(|| {
             for i in 0..keys_10k.len() {
-                trie.insert(keys_10k[i].clone(), values_10k[i].clone())
-                    .unwrap()
+                black_box(
+                    trie.insert(keys_10k[i].clone(), values_10k[i].clone())
+                        .unwrap(),
+                )
             }
             trie.root().unwrap()
         });

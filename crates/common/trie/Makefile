@@ -1,7 +1,7 @@
-.PHONY: bench ethrex-bench cita-bench build-ethrex-bench build-cita-bench
+.PHONY: bench build-bench
 
 build-bench:
-	@cargo build --bench ethrex_trie_bench
+	@cargo build --bench trie_bench
 
 bench: build-bench
-	@cargo bench --bench ethrex_trie_bench
+	@cargo bench --bench trie_bench
