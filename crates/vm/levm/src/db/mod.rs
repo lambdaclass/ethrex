@@ -62,13 +62,13 @@ impl Database for Db {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> U256 {
-        self.accounts
+        *self
+            .accounts
             .get(&address)
             .unwrap_or(&Account::default())
             .storage
             .get(&key)
             .unwrap_or(&U256::zero())
-            .clone()
     }
 
     fn get_block_hash(&self, block_number: u64) -> Option<H256> {
