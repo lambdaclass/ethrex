@@ -238,6 +238,9 @@ Node options:
 
           [default: ethrex]
 
+      --force
+          Delete the database without confirmation.
+
       --metrics.port <PROMETHEUS_METRICS_PORT>
 
 
