@@ -10,14 +10,18 @@ account=0x33c6b73432B3aeA0C1725E415CC40D04908B85fd
 end_val=$((171 * $iterations * $value))
 
 start_time=$(date +%s)
-ethrex_l2 test load --path /home/runner/work/ethrex/ethrex/test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
+ethrex_l2 test load --path /home/runner/work/ethrex/ethrex/test_data/private_keys.txt -i $iterations --value $value --to $account -v &
 
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "balance: $output"
 while [[ $output -lt $end_val ]]; do
-    sleep 2
+    sleep 15
     output=$(ethrex_l2 info -b -a $account --wei 2>&1)
     echo "balance: $output"
+    disk_usage=$(df -h / | awk 'NR==2 {print $5}')
+    echo "Disk usage: $disk_usage"
+    file_size=$(du -h /home/runner/work/ethrex/ethrex/perf.data | awk '{print $1}')
+    echo "File size of perf.data: $file_size"
 done
 end_time=$(date +%s)
 elapsed=$((end_time - start_time))
