@@ -17,8 +17,8 @@ use tracing::{debug, info};
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS,
-        MAX_PARALLEL_FETCHES, STORAGE_BATCH_SIZE,
+        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, utils::read_incoming_requests, BATCH_SIZE,
+        MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES,
     },
 };
 
@@ -60,22 +60,8 @@ pub(crate) async fn storage_fetcher(
     let mut stale = false;
     let mut incoming = true;
     while incoming {
-        // Fetch incoming requests
-        let mut msg_buffer = vec![];
-        if receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await != 0 {
-            for account_hashes_and_roots in msg_buffer {
-                if !account_hashes_and_roots.is_empty() {
-                    pending_storage.extend(account_hashes_and_roots);
-                } else {
-                    // Empty message signaling no more storages to sync
-                    incoming = false
-                }
-            }
-        } else {
-            // Disconnect
-            incoming = false
-        }
-        // If we have enough pending storages to fill a batch
+        incoming = read_incoming_requests(&mut receiver, &mut pending_storage).await;
+        // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
         while !stale
@@ -208,23 +194,8 @@ async fn large_storage_fetcher(
     let mut incoming = true;
     while incoming || !pending_storage.is_empty() {
         // Fetch incoming requests
-        if !receiver.is_empty() || pending_storage.is_empty() {
-            let mut msg_buffer = vec![];
-            if receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await != 0 {
-                for hashes_roots_keys in msg_buffer {
-                    if !hashes_roots_keys.is_empty() {
-                        pending_storage.extend(hashes_roots_keys);
-                    } else {
-                        // Empty message signaling no more storages to sync
-                        incoming = false
-                    }
-                }
-            } else {
-                // Disconnect
-                incoming = false
-            }
-        }
-        // If we have enough pending bytecodes to fill a batch
+        incoming = read_incoming_requests(&mut receiver, &mut pending_storage).await;
+        // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
         while !stale && !pending_storage.is_empty() {

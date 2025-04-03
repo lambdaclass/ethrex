@@ -11,7 +11,7 @@ use tracing::debug;
 
 use crate::peer_handler::PeerHandler;
 
-use super::{SyncError, BYTECODE_BATCH_SIZE};
+use super::{utils::read_incoming_requests, SyncError, BYTECODE_BATCH_SIZE};
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 pub(crate) async fn bytecode_fetcher(
@@ -22,14 +22,7 @@ pub(crate) async fn bytecode_fetcher(
     let mut pending_bytecodes: Vec<H256> = vec![];
     let mut incoming = true;
     while incoming {
-        // Fetch incoming requests
-        match receiver.recv().await {
-            Some(code_hashes) if !code_hashes.is_empty() => {
-                pending_bytecodes.extend(code_hashes);
-            }
-            // Disconnect / Empty message signaling no more bytecodes to sync
-            _ => incoming = false,
-        }
+        incoming = read_incoming_requests(&mut receiver, &mut pending_bytecodes).await;
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         while pending_bytecodes.len() >= BYTECODE_BATCH_SIZE
