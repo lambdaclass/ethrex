@@ -28,7 +28,6 @@ jobs:
         with:
           workdir: "crates/l2"
           files: "crates/l2/docker-compose-l2.yaml"
-          push: true
           set: |
             *.cache-to=type=gha,mode=max
             *.cache-from=type=gha
