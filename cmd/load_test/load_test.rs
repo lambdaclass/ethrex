@@ -21,12 +21,10 @@ use std::{
     io::{self, BufRead},
     path::Path,
     str::FromStr,
-    sync::{Arc, OnceLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::{task::JoinSet, time::sleep};
-
-static CLIENT: OnceLock<EthClient> = OnceLock::new();
 
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
@@ -116,6 +114,7 @@ where
     Ok(io::BufReader::new(file).lines())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn transfer_from(
     pk: SecretKey,
     to_address: Address,
@@ -399,7 +398,7 @@ impl Command {
             ethrex_url,
         } = self;
 
-        let eth_client = CLIENT.get_or_init(|| EthClient::new(&ethrex_url));
+        let eth_client = EthClient::new(&ethrex_url);
 
         let rich_address = get_address_from_secret_key(&private_key)?;
 
@@ -488,7 +487,7 @@ impl Command {
             value,
             verbose,
             calldata,
-            eth_client,
+            &eth_client,
         )
         .await
     }
