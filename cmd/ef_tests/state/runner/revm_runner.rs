@@ -30,10 +30,7 @@ use revm::{
     },
     Evm as Revm,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 pub fn re_run_failed_ef_test(
     test: &EFTest,
@@ -45,8 +42,8 @@ pub fn re_run_failed_ef_test(
         for (vector, vector_failure) in fork_result.failed_vectors.iter() {
             match vector_failure {
                 // We only want to re-run tests that failed in the post-state validation.
-                EFTestRunnerError::FailedToEnsurePostState(transaction_report, _) => {
-                    match re_run_failed_ef_test_tx(vector, test, transaction_report, &mut re_run_report, fork) {
+                EFTestRunnerError::FailedToEnsurePostState(transaction_report, _, levm_cache) => {
+                    match re_run_failed_ef_test_tx(levm_cache.clone(), vector, test, transaction_report, &mut re_run_report, fork) {
                         Ok(_) => continue,
                         Err(EFTestRunnerError::VMInitializationFailed(reason)) => {
                             return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
@@ -79,6 +76,7 @@ pub fn re_run_failed_ef_test(
 }
 
 pub fn re_run_failed_ef_test_tx(
+    levm_cache: HashMap<Address, Account>,
     vector: &TestVector,
     test: &EFTest,
     levm_execution_report: &ExecutionReport,
@@ -99,14 +97,7 @@ pub fn re_run_failed_ef_test_tx(
         re_run_report,
         fork,
     )?;
-    ensure_post_state(
-        levm_execution_report,
-        vector,
-        &mut state,
-        test,
-        re_run_report,
-        fork,
-    )?;
+    ensure_post_state(levm_cache, vector, &mut state, test, re_run_report, fork)?;
     Ok(())
 }
 
@@ -320,7 +311,7 @@ pub fn compare_levm_revm_execution_results(
 }
 
 pub fn ensure_post_state(
-    levm_execution_report: &ExecutionReport,
+    levm_cache: HashMap<Address, Account>,
     vector: &TestVector,
     revm_state: &mut EvmState,
     test: &EFTest,
@@ -331,27 +322,12 @@ pub fn ensure_post_state(
         Some(_expected_exception) => {}
         // We only want to compare account updates when no exception is expected.
         None => {
-            let store_wrapper = load_initial_state_levm(test);
-            let block_header = store_wrapper
-                .store
-                .get_block_header_by_hash(store_wrapper.block_hash)
-                .unwrap()
-                .unwrap();
-            let levm_account_updates = backends::levm::LEVM::get_state_transitions(
-                Some(*fork),
-                Arc::new(store_wrapper.clone()),
-                store_wrapper.store.get_chain_config().map_err(|e| {
-                    EFTestRunnerError::VMInitializationFailed(format!(
-                        "Error at LEVM::get_state_transitions in ensure_post_state(): {}",
-                        e
-                    ))
-                })?,
-                &block_header,
-                &levm_execution_report.new_state,
-            )
-            .map_err(|_| {
-                InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())
-            })?;
+            let mut db = load_initial_state_levm(test);
+            db.cache = levm_cache;
+            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db, *fork)
+                .map_err(|_| {
+                    InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())
+                })?;
             let revm_account_updates = backends::revm::REVM::get_state_transitions(revm_state);
             let account_updates_report = compare_levm_revm_account_updates(
                 vector,
@@ -461,11 +437,16 @@ pub fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                 Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
                     ef_test_report_fork.register_unexpected_execution_failure(error, *vector);
                 }
-                Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
+                Err(EFTestRunnerError::FailedToEnsurePostState(
+                    transaction_report,
+                    reason,
+                    levm_cache,
+                )) => {
                     ef_test_report_fork.register_post_state_validation_failure(
                         transaction_report,
                         reason,
                         *vector,
+                        levm_cache,
                     );
                 }
                 Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
@@ -525,10 +506,10 @@ pub fn _ensure_post_state_revm(
                             gas_refunded: 42,
                             logs: vec![],
                             output: Bytes::new(),
-                            new_state: HashMap::new(),
                         },
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
+                        HashMap::new(),
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -552,10 +533,10 @@ pub fn _ensure_post_state_revm(
                                 gas_refunded: 42,
                                 logs: vec![],
                                 output: Bytes::new(),
-                                new_state: HashMap::new(),
                             },
                             //TODO: This is not a TransactionReport because it is REVM
                             error_reason,
+                            HashMap::new(),
                         ));
                     }
                 }

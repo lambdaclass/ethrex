@@ -1,4 +1,4 @@
-use crate::RpcErr;
+use crate::utils::RpcErr;
 use axum_extra::{
     headers::{authorization::Bearer, Authorization},
     TypedHeader,
