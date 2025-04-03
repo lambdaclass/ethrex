@@ -46,11 +46,16 @@ pub fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
                 Err(EFTestRunnerError::ExecutionFailedUnexpectedly(error)) => {
                     ef_test_report_fork.register_unexpected_execution_failure(error, *vector);
                 }
-                Err(EFTestRunnerError::FailedToEnsurePostState(transaction_report, reason)) => {
+                Err(EFTestRunnerError::FailedToEnsurePostState(
+                    transaction_report,
+                    reason,
+                    levm_cache,
+                )) => {
                     ef_test_report_fork.register_post_state_validation_failure(
                         transaction_report,
                         reason,
                         *vector,
+                        levm_cache,
                     );
                 }
                 Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
@@ -304,6 +309,7 @@ pub fn ensure_post_state(
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         execution_report.clone(),
                         error_reason,
+                        db.cache.clone(),
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -325,6 +331,7 @@ pub fn ensure_post_state(
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             execution_report.clone(),
                             error_reason,
+                            db.cache.clone(),
                         ));
                     }
                 }
