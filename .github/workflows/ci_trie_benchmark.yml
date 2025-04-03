@@ -8,7 +8,7 @@ on:
       - "crates/common/trie/**"
 
 permissions:
-  pull-request: write
+  pull-requests: write
 
 jobs:
   build-ethrex-trie:
