@@ -1,0 +1,42 @@
+name: trie benchmark
+
+on:
+  workflow_call:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "crates/common/trie/**"
+
+permissions:
+  pull-requests: write
+
+jobs:
+  build-ethrex-trie:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+    steps:
+      - name: Populate cache
+        uses: actions/cache@v4
+        id: cache
+        with:
+          path: crates/common/trie
+          key: trie-${{ github.event.pull_request[matrix.trie-version].sha }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Rust
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Benchmarks
+        uses: boa-dev/criterion-compare-action@v3
+        with:
+          cwd: "crates/common/trie"
+          benchName: "trie_bench"
+          branchName: ${{ github.base_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
