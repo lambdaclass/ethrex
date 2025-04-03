@@ -3,8 +3,7 @@ name: Check README CLI Help
 on:
   pull_request:
     paths:
-      - 'cmd/ethrex/cli.rs'
-      - 'cmd/ethrex/Cargo.toml'
+      - 'cmd/ethrex/**'
       - 'README.md'
       - '.github/workflows/check_readme_cli.yml'
 
