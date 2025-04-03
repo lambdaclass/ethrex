@@ -4,6 +4,7 @@ mod state_sync;
 mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
+mod utils;
 
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{error::ChainError, Blockchain};
@@ -19,10 +20,7 @@ use state_sync::state_sync;
 use std::{array, collections::HashMap, sync::Arc};
 use storage_healing::storage_healer;
 use tokio::{
-    sync::{
-        mpsc::error::SendError,
-        Mutex,
-    },
+    sync::{mpsc::error::SendError, Mutex},
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
