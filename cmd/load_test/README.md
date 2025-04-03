@@ -42,3 +42,29 @@ For a samply report, run the following:
 ```bash
 samply record cargo run --bin ethrex --release --features dev -- --network test_data/genesis-l2-ci.json --dev
 ```
+
+## Interacting with reth
+
+The same load test can be run, the only difference is how you run the node:
+
+```bash
+cargo run --release -- node --chain <path_to_ethrex>/test_data/genesis-l2-ci.json --dev --dev.block-time 5000ms --http.port 8545 --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000
+```
+
+All of the txpool parameters are to make sure that it doesn't discard transactions sent by the load test. Trhoughput measurements in the logs are typically near 1Gigagas/second. To remove the database before getting measurements again:
+
+```bash
+cargo run --release -- db --chain <path_to_ethrex>/test_data/genesis-l2-ci.json drop -f
+```
+
+To get a flamegraph of its execution, run with the same parameters, just replace `cargo run --release` with `cargo flamegraph --bin reth --profiling`:
+
+```bash
+cargo flamegraph --bin reth --root --profiling -- node --chain ~/workspace/ethrex/test_data/genesis-l2-ci.json --dev --dev.block-time 5000ms --http.port 8545 --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000
+```
+
+For samply we want to directly execute the binary, so that it records the binary and not cargo itself:
+
+```bash
+samply record ./target/profiling/reth node --chain ~/workspace/ethrex/test_data/genesis-l2-ci.json --dev --dev.block-time 5000ms --http.port 8545 --txpool.max-pending-txns 100000000 --txpool.max-new-txns 1000000000 --txpool.pending-max-count 100000000 --txpool.pending-max-size 10000000000 --txpool.basefee-max-count 100000000000 --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000
+```
