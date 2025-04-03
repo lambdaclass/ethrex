@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743688636430,
+  "lastUpdate": 1743688684134,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2185,6 +2185,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185259852612,
             "range": "± 945855173",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "73d94a2457e3e1277a7a4736b9d534b5d23fd53d",
+          "message": "feat(l1): add hoodi testnet configuration (#2387)\n\n**Motivation**\nAdd support for hoodi testnet",
+          "timestamp": "2025-04-03T13:05:25Z",
+          "tree_id": "89f1db2b9baf7765d8b419f8bbcef6a890453b35",
+          "url": "https://github.com/lambdaclass/ethrex/commit/73d94a2457e3e1277a7a4736b9d534b5d23fd53d"
+        },
+        "date": 1743688681478,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 193600467450,
+            "range": "± 1409107936",
             "unit": "ns/iter"
           }
         ]
