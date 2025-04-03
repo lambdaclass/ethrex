@@ -304,9 +304,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                             self.handle_message(message, sender.clone()).await?;
                             debug!("[Connection {peer}] Handling message {} in {} ms", msg_str, handling_message.elapsed().as_millis());
                             idle_start = Instant::now();
-                            if receiver.is_closed() {
-                                tracing::warn!("[Main Loop Receive Message from Peer] Peer: {} channel closed", self.node.node_id.to_string());
-                            }
                         },
                         Err(e) => {
                             log_peer_debug(&self.node, &format!("Received RLPX Error in msg {}", e));
@@ -322,9 +319,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.send(message).await?;
                     debug!("[Connection {peer}] Sending Message in {} ms", sending_msg.elapsed().as_millis());
                     idle_start = Instant::now();
-                    if receiver.is_closed() {
-                        tracing::warn!("[Main Loop Receive Message From Backend] Peer: {} channel closed", self.node.node_id.to_string());
-                    }
                 }
                 // This is not ideal, but using the receiver without
                 // this function call, causes the loop to take ownwership
@@ -340,9 +334,6 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                     self.handle_broadcast(broadcasted_msg?).await?;
                     debug!("[Connection {peer}] Broadcasting in {} ms", broadcast.elapsed().as_millis());
                     idle_start = Instant::now();
-                    if receiver.is_closed() {
-                        tracing::warn!("[Main Loop Broadcast Message] Peer: {} channel closed", self.node.node_id.to_string());
-                    }
 
                 }
                 // Allow an interruption to check periodic tasks
@@ -355,10 +346,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             debug!(
                 "[Connection {peer}] Checking periodic tasks in {} ms (counted as idle time)",
                 check.elapsed().as_millis()
-            );
-            if receiver.is_closed() {
-                tracing::warn!("[Main Loop Check Periodic Tasks] Peer: {} channel closed", self.node.node_id.to_string());
-            }
+            )
         }
     }
 

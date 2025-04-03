@@ -105,20 +105,13 @@ impl PeerHandler {
     async fn get_peer_channel_with_retry(&self, capability: Capability) -> Option<PeerChannels> {
         for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
             let table = self.peer_table.lock().await;
-            let filter = |peer: &crate::kademlia::PeerData| -> bool {
-                // Search for peers with an active connection that support the required capabilities
-                peer.channels.is_some() && peer.supported_capabilities.contains(&capability)
+            if let Some(channels) = table.get_peer_channels(capability.clone()) {
+                return Some(channels);
             };
-            if let Some(peer) = table.get_random_peer_with_filter(&filter) {
-                if peer.channels.as_ref().unwrap().sender.is_closed() {
-                    warn!("[Get Peer Channel] Peer {} channel closed", peer.node.node_id.to_string());
-                }
-                return peer.channels.clone();
-            };
-            // drop the lock early as to not block the rest of processes
+            // drop the lock early to no block the rest of processes
             drop(table);
             info!("[Sync] No peers available, retrying in 10 sec");
-            // This is the unlikely case where we just started the node and don't have suitable peers, wait a bit and try again
+            // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
         None

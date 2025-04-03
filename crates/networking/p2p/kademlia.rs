@@ -245,7 +245,7 @@ impl KademliaTable {
     }
 
     /// Obtain a random peer from the kademlia table that matches the filter
-    pub fn get_random_peer_with_filter<'a>(
+    fn get_random_peer_with_filter<'a>(
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
     ) -> Option<&'a PeerData> {
