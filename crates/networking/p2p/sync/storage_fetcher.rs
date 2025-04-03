@@ -59,43 +59,40 @@ pub(crate) async fn storage_fetcher(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
+    let l_sender = large_storage_sender.clone();
+    let s_sender = storage_trie_rebuilder_sender.clone();
+    let fetch_batch = move |batch: Vec<(H256, H256)>, peers: PeerHandler, store: Store| {
+        let l_sender = l_sender.clone();
+        let s_sender = s_sender.clone();
+        async move {
+            fetch_storage_batch(
+                batch,
+                state_root,
+                peers,
+                store,
+                l_sender.clone(),
+                s_sender.clone(),
+            )
+            .await
+            .unwrap()
+        }
+    };
     while incoming {
         incoming = read_incoming_requests(&mut receiver, &mut pending_storage).await;
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
-        while !stale
-            && (pending_storage.len() >= STORAGE_BATCH_SIZE
-                || (!incoming && !pending_storage.is_empty()))
-        {
-            // We will be spawning multiple tasks and then collecting their results
-            // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
-            let mut storage_tasks = tokio::task::JoinSet::new();
-            for _ in 0..MAX_PARALLEL_FETCHES {
-                let next_batch = pending_storage
-                    .drain(..STORAGE_BATCH_SIZE.min(pending_storage.len()))
-                    .collect::<Vec<_>>();
-                storage_tasks.spawn(fetch_storage_batch(
-                    next_batch,
-                    state_root,
-                    peers.clone(),
-                    store.clone(),
-                    large_storage_sender.clone(),
-                    storage_trie_rebuilder_sender.clone(),
-                ));
-                // End loop if we don't have enough elements to fill up a batch
-                if pending_storage.is_empty()
-                    || (incoming && pending_storage.len() < STORAGE_BATCH_SIZE)
-                {
-                    break;
-                }
-            }
-            // Add unfetched accounts to queue and handle stale signal
-            for res in storage_tasks.join_all().await {
-                let (remaining, is_stale) = res?;
-                pending_storage.extend(remaining);
-                stale |= is_stale;
-            }
+        if stale {
+            info!("Fetch storage: Stale Pivot");
+        } else {
+            stale = crate::sync::utils::spawn_fetch_tasks(
+                &mut pending_storage,
+                incoming,
+                &fetch_batch,
+                peers.clone(),
+                store.clone(),
+            )
+            .await;
         }
     }
     debug!(
