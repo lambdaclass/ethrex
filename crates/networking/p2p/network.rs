@@ -199,7 +199,7 @@ pub async fn periodically_show_peer_stats(peer_table: Arc<Mutex<KademliaTable>>)
                 peer.channels.as_ref().is_some()
                     && peer.supported_capabilities.contains(&Capability::Snap)
             })
-            .map(|peer| (peer.node.node_id.to_string(), peer.channels.as_ref().unwrap().receiver.try_lock().unwrap().is_closed()))
+            .map(|peer| (peer.node.node_id.to_string(), peer.channels.as_ref().unwrap().sender.is_closed()))
             .collect();
         info!("Snap Peers: {snap_active_peers} / Active Peers {active_peers} / Total Peers: {total_peers}");
         info!("Snap Active Peer IDs & Channel Closed: {snap_active_peers_ids:?}");
