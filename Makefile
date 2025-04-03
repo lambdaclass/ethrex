@@ -155,24 +155,24 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--features "dev" \
 	--  \
 	--evm $$LEVM \
-	--network test_data/genesis-l2.json \
-	--http.port 1729 \
+	--network test_data/genesis-l1-dev.json \
+	--http.port 8545 \
 	--dev \
 	--datadir test_ethrex
 
-load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	cargo run --release --bin loadtest \
-	--manifest-path cmd/ethrex_l2/Cargo.toml -- \
+load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test
+	cargo run --release \
+	--manifest-path cmd/load_test/Cargo.toml -- \
 	--path test_data/private_keys.txt -v --test_type fibonacci
 
-load-test-fibonacci:
-	cargo run --release --bin loadtest \
-	--manifest-path cmd/ethrex_l2/Cargo.toml -- \
+load-test-fibonacci: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test-fibonacci
+	cargo run --release \
+	--manifest-path cmd/load_test/Cargo.toml -- \
 	--path test_data/private_keys.txt -v --test_type fibonacci
 
-load-test-io:
-	cargo run --release --bin loadtest \
-	--manifest-path cmd/ethrex_l2/Cargo.toml -- \
+load-test-io: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test-io
+	cargo run --release \
+	--manifest-path cmd/load_test/Cargo.toml -- \
 	--path test_data/private_keys.txt -v --test_type io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
@@ -183,7 +183,7 @@ flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in
 
 test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./test_data/ERC20.sol -o $@
-load-test-erc20: test_data/ERC20/ERC20.bin
-	cargo run --release --bin loadtest \
-	--manifest-path cmd/ethrex_l2/Cargo.toml -- \
+load-test-erc20: test_data/ERC20/ERC20.bin ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test-erc20
+	cargo run --release \
+	--manifest-path cmd/load_test/Cargo.toml -- \
 	--path test_data/private_keys.txt -v --test_type erc20

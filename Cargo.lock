@@ -1662,7 +1662,7 @@ version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fce8dd7fcfcbf3a0a87d8f515194b49d6135acab73e18bd380d1d93bb1a15eb"
 dependencies = [
- "clap 4.5.32",
+ "clap 4.5.35",
  "heck 0.4.1",
  "indexmap 2.8.0",
  "log",
@@ -1818,9 +1818,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.32"
+version = "4.5.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6088f3ae8c3608d19260cd7445411865a485688711b78b5be70d78cd96136f83"
+checksum = "d8aa86934b44c19c50f87cc2790e19f54f7a67aedb64101c2e1a2e5ecfb73944"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1828,9 +1828,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.32"
+version = "4.5.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22a7ef7f676155edfb82daa97f99441f3ebf4a58d5e32f295a56259f1b6facc8"
+checksum = "2414dbb2dd0695280da6ea9261e327479e9d37b0630f6b53ba2a11c60c679fd9"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1844,7 +1844,7 @@ version = "4.5.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c06f5378ea264ad4f82bbc826628b5aad714a75abf6ece087e923010eb937fb6"
 dependencies = [
- "clap 4.5.32",
+ "clap 4.5.35",
 ]
 
 [[package]]
@@ -2061,7 +2061,7 @@ dependencies = [
  "anes",
  "cast",
  "ciborium",
- "clap 4.5.32",
+ "clap 4.5.35",
  "criterion-plot",
  "is-terminal",
  "itertools 0.10.5",
@@ -2749,7 +2749,7 @@ name = "ef_tests-state"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "clap 4.5.32",
+ "clap 4.5.35",
  "clap_complete",
  "colored",
  "ethrex-blockchain",
@@ -3007,7 +3007,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cfg-if",
- "clap 4.5.32",
+ "clap 4.5.35",
  "clap_complete",
  "criterion",
  "directories",
@@ -3418,7 +3418,7 @@ name = "ethrex_l2_cli"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "clap 4.5.32",
+ "clap 4.5.35",
  "clap_complete",
  "colored",
  "dialoguer",
@@ -3445,6 +3445,34 @@ dependencies = [
  "strum 0.26.3",
  "tokio",
  "toml 0.8.20",
+ "tracing",
+ "tracing-subscriber 0.3.19",
+]
+
+[[package]]
+name = "ethrex_loadtest"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "clap 4.5.35",
+ "ethereum-types",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-l2",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-sdk",
+ "ethrex-storage",
+ "eyre",
+ "hex",
+ "keccak-hash",
+ "log",
+ "reqwest",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
 ]
@@ -5015,7 +5043,7 @@ checksum = "5297962ef19edda4ce33aaa484386e0a5b3d7f2f4e037cbeee00503ef6b29d33"
 dependencies = [
  "anstream",
  "anstyle",
- "clap 4.5.32",
+ "clap 4.5.35",
  "escape8259",
 ]
 
@@ -5053,7 +5081,7 @@ checksum = "23fb14cb19457329c82206317a5663005a4d404783dc74f4252769b0d5f42856"
 name = "loc"
 version = "0.1.0"
 dependencies = [
- "clap 4.5.32",
+ "clap 4.5.35",
  "clap_complete",
  "colored",
  "prettytable",
@@ -6580,7 +6608,7 @@ source = "git+https://github.com/brevis-network/pico#286feb9878d9e09347852e5bf12
 dependencies = [
  "anyhow",
  "cargo_metadata",
- "clap 4.5.32",
+ "clap 4.5.35",
  "env_logger 0.11.7",
  "hex",
  "log",
@@ -6650,7 +6678,7 @@ dependencies = [
  "bincode",
  "bytemuck",
  "cfg-if",
- "clap 4.5.32",
+ "clap 4.5.35",
  "cpu-time",
  "crossbeam",
  "csv",
@@ -8685,7 +8713,7 @@ dependencies = [
  "anyhow",
  "cargo_metadata",
  "chrono",
- "clap 4.5.32",
+ "clap 4.5.35",
  "dirs 5.0.1",
 ]
 
@@ -8697,7 +8725,7 @@ checksum = "557ebd420e4aa4184e2d06f0c817fa1a0113b38e46c87b9763e6443265ae1a39"
 dependencies = [
  "bincode",
  "bytemuck",
- "clap 4.5.32",
+ "clap 4.5.35",
  "elf",
  "enum-map",
  "eyre",
@@ -8872,7 +8900,7 @@ checksum = "1529c1c1e880691c565c7504940d46714ec2594320b8ee00dbc119c85bf1df26"
 dependencies = [
  "anyhow",
  "bincode",
- "clap 4.5.32",
+ "clap 4.5.35",
  "dirs 5.0.1",
  "downloader",
  "enum-map",

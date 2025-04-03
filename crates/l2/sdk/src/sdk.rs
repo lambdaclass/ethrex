@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
@@ -309,6 +311,13 @@ where
 {
     let hex = H256::deserialize(deserializer)?;
     SecretKey::from_slice(hex.as_bytes()).map_err(serde::de::Error::custom)
+}
+
+pub fn secret_key_parser(hex_str: &str) -> Result<SecretKey, EthClientError> {
+    let hex = H256::from_str(hex_str.trim_start_matches("0x"))
+        .map_err(|_| EthClientError::Custom("Couldn't convert from_str()".to_string()))?;
+    SecretKey::from_slice(hex.as_bytes())
+        .map_err(|_| EthClientError::Custom("Couldn't convert from_slice()".to_string()))
 }
 
 pub fn secret_key_serializer<S>(secret_key: &SecretKey, serializer: S) -> Result<S::Ok, S::Error>
