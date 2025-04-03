@@ -167,17 +167,36 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--dev \
 	--datadir test_ethrex
 
-load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test
+start-node-with-samply: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing // Then open te profile.json.gz in https://profiler.firefox.com/
+	@if [ -z "$$L" ]; then \
+		LEVM="revm"; \
+		echo "Running the test-node without the LEVM feature"; \
+		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
+	else \
+		LEVM="levm"; \
+		echo "Running the test-node with the LEVM feature"; \
+	fi; \
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	cargo run --release --bin ethrex \
+	--features "dev" \
+	--  \
+	--evm $$LEVM \
+	--network test_data/genesis-l1-dev.json \
+	--http.port 8545 \
+	--dev \
+	--datadir test_ethrex
+
+load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test
 	cargo run --release \
 	--manifest-path cmd/load_test/Cargo.toml -- \
 	--path test_data/private_keys.txt -v
 
-load-test-fibonacci: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test-fibonacci
+load-test-fibonacci: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test-fibonacci
 	cargo run --release \
 	--manifest-path cmd/load_test/Cargo.toml -- \
 	--path test_data/private_keys.txt -v --test_type fibonacci
 
-load-test-io: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test-io
+load-test-io: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test-io
 	cargo run --release \
 	--manifest-path cmd/load_test/Cargo.toml -- \
 	--path test_data/private_keys.txt -v --test_type io-heavy

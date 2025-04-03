@@ -24,7 +24,7 @@ Options:
   -h, --help                     Print help
 ```
 
-### Common Usage
+### Frequent Usecases
 
 Go to the repository's root dir and run the following command:
 
@@ -41,8 +41,20 @@ Flamegraph:
 
 - You will need two terminals:
   1. `sudo make start-node-with-flamegraph`
-  2. `sudo make load-test` 
+  2. `sudo make load-test`
      - OR:
-        - `load-test-erc20`
-        - `load-test-fibonacci` 
-        - `load-test-io`
+       - `load-test-erc20`
+       - `load-test-fibonacci`
+       - `load-test-io`
+
+Samply:
+
+- You will need two terminals:
+  1. `sudo make start-node-with-samply`
+  2. `sudo make load-test`
+     - OR:
+       - `load-test-erc20`
+       - `load-test-fibonacci`
+       - `load-test-io`
+
+When the node is stopeed, it will generate a file named `profile.json.gz`, you can open it at https://profiler.firefox.com/.
