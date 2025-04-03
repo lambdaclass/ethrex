@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743529164404,
+  "lastUpdate": 1743688636430,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2155,6 +2155,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185786068027,
             "range": "± 625343763",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c8ae91c53a62d70e8e699ab445e2e89e9d649c6",
+          "message": "ci(core): restrict github job permissions by default. (#2389)\n\n**Motivation**\nUse the principle of least privilege and don't grand write permissions\nthat are then forwarded to potentially malicious actions.",
+          "timestamp": "2025-04-03T13:06:01Z",
+          "tree_id": "c676caacb1b70135bf57d3b629b3a30c9125f864",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0c8ae91c53a62d70e8e699ab445e2e89e9d649c6"
+        },
+        "date": 1743688634472,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185259852612,
+            "range": "± 945855173",
             "unit": "ns/iter"
           }
         ]
