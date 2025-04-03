@@ -29,8 +29,14 @@ jobs:
           workdir: "crates/l2"
           files: "crates/l2/docker-compose-l2.yaml"
           set: |
-            *.cache-to=type=gha,mode=max
+            *.cache-to=type=local,dest=/tmp/buildx-cache,mode=max
             *.cache-from=type=gha
+
+      - name: Upload docker artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildx-cache
+          path: /tmp/buildx-cache
 
   integration-test:
     # "Integration Test" is a required check, don't change the name
@@ -50,6 +56,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Download buildx cache
+        uses: actions/download-artifact@v4
+        with:
+          name: buildx-cache
+          path: /tmp
+
       - name: Bake docker images
         uses: docker/bake-action@v6
         with:
@@ -57,8 +69,7 @@ jobs:
           files: "crates/l2/docker-compose-l2.yaml"
           load: true
           set: |
-            *.cache-to=type=gha,mode=max
-            *.cache-from=type=gha
+            *.cache-from=type=local,src=/tmp/buildx-cache
 
       - name: Build prover
         run: |
@@ -92,6 +103,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Download buildx cache
+        uses: actions/download-artifact@v4
+        with:
+          name: buildx-cache
+          path: /tmp
+
       - name: Bake docker images
         uses: docker/bake-action@v6
         with:
@@ -99,8 +116,7 @@ jobs:
           files: "crates/l2/docker-compose-l2.yaml"
           load: true
           set: |
-            *.cache-to=type=gha,mode=max
-            *.cache-from=type=gha
+            *.cache-from=type=local,src=/tmp/buildx-cache
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
