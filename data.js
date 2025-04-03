@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743689923819,
+  "lastUpdate": 1743689937083,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2245,6 +2245,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184410905603,
             "range": "± 1401636606",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f3576706e2a45bc96e5709693f4b9453fd6db25d",
+          "message": "feat(l1): abstract syncer <-> codebase interaction (#2303)\n\n**Motivation**\nThe codebase (mainly rpc) currently interacts with the synced by trying\nto acquire its lock, which works if we only need to know if the synced\nis busy, but no longer works if we need more precise information about\nthe sync such as what is the mode of the current sync. This PR\nintroduces the `SyncSupervisor` who is in charge of storing the latest\nfcu head, starting and restarting sync cycles and informing the current\nsync status at all times\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2282",
+          "timestamp": "2025-04-03T13:28:05Z",
+          "tree_id": "e2d4bc14288b64cff5ad094313010233d5543046",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f3576706e2a45bc96e5709693f4b9453fd6db25d"
+        },
+        "date": 1743689935033,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185738763425,
+            "range": "± 1374578941",
             "unit": "ns/iter"
           }
         ]
