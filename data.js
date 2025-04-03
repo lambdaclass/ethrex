@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743697310220,
+  "lastUpdate": 1743697849475,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2335,6 +2335,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186392698099,
             "range": "± 654097985",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "95512809+Himess@users.noreply.github.com",
+            "name": "Himess",
+            "username": "Himess"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a4cf43126c0b911f2eb3738dde0975720db96ebe",
+          "message": "refactor(core): update clap attributes to #[arg(...)] and #[command(...)] (#2238)\n\n**Description**\nThis PR updates deprecated `#[clap(...)]` attributes to their modern\nequivalents in `clap` 4.x.\nThe current codebase still uses outdated syntax that has been deprecated\nsince version 4.0.\nBy making this update, we ensure compatibility with future versions and\nmaintain code quality.\n\nCloses #2237 \n\n**Test**\nI ran cargo check --features clap/deprecated after making the changes,\neverything looks correct and aligned with the latest clap syntax.\n\n\n\n![image](https://github.com/user-attachments/assets/0f2de8f8-9775-4e31-a703-a7ae5e0623f0)\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-04-03T15:39:55Z",
+          "tree_id": "618d755c4f07612c8755a04b36f550143e00ea1c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a4cf43126c0b911f2eb3738dde0975720db96ebe"
+        },
+        "date": 1743697846957,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 188094419106,
+            "range": "± 766209671",
             "unit": "ns/iter"
           }
         ]
