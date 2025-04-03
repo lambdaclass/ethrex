@@ -8,10 +8,7 @@ on:
       - "crates/common/trie/**"
 
 permissions:
-  # deployments permission to deploy GitHub pages website
-  deployments: write
-  # contents permission to update benchmark contents in gh-pages branch
-  contents: write
+  pull-request: write
 
 jobs:
   build-ethrex-trie:
