@@ -271,9 +271,10 @@ fn calc_modified_accounts_size(
     // We use a temporary_context because revm mutates it in `get_state_transitions`
     // TODO: remove when we stop using revm
     let mut temporary_context = context.clone();
-    let account_updates = temporary_context
-        .vm
-        .get_state_transitions(context.payload.header.parent_hash)?;
+
+    let chain_config = &context.store.get_chain_config()?;
+    let fork = chain_config.fork(context.payload.header.timestamp);
+    let account_updates = temporary_context.vm.get_state_transitions(fork)?;
     for account_update in account_updates {
         modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
         if account_update.info.is_some() {
