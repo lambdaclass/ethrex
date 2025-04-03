@@ -7631,6 +7631,7 @@ dependencies = [
  "bytes",
  "ethrex-common",
  "ethrex-levm",
+ "ethrex-vm",
  "hex",
  "revm 9.0.0",
  "sha3",
