@@ -6,6 +6,7 @@ on:
     branches: ["**"]
     paths:
       - "crates/l2/prover/**"
+      - ".github/workflows/pr-main_l2_prover.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

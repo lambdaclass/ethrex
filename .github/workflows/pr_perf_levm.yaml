@@ -5,6 +5,7 @@ on:
     branches: ["**"]
     paths:
       - "crates/vm/levm/**"
+      - ".github/workflows/pr_perf_levm.yaml"
 
 permissions:
   pull-requests: write

@@ -5,7 +5,7 @@ on:
     paths:
       - "cmd/ethrex/**"
       - "README.md"
-      - ".github/workflows/check_readme_cli.yml"
+      - ".github/workflows/pr_lint_readme.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
