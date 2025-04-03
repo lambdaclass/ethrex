@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use crate::{
+    rpc::RpcApiContext,
     utils::{RpcErr, RpcRequest},
-    RpcApiContext,
 };
 
 pub fn version(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {

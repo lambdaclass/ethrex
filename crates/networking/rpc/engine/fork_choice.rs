@@ -10,12 +10,13 @@ use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use crate::{
+    rpc::{RpcApiContext, RpcHandler},
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
         payload::PayloadStatus,
     },
+    utils::RpcErr,
     utils::RpcRequest,
-    RpcApiContext, RpcErr, RpcHandler,
 };
 
 #[derive(Debug)]

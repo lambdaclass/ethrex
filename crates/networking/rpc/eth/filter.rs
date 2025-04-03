@@ -11,7 +11,7 @@ use std::{
 };
 use tracing::error;
 
-use crate::RpcHandler;
+use crate::rpc::RpcHandler;
 use crate::{
     types::block_identifier::{BlockIdentifier, BlockTag},
     utils::{parse_json_hex, RpcErr, RpcRequest},
@@ -258,9 +258,8 @@ mod tests {
             filter::PollableFilter,
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
-        map_http_requests,
+        rpc::{map_http_requests, RpcApiContext, FILTER_DURATION},
         utils::test_utils::{self, example_local_node_record, start_test_api},
-        RpcApiContext, FILTER_DURATION,
     };
     use crate::{
         types::block_identifier::BlockIdentifier,
