@@ -7,7 +7,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::node_id_from_signing_key,
-    sync::SyncManager,
+    sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
@@ -117,6 +117,7 @@ pub fn init_rpc_api(
         opts.syncmode.clone(),
         cancel_token,
         blockchain.clone(),
+        store.clone(),
     );
 
     let rpc_api = ethrex_rpc::start_api(
