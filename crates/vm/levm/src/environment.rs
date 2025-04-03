@@ -1,5 +1,4 @@
 use ethrex_common::{Address, H256, U256};
-pub use revm_primitives::SpecId;
 
 use crate::vm::EVMConfig;
 
