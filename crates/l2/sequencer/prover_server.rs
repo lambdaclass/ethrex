@@ -598,7 +598,7 @@ impl ProverServer {
             if *contract_sp1_vkey == zero {
                 info!("Setting SP1_VKEY");
                 let calldata: Vec<u8> =
-                    encode_calldata(SET_SP1_VKEY, &vec![Value::FixedBytes(sp1_vkey.clone())])?;
+                    encode_calldata(SET_SP1_VKEY, &[Value::FixedBytes(sp1_vkey.clone())])?;
 
                 send_generic_tx_to_on_chain_proposer(
                     &self.eth_client,
@@ -620,7 +620,7 @@ impl ProverServer {
             if *contract_risc0_vkey == zero {
                 info!("Setting RISC0_VKEY");
                 let calldata =
-                    encode_calldata(SET_RISC0_VKEY, &vec![Value::FixedBytes(risc0_vkey.clone())])?;
+                    encode_calldata(SET_RISC0_VKEY, &[Value::FixedBytes(risc0_vkey.clone())])?;
                 send_generic_tx_to_on_chain_proposer(
                     &self.eth_client,
                     calldata.into(),
@@ -641,7 +641,7 @@ impl ProverServer {
             if *contract_pico_vkey == zero {
                 info!("Setting PICO_VKEY");
                 let calldata =
-                    encode_calldata(SET_PICO_VKEY, &vec![Value::FixedBytes(pico_vkey.clone())])?;
+                    encode_calldata(SET_PICO_VKEY, &[Value::FixedBytes(pico_vkey.clone())])?;
                 send_generic_tx_to_on_chain_proposer(
                     &self.eth_client,
                     calldata.into(),
