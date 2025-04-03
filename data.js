@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743688684134,
+  "lastUpdate": 1743689923819,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2215,6 +2215,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 193600467450,
             "range": "± 1409107936",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c9b0dbbe875497eff4c47f928a1e7de10f83059d",
+          "message": "feat(l1): adjust byte code batch size (snap sync parameter) (#2338)\n\n**Motivation**\nPrevious changes have sped up other components of the snap sync process,\nmaking faults in the byte code fetcher more evident. The byte code\nfetcher used the same batch size as storage requests, 300, which is far\nmore than the byte codes normally returned by a peer request, causing\nthe byte code fetcher to keep on fetching the last batches when all\nother fetchers have already finished.\nThis PR reduces the batch size down to 70 so that it coincides with the\namount of byte codes regularly returned by peers\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Rename constant `BATCH_SIZE` -> `STORAGE_BATCH_SIZE`\n* Add constant `BYTECODE_BATCH_SIZE`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-03T13:28:35Z",
+          "tree_id": "166aff3e46e72fb6a5a4d83faedfc765e01c6e93",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c9b0dbbe875497eff4c47f928a1e7de10f83059d"
+        },
+        "date": 1743689921923,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184410905603,
+            "range": "± 1401636606",
             "unit": "ns/iter"
           }
         ]
