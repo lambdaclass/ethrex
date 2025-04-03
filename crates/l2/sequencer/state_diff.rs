@@ -119,6 +119,7 @@ impl StateDiff {
             encoded.extend(header.gas_used.to_be_bytes());
             encoded.extend(header.timestamp.to_be_bytes());
             encoded.extend(header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
+            encoded.extend(header.state_root.0);
         }
 
         let modified_accounts_len: u16 = self
@@ -172,6 +173,7 @@ impl StateDiff {
                 gas_used: decoder.get_u64()?,
                 timestamp: decoder.get_u64()?,
                 base_fee_per_gas: Some(decoder.get_u64()?),
+                state_root: decoder.get_h256()?,
                 ..Default::default()
             })
         }

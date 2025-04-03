@@ -330,21 +330,23 @@ impl Command {
                         .apply_account_updates_from_trie(new_trie, &account_updates)
                         .expect("Error applying account updates");
 
-                    let new_block = BlockHeader {
-                        coinbase,
-                        number: last_number + 1,
-                        parent_hash: last_hash,
-                        state_root: new_trie.hash().expect("Error committing state"),
-                        ..state_diff.header
-                    };
-                    let new_block_hash = new_block.compute_block_hash();
+                    for header in state_diff.headers {
+                        let new_block = BlockHeader {
+                            coinbase,
+                            number: last_number + 1,
+                            parent_hash: last_hash,
+                            state_root: new_trie.hash().expect("Error committing state"),
+                            ..state_diff.header
+                        };
+                        let new_block_hash = new_block.compute_block_hash();
 
-                    store.add_block_header(new_block_hash, new_block)?;
-                    store.add_block_number(new_block_hash, last_number + 1)?;
-                    store.set_canonical_block(last_number + 1, new_block_hash)?;
+                        store.add_block_header(new_block_hash, new_block)?;
+                        store.add_block_number(new_block_hash, last_number + 1)?;
+                        store.set_canonical_block(last_number + 1, new_block_hash)?;
 
-                    last_number += 1;
-                    last_hash = new_block_hash;
+                        last_number += 1;
+                        last_hash = new_block_hash;
+                    }
                 }
 
                 store.update_latest_block_number(last_number)?;

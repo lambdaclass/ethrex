@@ -34,9 +34,6 @@ impl AccountUpdate {
     }
 
     pub fn merge(&mut self, other: AccountUpdate) {
-        // if self.address != other.address {
-        //     panic!("Cannot merge updates for different accounts");
-        // }
         self.removed = other.removed;
         if let Some(info) = other.info {
             self.info = Some(info);
