@@ -8,11 +8,12 @@ use ethrex_p2p::sync_manager::SyncStatus;
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
+use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
 };
+use crate::utils::RpcErr;
 use crate::utils::{parse_json_hex, RpcRequest};
-use crate::{RpcApiContext, RpcErr, RpcHandler};
 
 // Must support rquest sizes of at least 32 blocks
 // Chosen an arbitrary x4 value

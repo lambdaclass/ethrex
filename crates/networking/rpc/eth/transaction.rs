@@ -4,12 +4,12 @@ use std::sync::Arc;
 use crate::utils::RpcRequest;
 use crate::{
     eth::block,
+    rpc::{RpcApiContext, RpcHandler},
     types::{
         block_identifier::BlockIdentifier,
         transaction::{RpcTransaction, SendRawTransactionRequest},
     },
     utils::RpcErr,
-    RpcApiContext, RpcHandler,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{

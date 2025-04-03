@@ -1,10 +1,10 @@
 use serde_json::Value;
 use tracing::info;
 
+use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
-use crate::RpcApiContext;
-use crate::{utils::RpcErr, RpcHandler};
+use crate::utils::RpcErr;
 use ethrex_common::{Address, BigEndianHash, H256, U256};
 
 pub struct GetBalanceRequest {
