@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743701269299,
+  "lastUpdate": 1743703958185,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2395,6 +2395,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185618654746,
             "range": "± 689737321",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6841f00000029f0184cd3b5ae8e235a5406ac5d",
+          "message": "ci: restore trie benchmark (#2308)\n\n**Motivation**\n\nAdd a CI job to compare the trie speed results.\n\n---------\n\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-04-03T17:20:37Z",
+          "tree_id": "adee21b7d8eb60f8125412d9cd38d611ab1d49c9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b6841f00000029f0184cd3b5ae8e235a5406ac5d"
+        },
+        "date": 1743703955920,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 188928141075,
+            "range": "± 793787747",
             "unit": "ns/iter"
           }
         ]
