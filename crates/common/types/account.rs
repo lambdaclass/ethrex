@@ -30,7 +30,7 @@ lazy_static! {
 }
 
 #[allow(unused)]
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub info: AccountInfo,
     pub code: Bytes,

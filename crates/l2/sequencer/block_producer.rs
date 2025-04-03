@@ -10,7 +10,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_storage::Store;
-use ethrex_vm::backends::BlockExecutionResult;
+use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use tokio::time::sleep;
 use tracing::{debug, error, info};

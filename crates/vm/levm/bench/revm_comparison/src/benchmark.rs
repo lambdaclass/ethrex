@@ -20,7 +20,7 @@ fn main() {
 
     let benchmark = std::env::args().nth(2).expect(usage);
 
-    let runs: usize = std::env::args()
+    let runs: u64 = std::env::args()
         .nth(3)
         .unwrap_or_else(|| "10".to_string()) // Default to 10 runs
         .parse()

@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use crate::{
     runner::{EFTestRunnerError, InternalError},
     types::{EFTest, EFTestTransaction},
 };
 use ethrex_common::{types::Genesis, H256, U256};
+use ethrex_levm::{db::CacheDB, vm::GeneralizedDatabase};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     backends::revm::db::{evm_state, EvmState},
@@ -27,7 +30,7 @@ pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
 }
 
 /// Loads initial state, function for LEVM as it does not require EvmState
-pub fn load_initial_state_levm(test: &EFTest) -> StoreWrapper {
+pub fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let genesis = Genesis::from(test);
 
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
@@ -35,10 +38,12 @@ pub fn load_initial_state_levm(test: &EFTest) -> StoreWrapper {
 
     let block_hash = genesis.get_block().header.compute_block_hash();
 
-    StoreWrapper {
+    let store = StoreWrapper {
         store: storage,
         block_hash,
-    }
+    };
+
+    GeneralizedDatabase::new(Arc::new(store), CacheDB::new())
 }
 
 pub fn spinner_update_text_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {

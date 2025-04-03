@@ -1232,6 +1232,7 @@ dependencies = [
  "keccak-hash",
  "lazy_static",
  "once_cell",
+ "rayon",
  "secp256k1",
  "serde",
  "serde_json",

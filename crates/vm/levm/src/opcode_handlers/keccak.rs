@@ -11,7 +11,7 @@ use sha3::{Digest, Keccak256};
 // KECCAK256 (1)
 // Opcodes: KECCAK256
 
-impl VM {
+impl<'a> VM<'a> {
     pub fn op_keccak256(
         &mut self,
         current_call_frame: &mut CallFrame,
