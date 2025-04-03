@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{AccountInfo, AccountState, BlockHeader};
+use ethrex_common::types::{code_hash, AccountInfo, AccountState, BlockHeader};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{hash_address, AccountUpdate};
 use ethrex_trie::Trie;
@@ -238,7 +238,10 @@ impl StateDiff {
 
             let balance = diff.new_balance.unwrap_or(account_state.balance);
             let nonce = account_state.nonce + u64::from(diff.nonce_diff);
-            let bytecode_hash = diff.bytecode_hash.unwrap_or(account_state.code_hash);
+            let bytecode_hash = diff.bytecode_hash.unwrap_or_else(|| match &diff.bytecode {
+                Some(bytecode) => code_hash(bytecode),
+                None => code_hash(&Bytes::new()),
+            });
 
             let account_info = if diff.new_balance.is_some()
                 || diff.nonce_diff != 0
