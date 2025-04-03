@@ -11,9 +11,9 @@ end_val=$((171 * $iterations * $value))
 
 start_time=$(date +%s)
 
-cargo run --release --bin loadtest \
-    --manifest-path /home/runner/work/ethrex/ethrex/cmd/ethrex_l2/Cargo.toml -- \
-    --path /home/runner/work/ethrex/ethrex/test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
+cargo run --release \
+    --manifest-path /home/runner/work/ethrex/ethrex/cmd/load_test/Cargo.toml -- \
+    --path /home/runner/work/ethrex/ethrex/test_data/private_keys.txt -i $iterations -v --value $value --to $account --url http://localhost:1729 >/dev/null
 
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 echo "balance: $output"

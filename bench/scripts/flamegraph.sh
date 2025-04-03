@@ -10,10 +10,11 @@ account=0x33c6b73432B3aeA0C1725E415CC40D04908B85fd
 end_val=$((171 * $iterations * $value))
 
 start_time=$(date +%s)
-cargo run --release --bin loadtest \
-    --manifest-path cmd/ethrex_l2/Cargo.toml -- \
-    --path../test_data/private_keys.txt -i $iterations -v --value $value --to $account >/dev/null
+cargo run --release \
+    --manifest-path cmd/load_test/Cargo.toml -- \
+    --path ./test_data/private_keys.txt -i $iterations -v --value $value --to $account --url http://localhost:1729 >/dev/null
 
+# TODO: replace with rex, ethrex_l2 checks on port 1729
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 
 while [[ $output -lt $end_val ]]; do
