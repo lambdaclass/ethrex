@@ -18,6 +18,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::hooks::l2_hook::L2Hook;
 use ethrex_levm::vm::Substate;
 use ethrex_levm::{
     db::Database as LevmDatabase,
@@ -195,16 +196,32 @@ impl LEVM {
             difficulty: block_header.difficulty,
         };
 
-        let mut vm = VM::new(
-            tx.to(),
-            env,
-            tx.value(),
-            tx.data().clone(),
-            db.clone(),
-            block_cache.clone(),
-            tx.access_list(),
-            tx.authorization_list(),
-        )?;
+        let mut vm = if let Transaction::PrivilegedL2Transaction(privileged_tx) = tx {
+            VM::new_with_hooks(
+                tx.to(),
+                env,
+                tx.value(),
+                tx.data().clone(),
+                db.clone(),
+                block_cache.clone(),
+                tx.access_list(),
+                tx.authorization_list(),
+                vec![Arc::new(L2Hook {
+                    recipient: privileged_tx.recipient,
+                })],
+            )?
+        } else {
+            VM::new(
+                tx.to(),
+                env,
+                tx.value(),
+                tx.data().clone(),
+                db.clone(),
+                block_cache.clone(),
+                tx.access_list(),
+                tx.authorization_list(),
+            )?
+        };
 
         vm.execute().map_err(VMError::into)
     }

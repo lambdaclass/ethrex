@@ -432,6 +432,7 @@ impl Command {
                 let withdraw_transaction = rollup_client
                     .build_privileged_transaction(
                         to.unwrap_or(cfg.wallet.address),
+                        to.unwrap_or(cfg.wallet.address),
                         COMMON_BRIDGE_L2_ADDRESS,
                         Bytes::from(encode_calldata(
                             L2_WITHDRAW_SIGNATURE,
@@ -449,7 +450,7 @@ impl Command {
                     .await?;
 
                 let tx_hash = rollup_client
-                    .send_privileged_l2_transaction(&withdraw_transaction, &cfg.wallet.private_key)
+                    .send_privileged_l2_transaction(&withdraw_transaction)
                     .await?;
 
                 println!("Withdrawal sent: {tx_hash:#x}");
