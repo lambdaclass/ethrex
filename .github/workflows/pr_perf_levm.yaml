@@ -1,4 +1,4 @@
-name: Benchmark LEVM vs REVM in PR
+name: Benchmark LEVM vs REVM
 
 on:
   pull_request:
