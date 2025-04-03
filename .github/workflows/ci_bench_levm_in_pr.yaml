@@ -6,6 +6,9 @@ on:
     paths:
       - "crates/vm/levm/**"
 
+permissions:
+  pull-requests: write
+
 jobs:
   benchmark-pr:
     name: Benchmark for PR
@@ -159,4 +162,3 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body-path: combined_result.md
           edit-mode: replace
-

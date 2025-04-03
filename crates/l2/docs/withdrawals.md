@@ -1,6 +1,6 @@
 # Withdrawal specs
 
-This document contains a detailed explanation of the changes needed to handled withdrawals and the withdrawal flow.
+This document contains a detailed explanation of the changes needed to handle withdrawals and the withdrawal flow.
 
 A new `Withdraw` type of transaction on L2 is introduced, where users send a certain amount of `eth` (or the native token in a custom token setup) with it. This money is then burned on the L2 and the operator sends a `WithdrawLog` to L1, so the user can then send a transaction to claim the withdrawal associated to that log and receive their funds from the Common bridge.
 

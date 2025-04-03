@@ -9,7 +9,7 @@
   - [How](#how)
     - [Quick Test](#quick-test)
     - [Dev Mode](#dev-mode)
-      - [Run the whole system with the prover](#run-the-whole-system-with-the-prover)
+      - [Run the whole system with the prover - In one Machine](#run-the-whole-system-with-the-prover---in-one-machine)
     - [GPU mode](#gpu-mode)
       - [Proving Process Test](#proving-process-test)
       - [Run the whole system with a GPU Prover](#run-the-whole-system-with-a-gpu-prover)
@@ -60,7 +60,7 @@ sequenceDiagram
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.
 
-#### Quick Test
+### Quick Test
 
 To test the `zkvm` execution quickly, the following test can be run:
 
@@ -79,23 +79,25 @@ Then run any of the targets:
 To run the blockchain (`proposer`) and prover in conjunction, start the `prover_client`, use the following command:
 
 ```sh
-make init-prover T="prover_type (pico,risc0,sp1,exec) G=true"
+make init-prover T="prover_type (pico,risc0,sp1) G=true"
 ```
 
-select the "exec" backend whenever it's not desired to generate proofs, like in a CI environment.
+#### Run the whole system with the prover - In one Machine
 
-#### Run the whole system with the prover
+> [!NOTE]
+> Used for development purposes.
 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp config_example.toml config.toml` &rarr; check if you want to change any config.
-4. `make init`
+3. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` &rarr; check if you want to change any config.
+4. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` &rarr; check if you want to change any config.
+5. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-5. In a new terminal &rarr; `make init-prover T=(risc0 or sp1)`.
+6. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico)`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
@@ -137,30 +139,40 @@ Then run any of the targets:
 
 Two servers are required: one for the `prover` and another for the `proposer`. If you run both components on the same machine, the `prover` may consume all available resources, leading to potential stuttering or performance issues for the `proposer`/`node`.
 
+- The number 1 simbolizes a machine with GPU for the `prover_client`.
+- The number 2 simbolizes a machine for the `sequencer`/L2 node itself.
+
 1. `prover_client`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
    1. `cd ethrex/crates/l2`
-   2. `cp config_example.toml config.toml` and change the `prover_server_endpoint` entry under the [prover.client] section with the ip of the other server.
+   2. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` and change the `prover_server_endpoint` with machine's `2` ip and make sure the port matches the one defined in machine 2.
 
 The important variables are:
 
 ```sh
-[prover.client]
-prover_server_endpoint=<ip-address>:3000
+[prover_client]
+prover_server_endpoint=<ip-address>:3900
 ```
 
 - `Finally`, to start the `prover_client`/`zkvm`, run:
-  - `make init-prover T=(risc0 or sp1) G=true`
+  - `make init-prover T=(sp1,risc0,pico) G=true`
 
 2. `prover_server`/`proposer` &rarr; this server just needs rust installed.
    1. `cd ethrex/crates/l2`
-   2. `cp config_example.toml config.toml` and change the addresses and the following fields:
-      - [prover.server]
-        `listen_ip=0.0.0.0` &rarr; used to handle the tcp communication with the other server.
+   2. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` and change the addresses and the following fields:
+      - [prover_server]
+        - `listen_ip=0.0.0.0` &rarr; Used to handle TCP communication with other servers from any network interface.
       - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.
       - [deployer]
         - `salt_is_zero=false` &rarr; set to false to randomize the salt.
       - `sp1_deploy_verifier = true` overwrites `sp1_contract_verifier`. Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-      - `risc0_contract_verifier = 0xd9b0d07CeCd808a8172F21fA7C97992168f045CA` &rarr; risc0’s verifier contract deployed on Sepolia. (Check the if the contract is deployed in your preferred network). An analog variable called `sp1_contract_verifier` exists for SP1.
+      - `risc0_contract_verifier`
+        - Check the if the contract is present on your preferred network.
+      - `sp1_contract_verifier`
+        - It can be deployed.
+        - Check the if the contract is present on your preferred network.
+      - `pico_contract_verifier`
+        - It can be deployed.
+        - Check the if the contract is present on your preferred network.
       - Set the [eth] `rpc_url` to any L1 endpoint.
 
 > [!NOTE]
@@ -172,11 +184,21 @@ prover_server_endpoint=<ip-address>:3000
 
 ## Configuration
 
-The following environment variables are available to configure the prover:
+Configuration is done through environment variables. The easiest way to configure the ProverClient is by creating a `prover_client_config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
+
+The following environment variables are available to configure the Proposer consider looking at the provided [prover_client_config_example.toml](../configs/prover_client_config_example.toml):
+
+The following environment variables are used by the ProverClient:
+
+- `CONFIGS_PATH`: The path where the `PROVER_CLIENT_CONFIG_FILE` is located at.
+- `PROVER_CLIENT_CONFIG_FILE`: The `.toml` that contains the config for the `prover_client`.
+- `PROVER_ENV_FILE`: The name of the `.env` that has the parsed `.toml` configuration.
+- `PROVER_CLIENT_PROVER_SERVER_ENDPOINT`: Prover Server's Endpoint used to connect the Client to the Server.
+
+The following environment variables are used by the ProverServer:
 
 - `PROVER_SERVER_LISTEN_IP`: IP used to start the Server.
 - `PROVER_SERVER_LISTEN_PORT`: Port used to start the Server.
-- `PROVER_CLIENT_PROVER_SERVER_ENDPOINT`: Prover Server's Endpoint used to connect the Client to the Server.
 - `PROVER_SERVER_VERIFIER_ADDRESS`: The address of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
 - `PROVER_SERVER_VERIFIER_PRIVATE_KEY`: The private key of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
 

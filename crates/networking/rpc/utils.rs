@@ -286,7 +286,7 @@ pub mod test_utils {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
-        sync::SyncManager,
+        sync_manager::SyncManager,
         types::{Node, NodeRecord},
     };
     use ethrex_storage::{EngineType, Store};

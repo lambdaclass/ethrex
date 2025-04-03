@@ -231,7 +231,7 @@ Node options:
           [default: INFO]
 
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and ephemery.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and hoodi.
 
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
@@ -313,7 +313,7 @@ At a high level, the following new parts are added to the node:
 >
 > 1. Make sure you are inside the `crates/l2` directory.
 > 2. Make sure the Docker daemon is running.
-> 3. Make sure you have created a `config.toml` file following the `config_example.toml` file.
+> 3. Make sure you have created a `sequencer_config.toml` file following the `sequencer_config_example.toml` file.
 
 ```
 make init
