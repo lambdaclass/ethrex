@@ -53,12 +53,11 @@ impl LevmDatabase for StoreWrapper {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
-        let a = self
+        Ok(self
             .store
             .get_block_header(block_number)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
-
-        Ok(a.map(|a| CoreH256::from(a.compute_block_hash().0)))
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?
+            .map(|header| CoreH256::from(header.compute_block_hash().0)))
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
