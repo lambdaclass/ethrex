@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743692923403,
+  "lastUpdate": 1743697310220,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2305,6 +2305,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184947992254,
             "range": "± 1037254491",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "99c544092663bb241c9cf09b07158415658bd966",
+          "message": "refactor(l2): remove references to vm internal api. (#2299)\n\n**Motivation**\nL2 code was accessing internal apis from the vm crate, specifically\n`revm` constructs. This is attempt to replace those with the public api,\nso that we can easily switch between revm and levm.\n\n**Description**\n- Replaces references to `ethrex_vm::backends::` from the prover\nbackends.\n- Moved `ExecutionDB ` to `vm/db.rs`. It is still somewhat coupled with\nrevm but less than before. It should be totally decoupled.\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: JereSalo <jeresalo17@gmail.com>\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-04-03T15:31:56Z",
+          "tree_id": "e5ee0003621e4a3b89c6d8c759c30963b487504f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/99c544092663bb241c9cf09b07158415658bd966"
+        },
+        "date": 1743697308730,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186392698099,
+            "range": "± 654097985",
             "unit": "ns/iter"
           }
         ]
