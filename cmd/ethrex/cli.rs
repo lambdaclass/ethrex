@@ -55,7 +55,7 @@ pub struct Options {
     #[arg(
         long = "force", 
         help = "Force remove the database",
-        long_help = "Delete the database without confirmation`.",
+        long_help = "Delete the database without confirmation.",
         action = clap::ArgAction::SetTrue,
         help_heading = "Node options"
     )]
