@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743689937083,
+  "lastUpdate": 1743692923403,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2275,6 +2275,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185738763425,
             "range": "± 1374578941",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "065b797d9f2eb422532032d23081b8f61b028fec",
+          "message": "ci(l1): add job that makes sure cli is in sync with README. (#2390)\n\n**Motivation**\nAvoid update to the cli code to end up in an outdated README\n\n**Description**\n- Added a job that checks that the help output in the ethrex command\nthat is in the README is in sync with the code.\n\nCloses #2247",
+          "timestamp": "2025-04-03T14:19:03Z",
+          "tree_id": "94dc2eb9093c38a7e6bd45d594d3a2f7c5115cc7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/065b797d9f2eb422532032d23081b8f61b028fec"
+        },
+        "date": 1743692921453,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184947992254,
+            "range": "± 1037254491",
             "unit": "ns/iter"
           }
         ]
