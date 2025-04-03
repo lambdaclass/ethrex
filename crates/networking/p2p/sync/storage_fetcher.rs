@@ -59,11 +59,11 @@ pub(crate) async fn storage_fetcher(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
+    // Create an async closure to pass to the generic task spawner
     let l_sender = large_storage_sender.clone();
-    let s_sender = storage_trie_rebuilder_sender.clone();
     let fetch_batch = move |batch: Vec<(H256, H256)>, peers: PeerHandler, store: Store| {
         let l_sender = l_sender.clone();
-        let s_sender = s_sender.clone();
+        let s_sender = storage_trie_rebuilder_sender.clone();
         async move {
             fetch_storage_batch(
                 batch,
@@ -78,10 +78,9 @@ pub(crate) async fn storage_fetcher(
         }
     };
     while incoming {
+        // Read incoming messages and add them to the queue
         incoming = read_incoming_requests(&mut receiver, &mut pending_storage).await;
-        // If we have enough pending bytecodes to fill a batch
-        // or if we have no more incoming batches, spawn a fetch process
-        // If the pivot became stale don't process anything and just save incoming requests
+        // If the pivot isn't stale, spawn fetch tasks for the queued elements
         if stale {
             info!("Fetch storage: Stale Pivot");
         } else {
@@ -91,6 +90,7 @@ pub(crate) async fn storage_fetcher(
                 &fetch_batch,
                 peers.clone(),
                 store.clone(),
+                BATCH_SIZE,
             )
             .await;
         }
