@@ -71,7 +71,7 @@ impl Evm {
                     store: store.clone(),
                     block_hash: parent_hash,
                 },
-                block_cache: CacheDB::new(),
+                block_cache: CacheDB::default(),
             },
         }
     }
@@ -163,12 +163,14 @@ impl Evm {
 
                 // Now original_value is going to be the same as the current_value, for the next transaction.
                 // It should have only one value but it is convenient to keep on using our CacheDB structure
-                for account in new_state.values_mut() {
-                    for storage_slot in account.storage.values_mut() {
+                for (_account, storage) in new_state.cached_accounts.values_mut() {
+                    for storage_slot in storage.values_mut() {
                         storage_slot.original_value = storage_slot.current_value;
                     }
                 }
-                block_cache.extend(new_state);
+                block_cache
+                    .cached_accounts
+                    .extend(new_state.cached_accounts);
 
                 let receipt = Receipt::new(
                     tx.tx_type(),
@@ -204,7 +206,7 @@ impl Evm {
             } => {
                 let chain_config = store_wrapper.store.get_chain_config()?;
                 let fork = chain_config.fork(block_header.timestamp);
-                let mut new_state = CacheDB::new();
+                let mut new_state = CacheDB::default();
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     LEVM::beacon_root_contract_call(
@@ -226,13 +228,15 @@ impl Evm {
 
                 // Now original_value is going to be the same as the current_value, for the next transaction.
                 // It should have only one value but it is convenient to keep on using our CacheDB structure
-                for account in new_state.values_mut() {
-                    for storage_slot in account.storage.values_mut() {
+                for (_account, storage) in new_state.cached_accounts.values_mut() {
+                    for storage_slot in storage.values_mut() {
                         storage_slot.original_value = storage_slot.current_value;
                     }
                 }
 
-                block_cache.extend(new_state);
+                block_cache
+                    .cached_accounts
+                    .extend(new_state.cached_accounts);
                 Ok(())
             }
         }
@@ -286,14 +290,16 @@ impl Evm {
                 block_cache,
             } => {
                 let parent_hash = block_header.parent_hash;
-                let mut new_state = CacheDB::new();
+                let mut new_state = CacheDB::default();
                 LEVM::process_withdrawals(
                     &mut new_state,
                     withdrawals,
                     &store_wrapper.store,
                     parent_hash,
                 )?;
-                block_cache.extend(new_state);
+                block_cache
+                    .cached_accounts
+                    .extend(new_state.cached_accounts);
                 Ok(())
             }
         }

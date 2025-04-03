@@ -3,15 +3,14 @@
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Fork, TxKind},
+    types::{Account, Fork, TxKind},
     Address, H256, U256,
 };
 #[cfg(feature = "l2")]
 use ethrex_levm::precompiles::p_256_verify;
 use ethrex_levm::{
-    account::Account,
     constants::*,
-    db::{cache, CacheDB, Db},
+    db::{CacheDB, Db},
     errors::{OutOfGasError, TxResult, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, ECADD_COST, ECMUL_COST, ECPAIRING_BASE_COST,
@@ -1740,7 +1739,7 @@ fn call_returns_if_bytecode_empty() {
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(&mut cache, callee_address, callee_account);
+    cache.insert_account(callee_address, callee_account, HashMap::default());
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
@@ -1787,7 +1786,7 @@ fn call_changes_callframe_and_stores() {
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(&mut cache, callee_address, callee_account);
+    cache.insert_account(callee_address, callee_account, HashMap::default());
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
@@ -1882,8 +1881,8 @@ fn nested_calls() {
     ]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(&mut cache, callee2_address, callee2_account);
-    cache::insert_account(&mut cache, callee3_address, callee3_account);
+    cache.insert_account(callee2_address, callee2_account, HashMap::default());
+    cache.insert_account(callee3_address, callee3_account, HashMap::default());
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
@@ -1951,7 +1950,7 @@ fn staticcall_changes_callframe_is_static() {
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(&mut cache, callee_address, callee_account);
+    cache.insert_account(callee_address, callee_account, HashMap::default());
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
@@ -2065,7 +2064,7 @@ fn pc_op_with_push_offset() {
 //     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
 //     let mut cache = CacheDB::default();
-//     cache::insert_account(&mut cache, callee_address, callee_account);
+//     cache.insert_account(callee_address, callee_account, HashMap::default()););
 
 //     let mut vm = new_vm_with_ops_addr_bal_db(
 //         ops_to_bytecode(&caller_ops).unwrap(),
@@ -2129,7 +2128,7 @@ fn pc_op_with_push_offset() {
 //     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
 //     let mut cache = CacheDB::default();
-//     cache::insert_account(&mut cache, callee_address, callee_account);
+//     cache.insert_account(callee_address, callee_account, HashMap::default()););
 
 //     let mut vm = new_vm_with_ops_addr_bal_db(
 //         ops_to_bytecode(&caller_ops).unwrap(),
@@ -2191,7 +2190,7 @@ fn pc_op_with_push_offset() {
 //     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
 //     let mut cache = CacheDB::default();
-//     cache::insert_account(&mut cache, callee_address, callee_account);
+//     cache.insert_account(callee_address, callee_account, HashMap::default()););
 
 //     let mut vm = new_vm_with_ops_addr_bal_db(
 //         ops_to_bytecode(&caller_ops).unwrap(),
@@ -2252,7 +2251,7 @@ fn pc_op_with_push_offset() {
 //     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
 //     let mut cache = CacheDB::default();
-//     cache::insert_account(&mut cache, callee_address, callee_account);
+//     cache.insert_account(callee_address, callee_account, HashMap::default()););
 
 //     let mut vm = new_vm_with_ops_addr_bal_db(
 //         ops_to_bytecode(&caller_ops).unwrap(),
@@ -2474,7 +2473,7 @@ fn calldataload_being_set_by_parent() {
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(&mut cache, callee_address, callee_account);
+    cache.insert_account(callee_address, callee_account, HashMap::default());
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
@@ -2617,7 +2616,7 @@ fn returndatacopy_being_set_by_parent() {
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(&mut cache, callee_address, callee_account);
+    cache.insert_account(callee_address, callee_account, HashMap::default());
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
@@ -3456,7 +3455,7 @@ fn logs_from_multiple_callers() {
     db.add_accounts(vec![(callee_address, callee_account.clone())]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(&mut cache, callee_address, callee_account);
+    cache.insert_account(callee_address, callee_account, HashMap::default());
 
     let mut vm = new_vm_with_ops_addr_bal_db(
         ops_to_bytecode(&caller_ops).unwrap(),
@@ -3824,15 +3823,21 @@ fn create_happy_path() {
 
     // Calculated create address is with contract's address. In this case we are using 42 when using new_vm_with_ops_addr_bal_db function :)
     let executing_contract_address = Address::from_low_u64_be(42);
-    let executing_contract_before = cache::get_account(&vm.cache, &executing_contract_address)
+    let executing_contract_before = vm
+        .cache
+        .get_account(&executing_contract_address)
         .unwrap()
+        .0
         .clone();
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
     vm.run_execution(&mut current_call_frame).unwrap();
 
-    let executing_contract_after = cache::get_account(&vm.cache, &executing_contract_address)
+    let executing_contract_after = vm
+        .cache
+        .get_account(&executing_contract_address)
         .unwrap()
+        .0
         .clone();
 
     let call_frame = vm.current_call_frame_mut().unwrap();
@@ -3848,13 +3853,15 @@ fn create_happy_path() {
     // Here we are supposing calculate_create_address calculates it correctly.
 
     // Check the account was created with correct balance, nonce and bytecode.
-    let new_account = cache::get_account(&vm.cache, &word_to_address(returned_address)).unwrap();
+    let new_account = vm
+        .cache
+        .get_account(&word_to_address(returned_address))
+        .unwrap()
+        .0
+        .clone();
     assert_eq!(new_account.info.balance, U256::from(value_to_transfer));
     assert_eq!(new_account.info.nonce, 1);
-    assert_eq!(
-        new_account.info.bytecode,
-        Bytes::from(vec![0xff, 0xff, 0xff, 0xff])
-    );
+    assert_eq!(new_account.code, Bytes::from(vec![0xff, 0xff, 0xff, 0xff]));
 
     // Check that the executing contract transferred value and it's nonce increased
     assert_eq!(
@@ -3881,10 +3888,10 @@ fn caller_op() {
     )]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(
-        &mut cache,
+    cache.insert_account(
         address_that_has_the_code,
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
+        HashMap::default(),
     );
 
     let env = Environment::default_from_address(caller);
@@ -3925,10 +3932,10 @@ fn origin_op() {
     )]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(
-        &mut cache,
+    cache.insert_account(
         msg_sender,
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
+        HashMap::default(),
     );
 
     let env = Environment::default_from_address(msg_sender);
@@ -3996,10 +4003,10 @@ fn address_op() {
     )]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(
-        &mut cache,
+    cache.insert_account(
         address_that_has_the_code,
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
+        HashMap::default(),
     );
 
     let env = Environment::default_from_address(Address::from_low_u64_be(42));
@@ -4042,12 +4049,12 @@ fn selfbalance_op() {
     )]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(
-        &mut cache,
+    cache.insert_account(
         address_that_has_the_code,
         Account::default()
             .with_bytecode(ops_to_bytecode(&operations).unwrap())
             .with_balance(balance),
+        HashMap::default(),
     );
 
     let env = Environment::default_from_address(Address::from_low_u64_be(42));
@@ -4089,10 +4096,10 @@ fn callvalue_op() {
     )]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(
-        &mut cache,
+    cache.insert_account(
         address_that_has_the_code,
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
+        HashMap::default(),
     );
 
     let env = Environment::default_from_address(Address::from_low_u64_be(42));
@@ -4133,10 +4140,10 @@ fn codesize_op() {
     )]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(
-        &mut cache,
+    cache.insert_account(
         address_that_has_the_code,
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
+        HashMap::default(),
     );
 
     let env = Environment::default_from_address(Address::from_low_u64_be(42));
@@ -4175,10 +4182,10 @@ fn gasprice_op() {
     )]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(
-        &mut cache,
+    cache.insert_account(
         address_that_has_the_code,
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
+        HashMap::default(),
     );
 
     let mut env = Environment::default_from_address(Address::from_low_u64_be(42));
@@ -4235,10 +4242,10 @@ fn codecopy_op() {
     )]);
 
     let mut cache = CacheDB::default();
-    cache::insert_account(
-        &mut cache,
+    cache.insert_account(
         address_that_has_the_code,
         Account::default().with_bytecode(ops_to_bytecode(&operations).unwrap()),
+        HashMap::default(),
     );
 
     let env = Environment::default_from_address(Address::from_low_u64_be(42));
@@ -4480,7 +4487,8 @@ fn revert_sstore() {
 
     let mut vm = new_vm_with_ops(&operations).unwrap();
     vm.current_call_frame_mut().unwrap().code_address = sender_address;
-    cache::insert_account(&mut vm.cache, sender_address, Account::default());
+    vm.cache
+        .insert_account(sender_address, Account::default(), HashMap::default());
 
     let mut current_call_frame = vm.call_frames.pop().unwrap();
 

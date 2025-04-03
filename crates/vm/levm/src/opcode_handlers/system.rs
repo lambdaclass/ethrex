@@ -1,16 +1,18 @@
 use crate::{
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
-    db::cache,
     errors::{InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
     memory::{self, calculate_memory_size},
     utils::{address_to_word, word_to_address, *},
     vm::VM,
-    Account,
 };
 use bytes::Bytes;
-use ethrex_common::{types::Fork, Address, U256};
+use ethrex_common::{
+    types::{Account, Fork},
+    Address, U256,
+};
+use revm_primitives::HashMap;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -46,7 +48,7 @@ impl VM {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (account_info, address_was_cold) = access_account(
+        let (account, address_was_cold) = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
@@ -71,7 +73,7 @@ impl VM {
             new_memory_size,
             current_memory_size,
             address_was_cold,
-            account_info.is_empty(),
+            account.is_empty(),
             self.db.account_exists(callee),
             value_to_transfer,
             gas,
@@ -535,13 +537,13 @@ impl VM {
             target_address,
         );
 
-        let (current_account_info, _current_account_is_cold) = access_account(
+        let (current_account, _current_account_is_cold) = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
             current_call_frame.to,
         );
-        let balance_to_transfer = current_account_info.balance;
+        let balance_to_transfer = current_account.info.balance;
 
         let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
             target_account_info.is_empty()
@@ -577,7 +579,9 @@ impl VM {
                 .contains(&current_call_frame.to)
             {
                 // If target is the same as the contract calling, Ether will be burnt.
+
                 get_account_mut_vm(&mut self.cache, self.db.clone(), current_call_frame.to)?
+                    .0
                     .info
                     .balance = U256::zero();
 
@@ -593,6 +597,7 @@ impl VM {
                 balance_to_transfer,
             )?;
             get_account_mut_vm(&mut self.cache, self.db.clone(), current_call_frame.to)?
+                .0
                 .info
                 .balance = U256::zero();
 
@@ -647,7 +652,7 @@ impl VM {
 
         let deployer_address = current_call_frame.to;
 
-        let deployer_account_info = access_account(
+        let deployer_account = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
@@ -666,7 +671,7 @@ impl VM {
 
         let new_address = match salt {
             Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
-            None => calculate_create_address(deployer_address, deployer_account_info.nonce)?,
+            None => calculate_create_address(deployer_address, deployer_account.info.nonce)?,
         };
 
         // touch account
@@ -680,9 +685,9 @@ impl VM {
         // 1. Sender doesn't have enough balance to send value.
         // 2. Depth limit has been reached
         // 3. Sender nonce is max.
-        if deployer_account_info.balance < value_in_wei_to_send
+        if deployer_account.info.balance < value_in_wei_to_send
             || new_depth > 1024
-            || deployer_account_info.nonce == u64::MAX
+            || deployer_account.info.nonce == u64::MAX
         {
             // Return reserved gas
             current_call_frame.gas_used = current_call_frame
@@ -695,7 +700,7 @@ impl VM {
         }
 
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
-        let new_account = get_account(&mut self.cache, self.db.clone(), new_address);
+        let new_account = get_account(&mut self.cache, self.db.clone(), new_address).0;
         if new_account.has_code_or_nonce() {
             increment_account_nonce(&mut self.cache, self.db.clone(), deployer_address)?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
@@ -716,7 +721,8 @@ impl VM {
         } else {
             Account::new(new_balance, Bytes::new(), 1, Default::default())
         };
-        cache::insert_account(&mut self.cache, new_address, new_account);
+        self.cache
+            .insert_account(new_address, new_account, HashMap::new());
 
         // 2. Increment sender's nonce.
         increment_account_nonce(&mut self.cache, self.db.clone(), deployer_address)?;
@@ -774,7 +780,7 @@ impl VM {
                 )?;
 
                 // Deployment failed so account shouldn't exist
-                cache::remove_account(&mut self.cache, &new_address);
+                self.cache.remove_account(&new_address);
                 self.accrued_substate.created_accounts.remove(&new_address);
 
                 // If revert we have to copy the return_data
@@ -816,14 +822,14 @@ impl VM {
             memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
 
         // 1. Validate sender has enough value
-        let sender_account_info = access_account(
+        let sender_account = access_account(
             &mut self.cache,
             self.db.clone(),
             &mut self.accrued_substate,
             msg_sender,
         )
         .0;
-        if should_transfer_value && sender_account_info.balance < value {
+        if should_transfer_value && sender_account.info.balance < value {
             current_call_frame.gas_used = current_call_frame
                 .gas_used
                 .checked_sub(gas_limit)

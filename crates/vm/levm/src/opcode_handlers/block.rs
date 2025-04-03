@@ -151,6 +151,7 @@ impl VM {
         current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
         let balance = get_account(&mut self.cache, self.db.clone(), current_call_frame.to)
+            .0
             .info
             .balance;
 

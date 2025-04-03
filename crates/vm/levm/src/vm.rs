@@ -1,11 +1,7 @@
 use crate::{
-    account::{Account, StorageSlot},
     call_frame::CallFrame,
     constants::*,
-    db::{
-        cache::{self},
-        CacheDB, Database,
-    },
+    db::{CacheDB, Database},
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
@@ -15,13 +11,13 @@ use crate::{
         SIZE_PRECOMPILES_PRE_CANCUN,
     },
     utils::*,
-    TransientStorage,
+    StorageSlot, TransientStorage,
 };
 use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, TxKind,
+        Account, BlockHeader, ChainConfig, Fork, ForkBlobSchedule, TxKind,
     },
     Address, H256, U256,
 };
@@ -272,7 +268,7 @@ impl VM {
             TxKind::Create => {
                 // CREATE tx
 
-                let sender_nonce = get_account(&mut cache, db.clone(), env.origin).info.nonce;
+                let sender_nonce = get_account(&mut cache, db.clone(), env.origin).0.info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -400,7 +396,7 @@ impl VM {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(&mut self.cache, self.db.clone(), new_contract_address);
+            let new_account = get_account(&mut self.cache, self.db.clone(), new_contract_address).0;
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -419,7 +415,8 @@ impl VM {
             } else {
                 Account::new(balance, Bytes::new(), 1, HashMap::new())
             };
-            cache::insert_account(&mut self.cache, new_contract_address, created_contract);
+            self.cache
+                .insert_account(new_contract_address, created_contract, HashMap::new());
         }
 
         let mut report = self.run_execution(&mut initial_call_frame)?;
@@ -456,8 +453,8 @@ impl VM {
                 .or_default()
                 .insert(key);
         }
-        let storage_slot = match cache::get_account(&self.cache, &address) {
-            Some(account) => match account.storage.get(&key) {
+        let storage_slot = match self.cache.get_account(&address) {
+            Some((_account, storage)) => match storage.get(&key) {
                 Some(storage_slot) => storage_slot.clone(),
                 None => {
                     let value = self.db.get_storage_slot(address, key);
@@ -478,8 +475,8 @@ impl VM {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
-        account.storage.insert(key, storage_slot.clone());
+        let (_account, storage) = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
+        storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
     }
@@ -490,12 +487,11 @@ impl VM {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
-        let account_original_storage_slot_value = account
-            .storage
+        let (_account, storage) = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
+        let account_original_storage_slot_value = storage
             .get(&key)
             .map_or(U256::zero(), |slot| slot.original_value);
-        let slot = account.storage.entry(key).or_insert(StorageSlot {
+        let slot = storage.entry(key).or_insert(StorageSlot {
             original_value: account_original_storage_slot_value,
             current_value: new_value,
         });
@@ -512,7 +508,7 @@ impl VM {
             gas_used: self.env.gas_limit,
             gas_refunded: 0,
             logs: vec![],
-            new_state: HashMap::default(),
+            new_state: CacheDB::default(),
             output: Bytes::new(),
         };
 
