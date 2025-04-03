@@ -82,6 +82,8 @@ impl Blockchain {
         );
         let execution_result = vm.execute_block(block)?;
 
+        dbg!(&execution_result.account_updates);
+
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;

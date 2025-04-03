@@ -93,7 +93,7 @@ impl LEVM {
             }
         }
 
-        let account_updates = Self::get_state_transitions(db, fork)?;
+        let account_updates = Self::get_state_transitions(db)?;
 
         Ok(BlockExecutionResult {
             receipts,
@@ -176,74 +176,64 @@ impl LEVM {
 
     pub fn get_state_transitions(
         db: &mut GeneralizedDatabase,
-        fork: Fork,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (new_state_account_address, new_state_account) in db.cache.drain() {
-            let initial_account_state = db.store.get_account_info(new_state_account_address)?;
-            let mut updates = 0;
-            if initial_account_state.balance != new_state_account.info.balance {
-                updates += 1;
-            }
-            if initial_account_state.nonce != new_state_account.info.nonce {
-                updates += 1;
-            }
-            let code = if new_state_account.info.bytecode.is_empty() {
-                None
-            } else {
-                // Look into the current database to see if the bytecode hash is already present
-                let current_bytecode = &initial_account_state.bytecode;
-                let code = new_state_account.info.bytecode.clone();
-                // The code is present in the current database
-                if *current_bytecode != Bytes::new() {
-                    if *current_bytecode != code {
-                        // The code has changed
-                        Some(code)
-                    } else {
-                        // The code has not changed
-                        None
-                    }
-                } else {
-                    // The new state account code is not present in the current
-                    // database, then it must be new
-                    Some(code)
-                }
-            };
-            if code.is_some() {
-                updates += 1;
-            }
-            let mut added_storage = HashMap::new();
-            for (key, value) in &new_state_account.storage {
-                added_storage.insert(*key, value.current_value);
-                updates += 1;
+        for (address, new_state_account) in db.cache.drain() {
+            let initial_state_account = db.store.get_account_info(address)?;
+            // let mut updates = 0;
+            let mut acc_info_updated = false;
+            let mut storage_updated = false;
+
+            // Account Info has been updated if balance, nonce or bytecode changed.
+            if initial_state_account.balance != new_state_account.info.balance {
+                acc_info_updated = true;
             }
 
-            if updates == 0 && !new_state_account.is_empty() {
+            if initial_state_account.nonce != new_state_account.info.nonce {
+                acc_info_updated = true;
+            }
+
+            let new_state_code_hash = code_hash(&new_state_account.info.bytecode);
+            let code = if initial_state_account.bytecode_hash() != new_state_code_hash {
+                acc_info_updated = true;
+                Some(new_state_account.info.bytecode.clone())
+            } else {
+                None
+            };
+
+            let mut added_storage = HashMap::new();
+            for (key, value) in &new_state_account.storage {
+                let storage_before_block = db.store.get_storage_slot(address, *key)?;
+                if value.current_value != storage_before_block {
+                    added_storage.insert(*key, value.current_value);
+                    storage_updated = true;
+                }
+            }
+
+            let info = if acc_info_updated {
+                Some(AccountInfo {
+                    code_hash: new_state_code_hash,
+                    balance: new_state_account.info.balance,
+                    nonce: new_state_account.info.nonce,
+                })
+            } else {
+                None
+            };
+
+            let removed = !initial_state_account.is_empty() && new_state_account.is_empty();
+
+            if !removed && !acc_info_updated && !storage_updated {
+                // Account hasn't been updated
                 continue;
             }
 
             let account_update = AccountUpdate {
-                address: new_state_account_address,
-                removed: new_state_account.is_empty(),
-                info: Some(AccountInfo {
-                    code_hash: code_hash(&new_state_account.info.bytecode),
-                    balance: new_state_account.info.balance,
-                    nonce: new_state_account.info.nonce,
-                }),
+                address,
+                removed,
+                info,
                 code,
                 added_storage,
             };
-
-            // https://eips.ethereum.org/EIPS/eip-161
-            // if an account was empty and is now empty, after spurious dragon, it should be removed
-            if account_update.removed
-                && initial_account_state.balance.is_zero()
-                && initial_account_state.nonce == 0
-                && initial_account_state.bytecode_hash() == code_hash(&Bytes::new())
-                && fork < Fork::SpuriousDragon
-            {
-                continue;
-            }
 
             account_updates.push(account_update);
         }
