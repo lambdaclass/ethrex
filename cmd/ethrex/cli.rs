@@ -35,7 +35,7 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and mekong.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and hoodi.",
         help_heading = "Node options"
     )]
     pub network: Option<String>,
