@@ -335,7 +335,6 @@ impl Command {
                             coinbase,
                             number: last_number + 1,
                             parent_hash: last_hash,
-                            state_root: new_trie.hash().expect("Error committing state"),
                             ..state_diff.header
                         };
                         let new_block_hash = new_block.compute_block_hash();
@@ -347,6 +346,7 @@ impl Command {
                         last_number += 1;
                         last_hash = new_block_hash;
                     }
+                    // TODO: Ensure that the last state_root is the same as new_trie.hash().
                 }
 
                 store.update_latest_block_number(last_number)?;
