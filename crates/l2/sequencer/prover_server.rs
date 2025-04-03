@@ -578,8 +578,6 @@ impl ProverServer {
         sp1_vkey: Bytes,
         pico_vkey: Bytes,
     ) -> Result<(), ProverServerError> {
-        // TODO: query the contract
-
         let vkeys = EthClient::get_verifying_keys(
             &self.eth_client,
             &VERIYING_KEYS,
@@ -590,7 +588,7 @@ impl ProverServer {
         // Compare with the current vkeys
         // Set only if the vkey from the contract is zero
         // It's done individually to allow only one prover backend at the time.
-        // TODO: We may set the desired one and force the rest to zero.
+        // CHECK: We may may want to set the desired one and force the rest to zero.
         let zero: Bytes = H256::zero().as_bytes().to_vec().into();
         if self.needed_proof_types.contains(&ProverType::SP1) {
             let contract_sp1_vkey = vkeys.get(SP1_VKEY).ok_or(ProverServerError::Custom(

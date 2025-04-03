@@ -92,7 +92,10 @@ pub fn to_calldata(output: ProveOutput) -> Result<ProofCalldata, Box<dyn std::er
     Ok(ProofCalldata {
         prover_type: ProverType::Pico,
         calldata,
-        // TODO: check if this is ok
-        vkey: vec![].into(),
+        // CHECK: double check, the riscvVKey
+        // is the ZKVM_PICO_PROGRAM_ELF, and is the same as
+        // the generated .json. Else, get it from the file.
+        // https://github.com/brevis-network/pico-zkapp-template/blob/evm/contracts/test/Fibonacci.t.sol
+        vkey: ZKVM_PICO_PROGRAM_ELF.to_vec().into(),
     })
 }
