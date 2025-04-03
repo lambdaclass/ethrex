@@ -44,7 +44,7 @@ pub struct DepositLog {
 #[derive(Clone)]
 pub struct StateDiff {
     pub version: u8,
-    pub header: BlockHeader,
+    pub headers: Vec<BlockHeader>,
     pub modified_accounts: HashMap<Address, AccountStateDiff>,
     pub withdrawal_logs: Vec<WithdrawalLog>,
     pub deposit_logs: Vec<DepositLog>,
@@ -88,7 +88,7 @@ impl Default for StateDiff {
     fn default() -> Self {
         StateDiff {
             version: 1,
-            header: BlockHeader::default(),
+            headers: Vec::default(),
             modified_accounts: HashMap::new(),
             withdrawal_logs: Vec::new(),
             deposit_logs: Vec::new(),
@@ -106,12 +106,20 @@ impl StateDiff {
         encoded.push(self.version);
 
         // Header fields
-        encoded.extend(self.header.transactions_root.0);
-        encoded.extend(self.header.receipts_root.0);
-        encoded.extend(self.header.gas_limit.to_be_bytes());
-        encoded.extend(self.header.gas_used.to_be_bytes());
-        encoded.extend(self.header.timestamp.to_be_bytes());
-        encoded.extend(self.header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
+        let headers_len: u16 = self
+            .headers
+            .len()
+            .try_into()
+            .map_err(StateDiffError::from)?;
+        encoded.extend(headers_len.to_be_bytes());
+        for header in self.headers.iter() {
+            encoded.extend(header.transactions_root.0);
+            encoded.extend(header.receipts_root.0);
+            encoded.extend(header.gas_limit.to_be_bytes());
+            encoded.extend(header.gas_used.to_be_bytes());
+            encoded.extend(header.timestamp.to_be_bytes());
+            encoded.extend(header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
+        }
 
         let modified_accounts_len: u16 = self
             .modified_accounts
@@ -153,13 +161,20 @@ impl StateDiff {
             return Err(StateDiffError::UnsupportedVersion(version));
         }
 
-        // Header fields
-        let transactions_root = decoder.get_h256()?;
-        let receipts_root = decoder.get_h256()?;
-        let gas_limit = decoder.get_u64()?;
-        let gas_used = decoder.get_u64()?;
-        let timestamp = decoder.get_u64()?;
-        let base_fee_per_gas = decoder.get_u64()?;
+        // Headers
+        let headers_len = decoder.get_u16()?;
+        let mut headers = Vec::with_capacity(headers_len.into());
+        for _ in 0..headers_len {
+            headers.push(BlockHeader {
+                transactions_root: decoder.get_h256()?,
+                receipts_root: decoder.get_h256()?,
+                gas_limit: decoder.get_u64()?,
+                gas_used: decoder.get_u64()?,
+                timestamp: decoder.get_u64()?,
+                base_fee_per_gas: Some(decoder.get_u64()?),
+                ..Default::default()
+            })
+        }
 
         // Accounts diff
         let modified_accounts_len = decoder.get_u16()?;
@@ -204,15 +219,7 @@ impl StateDiff {
         }
 
         Ok(Self {
-            header: BlockHeader {
-                transactions_root,
-                receipts_root,
-                gas_limit,
-                gas_used,
-                timestamp,
-                base_fee_per_gas: Some(base_fee_per_gas),
-                ..Default::default()
-            },
+            headers,
             version,
             modified_accounts,
             withdrawal_logs,
