@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743697849475,
+  "lastUpdate": 1743701269299,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2365,6 +2365,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 188094419106,
             "range": "± 766209671",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3f45ff776f570b988d9fab1c51c23fbf38e4ae16",
+          "message": "refactor(l1): cleanup the public api of rpc crate (#2319)\n\n**Motivation**\nHaving a clean and explicit `lib.rs` that only exposes necesary\nfunctions to the outside\n\nThe idea is for every crate:\n- To minimize the functions/objects that are exposed\n- To make them explicit in a centralized location (lib.rs)\n\nSome crates from the workspace are already like this, others are in the\nprocess of being refactored.",
+          "timestamp": "2025-04-03T16:36:41Z",
+          "tree_id": "b640918af09795326754d9934486fd7120171ba5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3f45ff776f570b988d9fab1c51c23fbf38e4ae16"
+        },
+        "date": 1743701267792,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185618654746,
+            "range": "± 689737321",
             "unit": "ns/iter"
           }
         ]
