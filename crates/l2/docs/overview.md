@@ -57,7 +57,7 @@ This is called the **Data Availability** problem. As discussed before, sending t
 
 This is now feasible; if we take 200 bytes as a rough estimate for the size of a single transfer between two users (see [this post](https://ethereum.stackexchange.com/questions/30175/what-is-the-size-bytes-of-a-simple-ethereum-transaction-versus-a-bitcoin-trans) for the calculation on legacy transactions) and 128 KB as [a reasonable transaction size limit](https://github.com/ethereum/go-ethereum/blob/830f3c764c21f0d314ae0f7e60d6dd581dc540ce/core/txpool/legacypool/legacypool.go#L49-L53) we get around ~650 transactions at maximum per `commit` transaction (we are assuming we use calldata here, blobs can increase this limit as each one is 128 KB and we could use multiple per transaction).
 
-Going a bit further, instead of posting the entire transaction, we could just post which storage slots have been modified and their new value (this includes deployed contracts and their bytecode of course). This can reduce the size a lot for most cases; in the case of a regular transfer as above, we are modifying storage for two accounts, which is just two `(address, balance)` pairs, so (20 + 32) * 2 = 104 bytes, or around half as before. Some other clever techniques and compression algorithms can push down the publishing cost of this and other transactions much further.
+Going a bit further, instead of posting the entire transaction, we could just post which accounts have been modified and their new values (this includes deployed contracts and their bytecode of course). This can reduce the size a lot for most cases; in the case of a regular transfer as above, we only need to record balance updates of two accounts, which requires sending just two `(address, balance)` pairs, so (20 + 32) * 2 = 104 bytes, or around half as before. Some other clever techniques and compression algorithms can push down the publishing cost of this and other transactions much further.
 
 This is called `state diffs`. Instead of publishing entire transactions for data availability, we only publish whatever state they modified. This is enough for anyone to reconstruct the entire state of the network.
 
@@ -90,7 +90,7 @@ The solution is through a [proof of equivalence](https://ethresear.ch/t/easy-pro
 
 If we turn the first one into a polynomial commitment, we can take a random evaluation point through Fiat Shamir and prove that it evaluates to the same value as the KZG blob commitment at that point. The `commit` transaction then sends the blob commitment and, through the point evaluation precompile, verifies that the given blob evaluates to that same value. If it does, the underlying blob is indeed the correct state diff.
 
-Our proof of equivalence implementation follows Method 1 [here](https://notes.ethereum.org/@dankrad/kzg_commitments_in_proofs). What we do is the following.
+Our proof of equivalence implementation follows Method 1 [here](https://notes.ethereum.org/@dankrad/kzg_commitments_in_proofs). What we do is the following:
 
 ### Prover side
 
@@ -135,10 +135,10 @@ The public input to the proof is then the hash of the previous block commitment 
 
 ### Commit transaction
 
-For the `commit` transaction, the L1 verifier contract then receives the following things from the sequencer:
+For the `commit` transaction, the L1 verifier contract receives the following things from the sequencer:
 
 - The L2 block number to be commited.
-- The new L2 state root/
+- The new L2 state root.
 - The Withdrawal logs merkle root.
 - The state diffs hash or polynomial commitment scheme accordingly.
 
