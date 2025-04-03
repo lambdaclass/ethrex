@@ -11,8 +11,6 @@ services:
       args:
         - BUILDPLATFORM=linux/amd64
       dockerfile: ./crates/l2/contracts/Dockerfile
-      cache_from:
-        - type=gha
     volumes:
       # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${CI_ETHREX_WORKDIR}/contracts
@@ -40,8 +38,6 @@ services:
     build:
       context: ../../
       dockerfile: ./crates/l2/Dockerfile
-      cache_from:
-        - type=gha
     ports:
       # RPC
       - 127.0.0.1:1729:1729
