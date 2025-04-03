@@ -87,27 +87,6 @@ impl Evm {
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
-            Evm::REVM { state } => {
-                let mut state = evm_state(
-                    state
-                        .database()
-                        .ok_or(EvmError::Custom(
-                            "Failed to fetch database from EVM State".to_owned(),
-                        ))?
-                        .clone(),
-                    block.header.parent_hash,
-                );
-                REVM::execute_block(block, &mut state)
-            }
-            Evm::LEVM { db } => LEVM::execute_block(block, db),
-        }
-    }
-
-    pub fn execute_block_without_clearing_state(
-        &mut self,
-        block: &Block,
-    ) -> Result<BlockExecutionResult, EvmError> {
-        match self {
             Evm::REVM { state } => REVM::execute_block(block, state),
             Evm::LEVM { db } => LEVM::execute_block(block, db),
         }

@@ -101,7 +101,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config)?;
 
-        let execution_result = vm.execute_block_without_clearing_state(block)?;
+        let execution_result = vm.execute_block(block)?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
