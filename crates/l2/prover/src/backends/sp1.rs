@@ -85,7 +85,6 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
     // bytes calldata publicValues,
     // bytes calldata proofBytes
     let calldata = vec![
-        Value::FixedBytes(bytes::Bytes::from_owner(proof.vk.bytes32_raw())),
         Value::Bytes(proof.proof.public_values.to_vec().into()),
         Value::Bytes(proof.proof.bytes().into()),
     ];

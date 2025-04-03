@@ -40,7 +40,7 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0xAA,
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verify(uint256,bytes,bytes32,bytes,bytes,bytes,uint256[8])";
 
 // Verifying Keys
 const RISC0_VKEY: &str = "RISC0_VKEY()";
@@ -684,18 +684,12 @@ impl ProverServer {
                 Value::Uint(U256::from(last_verified_block + 1)),
                 // risc0BlockProof
                 Value::Bytes(vec![].into()),
-                // risc0ImageId
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
                 // risco0JournalDigest
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // sp1ProgramVKey
                 Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
                 // sp1PublicValues
                 Value::Bytes(vec![].into()),
                 // sp1Bytes
                 Value::Bytes(vec![].into()),
-                // picoRiscvVkey
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
                 // picoPublicValues
                 Value::Bytes(vec![].into()),
                 // picoProof

@@ -220,14 +220,11 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         uint256 blockNumber,
         //risc0
         bytes calldata risc0BlockProof,
-        bytes32 risc0ImageId,
         bytes32 risc0JournalDigest,
         //sp1
-        bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
         bytes calldata sp1ProofBytes,
         //pico
-        bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
         uint256[8] calldata picoProof
     ) external override onlySequencer {
