@@ -319,7 +319,7 @@ pub fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
+                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(db, *fork)
                         .map_err(|_| {
                             InternalError::Custom(
                                 "Error at LEVM::get_state_transitions in ensure_post_state()"

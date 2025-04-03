@@ -93,7 +93,7 @@ impl LEVM {
             }
         }
 
-        let account_updates = Self::get_state_transitions(db)?;
+        let account_updates = Self::get_state_transitions(db, fork)?;
 
         Ok(BlockExecutionResult {
             receipts,
@@ -176,11 +176,13 @@ impl LEVM {
 
     pub fn get_state_transitions(
         db: &mut GeneralizedDatabase,
+        fork: Fork,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.drain() {
             let initial_state_account = db.store.get_account_info(address)?;
-            // let mut updates = 0;
+            let account_existed = db.store.account_exists(address);
+
             let mut acc_info_updated = false;
             let mut storage_updated = false;
 
@@ -202,10 +204,10 @@ impl LEVM {
             };
 
             let mut added_storage = HashMap::new();
-            for (key, value) in &new_state_account.storage {
+            for (key, storage_slot) in &new_state_account.storage {
                 let storage_before_block = db.store.get_storage_slot(address, *key)?;
-                if value.current_value != storage_before_block {
-                    added_storage.insert(*key, value.current_value);
+                if storage_slot.current_value != storage_before_block {
+                    added_storage.insert(*key, storage_slot.current_value);
                     storage_updated = true;
                 }
             }
@@ -220,7 +222,20 @@ impl LEVM {
                 None
             };
 
-            let removed = !initial_state_account.is_empty() && new_state_account.is_empty();
+            let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
+
+            if fork >= Fork::SpuriousDragon && fork <= Fork::Berlin {
+                // up to berlin cause I say so :)
+                // c. No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent.
+                if !account_existed && new_state_account.is_empty() {
+                    continue;
+                }
+
+                // d. At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted).
+                if new_state_account.is_empty() {
+                    removed = true;
+                }
+            }
 
             if !removed && !acc_info_updated && !storage_updated {
                 // Account hasn't been updated

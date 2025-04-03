@@ -524,7 +524,9 @@ impl Blockchain {
     }
 
     fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
-        let account_updates = context.vm.get_state_transitions()?;
+        let chain_config = &context.store.get_chain_config()?;
+        let fork = chain_config.fork(context.payload.header.timestamp);
+        let account_updates = context.vm.get_state_transitions(fork)?;
 
         context.payload.header.state_root = context
             .store

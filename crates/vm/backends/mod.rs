@@ -205,10 +205,10 @@ impl Evm {
     /// [LEVM::get_state_transitions] gathers the information from a [CacheDB].
     ///
     /// They may have the same name, but they serve for different purposes.
-    pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
+    pub fn get_state_transitions(&mut self, fork: Fork) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
-            Evm::LEVM { db } => LEVM::get_state_transitions(db),
+            Evm::LEVM { db } => LEVM::get_state_transitions(db, fork),
         }
     }
 
