@@ -11,7 +11,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_storage::Store;
-use ethrex_vm::backends::BlockExecutionResult;
+use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use payload_builder::build_payload;
 use tokio::time::sleep;

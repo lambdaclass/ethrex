@@ -23,7 +23,7 @@ pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 #[derive(ClapParser)]
 #[command(name="ethrex", author = "Lambdaclass", version=VERSION_STRING, about, about = "ethrex Execution client")]
 pub struct CLI {
-    #[clap(flatten)]
+    #[command(flatten)]
     pub opts: Options,
     #[command(subcommand)]
     pub command: Option<Subcommand>,
@@ -35,7 +35,7 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and mekong.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and hoodi.",
         help_heading = "Node options"
     )]
     pub network: Option<String>,
@@ -189,24 +189,24 @@ impl Default for Options {
 #[allow(clippy::large_enum_variant)]
 #[derive(ClapSubcommand)]
 pub enum Subcommand {
-    #[clap(name = "removedb", about = "Remove the database")]
+    #[command(name = "removedb", about = "Remove the database")]
     RemoveDB {
-        #[clap(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
         datadir: String,
     },
-    #[clap(name = "import", about = "Import blocks to the database")]
+    #[command(name = "import", about = "Import blocks to the database")]
     Import {
-        #[clap(
+        #[arg(
             required = true,
             value_name = "FILE_PATH/FOLDER",
             help = "Path to a RLP chain file or a folder containing files with individual Blocks"
         )]
         path: String,
-        #[clap(long = "removedb", action = ArgAction::SetTrue)]
+        #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
     #[cfg(any(feature = "l2", feature = "based"))]
-    #[clap(subcommand)]
+    #[command(subcommand)]
     L2(l2::Command),
 }
 

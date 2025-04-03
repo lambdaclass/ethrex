@@ -1,11 +1,6 @@
 use crate::authentication::authenticate;
-use axum::{routing::post, Json, Router};
-use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
-    TypedHeader,
-};
-use bytes::Bytes;
-use engine::{
+use crate::clients::{EngineClient, EthClient};
+use crate::engine::{
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
     payload::{
@@ -15,7 +10,7 @@ use engine::{
     },
     ExchangeCapabilitiesRequest,
 };
-use eth::{
+use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
         GetTransactionCountRequest,
@@ -36,10 +31,27 @@ use eth::{
         GetTransactionByHashRequest, GetTransactionReceiptRequest,
     },
 };
+use crate::types::transaction::SendRawTransactionRequest;
+use crate::utils::{
+    RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
+    RpcSuccessResponse,
+};
+use crate::{admin, net};
+use crate::{eth, web3};
+use axum::extract::State;
+use axum::{routing::post, Json, Router};
+use axum_extra::{
+    headers::{authorization::Bearer, Authorization},
+    TypedHeader,
+};
+use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 #[cfg(feature = "based")]
 use ethrex_common::Public;
-use ethrex_p2p::{sync::SyncManager, types::NodeRecord};
+use ethrex_p2p::sync_manager::SyncManager;
+use ethrex_p2p::types::Node;
+use ethrex_p2p::types::NodeRecord;
+use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
@@ -49,42 +61,20 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing::info;
-use types::transaction::SendRawTransactionRequest;
-use utils::{
-    RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
-    RpcSuccessResponse,
-};
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "l2")] {
-        use l2::transaction::SponsoredTx;
+        use crate::l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
-        mod l2;
     }
 }
-mod admin;
-mod authentication;
-pub mod engine;
-mod eth;
-mod net;
-pub mod types;
-pub mod utils;
-mod web3;
-
-pub mod clients;
-pub use clients::{EngineClient, EthClient};
-
-use axum::extract::State;
-use ethrex_p2p::types::Node;
-use ethrex_storage::{error::StoreError, Store};
 
 #[cfg(feature = "based")]
-mod based;
-#[cfg(feature = "based")]
-use based::versioned_message::SignedMessage;
+use crate::based::versioned_message::SignedMessage;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -95,53 +85,26 @@ enum RpcRequestWrapper {
 
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
-    storage: Store,
-    blockchain: Arc<Blockchain>,
-    jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
-    active_filters: ActiveFilters,
-    syncer: Arc<TokioMutex<SyncManager>>,
+    pub storage: Store,
+    pub blockchain: Arc<Blockchain>,
+    pub jwt_secret: Bytes,
+    pub local_p2p_node: Node,
+    pub local_node_record: NodeRecord,
+    pub active_filters: ActiveFilters,
+    pub syncer: Arc<SyncManager>,
     #[cfg(feature = "based")]
-    gateway_eth_client: EthClient,
+    pub gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
-    gateway_auth_client: EngineClient,
+    pub gateway_auth_client: EngineClient,
     #[cfg(feature = "based")]
-    gateway_pubkey: Public,
+    pub gateway_pubkey: Public,
     #[cfg(feature = "l2")]
-    valid_delegation_addresses: Vec<Address>,
+    pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
-    sponsor_pk: SecretKey,
+    pub sponsor_pk: SecretKey,
 }
 
-/// Describes the client's current sync status:
-/// Inactive: There is no active sync process
-/// Active: The client is currently syncing
-/// Pending: The previous sync process became stale, awaiting restart
-#[derive(Debug)]
-pub enum SyncStatus {
-    Inactive,
-    Active,
-    Pending,
-}
-
-impl RpcApiContext {
-    /// Returns the engine's current sync status, see [SyncStatus]
-    pub fn sync_status(&self) -> Result<SyncStatus, StoreError> {
-        // Try to get hold of the sync manager, if we can't then it means it is currently involved in a sync process
-        Ok(if self.syncer.try_lock().is_err() {
-            SyncStatus::Active
-        // Check if there is a checkpoint left from a previous aborted sync
-        } else if self.storage.get_header_download_checkpoint()?.is_some() {
-            SyncStatus::Pending
-        // No trace of a sync being handled
-        } else {
-            SyncStatus::Inactive
-        })
-    }
-}
-
-trait RpcHandler: Sized {
+pub trait RpcHandler: Sized {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
 
     fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -164,7 +127,7 @@ trait RpcHandler: Sized {
     fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr>;
 }
 
-const FILTER_DURATION: Duration = {
+pub const FILTER_DURATION: Duration = {
     if cfg!(test) {
         Duration::from_secs(1)
     } else {
@@ -198,7 +161,7 @@ pub async fn start_api(
         local_p2p_node,
         local_node_record,
         active_filters: active_filters.clone(),
-        syncer: Arc::new(TokioMutex::new(syncer)),
+        syncer: Arc::new(syncer),
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
@@ -260,7 +223,7 @@ async fn shutdown_signal() {
         .expect("failed to install Ctrl+C handler");
 }
 
-pub async fn handle_http_request(
+async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Json<Value> {
@@ -559,11 +522,11 @@ mod tests {
         let context = RpcApiContext {
             local_p2p_node,
             local_node_record: example_local_node_record(),
-            storage,
+            storage: storage.clone(),
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -661,7 +624,7 @@ mod tests {
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -704,7 +667,7 @@ mod tests {
             blockchain,
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -779,7 +742,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
             active_filters: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]

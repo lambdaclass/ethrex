@@ -5,16 +5,18 @@ use ethrex_blockchain::{
     payload::{create_payload, BuildPayloadArgs},
 };
 use ethrex_common::types::BlockHeader;
+use ethrex_p2p::sync_manager::SyncStatus;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use crate::{
+    rpc::{RpcApiContext, RpcHandler},
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
         payload::PayloadStatus,
     },
+    utils::RpcErr,
     utils::RpcRequest,
-    RpcApiContext, RpcErr, RpcHandler, SyncStatus,
 };
 
 #[derive(Debug)]
@@ -208,16 +210,14 @@ fn handle_forkchoice(
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash
     );
+    // Update fcu head in syncer
+    context.syncer.set_head(fork_choice_state.head_block_hash);
     // Check if there is an ongoing sync before applying the forkchoice
-    let fork_choice_res = match context.sync_status()? {
+    let fork_choice_res = match context.syncer.status()? {
         // Apply current fork choice
         SyncStatus::Inactive => {
-            let invalid_ancestors = {
-                let lock = context.syncer.try_lock();
-                match lock {
-                    Ok(sync) => sync.invalid_ancestors.clone(),
-                    Err(_) => return Err(RpcErr::Internal("Internal error".into())),
-                }
+            let Some(invalid_ancestors) = context.syncer.invalid_ancestors() else {
+                return Err(RpcErr::Internal("Internal error".into()));
             };
 
             // Check head block hash in invalid_ancestors
@@ -303,18 +303,7 @@ fn handle_forkchoice(
                         .storage
                         .update_sync_status(false)
                         .map_err(|e| RpcErr::Internal(e.to_string()))?;
-                    let current_head = context.storage.get_latest_canonical_block_hash()?.ok_or(
-                        RpcErr::Internal("Missing latest canonical block".to_owned()),
-                    )?;
-                    let sync_head = fork_choice_state.head_block_hash;
-                    tokio::spawn(async move {
-                        // If we can't get hold of the syncer, then it means that there is an active sync in process
-                        if let Ok(mut syncer) = context.syncer.try_lock() {
-                            syncer
-                                .start_sync(current_head, sync_head, context.storage.clone())
-                                .await
-                        }
-                    });
+                    context.syncer.start_sync();
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {

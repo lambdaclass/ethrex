@@ -23,7 +23,7 @@ use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_vm::backends::Evm;
+use ethrex_vm::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
