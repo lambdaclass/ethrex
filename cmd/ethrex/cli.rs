@@ -280,7 +280,6 @@ pub fn remove_db(datadir: &str, force: bool) {
     } else {
         warn!("Data directory does not exist: {}", data_dir);
     }
-    return;
 }
 
 pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {

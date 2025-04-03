@@ -26,6 +26,8 @@ pub enum Command {
     RemoveDB {
         #[clap(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
         datadir: String,
+        #[clap(long = "force", required = false, action = clap::ArgAction::SetTrue)]
+        force: bool,
     },
 }
 
