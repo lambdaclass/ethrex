@@ -347,16 +347,23 @@ pub fn block_number_has_state_file(
     Ok(false)
 }
 
-/// CHECK if the given block_number has all the proofs needed
-/// This function will check if the path: ../../../<block_number>/ contains the proofs
-/// Make sure to add all new proving_systems in the [ProverType::all] function
-pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateError> {
+/// Check if the given block_number has all the proofs needed
+/// This function will check if the path: ../../../<block_number>/
+/// contains the needed_proof_types passed as parameter.
+pub fn block_number_has_all_needed_proofs(
+    block_number: u64,
+    needed_proof_types: &[ProverType],
+) -> Result<bool, SaveStateError> {
+    if needed_proof_types.is_empty() {
+        return Ok(true);
+    }
+
     let block_state_path = get_block_state_path(block_number)?;
 
     let mut has_all_proofs = true;
-    for prover_type in ProverType::all() {
+    for prover_type in needed_proof_types {
         let file_name_to_seek: OsString =
-            get_state_file_name(block_number, &StateFileType::Proof(prover_type)).into();
+            get_state_file_name(block_number, &StateFileType::Proof(*prover_type)).into();
 
         // Check if the proof exists
         let proof_exists = std::fs::read_dir(&block_state_path)?
@@ -378,20 +385,18 @@ pub fn block_number_has_all_proofs(block_number: u64) -> Result<bool, SaveStateE
 mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
-    use ethrex_vm::{
-        backends::{Evm, EvmEngine},
-        ExecutionDB,
-    };
-    use test_casing::test_casing;
+    use ethrex_vm::ExecutionDB;
 
     use super::*;
     use crate::utils::test_data_io;
+    use ethrex_vm::EvmEngine;
     use std::fs::{self};
+    use test_casing::test_casing;
 
     #[test_casing(2, [EvmEngine::LEVM, EvmEngine::REVM])]
     #[test]
     fn test_state_file_integration(
-        evm_engine: EvmEngine,
+        _evm_engine: EvmEngine,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = fs::remove_dir_all(default_datadir()?) {
             if e.kind() != std::io::ErrorKind::NotFound {
@@ -438,9 +443,8 @@ mod tests {
 
         // Write all the account_updates and proofs for each block
         for block in &blocks {
-            let mut evm = Evm::new(evm_engine, store.clone(), block.hash());
             let account_updates =
-                ExecutionDB::get_account_updates(blocks.last().unwrap(), &mut evm).unwrap();
+                ExecutionDB::get_account_updates(blocks.last().unwrap(), &store).unwrap();
 
             account_updates_vec.push(account_updates.clone());
 

@@ -1,4 +1,4 @@
-use crate::{utils::RpcErr, RpcApiContext};
+use crate::{rpc::RpcApiContext, utils::RpcErr};
 use serde::{Deserialize, Serialize};
 use ssz_types::{typenum, VariableList};
 use tree_hash_derive::TreeHash;

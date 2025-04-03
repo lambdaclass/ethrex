@@ -74,7 +74,7 @@ pub(crate) enum Command {
             help = "Run fibonacci load test"
         )]
         fibonacci: bool,
-        #[clap(long = "io", default_value = "false", help = "Run I/O-heavy load test")]
+        #[arg(long = "io", default_value = "false", help = "Run I/O-heavy load test")]
         i_o_heavy: bool,
     },
     #[clap(about = "Load test that deploys an ERC20 and runs transactions")]
@@ -155,9 +155,8 @@ async fn transfer_from(
                     } else {
                         None
                     },
-                    max_fee_per_gas: Some(3121115334),
-                    max_priority_fee_per_gas: Some(3000000000),
                     gas_limit: Some(TX_GAS_COST * 100),
+                    nonce: Some(i),
                     ..Default::default()
                 },
             )
