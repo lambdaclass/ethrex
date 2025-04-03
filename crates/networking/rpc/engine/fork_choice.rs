@@ -16,7 +16,7 @@ use crate::{
         payload::PayloadStatus,
     },
     utils::RpcErr,
-    utils::RpcRequest
+    utils::RpcRequest,
 };
 
 #[derive(Debug)]
