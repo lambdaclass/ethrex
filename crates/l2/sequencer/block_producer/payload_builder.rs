@@ -268,7 +268,7 @@ fn calc_modified_accounts_size(
 ) -> Result<usize, BlockProducerError> {
     let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
 
-    // We use a temporary_context because revm mutates it in `get_state_transitions`
+    // We use a temporary_context because `get_state_transitions` mutates it.
     // TODO: remove when we stop using revm
     let mut temporary_context = context.clone();
 
