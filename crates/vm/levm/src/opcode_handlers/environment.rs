@@ -12,7 +12,7 @@ use keccak_hash::keccak;
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
 
-impl VM {
+impl<'a> VM<'a> {
     // ADDRESS operation
     pub fn op_address(
         &mut self,
@@ -36,12 +36,8 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = access_account(
-            &mut self.cache,
-            self.db.clone(),
-            &mut self.accrued_substate,
-            address,
-        );
+        let (account_info, address_was_cold) =
+            access_account(self.db, &mut self.accrued_substate, address)?;
 
         current_call_frame
             .increase_consumed_gas(gas_cost::balance(address_was_cold, self.env.config.fork)?)?;
@@ -286,12 +282,8 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = access_account(
-            &mut self.cache,
-            self.db.clone(),
-            &mut self.accrued_substate,
-            address,
-        );
+        let (account_info, address_was_cold) =
+            access_account(self.db, &mut self.accrued_substate, address)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodesize(
             address_was_cold,
@@ -319,12 +311,8 @@ impl VM {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let (account_info, address_was_cold) = access_account(
-            &mut self.cache,
-            self.db.clone(),
-            &mut self.accrued_substate,
-            address,
-        );
+        let (account_info, address_was_cold) =
+            access_account(self.db, &mut self.accrued_substate, address)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -449,12 +437,8 @@ impl VM {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) = access_account(
-            &mut self.cache,
-            self.db.clone(),
-            &mut self.accrued_substate,
-            address,
-        );
+        let (account_info, address_was_cold) =
+            access_account(self.db, &mut self.accrued_substate, address)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodehash(
             address_was_cold,

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use crate::{
     types::{
@@ -10,8 +10,8 @@ use crate::{
 use bytes::Bytes;
 use errors::{
     EstimateGasPriceError, EthClientError, GetBalanceError, GetBlockByHashError,
-    GetBlockByNumberError, GetBlockNumberError, GetGasPriceError, GetLogsError, GetNonceError,
-    GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
+    GetBlockByNumberError, GetBlockNumberError, GetCodeError, GetGasPriceError, GetLogsError,
+    GetNonceError, GetTransactionByHashError, GetTransactionReceiptError, SendRawTransactionError,
 };
 use eth_sender::Overrides;
 use ethrex_common::{
@@ -27,7 +27,7 @@ use reqwest::Client;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::ops::Div;
+use std::{ops::Div, str::FromStr};
 use tracing::warn;
 
 pub mod errors;
@@ -53,6 +53,7 @@ pub enum WrappedTransaction {
     L2(PrivilegedL2Transaction),
 }
 
+#[derive(Debug, Clone)]
 pub enum BlockByNumber {
     Number(u64),
     Latest,
@@ -60,6 +61,22 @@ pub enum BlockByNumber {
     Pending,
 }
 
+impl From<BlockByNumber> for Value {
+    fn from(value: BlockByNumber) -> Self {
+        match value {
+            BlockByNumber::Number(n) => json!(format!("{n:#x}")),
+            BlockByNumber::Latest => json!("latest"),
+            BlockByNumber::Earliest => json!("earliest"),
+            BlockByNumber::Pending => json!("pending"),
+        }
+    }
+}
+
+impl From<u64> for BlockByNumber {
+    fn from(value: u64) -> Self {
+        BlockByNumber::Number(value)
+    }
+}
 const MAX_NUMBER_OF_RETRIES: u64 = 10;
 const BACKOFF_FACTOR: u64 = 2;
 // Give at least 8 blocks before trying to bump gas.
@@ -381,12 +398,16 @@ impl EthClient {
         Ok((gas_price * (100 + bump_percent)) / 100)
     }
 
-    pub async fn get_nonce(&self, address: Address) -> Result<u64, EthClientError> {
+    pub async fn get_nonce(
+        &self,
+        address: Address,
+        block: BlockByNumber,
+    ) -> Result<u64, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getTransactionCount".to_string(),
-            params: Some(vec![json!(format!("{address:#x}")), json!("latest")]),
+            params: Some(vec![json!(format!("{address:#x}")), block.into()]),
         };
 
         match self.send_request(request).await {
@@ -452,18 +473,12 @@ impl EthClient {
         &self,
         block: BlockByNumber,
     ) -> Result<RpcBlock, EthClientError> {
-        let r = match block {
-            BlockByNumber::Number(n) => format!("{n:#x}"),
-            BlockByNumber::Latest => "latest".to_owned(),
-            BlockByNumber::Earliest => "earliest".to_owned(),
-            BlockByNumber::Pending => "pending".to_owned(),
-        };
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getBlockByNumber".to_string(),
             // With false it just returns the hash of the transactions.
-            params: Some(vec![json!(r), json!(false)]),
+            params: Some(vec![block.into(), json!(false)]),
         };
 
         match self.send_request(request).await {
@@ -531,12 +546,16 @@ impl EthClient {
         }
     }
 
-    pub async fn get_balance(&self, address: Address) -> Result<U256, EthClientError> {
+    pub async fn get_balance(
+        &self,
+        address: Address,
+        block: BlockByNumber,
+    ) -> Result<U256, EthClientError> {
         let request = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: "eth_getBalance".to_string(),
-            params: Some(vec![json!(format!("{:#x}", address)), json!("latest")]),
+            params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
         };
 
         match self.send_request(request).await {
@@ -564,6 +583,40 @@ impl EthClient {
                 .map_err(EthClientError::from),
             Ok(RpcResponse::Error(error_response)) => {
                 Err(GetBalanceError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn get_code(
+        &self,
+        address: Address,
+        block: BlockByNumber,
+    ) -> Result<Bytes, EthClientError> {
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "eth_getCode".to_string(),
+            params: Some(vec![json!(format!("{:#x}", address)), block.into()]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => hex::decode(
+                &serde_json::from_value::<String>(result.result)
+                    .map(|hex_str| {
+                        hex_str
+                            .strip_prefix("0x")
+                            .map(ToString::to_string)
+                            .unwrap_or(hex_str)
+                    })
+                    .map_err(GetCodeError::SerdeJSONError)
+                    .map_err(EthClientError::from)?,
+            )
+            .map(Into::into)
+            .map_err(GetCodeError::NotHexError)
+            .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetCodeError::RPCError(error_response.error.message).into())
             }
             Err(error) => Err(error),
         }
@@ -821,7 +874,7 @@ impl EthClient {
         if let Some(nonce) = overrides.nonce {
             return Ok(nonce);
         }
-        self.get_nonce(address).await
+        self.get_nonce(address, BlockByNumber::Latest).await
     }
 
     pub async fn get_last_committed_block(
@@ -848,6 +901,24 @@ impl EthClient {
         .await
     }
 
+    pub async fn get_verifier_contracts(
+        eth_client: &EthClient,
+        verifier_selectors: &[&str],
+        on_chain_proposer_address: Address,
+    ) -> Result<HashMap<String, Address>, EthClientError> {
+        let mut map: HashMap<_, _> = HashMap::new();
+        for selector in verifier_selectors.iter() {
+            let addr = Self::_call_address_variable(
+                eth_client,
+                selector.as_bytes(),
+                on_chain_proposer_address,
+            )
+            .await?;
+            map.insert(selector.to_string(), addr);
+        }
+        Ok(map)
+    }
+
     pub async fn get_last_fetched_l1_block(
         eth_client: &EthClient,
         common_bridge_address: Address,
@@ -855,11 +926,11 @@ impl EthClient {
         Self::_call_block_variable(eth_client, b"lastFetchedL1Block()", common_bridge_address).await
     }
 
-    async fn _call_block_variable(
+    async fn _generic_call(
         eth_client: &EthClient,
         selector: &[u8],
         on_chain_proposer_address: Address,
-    ) -> Result<u64, EthClientError> {
+    ) -> Result<String, EthClientError> {
         let selector = keccak(selector)
             .as_bytes()
             .get(..4)
@@ -872,7 +943,7 @@ impl EthClient {
         let leading_zeros = 32 - ((calldata.len() - 4) % 32);
         calldata.extend(vec![0; leading_zeros]);
 
-        let hex_str = eth_client
+        let hex_string = eth_client
             .call(
                 on_chain_proposer_address,
                 calldata.into(),
@@ -880,10 +951,40 @@ impl EthClient {
             )
             .await?;
 
-        let value = from_hex_string_to_u256(&hex_str)?.try_into().map_err(|_| {
-            EthClientError::Custom("Failed to convert from_hex_string_to_u256()".to_owned())
-        })?;
+        Ok(hex_string)
+    }
 
+    async fn _call_block_variable(
+        eth_client: &EthClient,
+        selector: &[u8],
+        on_chain_proposer_address: Address,
+    ) -> Result<u64, EthClientError> {
+        let hex_string =
+            Self::_generic_call(eth_client, selector, on_chain_proposer_address).await?;
+
+        let value = from_hex_string_to_u256(&hex_string)?
+            .try_into()
+            .map_err(|_| {
+                EthClientError::Custom("Failed to convert from_hex_string_to_u256()".to_owned())
+            })?;
+
+        Ok(value)
+    }
+
+    async fn _call_address_variable(
+        eth_client: &EthClient,
+        selector: &[u8],
+        on_chain_proposer_address: Address,
+    ) -> Result<Address, EthClientError> {
+        let hex_string =
+            Self::_generic_call(eth_client, selector, on_chain_proposer_address).await?;
+
+        let hex_str = &hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
+            "Couldn't strip prefix from request.".to_owned(),
+        ))?[24..]; // Get the needed bytes
+
+        let value = Address::from_str(hex_str)
+            .map_err(|_| EthClientError::Custom("Failed to convert from_str()".to_owned()))?;
         Ok(value)
     }
 
@@ -914,9 +1015,9 @@ impl EthClient {
     }
 }
 
-pub fn from_hex_string_to_u256(hex_str: &str) -> Result<U256, EthClientError> {
-    let hex_string = hex_str.strip_prefix("0x").ok_or(EthClientError::Custom(
-        "Couldn't strip prefix from last_committed_block.".to_owned(),
+pub fn from_hex_string_to_u256(hex_string: &str) -> Result<U256, EthClientError> {
+    let hex_string = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
+        "Couldn't strip prefix from request.".to_owned(),
     ))?;
 
     if hex_string.is_empty() {

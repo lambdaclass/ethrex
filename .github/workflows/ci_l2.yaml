@@ -11,9 +11,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
-env:
-  RUST_VERSION: 1.82.0
-
 jobs:
   test:
     # "Integration Test" is a required check, don't change the name
@@ -25,8 +22,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
@@ -34,5 +29,5 @@ jobs:
       - name: Run L2 integration test
         run: |
           cd crates/l2
-          cp config_example.toml config.toml
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
           make ci_test

@@ -8,7 +8,7 @@ use crate::{
 // Exchange Operations (16)
 // Opcodes: SWAP1 ... SWAP16
 
-impl VM {
+impl<'a> VM<'a> {
     // SWAP operation
     pub fn op_swap(
         &mut self,

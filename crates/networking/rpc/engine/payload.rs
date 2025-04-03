@@ -4,10 +4,11 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
+use ethrex_p2p::sync_manager::SyncStatus;
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
-use crate::rpc::{RpcApiContext, RpcHandler, SyncStatus};
+use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadResponse, PayloadStatus,
 };
@@ -531,9 +532,8 @@ fn validate_ancestors(
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
     // Obtain the invalid ancestors from the syncer
-    let invalid_ancestors = match context.syncer.try_lock() {
-        Ok(syncer) => syncer.invalid_ancestors.clone(),
-        Err(_) => return Err(RpcErr::Internal("Internal error".into())),
+    let Some(invalid_ancestors) = context.syncer.invalid_ancestors() else {
+        return Err(RpcErr::Internal("Internal error".into()));
     };
 
     // Check if the block has already been invalidated
@@ -563,8 +563,8 @@ fn handle_new_payload_v1_v2(
     let block = get_block_from_payload(payload, None, None)?;
 
     // Check sync status
-    match context.sync_status()? {
-        SyncStatus::Active | SyncStatus::Pending => {
+    match context.syncer.status()? {
+        SyncStatus::Active(_) => {
             return serde_json::to_value(PayloadStatus::syncing())
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         }
@@ -595,8 +595,8 @@ fn handle_new_payload_v3(
 ) -> Result<PayloadStatus, RpcErr> {
     // Ignore incoming
     // Check sync status
-    match context.sync_status()? {
-        SyncStatus::Active | SyncStatus::Pending => return Ok(PayloadStatus::syncing()),
+    match context.syncer.status()? {
+        SyncStatus::Active(_) => return Ok(PayloadStatus::syncing()),
         SyncStatus::Inactive => {}
     }
 
@@ -691,12 +691,12 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
 
     // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
     let add_block_to_invalid_ancestor = || {
-        let lock = context.syncer.try_lock();
-        if let Ok(mut syncer) = lock {
-            syncer
-                .invalid_ancestors
-                .insert(block_hash, latest_valid_hash);
-        };
+        if !context
+            .syncer
+            .add_invalid_ancestor(block_hash, latest_valid_hash)
+        {
+            error!("Failed to mark invalid ancestor")
+        }
     };
 
     match context.blockchain.add_block(block) {

@@ -12,9 +12,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions:
+  pull-requests: write
+
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.82.0
 
 jobs:
   ef-test:
@@ -27,8 +29,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
@@ -80,8 +80,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
@@ -150,7 +148,7 @@ jobs:
           name: pr-ef-test-data
           path: crates/vm/levm/
 
-     # NOTE: diff will exit with a non 0 exit code when there are differences
+      # NOTE: diff will exit with a non 0 exit code when there are differences
       - name: Compare files
         id: branch_diffs
         continue-on-error: true
@@ -294,8 +292,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
@@ -314,8 +310,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Set up cargo cache
         uses: Swatinem/rust-cache@v2
@@ -343,7 +337,6 @@ jobs:
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt, clippy
 
       - name: Add Rust Cache

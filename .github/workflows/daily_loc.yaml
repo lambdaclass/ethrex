@@ -6,9 +6,6 @@ on:
     - cron: "0 0 * * 1,2,3,4,5"
   workflow_dispatch:
 
-env:
-  RUST_VERSION: 1.82.0
-
 jobs:
   loc:
     name: Count ethrex loc and generate report
@@ -19,8 +16,6 @@ jobs:
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
