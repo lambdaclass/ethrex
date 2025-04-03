@@ -243,7 +243,7 @@ pub(crate) async fn large_storage_fetcher(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
-    while incoming || !pending_storage.is_empty() {
+    while incoming {
         // Fetch incoming requests
         if !receiver.is_empty() || pending_storage.is_empty() {
             let mut msg_buffer = vec![];
