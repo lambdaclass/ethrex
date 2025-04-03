@@ -177,6 +177,7 @@ pub struct VM<'a> {
     pub cache_backup: CacheDB, // Backup of the cache before executing the transaction
 }
 
+#[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,

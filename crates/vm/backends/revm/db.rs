@@ -31,6 +31,8 @@ pub enum EvmState {
     Execution(Box<revm::db::CacheDB<ExecutionDB>>),
 }
 
+// Needed because revm::db::State is not cloneable and we need to
+// restore the previous EVM state after executing a transaction in L2 mode whose resulting state diff doesn't fit in a blob.
 impl Clone for EvmState {
     fn clone(&self) -> Self {
         match self {
