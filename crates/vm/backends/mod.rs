@@ -335,7 +335,7 @@ impl Evm {
                 store_wrapper,
                 block_cache,
             } => {
-                store_wrapper.block_hash = header.parent_hash;
+                store_wrapper.block_hash = header.compute_block_hash();
 
                 LEVM::simulate_tx_from_generic(tx, header, store_wrapper, block_cache.clone())
             }
