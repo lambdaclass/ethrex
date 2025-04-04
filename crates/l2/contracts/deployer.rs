@@ -350,13 +350,14 @@ async fn deploy_contracts(
         Color::Cyan,
     );
 
-    let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) = deploy_contract(
-        deployer,
-        deployer_private_key,
-        eth_client,
-        &contracts_path.join("solc_out/OnChainProposer.bin"),
-    )
-    .await?;
+    let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) =
+        deploy_on_chain_proposer(
+            deployer,
+            deployer_private_key,
+            eth_client,
+            &contracts_path.join("solc_out/OnChainProposer.bin"),
+        )
+        .await?;
 
     let msg = format!(
         "OnChainProposer:\n\tDeployed at address {}\n\tWith tx hash {}",
@@ -438,12 +439,10 @@ async fn deploy_contract(
     contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
     let init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
-        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
+        DeployError::DecodingError(format!("Failed to read contract init code: {err}"))
     })?)
     .map_err(|err| {
-        DeployError::DecodingError(format!(
-            "Failed to decode on_chain_proposer_init_code: {err}"
-        ))
+        DeployError::DecodingError(format!("Failed to decode contract init code: {err}"))
     })?
     .into();
 
@@ -451,6 +450,44 @@ async fn deploy_contract(
         create2_deploy(deployer, deployer_private_key, &init_code, eth_client)
             .await
             .map_err(DeployError::from)?;
+
+    Ok((deploy_tx_hash, contract_address))
+}
+
+async fn deploy_on_chain_proposer(
+    deployer: Address,
+    deployer_private_key: SecretKey,
+    eth_client: &EthClient,
+    contract_path: &Path,
+) -> Result<(H256, Address), DeployError> {
+    let mut init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
+        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
+    })?)
+    .map_err(|err| {
+        DeployError::DecodingError(format!(
+            "Failed to decode on_chain_proposer_init_code: {err}"
+        ))
+    })?;
+
+    let validium: bool = read_env_var("COMMITTER_VALIDIUM")?
+        .trim()
+        .parse()
+        .map_err(|err| DeployError::ParseError(format!("Malformed COMMITTER_VALIDIUM: {err}")))?;
+
+    let validium_value = if validium { 1u8 } else { 0u8 };
+    let encoded_validium = vec![0; 31]
+        .into_iter()
+        .chain(std::iter::once(validium_value));
+    init_code.extend(encoded_validium);
+
+    let (deploy_tx_hash, contract_address) = create2_deploy(
+        deployer,
+        deployer_private_key,
+        &init_code.into(),
+        eth_client,
+    )
+    .await
+    .map_err(DeployError::from)?;
 
     Ok((deploy_tx_hash, contract_address))
 }
