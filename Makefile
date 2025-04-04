@@ -152,7 +152,7 @@ install-cli: ## 🛠️ Installs the ethrex-l2 cli
 # When we have the rex CLI, we should change it. The port is also coupled to the load_test.
 # That's why the port 1729 is being used in all targets related to perf/loadtests.
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
-	@if [ -z "$$L" ]; then \
+	@if [ -z "$$LEVM" ]; then \
 		LEVM="revm"; \
 		echo "Running the test-node without the LEVM feature"; \
 		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
@@ -171,7 +171,7 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--datadir test_ethrex
 
 start-node-with-samply: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing // Then open te profile.json.gz in https://profiler.firefox.com/
-	@if [ -z "$$L" ]; then \
+	@if [ -z "$$LEVM" ]; then \
 		LEVM="revm"; \
 		echo "Running the test-node without the LEVM feature"; \
 		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
