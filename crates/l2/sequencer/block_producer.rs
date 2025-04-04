@@ -1,3 +1,4 @@
+mod payload_builder;
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -12,6 +13,7 @@ use ethrex_common::Address;
 use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
+use payload_builder::build_payload;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
@@ -100,14 +102,17 @@ impl BlockProducer {
             beacon_root: Some(head_beacon_block_root),
             version,
         };
-        let mut payload = create_payload(&args, &store)?;
+        let payload = create_payload(&args, &store)?;
 
         // Blockchain builds the payload from mempool txs and executes them
-        let payload_build_result = blockchain.build_payload(&mut payload).await?;
-        info!("Built payload for new block {}", payload.header.number);
+        let payload_build_result = build_payload(blockchain.clone(), payload, &store).await?;
+        info!(
+            "Built payload for new block {}",
+            payload_build_result.payload.header.number
+        );
 
         // Blockchain stores block
-        let block = payload;
+        let block = payload_build_result.payload;
         let chain_config = store.get_chain_config()?;
         validate_block(&block, &head_header, &chain_config)?;
 

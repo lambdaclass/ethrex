@@ -16,3 +16,9 @@ pub enum ProverInputError {
     #[error("ExecutionDB error: {0}")]
     ExecutionDBError(#[from] ExecutionDBError),
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum UtilsError {
+    #[error("Unable to parse withdrawal_event_selector: {0}")]
+    WithdrawalSelectorError(String),
+}
