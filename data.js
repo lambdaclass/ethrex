@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743761549202,
+  "lastUpdate": 1743779206450,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2455,6 +2455,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182442624526,
             "range": "± 2114014788",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "mrugiero@gmail.com",
+            "name": "Mario Rugiero",
+            "username": "Oppen"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cebab85b71c49ce965fe86b435868ae769625496",
+          "message": "feat(l1,l2): make write path APIs async (#2336)\n\n**Motivation**\n\nSome of our sync APIs can produce starving when running on Tokio due to\ntaking a long time to reach the next `await`-point.\nSpecifically, writing to the DB tends to take a long time, which blocks\nother tasks, sometimes the whole runtime due to how the scheduler in\nTokio works.\nThus, we need a way to inform the runtime we're going to be working for\na while, and give it control while we wait for stuff.\n\n**Description**\n\nTake the mutable APIs for the DB and mark them `async`. Then bubble that\nup to their users. Then make the functions non-blocking by using\n`spawn_blocking` to run on the blocking thread, releasing the runtime to\nhandle more work.\nThe DB writing APIs had to change to pass-by-value to satisfy the\nborrow-checker in the blocking task context. I think I can use proper\nlifetime bounds with a helper crate, if that's preferred. The values\nwere already being discarded after passing to the DB, so passing by\nvalue should not be a problem either way.\n\nSpecial considerations:\n- For some work performed before benchmarks and EF tests which are\ninherently synchronous I opted for calling with an ad-hoc runtime\ninstance and `block_on`, as that might reduce the changes needed by\nlocalizing the async work. If desired, that can be changed up to making\na `tokio::main`. The same is true for some setup functions for tests.\n- For the DBs I had to separate the Tokio import. This is because they\nneed to compile with L2, which means provers' custom compilers, and\nthose don't support the networking functions in the stdlib, which Tokio\nwith full features (as the workspace dep declares) brings them in.\n- The InMemoryDB was left untouched other than updating the interfaces,\ngiven hashmap access should be quick enough.\n- I need to comment on [this\nhack](https://github.com/lambdaclass/ethrex/pull/2336/files#diff-264636d3ee6ee67bd6e136b8c98f74152de6a8e2a07f597cfb5f622d4e0d815aR143-R146):\n`and_then` can't be used on futures and everything became a mess without\nthat little helper.\n- I'm unsure about whether or not we also want to cover the read APIs,\nat least for consistency I would think so, but for now I left them out.\n\ncloses #2402",
+          "timestamp": "2025-04-04T14:16:33Z",
+          "tree_id": "ada0fd5a18b103edb80f5fc4526a26ff6ce89be1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cebab85b71c49ce965fe86b435868ae769625496"
+        },
+        "date": 1743779204225,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183372687645,
+            "range": "± 745106382",
             "unit": "ns/iter"
           }
         ]
