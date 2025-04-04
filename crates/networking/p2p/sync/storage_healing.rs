@@ -42,7 +42,7 @@ pub(crate) async fn storage_healer(
         if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
             pending_paths.extend(
                 store
-                    .get_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?
+                    .take_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?
                     .into_iter(),
             );
         }

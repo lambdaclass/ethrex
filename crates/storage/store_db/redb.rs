@@ -784,7 +784,7 @@ impl StoreEngine for RedBStore {
         self.write_batch(STORAGE_HEAL_PATHS_TABLE, key_values)
     }
 
-    fn get_storage_heal_paths(
+    fn take_storage_heal_paths(
         &self,
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {

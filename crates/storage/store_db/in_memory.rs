@@ -472,7 +472,7 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    fn get_storage_heal_paths(
+    fn take_storage_heal_paths(
         &self,
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {

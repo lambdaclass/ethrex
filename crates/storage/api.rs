@@ -254,9 +254,9 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         -> Result<(), StoreError>;
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
-    /// Gets paths from at most `limit` storage tries
+    /// Gets paths from at most `limit` storage tries and removes them from the store
     #[allow(clippy::type_complexity)]
-    fn get_storage_heal_paths(&self, limit: usize)
+    fn take_storage_heal_paths(&self, limit: usize)
         -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError>;
 
     /// Sets the state trie paths in need of healing

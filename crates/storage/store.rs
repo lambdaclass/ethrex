@@ -939,13 +939,13 @@ impl Store {
     }
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
-    /// Gets paths from at most `limit` storage tries and removed them from the Store
+    /// Gets paths from at most `limit` storage tries and removes them from the Store
     #[allow(clippy::type_complexity)]
-    pub fn get_storage_heal_paths(
+    pub fn take_storage_heal_paths(
         &self,
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        self.engine.get_storage_heal_paths(limit)
+        self.engine.take_storage_heal_paths(limit)
     }
 
     /// Sets the state trie paths in need of healing
