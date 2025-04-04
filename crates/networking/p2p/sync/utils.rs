@@ -9,36 +9,45 @@ use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES};
 
 /// Runs the queue process by reading incoming messages from the receiver, adding the requests to the queue, and then spawning parallel fetch tasks for all queued items
 /// This process will only end when an end signal in the form of an empty vector is read from the receiver
-pub(crate) async fn run_queue<T, F, Fut>(receiver: &mut Receiver<Vec<T>>, queue: &mut Vec<T>, fetch_batch: &F,
+pub(crate) async fn run_queue<T, F, Fut>(
+    receiver: &mut Receiver<Vec<T>>,
+    queue: &mut Vec<T>,
+    fetch_batch: &F,
     peers: PeerHandler,
     store: Store,
-    batch_size: usize) -> Result<(), SyncError>
-    where
+    batch_size: usize,
+) -> Result<(), SyncError>
+where
     T: Send + 'static,
     F: Fn(Vec<T>, PeerHandler, Store) -> Fut + Sync + Send,
-    Fut: Future<Output = Result<(Vec<T>, bool), SyncError>> + Send + 'static {
-        // The pivot may become stale while the fetcher is active, we will still keep the process
-        // alive until the end signal so we don't lose incoming messages
-        let mut incoming = true;
-        let mut stale = false;
-        while incoming {
-            // Read incoming messages and add them to the queue
-            incoming = read_incoming_requests(receiver, queue).await;
-            // If the pivot isn't stale, spawn fetch tasks for the queued elements
-            if !stale {
-                stale = spawn_fetch_tasks(queue, incoming, fetch_batch, peers.clone(), store.clone(), batch_size).await?;
-            }
+    Fut: Future<Output = Result<(Vec<T>, bool), SyncError>> + Send + 'static,
+{
+    // The pivot may become stale while the fetcher is active, we will still keep the process
+    // alive until the end signal so we don't lose incoming messages
+    let mut incoming = true;
+    let mut stale = false;
+    while incoming {
+        // Read incoming messages and add them to the queue
+        incoming = read_incoming_requests(receiver, queue).await;
+        // If the pivot isn't stale, spawn fetch tasks for the queued elements
+        if !stale {
+            stale = spawn_fetch_tasks(
+                queue,
+                incoming,
+                fetch_batch,
+                peers.clone(),
+                store.clone(),
+                batch_size,
+            )
+            .await?;
         }
-        Ok(())
-
     }
+    Ok(())
+}
 
 /// Reads incoming requests from the receiver, adds them to the queue, and returns the requests' incoming status
 /// Will only wait out for incoming requests if the queue is currenlty empty
-async fn read_incoming_requests<T>(
-    receiver: &mut Receiver<Vec<T>>,
-    queue: &mut Vec<T>,
-) -> bool {
+async fn read_incoming_requests<T>(receiver: &mut Receiver<Vec<T>>, queue: &mut Vec<T>) -> bool {
     if !receiver.is_empty() || queue.is_empty() {
         let mut msg_buffer = vec![];
         receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await;
@@ -63,7 +72,7 @@ async fn spawn_fetch_tasks<T, F, Fut>(
 where
     T: Send + 'static,
     F: Fn(Vec<T>, PeerHandler, Store) -> Fut + Sync + Send,
-    Fut: Future<Output = Result<(Vec<T>, bool), SyncError>> + Send + 'static
+    Fut: Future<Output = Result<(Vec<T>, bool), SyncError>> + Send + 'static,
 {
     let mut stale = false;
     if queue.len() > batch_size || (!full_batches && !queue.is_empty()) {

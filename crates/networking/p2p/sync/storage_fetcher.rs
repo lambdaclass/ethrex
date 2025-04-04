@@ -9,15 +9,14 @@
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
-use ethrex_trie::Nibbles;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tracing::{debug, info, error};
+use tracing::{debug, error, info};
 
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, utils::run_queue, STORAGE_BATCH_SIZE,
-        MAX_CHANNEL_MESSAGES,
+        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, utils::run_queue, MAX_CHANNEL_MESSAGES,
+        STORAGE_BATCH_SIZE,
     },
 };
 
@@ -56,9 +55,10 @@ pub(crate) async fn storage_fetcher(
     let mut pending_storage: Vec<(H256, H256)> = vec![];
     // Create an async closure to pass to the generic task spawner
     let l_sender = large_storage_sender.clone();
+    let s_sender = storage_trie_rebuilder_sender.clone();
     let fetch_batch = move |batch: Vec<(H256, H256)>, peers: PeerHandler, store: Store| {
         let l_sender = l_sender.clone();
-        let s_sender = storage_trie_rebuilder_sender.clone();
+        let s_sender = s_sender.clone();
         async move {
             fetch_storage_batch(
                 batch,
@@ -67,21 +67,27 @@ pub(crate) async fn storage_fetcher(
                 store,
                 l_sender.clone(),
                 s_sender.clone(),
-            ).await
+            )
+            .await
         }
     };
-    run_queue(&mut receiver, &mut pending_storage, &fetch_batch, peers.clone(), store.clone(), STORAGE_BATCH_SIZE).await?;
+    run_queue(
+        &mut receiver,
+        &mut pending_storage,
+        &fetch_batch,
+        peers.clone(),
+        store.clone(),
+        STORAGE_BATCH_SIZE,
+    )
+    .await?;
     info!(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
     if !pending_storage.is_empty() {
-        store.set_storage_heal_paths(
-            pending_storage
-                .into_iter()
-                .map(|(hash, _)| (hash, vec![Nibbles::default()]))
-                .collect(),
-        ).await?;
+        storage_healer_sender
+            .send(pending_storage.into_iter().map(|(hash, _)| hash).collect())
+            .await?;
     }
     // Signal large storage fetcher
     large_storage_sender.send(vec![]).await?;
@@ -166,19 +172,27 @@ async fn large_storage_fetcher(
     let mut pending_storage: Vec<LargeStorageRequest> = vec![];
     // Create an async closure to pass to the generic task spawner
     let s_sender = storage_trie_rebuilder_sender.clone();
-    let fetch_batch = move |batch: Vec<LargeStorageRequest>, peers: PeerHandler, store: Store| {
+    let fetch_batch = move |mut batch: Vec<LargeStorageRequest>, peers: PeerHandler, store: Store| {
         let s_sender = s_sender.clone();
         // Batch size should always be 1
         if batch.len() != 1 {
             error!("Invalid large storage batch size, check source code");
         }
         async move {
-                fetch_large_storage(batch[0], state_root, peers, store, s_sender.clone())
-                    .await
-                    .map(|(rem, stale)| (rem.map(|r| vec![r]).unwrap_or_default(), stale))
+            fetch_large_storage(batch.remove(0), state_root, peers, store, s_sender.clone())
+                .await
+                .map(|(rem, stale)| (rem.map(|r| vec![r]).unwrap_or_default(), stale))
         }
     };
-    run_queue(&mut receiver, &mut pending_storage, &fetch_batch, peers.clone(), store.clone(), STORAGE_BATCH_SIZE).await?;
+    run_queue(
+        &mut receiver,
+        &mut pending_storage,
+        &fetch_batch,
+        peers.clone(),
+        store.clone(),
+        STORAGE_BATCH_SIZE,
+    )
+    .await?;
     info!(
         "Concluding large storage fetcher, {} large storages left in queue to be healed later",
         pending_storage.len()

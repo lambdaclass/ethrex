@@ -5,8 +5,9 @@
 //! The fetcher will remain active and listening until a termination signal (an empty batch) is received
 
 use ethrex_common::H256;
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::Store;
 use tokio::sync::mpsc::Receiver;
+use tracing::debug;
 
 use crate::peer_handler::PeerHandler;
 
@@ -21,9 +22,19 @@ pub(crate) async fn bytecode_fetcher(
     let mut pending_bytecodes: Vec<H256> = vec![];
     let fetch_batch = move |batch: Vec<H256>, peers: PeerHandler, store: Store| async {
         // Bytecode fetcher will never become stale
-        fetch_bytecode_batch(batch, peers, store).await.map(|res| (res, false))
+        fetch_bytecode_batch(batch, peers, store)
+            .await
+            .map(|res| (res, false))
     };
-    run_queue(&mut receiver, &mut pending_bytecodes, &fetch_batch, peers.clone(), store.clone(), BYTECODE_BATCH_SIZE).await?;
+    run_queue(
+        &mut receiver,
+        &mut pending_bytecodes,
+        &fetch_batch,
+        peers.clone(),
+        store.clone(),
+        BYTECODE_BATCH_SIZE,
+    )
+    .await?;
     Ok(())
 }
 
@@ -34,6 +45,7 @@ async fn fetch_bytecode_batch(
     store: Store,
 ) -> Result<Vec<H256>, SyncError> {
     if let Some(bytecodes) = peers.request_bytecodes(batch.clone()).await {
+        debug!("Received {} bytecodes", bytecodes.len());
         // Store the bytecodes
         for code in bytecodes.into_iter() {
             store.add_account_code(batch.remove(0), code).await?;
