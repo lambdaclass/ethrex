@@ -65,8 +65,8 @@ pub(crate) async fn storage_fetcher(
                 state_root,
                 peers,
                 store,
-                l_sender.clone(),
-                s_sender.clone(),
+                l_sender,
+                s_sender,
             )
             .await
         }
@@ -180,7 +180,7 @@ async fn large_storage_fetcher(
                 error!("Invalid large storage batch size, check source code");
             }
             async move {
-                fetch_large_storage(batch.remove(0), state_root, peers, store, s_sender.clone())
+                fetch_large_storage(batch.remove(0), state_root, peers, store, s_sender)
                     .await
                     .map(|(rem, stale)| (rem.map(|r| vec![r]).unwrap_or_default(), stale))
             }
