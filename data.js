@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743782717586,
+  "lastUpdate": 1743785456616,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2545,6 +2545,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186248964840,
             "range": "± 514055303",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c58d3b2a713761c56a6c2d221c59a878dd8ea21b",
+          "message": "fix(l1): correctly account for completed segments when showing state sync progress (#2352)\n\n**Motivation**\nCurrenlty, completed segments show as 0% complete when showing state\nsync progress. This is due to the last_key value used to calculate\nprogress not being updated before marking the segment as finished. This\nPR fixes this issue\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Set last key when marking segment state sync finalization in the state\nsync progress tracker\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Mario Rugiero <mrugiero@gmail.com>",
+          "timestamp": "2025-04-04T16:00:14Z",
+          "tree_id": "50dc45a61e6bfe90d6bece14260519defc70bf4c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c58d3b2a713761c56a6c2d221c59a878dd8ea21b"
+        },
+        "date": 1743785455078,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 190126874748,
+            "range": "± 430342626",
             "unit": "ns/iter"
           }
         ]
