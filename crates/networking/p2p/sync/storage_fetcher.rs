@@ -86,12 +86,10 @@ pub(crate) async fn storage_fetcher(
                 store,
                 l_sender.clone(),
                 s_sender.clone(),
-            )
-            .await
-            .unwrap()
+            ).await
         }
     };
-    run_queue(&mut receiver, &mut pending_storage, &fetch_batch, peers.clone(), store.clone(), BATCH_SIZE).await;
+    run_queue(&mut receiver, &mut pending_storage, &fetch_batch, peers.clone(), store.clone(), BATCH_SIZE).await?;
     info!(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
@@ -200,15 +198,12 @@ pub(crate) async fn large_storage_fetcher(
             warn!("Invalid large storage batch size, check source code");
         }
         async move {
-            let (rem, stale) =
                 fetch_large_storage_batch(batch[0], state_root, peers, store, s_sender.clone())
                     .await
-                    .unwrap();
-            let remaining = rem.map(|r| vec![r]).unwrap_or_default();
-            (remaining, stale)
+                    .map(|(rem, stale)| (rem.map(|r| vec![r]).unwrap_or_default(), stale))
         }
     };
-    run_queue(&mut receiver, &mut pending_storage, &fetch_batch, peers.clone(), store.clone(), BATCH_SIZE).await;
+    run_queue(&mut receiver, &mut pending_storage, &fetch_batch, peers.clone(), store.clone(), BATCH_SIZE).await?;
     info!(
         "Concluding large storage fetcher, {} large storages left in queue to be healed later",
         pending_storage.len()

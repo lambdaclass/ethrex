@@ -1,20 +1,22 @@
+use std::future::Future;
+
 use ethrex_storage::Store;
 use tokio::sync::mpsc::Receiver;
 
 use crate::peer_handler::PeerHandler;
 
-use super::{MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES};
+use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES};
 
 /// Runs the queue process by reading incoming messages from the receiver, adding the requests to the queue, and then spawning parallel fetch tasks for all queued items
 /// This process will only end when an end signal in the form of an empty vector is read from the receiver
 pub(crate) async fn run_queue<T, F, Fut>(receiver: &mut Receiver<Vec<T>>, queue: &mut Vec<T>, fetch_batch: &F,
     peers: PeerHandler,
     store: Store,
-    batch_size: usize)
+    batch_size: usize) -> Result<(), SyncError>
     where
     T: Send + 'static,
     F: Fn(Vec<T>, PeerHandler, Store) -> Fut + Sync + Send,
-    Fut: std::future::Future<Output = (Vec<T>, bool)> + Send + 'static {
+    Fut: Future<Output = Result<(Vec<T>, bool), SyncError>> + Send + 'static {
         // The pivot may become stale while the fetcher is active, we will still keep the process
         // alive until the end signal so we don't lose incoming messages
         let mut incoming = true;
@@ -24,9 +26,10 @@ pub(crate) async fn run_queue<T, F, Fut>(receiver: &mut Receiver<Vec<T>>, queue:
             incoming = read_incoming_requests(receiver, queue).await;
             // If the pivot isn't stale, spawn fetch tasks for the queued elements
             if !stale {
-                stale = spawn_fetch_tasks(queue, incoming, fetch_batch, peers.clone(), store.clone(), batch_size).await
+                stale = spawn_fetch_tasks(queue, incoming, fetch_batch, peers.clone(), store.clone(), batch_size).await?;
             }
         }
+        Ok(())
 
     }
 
@@ -56,11 +59,11 @@ async fn spawn_fetch_tasks<T, F, Fut>(
     peers: PeerHandler,
     store: Store,
     batch_size: usize,
-) -> bool
+) -> Result<bool, SyncError>
 where
     T: Send + 'static,
     F: Fn(Vec<T>, PeerHandler, Store) -> Fut + Sync + Send,
-    Fut: std::future::Future<Output = (Vec<T>, bool)> + Send + 'static,
+    Fut: Future<Output = Result<(Vec<T>, bool), SyncError>> + Send + 'static
 {
     let mut stale = false;
     if queue.len() > batch_size || (!full_batches && !queue.is_empty()) {
@@ -78,10 +81,10 @@ where
         }
         // Collect Results
         for res in tasks.join_all().await {
-            let (remaining, is_stale) = res;
+            let (remaining, is_stale) = res?;
             queue.extend(remaining);
             stale |= is_stale;
         }
     }
-    stale
+    Ok(stale)
 }
