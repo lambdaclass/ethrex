@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743780942941,
+  "lastUpdate": 1743782717586,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2515,6 +2515,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185862907204,
             "range": "± 942764473",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6aeb01cb9be8680cc1c2ce80faf76f3c858779a2",
+          "message": "fix(l1): move on to the next retry upon failed sends on peer handler requests (#2369)\n\n**Motivation**\nThe PeerHandler contains methods to request all sorts of data from peers\nand ins used both in snap and full sync. It uses a retry system to\nensure that we don't misinterpret a malicious/unsynced peer as the data\nnot being available. If one peer doesn't return the requested data we\nwould try with other peers first before assuming that the data is too\nold or doesn't exist.\nWhen we sent the requests to the peer, we were not respecting the retry\npolicy and returning a None response upon first failure. This led the\nsynced to believe that data had become stale when it was not the case.\nThis, on multiple occasions, caused the storage fetcher to cease\nfetching while the state sync was still alive and fetching accounts,\nleaving a huge backlog of storages to heal after the state sync.\nThis PR solves this by moving on to the next retry upon a send error\ninstead of aborting the request and returning an empty response\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Continue to the next retry instead of returning None upon a failed\n`send` in all `PeerHandler` request methods\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-04T15:15:20Z",
+          "tree_id": "35cbff8ec03add8f597089a74c32b88a5ba93157",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6aeb01cb9be8680cc1c2ce80faf76f3c858779a2"
+        },
+        "date": 1743782716073,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186248964840,
+            "range": "± 514055303",
             "unit": "ns/iter"
           }
         ]
