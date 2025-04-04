@@ -1,0 +1,6 @@
+# Mount and use database created from blobs, for the state reconstruct test.
+services:
+  ethrex_l2:
+    volumes:
+      - ./store:/store
+    command: l2 init --network /genesis-l2.json --http.addr 0.0.0.0 --http.port 1729 --authrpc.port 8552 --datadir /store
