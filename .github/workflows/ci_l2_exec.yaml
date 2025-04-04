@@ -29,8 +29,8 @@ jobs:
           workdir: "crates/l2"
           files: "crates/l2/docker-compose-l2.yaml"
           set: |
-            ethrex_l2.cache-to=type=local,dest=/tmp/ethrex_l2-docker-cache,mode=max
-            contract_deployer.cache-to=type=local,dest=/tmp/contract_deployer-docker-cache,mode=max
+            ethrex_l2.cache-to=type=local,dest=/tmp/buildx-cache/ethrex_l2,mode=max
+            contract_deployer.cache-to=type=local,dest=/tmp/buildx-cache/contract_deployer,mode=max
 
       - name: Upload docker artifacts
         uses: actions/upload-artifact@v4
@@ -60,7 +60,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: buildx-cache
-          path: /tmp
+          path: /tmp/buildx-cache
 
       - name: Bake docker images
         uses: docker/bake-action@v6
@@ -69,8 +69,8 @@ jobs:
           files: "crates/l2/docker-compose-l2.yaml"
           load: true
           set: |
-            ethrex_l2.cache-from=type=local,dest=/tmp/ethrex_l2-docker-cache
-            contract_deployer.cache-from=type=local,dest=/tmp/contract_deployer-docker-cache
+            ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
+            contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
       - name: Build prover
         run: |
@@ -108,7 +108,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: buildx-cache
-          path: /tmp
+          path: /tmp/buildx-cache
 
       - name: Bake docker images
         uses: docker/bake-action@v6
@@ -117,8 +117,8 @@ jobs:
           files: "crates/l2/docker-compose-l2.yaml"
           load: true
           set: |
-            ethrex_l2.cache-from=type=local,dest=/tmp/ethrex_l2-docker-cache
-            contract_deployer.cache-from=type=local,dest=/tmp/contract_deployer-docker-cache
+            ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
+            contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
