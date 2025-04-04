@@ -24,24 +24,41 @@ Options:
   -h, --help                     Print help
 ```
 
-### Frequent Usecases
-
-Go to the repository's root dir and run the following command:
-
-```sh
-cargo run --manifest-path cmd/load_test/Cargo.toml -- --path ./test_data/private_keys.txt
-```
-
 The `iterations` means that each pk in the `./test_data/private_keys.txt` file will send `i` transactions.
 At the moment, the file contains 171 accounts. So by default it will be $171 \times 1000 = 171000$ txs.
+
+### Frequent Usecases
+
+Go to the repository's root dir and run the following command in two terminals:
+
+1. Start the Node with the in Memory Engine:
+
+```sh
+cargo run --release --bin ethrex \
+--features "dev" \
+--  \
+--evm revm \
+--network test_data/genesis-l1-dev.json \
+--http.port 1729 \
+--dev \
+--datadir memory
+```
+
+2. Run the Loadtest:
+
+```sh
+cargo run --manifest-path cmd/load_test/Cargo.toml -- --path ./test_data/private_keys.txt --url http://localhost:1729
+```
 
 Also, the root's Makefile contains some targets to facilitate the process `load test` process.
 
 Flamegraph:
 
+- [Install cargo flamegraph](https://github.com/flamegraph-rs/flamegraph?tab=readme-ov-file#installation)
+
 - You will need two terminals:
-  1. `sudo make start-node-with-flamegraph`
-  2. `sudo make load-test`
+  1. `make start-node-with-flamegraph`
+  2. `make load-test`
      - OR:
        - `load-test-erc20`
        - `load-test-fibonacci`
@@ -49,12 +66,16 @@ Flamegraph:
 
 Samply:
 
+- [Install samply](https://github.com/mstange/samply?tab=readme-ov-file#installation)
+
 - You will need two terminals:
-  1. `sudo make start-node-with-samply`
-  2. `sudo make load-test`
+  1. `make start-node-with-samply`
+  2. `make load-test`
      - OR:
        - `load-test-erc20`
        - `load-test-fibonacci`
        - `load-test-io`
 
 When the node is stopeed, it will generate a file named `profile.json.gz`, you can open it at https://profiler.firefox.com/.
+
+> [!NOTE] > `sudo` privileges may be needed to start the node and then for the load-test
