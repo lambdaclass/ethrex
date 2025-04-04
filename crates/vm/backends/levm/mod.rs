@@ -186,7 +186,7 @@ impl LEVM {
             let mut acc_info_updated = false;
             let mut storage_updated = false;
 
-            // Account Info has been updated if balance, nonce or bytecode changed.
+            // 1. Account Info has been updated if balance, nonce or bytecode changed.
             if initial_state_account.balance != new_state_account.info.balance {
                 acc_info_updated = true;
             }
@@ -203,6 +203,7 @@ impl LEVM {
                 None
             };
 
+            // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
             for (key, storage_slot) in &new_state_account.storage {
                 let storage_before_block = db.store.get_storage_slot(address, *key)?;
@@ -224,14 +225,15 @@ impl LEVM {
 
             let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
 
-            if fork >= Fork::SpuriousDragon && fork <= Fork::Berlin {
-                // up to berlin cause I say so :)
-                // c. No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent.
+            // https://eips.ethereum.org/EIPS/eip-161
+            if fork >= Fork::SpuriousDragon {
+                // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
                 if !account_existed && new_state_account.is_empty() {
                     continue;
                 }
 
-                // d. At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted).
+                // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+                // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
                 if new_state_account.is_empty() {
                     removed = true;
                 }
