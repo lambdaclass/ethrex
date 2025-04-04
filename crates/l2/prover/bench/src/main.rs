@@ -6,8 +6,7 @@ use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
-use ethrex_prover_lib::{execute, prove};
-use ethrex_vm::execution_db::ToExecDB;
+use ethrex_prover_lib::execute;
 use zkvm_interface::io::ProgramInput;
 
 #[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
@@ -86,7 +85,7 @@ async fn main() {
     let now = std::time::Instant::now();
     if prove {
         println!("proving");
-        prove(ProgramInput {
+        ethrex_prover_lib::prove(ProgramInput {
             block,
             parent_block_header,
             db,

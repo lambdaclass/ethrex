@@ -188,9 +188,3 @@ impl ExecutionDB {
         Ok(db)
     }
 }
-
-/// Creates an [ExecutionDB] from an initial database and a block to execute, usually via
-/// pre-execution.
-pub trait ToExecDB {
-    fn to_exec_db(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError>;
-}

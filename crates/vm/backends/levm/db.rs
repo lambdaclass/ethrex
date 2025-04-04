@@ -5,7 +5,73 @@ use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::db::{ExecutionDB, StoreWrapper};
 use ethrex_levm::db::error::DatabaseError;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::result::Result;
+use std::sync::Arc;
+
+#[derive(Clone)]
+pub struct DatabaseLogger {
+    pub block_hashes_accessed: RefCell<HashMap<u64, CoreH256>>,
+    pub store: Arc<dyn LevmDatabase>,
+}
+
+impl DatabaseLogger {
+    pub fn new(store: Arc<dyn LevmDatabase>) -> Self {
+        Self {
+            block_hashes_accessed: RefCell::new(HashMap::new()),
+            store,
+        }
+    }
+}
+
+impl LevmDatabase for DatabaseLogger {
+    fn get_account_info(
+        &self,
+        address: CoreAddress,
+    ) -> Result<ethrex_levm::AccountInfo, DatabaseError> {
+        let acc_info = self.store.get_account_info(address)?;
+        Ok(acc_info)
+    }
+
+    fn account_exists(&self, address: CoreAddress) -> bool {
+        self.store.account_exists(address)
+    }
+
+    fn get_storage_slot(
+        &self,
+        address: CoreAddress,
+        key: CoreH256,
+    ) -> Result<CoreU256, DatabaseError> {
+        self.store.get_storage_slot(address, key)
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
+        let block_hash = self.store.get_block_hash(block_number)?;
+        if let Some(hash) = block_hash {
+            self.block_hashes_accessed
+                .borrow_mut()
+                .insert(block_number, hash);
+        }
+        Ok(block_hash)
+    }
+
+    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+        self.store.get_chain_config()
+    }
+
+    fn get_account_info_by_hash(
+        &self,
+        block_hash: ethrex_common::types::BlockHash,
+        address: CoreAddress,
+    ) -> Result<Option<AccountInfo>, DatabaseError> {
+        self.store.get_account_info_by_hash(block_hash, address)
+    }
+
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
+        self.store.get_account_code(code_hash)
+    }
+}
 
 impl LevmDatabase for StoreWrapper {
     fn get_account_info(

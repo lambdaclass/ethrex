@@ -3,21 +3,18 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
-use crate::rpc::{get_account, get_block, get_storage, retry};
+use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Account as CoreAccount, AccountInfo, AccountState, Block, TxKind},
+    types::{AccountInfo, AccountState, Block, TxKind},
     Address, H256, U256,
 };
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
-use ethrex_vm::{
-    execution_db::{ExecutionDB, ToExecDB},
-    spec_id, EvmError,
-};
+use ethrex_vm::{fork_to_spec_id, EvmError, ExecutionDB, ExecutionDBError};
 use futures_util::future::join_all;
-use revm::{db::CacheDB, DatabaseRef};
+use revm::DatabaseRef;
 use revm_primitives::{
     AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
     Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
@@ -163,119 +160,18 @@ impl RpcDB {
             handle.block_on(self.fetch_account(address, storage_keys, from_child))
         })
     }
-}
 
-impl DatabaseRef for RpcDB {
-    type Error = String;
-
-    fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
-        let address = Address::from(address.0.as_ref());
-
-        let account = {
-            let cache_ref = self.cache.borrow();
-            if let Some(account) = cache_ref.get(&address) {
-                account.clone()
-            } else {
-                drop(cache_ref); // fetch_account_blocking mutably borrows the cache
-                self.fetch_account_blocking(address, &[], false)?
-            }
-        };
-
-        if let Account::Existing {
-            account_state,
-            storage,
-            code,
-            ..
-        } = account
-        {
-            Ok(Some(RevmAccountInfo {
-                nonce: account_state.nonce,
-                balance: RevmU256::from_limbs(account_state.balance.0),
-                code_hash: RevmB256::from(account_state.code_hash.0),
-                code: code.map(|code| RevmBytecode::new_raw(RevmBytes(code))),
-            }))
-        } else {
-            Ok(None)
-        }
-    }
-    #[allow(unused_variables)]
-    fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
-        Ok(RevmBytecode::default()) // code is stored in account info
-    }
-    fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        let address = Address::from(address.0.as_ref());
-        let index = H256::from_slice(&index.to_be_bytes_vec());
-
-        // TODO: this can be simplified
-        let value = {
-            let cache_ref = self.cache.borrow();
-            if let Some(account) = cache_ref.get(&address) {
-                let Account::Existing { storage, .. } = account else {
-                    return Err("account doesn't exists".to_string());
-                };
-                match storage.get(&index) {
-                    Some(value) => *value,
-                    None => {
-                        let storage_keys =
-                            storage.keys().chain(&[index]).cloned().collect::<Vec<_>>();
-                        drop(cache_ref); // fetch_account_blocking mutably borrows the cache
-                        let account = self.fetch_account_blocking(address, &storage_keys, false)?;
-                        let Account::Existing { storage, .. } = account else {
-                            return Err("account doesn't exists".to_string());
-                        };
-                        storage[&index]
-                    }
-                }
-            } else {
-                drop(cache_ref); // fetch_account_blocking mutably borrows the cache
-                let account = self.fetch_account_blocking(address, &[index], false)?;
-                let Account::Existing { storage, .. } = account else {
-                    return Err("account doesn't exists".to_string());
-                };
-                storage[&index]
-            }
-        };
-
-        Ok(RevmU256::from_limbs(value.0))
-    }
-    fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
-        let hash = match self.block_hashes.borrow_mut().entry(number) {
-            Entry::Occupied(entry) => *entry.get(),
-            Entry::Vacant(entry) => {
-                println!("retrieving block hash for block number {number}");
-                let handle = tokio::runtime::Handle::current();
-                let hash = tokio::task::block_in_place(|| {
-                    handle.block_on(retry(|| get_block(&self.rpc_url, number as usize)))
-                })
-                .map(|block| block.hash())?;
-                entry.insert(hash);
-                hash
-            }
-        };
-
-        Ok(RevmB256::from(hash.0))
-    }
-}
-
-impl ToExecDB for RpcDB {
-    fn to_exec_db(
-        &self,
-        block: &Block,
-    ) -> Result<ethrex_vm::ExecutionDB, ethrex_vm::errors::ExecutionDBError> {
+    pub fn to_exec_db(&self, block: &Block) -> Result<ethrex_vm::ExecutionDB, ExecutionDBError> {
         // TODO: Simplify this function and potentially merge with the implementation for
         // StoreWrapper.
 
-        let parent_hash = block.header.parent_hash;
         let chain_config = *CANCUN_CONFIG;
+        let fork = chain_config.fork(block.header.timestamp);
 
         // pre-execute and get cache db
-        let cache_db = ExecutionDB::pre_execute(
-            block,
-            chain_config.chain_id,
-            spec_id(&chain_config, block.header.timestamp),
-            self,
-        )
-        .map_err(|err| Box::new(EvmError::Custom(err.to_string())))?; // TODO: ugly error handling
+        let cache_db =
+            ExecutionDB::pre_execute(block, chain_config.chain_id, fork_to_spec_id(fork), self)
+                .map_err(|err| Box::new(EvmError::Custom(err.to_string())))?; // TODO: ugly error handling
 
         // index read and touched account addresses and storage keys
         let index: Vec<_> = cache_db
@@ -432,6 +328,97 @@ impl ToExecDB for RpcDB {
             state_proofs,
             storage_proofs,
         })
+    }
+}
+
+impl DatabaseRef for RpcDB {
+    type Error = String;
+
+    fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
+        let address = Address::from(address.0.as_ref());
+
+        let account = {
+            let cache_ref = self.cache.borrow();
+            if let Some(account) = cache_ref.get(&address) {
+                account.clone()
+            } else {
+                drop(cache_ref); // fetch_account_blocking mutably borrows the cache
+                self.fetch_account_blocking(address, &[], false)?
+            }
+        };
+
+        if let Account::Existing {
+            account_state,
+            code,
+            ..
+        } = account
+        {
+            Ok(Some(RevmAccountInfo {
+                nonce: account_state.nonce,
+                balance: RevmU256::from_limbs(account_state.balance.0),
+                code_hash: RevmB256::from(account_state.code_hash.0),
+                code: code.map(|code| RevmBytecode::new_raw(RevmBytes(code))),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    #[allow(unused_variables)]
+    fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
+        Ok(RevmBytecode::default()) // code is stored in account info
+    }
+    fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
+        let address = Address::from(address.0.as_ref());
+        let index = H256::from_slice(&index.to_be_bytes_vec());
+
+        // TODO: this can be simplified
+        let value = {
+            let cache_ref = self.cache.borrow();
+            if let Some(account) = cache_ref.get(&address) {
+                let Account::Existing { storage, .. } = account else {
+                    return Err("account doesn't exists".to_string());
+                };
+                match storage.get(&index) {
+                    Some(value) => *value,
+                    None => {
+                        let storage_keys =
+                            storage.keys().chain(&[index]).cloned().collect::<Vec<_>>();
+                        drop(cache_ref); // fetch_account_blocking mutably borrows the cache
+                        let account = self.fetch_account_blocking(address, &storage_keys, false)?;
+                        let Account::Existing { storage, .. } = account else {
+                            return Err("account doesn't exists".to_string());
+                        };
+                        storage[&index]
+                    }
+                }
+            } else {
+                drop(cache_ref); // fetch_account_blocking mutably borrows the cache
+                let account = self.fetch_account_blocking(address, &[index], false)?;
+                let Account::Existing { storage, .. } = account else {
+                    return Err("account doesn't exists".to_string());
+                };
+                storage[&index]
+            }
+        };
+
+        Ok(RevmU256::from_limbs(value.0))
+    }
+    fn block_hash_ref(&self, number: u64) -> Result<RevmB256, Self::Error> {
+        let hash = match self.block_hashes.borrow_mut().entry(number) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                println!("retrieving block hash for block number {number}");
+                let handle = tokio::runtime::Handle::current();
+                let hash = tokio::task::block_in_place(|| {
+                    handle.block_on(retry(|| get_block(&self.rpc_url, number as usize)))
+                })
+                .map(|block| block.hash())?;
+                entry.insert(hash);
+                hash
+            }
+        };
+
+        Ok(RevmB256::from(hash.0))
     }
 }
 
