@@ -10,7 +10,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_storage::Store;
-use ethrex_vm::backends::BlockExecutionResult;
+use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
@@ -57,8 +57,9 @@ impl BlockProducer {
         execution_cache: Arc<ExecutionCache>,
     ) {
         loop {
-            if let Err(err) =
-                self.main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+            if let Err(err) = self
+                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+                .await
             {
                 error!("Block Producer Error: {}", err);
             }
@@ -67,7 +68,7 @@ impl BlockProducer {
         }
     }
 
-    pub fn main_logic(
+    pub async fn main_logic(
         &self,
         store: Store,
         blockchain: Arc<Blockchain>,
@@ -102,7 +103,7 @@ impl BlockProducer {
         let mut payload = create_payload(&args, &store)?;
 
         // Blockchain builds the payload from mempool txs and executes them
-        let payload_build_result = blockchain.build_payload(&mut payload)?;
+        let payload_build_result = blockchain.build_payload(&mut payload).await?;
         info!("Built payload for new block {}", payload.header.number);
 
         // Blockchain stores block
@@ -116,7 +117,9 @@ impl BlockProducer {
             requests: Vec::new(),
         };
 
-        blockchain.store_block(&block, execution_result.clone())?;
+        blockchain
+            .store_block(&block, execution_result.clone())
+            .await?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
@@ -124,7 +127,7 @@ impl BlockProducer {
         execution_cache.push(block.hash(), execution_result.account_updates)?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&store, block.hash(), block.hash(), block.hash())?;
+        apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
 
         Ok(())
     }

@@ -4,13 +4,13 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::{
+    rpc::{RpcApiContext, RpcHandler},
     types::{
         block::RpcBlock,
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
         receipt::{RpcReceipt, RpcReceiptBlockInfo, RpcReceiptTxInfo},
     },
     utils::RpcErr,
-    RpcApiContext, RpcHandler,
 };
 use ethrex_common::types::{
     calculate_base_fee_per_blob_gas, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt,
@@ -64,7 +64,7 @@ impl RpcHandler for GetBlockByNumberRequest {
             hydrated: serde_json::from_value(params[1].clone())?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         info!("Requested block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage)? {
@@ -98,7 +98,7 @@ impl RpcHandler for GetBlockByHashRequest {
             hydrated: serde_json::from_value(params[1].clone())?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         info!("Requested block with hash: {:#x}", self.block);
         let block_number = match storage.get_block_number(self.block)? {
@@ -131,7 +131,7 @@ impl RpcHandler for GetBlockTransactionCountRequest {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested transaction count for block with number: {}",
             self.block
@@ -164,7 +164,7 @@ impl RpcHandler for GetBlockReceiptsRequest {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         info!("Requested receipts for block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage)? {
@@ -197,7 +197,7 @@ impl RpcHandler for GetRawHeaderRequest {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested raw header for block with identifier: {}",
             self.block
@@ -230,7 +230,7 @@ impl RpcHandler for GetRawBlockRequest {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested raw block: {}", self.block);
         let block_number = match self.block.resolve_block_number(&context.storage)? {
             Some(block_number) => block_number,
@@ -263,7 +263,7 @@ impl RpcHandler for GetRawReceipts {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let block_number = match self.block.resolve_block_number(storage)? {
             Some(block_number) => block_number,
@@ -288,7 +288,7 @@ impl RpcHandler for BlockNumberRequest {
         Ok(Self {})
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested latest block number");
         serde_json::to_value(format!("{:#x}", context.storage.get_latest_block_number()?))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -300,7 +300,7 @@ impl RpcHandler for GetBlobBaseFee {
         Ok(Self {})
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Requested blob gas price");
         let block_number = context.storage.get_latest_block_number()?;
         let header = match context.storage.get_block_header(block_number)? {

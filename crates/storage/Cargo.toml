@@ -10,6 +10,7 @@ ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-trie.workspace = true
 
+async-trait.workspace = true
 ethereum-types.workspace = true
 anyhow = "1.0.86"
 bytes.workspace = true
@@ -21,11 +22,14 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 libmdbx = { workspace = true, optional = true }
 redb = { workspace = true, optional = true }
+# NOTE: intentionally avoiding the workspace dep as it brings "full" features, breaking the provers
+# We only need the runtime for the blocking databases to spawn blocking tasks
+tokio = { version = "1.41.1", optional = true, default-features = false, features = ["rt"] }
 
 [features]
 default = []
-libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx"]
-redb = ["dep:redb"]
+libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "dep:tokio"]
+redb = ["dep:redb", "dep:tokio"]
 
 [dev-dependencies]
 hex.workspace = true

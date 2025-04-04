@@ -5,7 +5,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{backends::revm::execution_db::ToExecDB, StoreWrapper};
+use ethrex_vm::{StoreWrapper, ToExecDB};
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -63,6 +63,8 @@ pub fn generate_program_input(
     chain: Vec<Block>,
     block_number: usize,
 ) -> Result<ProgramInput, ProverInputError> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
     let block = chain
         .get(block_number)
         .ok_or(ProverInputError::InvalidBlockNumber(block_number))?
@@ -70,11 +72,11 @@ pub fn generate_program_input(
 
     // create store
     let store = Store::new("memory", EngineType::InMemory)?;
-    store.add_initial_state(genesis)?;
+    rt.block_on(store.add_initial_state(genesis))?;
     // create blockchain
     let blockchain = Blockchain::default_with_store(store.clone());
     for block in chain {
-        blockchain.add_block(&block)?;
+        rt.block_on(blockchain.add_block(&block))?;
     }
 
     let parent_hash = block.header.parent_hash;

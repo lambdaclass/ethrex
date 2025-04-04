@@ -2,6 +2,10 @@
 
 ## Perf
 
+#### 2025-04-01
+
+- Asyncify DB write APIs, as well as its users [#2336](https://github.com/lambdaclass/ethrex/pull/2336)
+
 #### 2025-03-30
 
 - Faster block import, use a slice instead of copy

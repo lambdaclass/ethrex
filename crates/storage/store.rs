@@ -94,7 +94,7 @@ impl Store {
         Ok(store)
     }
 
-    pub fn new_from_genesis(
+    pub async fn new_from_genesis(
         store_path: &str,
         engine_type: EngineType,
         genesis_path: &str,
@@ -105,7 +105,7 @@ impl Store {
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let store = Self::new(store_path, engine_type)?;
-        store.add_initial_state(genesis)?;
+        store.add_initial_state(genesis).await?;
         Ok(store)
     }
 
@@ -140,20 +140,22 @@ impl Store {
         }))
     }
 
-    pub fn add_block_header(
+    pub async fn add_block_header(
         &self,
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_header(block_hash, block_header)
+        self.engine.add_block_header(block_hash, block_header).await
     }
 
-    pub fn add_block_headers(
+    pub async fn add_block_headers(
         &self,
         block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_headers(block_hashes, block_headers)
+        self.engine
+            .add_block_headers(block_hashes, block_headers)
+            .await
     }
 
     pub fn get_block_header(
@@ -177,12 +179,12 @@ impl Store {
         self.engine.get_block_body_by_hash(block_hash)
     }
 
-    pub fn add_block_body(
+    pub async fn add_block_body(
         &self,
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_body(block_hash, block_body)
+        self.engine.add_block_body(block_hash, block_body).await
     }
 
     pub fn get_block_body(
@@ -192,12 +194,12 @@ impl Store {
         self.engine.get_block_body(block_number)
     }
 
-    pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         info!(
             "Adding block to pending: {}",
             block.header.compute_block_hash()
         );
-        self.engine.add_pending_block(block)
+        self.engine.add_pending_block(block).await
     }
 
     pub fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
@@ -205,7 +207,7 @@ impl Store {
         self.engine.get_pending_block(block_hash)
     }
 
-    pub fn add_block_number(
+    pub async fn add_block_number(
         &self,
         block_hash: BlockHash,
         block_number: BlockNumber,
@@ -213,6 +215,7 @@ impl Store {
         self.engine
             .clone()
             .add_block_number(block_hash, block_number)
+            .await
     }
 
     pub fn get_block_number(
@@ -222,7 +225,7 @@ impl Store {
         self.engine.get_block_number(block_hash)
     }
 
-    pub fn add_transaction_location(
+    pub async fn add_transaction_location(
         &self,
         transaction_hash: H256,
         block_number: BlockNumber,
@@ -231,9 +234,10 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .await
     }
 
-    pub fn add_transaction_locations(
+    pub async fn add_transaction_locations(
         &self,
         transactions: &[Transaction],
         block_number: BlockNumber,
@@ -250,7 +254,7 @@ impl Store {
             ));
         }
 
-        self.engine.add_transaction_locations(locations)
+        self.engine.add_transaction_locations(locations).await
     }
 
     pub fn get_transaction_location(
@@ -260,8 +264,8 @@ impl Store {
         self.engine.get_transaction_location(transaction_hash)
     }
 
-    pub fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        self.engine.add_account_code(code_hash, code)
+    pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
+        self.engine.add_account_code(code_hash, code).await
     }
 
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
@@ -308,7 +312,7 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
-    pub fn apply_account_updates(
+    pub async fn apply_account_updates(
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
@@ -317,11 +321,13 @@ impl Store {
             return Ok(None);
         };
 
-        let mut state_trie = self.apply_account_updates_from_trie(state_trie, account_updates)?;
+        let mut state_trie = self
+            .apply_account_updates_from_trie(state_trie, account_updates)
+            .await?;
         Ok(Some(state_trie.hash()?))
     }
 
-    pub fn apply_account_updates_from_trie(
+    pub async fn apply_account_updates_from_trie(
         &self,
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
@@ -344,7 +350,7 @@ impl Store {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.add_account_code(info.code_hash, code.clone())?;
+                        self.add_account_code(info.code_hash, code.clone()).await?;
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -371,7 +377,7 @@ impl Store {
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
-    pub fn setup_genesis_state_trie(
+    pub async fn setup_genesis_state_trie(
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
@@ -380,7 +386,7 @@ impl Store {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
-            self.add_account_code(code_hash, account.code)?;
+            self.add_account_code(code_hash, account.code).await?;
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
@@ -404,28 +410,28 @@ impl Store {
         Ok(genesis_state_trie.hash()?)
     }
 
-    pub fn add_receipt(
+    pub async fn add_receipt(
         &self,
         block_hash: BlockHash,
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipt(block_hash, index, receipt)
+        self.engine.add_receipt(block_hash, index, receipt).await
     }
 
-    pub fn add_receipts(
+    pub async fn add_receipts(
         &self,
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipts(block_hash, receipts)
+        self.engine.add_receipts(block_hash, receipts).await
     }
 
-    pub fn add_receipts_for_blocks(
+    pub async fn add_receipts_for_blocks(
         &self,
         receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipts_for_blocks(receipts)
+        self.engine.add_receipts_for_blocks(receipts).await
     }
 
     pub fn get_receipt(
@@ -436,21 +442,21 @@ impl Store {
         self.engine.get_receipt(block_number, index)
     }
 
-    pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        self.add_blocks(&[block])
+    pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
+        self.add_blocks(vec![block]).await
     }
 
-    pub fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        self.engine.add_blocks(blocks)
+    pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
+        self.engine.add_blocks(blocks).await
     }
 
-    pub fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        self.engine.mark_chain_as_canonical(blocks)
+    pub async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        self.engine.mark_chain_as_canonical(blocks).await
     }
 
-    pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
+    pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
         info!("Setting initial sync status to false");
-        self.update_sync_status(false)?;
+        self.update_sync_status(false).await?;
 
         info!("Storing initial state from genesis");
 
@@ -470,7 +476,7 @@ impl Store {
         }
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
-        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc)?;
+        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
         // Store genesis block
@@ -479,13 +485,16 @@ impl Store {
             genesis_block_number, genesis_hash
         );
 
-        self.add_block(genesis_block)?;
-        self.update_earliest_block_number(genesis_block_number)?;
-        self.update_latest_block_number(genesis_block_number)?;
-        self.set_canonical_block(genesis_block_number, genesis_hash)?;
+        self.add_block(genesis_block).await?;
+        self.update_earliest_block_number(genesis_block_number)
+            .await?;
+        self.update_latest_block_number(genesis_block_number)
+            .await?;
+        self.set_canonical_block(genesis_block_number, genesis_hash)
+            .await?;
 
         // Set chain config
-        self.set_chain_config(&genesis.config)
+        self.set_chain_config(&genesis.config).await
     }
 
     pub fn get_transaction_by_hash(
@@ -535,19 +544,19 @@ impl Store {
             .transpose()
     }
 
-    pub fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        self.engine.set_chain_config(chain_config)
+    pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+        self.engine.set_chain_config(chain_config).await
     }
 
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
         self.engine.get_chain_config()
     }
 
-    pub fn update_earliest_block_number(
+    pub async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_earliest_block_number(block_number)
+        self.engine.update_earliest_block_number(block_number).await
     }
 
     pub fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
@@ -556,27 +565,35 @@ impl Store {
             .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
-    pub fn update_finalized_block_number(
+    pub async fn update_finalized_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_finalized_block_number(block_number)
+        self.engine
+            .update_finalized_block_number(block_number)
+            .await
     }
 
     pub fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.engine.get_finalized_block_number()
     }
 
-    pub fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.update_safe_block_number(block_number)
+    pub async fn update_safe_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        self.engine.update_safe_block_number(block_number).await
     }
 
     pub fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.engine.get_safe_block_number()
     }
 
-    pub fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.update_latest_block_number(block_number)
+    pub async fn update_latest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        self.engine.update_latest_block_number(block_number).await
     }
 
     pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
@@ -585,20 +602,23 @@ impl Store {
             .ok_or(StoreError::MissingLatestBlockNumber)
     }
 
-    pub fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.update_pending_block_number(block_number)
+    pub async fn update_pending_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        self.engine.update_pending_block_number(block_number).await
     }
 
     pub fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.engine.get_pending_block_number()
     }
 
-    pub fn set_canonical_block(
+    pub async fn set_canonical_block(
         &self,
         number: BlockNumber,
         hash: BlockHash,
     ) -> Result<(), StoreError> {
-        self.engine.set_canonical_block(number, hash)
+        self.engine.set_canonical_block(number, hash).await
     }
 
     pub fn get_canonical_block_hash(
@@ -619,8 +639,8 @@ impl Store {
     /// Marks a block number as not having any canonical blocks associated with it.
     /// Used for reorgs.
     /// Note: Should we also remove all others up to the head here?
-    pub fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.unset_canonical_block(number)
+    pub async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
+        self.engine.unset_canonical_block(number).await
     }
 
     /// Obtain the storage trie for the given block
@@ -838,20 +858,20 @@ impl Store {
         Ok(nodes)
     }
 
-    pub fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.engine.add_payload(payload_id, block)
+    pub async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
+        self.engine.add_payload(payload_id, block).await
     }
 
     pub fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         self.engine.get_payload(payload_id)
     }
 
-    pub fn update_payload(
+    pub async fn update_payload(
         &self,
         payload_id: u64,
         payload: PayloadBundle,
     ) -> Result<(), StoreError> {
-        self.engine.update_payload(payload_id, payload)
+        self.engine.update_payload(payload_id, payload).await
     }
 
     pub fn get_receipts_for_block(
@@ -905,8 +925,11 @@ impl Store {
     }
 
     /// Sets the hash of the last header downloaded during a snap sync
-    pub fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        self.engine.set_header_download_checkpoint(block_hash)
+    pub async fn set_header_download_checkpoint(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.engine.set_header_download_checkpoint(block_hash).await
     }
 
     /// Gets the hash of the last header downloaded during a snap sync
@@ -915,11 +938,11 @@ impl Store {
     }
 
     /// Sets the last key fetched from the state trie being fetched during snap sync
-    pub fn set_state_trie_key_checkpoint(
+    pub async fn set_state_trie_key_checkpoint(
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
-        self.engine.set_state_trie_key_checkpoint(last_keys)
+        self.engine.set_state_trie_key_checkpoint(last_keys).await
     }
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
@@ -931,26 +954,26 @@ impl Store {
 
     /// Sets storage trie paths in need of healing, grouped by hashed address
     /// This will overwite previously stored paths for the received storages but will not remove other storage's paths
-    pub fn set_storage_heal_paths(
+    pub async fn set_storage_heal_paths(
         &self,
         paths: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_storage_heal_paths(paths)
+        self.engine.set_storage_heal_paths(paths).await
     }
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
     /// Gets paths from at most `limit` storage tries and removes them from the Store
     #[allow(clippy::type_complexity)]
-    pub fn take_storage_heal_paths(
+    pub async fn take_storage_heal_paths(
         &self,
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        self.engine.take_storage_heal_paths(limit)
+        self.engine.take_storage_heal_paths(limit).await
     }
 
     /// Sets the state trie paths in need of healing
-    pub fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
-        self.engine.set_state_heal_paths(paths)
+    pub async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.engine.set_state_heal_paths(paths).await
     }
 
     /// Gets the state trie paths in need of healing
@@ -961,22 +984,23 @@ impl Store {
     pub fn is_synced(&self) -> Result<bool, StoreError> {
         self.engine.is_synced()
     }
-    pub fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.engine.update_sync_status(status)
+    pub async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+        self.engine.update_sync_status(status).await
     }
 
     /// Write an account batch into the current state snapshot
-    pub fn write_snapshot_account_batch(
+    pub async fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
         account_states: Vec<AccountState>,
     ) -> Result<(), StoreError> {
         self.engine
             .write_snapshot_account_batch(account_hashes, account_states)
+            .await
     }
 
     /// Write a storage batch into the current storage snapshot
-    pub fn write_snapshot_storage_batch(
+    pub async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
         storage_keys: Vec<H256>,
@@ -984,10 +1008,11 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine
             .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
+            .await
     }
 
     /// Write multiple storage batches belonging to different accounts into the current storage snapshot
-    pub fn write_snapshot_storage_batches(
+    pub async fn write_snapshot_storage_batches(
         &self,
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,
@@ -995,19 +1020,22 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine
             .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
+            .await
     }
 
     /// Clears all checkpoint data created during the last snap sync
-    pub fn clear_snap_state(&self) -> Result<(), StoreError> {
-        self.engine.clear_snap_state()
+    pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.engine.clear_snap_state().await
     }
 
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub fn set_state_trie_rebuild_checkpoint(
+    pub async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        self.engine.set_state_trie_rebuild_checkpoint(checkpoint)
+        self.engine
+            .set_state_trie_rebuild_checkpoint(checkpoint)
+            .await
     }
 
     /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
@@ -1018,11 +1046,11 @@ impl Store {
     }
 
     /// Set the accont hashes and roots of the storage tries awaiting rebuild
-    pub fn set_storage_trie_rebuild_pending(
+    pub async fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_storage_trie_rebuild_pending(pending)
+        self.engine.set_storage_trie_rebuild_pending(pending).await
     }
 
     /// Get the accont hashes and roots of the storage tries awaiting rebuild
@@ -1033,8 +1061,8 @@ impl Store {
     }
 
     /// Clears the state and storage snapshots
-    pub fn clear_snapshot(&self) -> Result<(), StoreError> {
-        self.engine.clear_snapshot()
+    pub async fn clear_snapshot(&self) -> Result<(), StoreError> {
+        self.engine.clear_snapshot().await
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
@@ -1087,25 +1115,29 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_in_memory_store() {
-        test_store_suite(EngineType::InMemory);
+    #[tokio::test]
+    async fn test_in_memory_store() {
+        test_store_suite(EngineType::InMemory).await;
     }
 
     #[cfg(feature = "libmdbx")]
-    #[test]
-    fn test_libmdbx_store() {
-        test_store_suite(EngineType::Libmdbx);
+    #[tokio::test]
+    async fn test_libmdbx_store() {
+        test_store_suite(EngineType::Libmdbx).await;
     }
 
     #[cfg(feature = "redb")]
-    #[test]
-    fn test_redb_store() {
-        test_store_suite(EngineType::RedB);
+    #[tokio::test]
+    async fn test_redb_store() {
+        test_store_suite(EngineType::RedB).await;
     }
 
     // Creates an empty store, runs the test and then removes the store (if needed)
-    fn run_test(test_func: &dyn Fn(Store), engine_type: EngineType) {
+    async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
+    where
+        F: FnOnce(Store) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
         // Remove preexistent DBs in case of a failed previous test
         if !matches!(engine_type, EngineType::InMemory) {
             remove_test_dbs("store-test-db");
@@ -1113,26 +1145,26 @@ mod tests {
         // Build a new store
         let store = Store::new("store-test-db", engine_type).expect("Failed to create test db");
         // Run the test
-        test_func(store);
+        test_func(store).await;
         // Remove store (if needed)
         if !matches!(engine_type, EngineType::InMemory) {
             remove_test_dbs("store-test-db");
         };
     }
 
-    fn test_store_suite(engine_type: EngineType) {
-        run_test(&test_store_block, engine_type);
-        run_test(&test_store_block_number, engine_type);
-        run_test(&test_store_transaction_location, engine_type);
-        run_test(&test_store_transaction_location_not_canonical, engine_type);
-        run_test(&test_store_block_receipt, engine_type);
-        run_test(&test_store_account_code, engine_type);
-        run_test(&test_store_block_tags, engine_type);
-        run_test(&test_chain_config_storage, engine_type);
-        run_test(&test_genesis_block, engine_type);
+    async fn test_store_suite(engine_type: EngineType) {
+        run_test(test_store_block, engine_type).await;
+        run_test(test_store_block_number, engine_type).await;
+        run_test(test_store_transaction_location, engine_type).await;
+        run_test(test_store_transaction_location_not_canonical, engine_type).await;
+        run_test(test_store_block_receipt, engine_type).await;
+        run_test(test_store_account_code, engine_type).await;
+        run_test(test_store_block_tags, engine_type).await;
+        run_test(test_chain_config_storage, engine_type).await;
+        run_test(test_genesis_block, engine_type).await;
     }
 
-    fn test_genesis_block(store: Store) {
+    async fn test_genesis_block(store: Store) {
         const GENESIS_KURTOSIS: &str = include_str!("../../test_data/genesis-kurtosis.json");
         const GENESIS_HIVE: &str = include_str!("../../test_data/genesis-hive.json");
         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
@@ -1142,12 +1174,15 @@ mod tests {
             serde_json::from_str(GENESIS_HIVE).expect("deserialize genesis-hive.json");
         store
             .add_initial_state(genesis_kurtosis.clone())
+            .await
             .expect("first genesis");
         store
             .add_initial_state(genesis_kurtosis)
+            .await
             .expect("second genesis with same block");
         panic::catch_unwind(move || {
-            let _ = store.add_initial_state(genesis_hive);
+            let rt = tokio::runtime::Runtime::new().expect("runtime creation failed");
+            let _ = rt.block_on(store.add_initial_state(genesis_hive));
         })
         .expect_err("genesis with a different block should panic");
     }
@@ -1159,14 +1194,20 @@ mod tests {
         }
     }
 
-    fn test_store_block(store: Store) {
+    async fn test_store_block(store: Store) {
         let (block_header, block_body) = create_block_for_testing();
         let block_number = 6;
         let hash = block_header.compute_block_hash();
 
-        store.add_block_header(hash, block_header.clone()).unwrap();
-        store.add_block_body(hash, block_body.clone()).unwrap();
-        store.set_canonical_block(block_number, hash).unwrap();
+        store
+            .add_block_header(hash, block_header.clone())
+            .await
+            .unwrap();
+        store
+            .add_block_body(hash, block_body.clone())
+            .await
+            .unwrap();
+        store.set_canonical_block(block_number, hash).await.unwrap();
 
         let stored_header = store.get_block_header(block_number).unwrap().unwrap();
         let stored_body = store.get_block_body(block_number).unwrap().unwrap();
@@ -1228,18 +1269,21 @@ mod tests {
         (block_header, block_body)
     }
 
-    fn test_store_block_number(store: Store) {
+    async fn test_store_block_number(store: Store) {
         let block_hash = H256::random();
         let block_number = 6;
 
-        store.add_block_number(block_hash, block_number).unwrap();
+        store
+            .add_block_number(block_hash, block_number)
+            .await
+            .unwrap();
 
         let stored_number = store.get_block_number(block_hash).unwrap().unwrap();
 
         assert_eq!(stored_number, block_number);
     }
 
-    fn test_store_transaction_location(store: Store) {
+    async fn test_store_transaction_location(store: Store) {
         let transaction_hash = H256::random();
         let block_hash = H256::random();
         let block_number = 6;
@@ -1247,9 +1291,13 @@ mod tests {
 
         store
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .await
             .unwrap();
 
-        store.set_canonical_block(block_number, block_hash).unwrap();
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .unwrap();
 
         let stored_location = store
             .get_transaction_location(transaction_hash)
@@ -1259,7 +1307,7 @@ mod tests {
         assert_eq!(stored_location, (block_number, block_hash, index));
     }
 
-    fn test_store_transaction_location_not_canonical(store: Store) {
+    async fn test_store_transaction_location_not_canonical(store: Store) {
         let transaction_hash = H256::random();
         let block_hash = H256::random();
         let block_number = 6;
@@ -1267,10 +1315,12 @@ mod tests {
 
         store
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .await
             .unwrap();
 
         store
             .set_canonical_block(block_number, H256::random())
+            .await
             .unwrap();
 
         assert_eq!(
@@ -1279,7 +1329,7 @@ mod tests {
         )
     }
 
-    fn test_store_block_receipt(store: Store) {
+    async fn test_store_block_receipt(store: Store) {
         let receipt = Receipt {
             tx_type: TxType::EIP2930,
             succeeded: true,
@@ -1293,27 +1343,34 @@ mod tests {
 
         store
             .add_receipt(block_hash, index, receipt.clone())
+            .await
             .unwrap();
 
-        store.set_canonical_block(block_number, block_hash).unwrap();
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .unwrap();
 
         let stored_receipt = store.get_receipt(block_number, index).unwrap().unwrap();
 
         assert_eq!(stored_receipt, receipt);
     }
 
-    fn test_store_account_code(store: Store) {
+    async fn test_store_account_code(store: Store) {
         let code_hash = H256::random();
         let code = Bytes::from("kiwi");
 
-        store.add_account_code(code_hash, code.clone()).unwrap();
+        store
+            .add_account_code(code_hash, code.clone())
+            .await
+            .unwrap();
 
         let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
 
         assert_eq!(stored_code, code);
     }
 
-    fn test_store_block_tags(store: Store) {
+    async fn test_store_block_tags(store: Store) {
         let earliest_block_number = 0;
         let finalized_block_number = 7;
         let safe_block_number = 6;
@@ -1322,16 +1379,23 @@ mod tests {
 
         store
             .update_earliest_block_number(earliest_block_number)
+            .await
             .unwrap();
         store
             .update_finalized_block_number(finalized_block_number)
+            .await
             .unwrap();
-        store.update_safe_block_number(safe_block_number).unwrap();
+        store
+            .update_safe_block_number(safe_block_number)
+            .await
+            .unwrap();
         store
             .update_latest_block_number(latest_block_number)
+            .await
             .unwrap();
         store
             .update_pending_block_number(pending_block_number)
+            .await
             .unwrap();
 
         let stored_earliest_block_number = store.get_earliest_block_number().unwrap();
@@ -1347,9 +1411,9 @@ mod tests {
         assert_eq!(pending_block_number, stored_pending_block_number);
     }
 
-    fn test_chain_config_storage(store: Store) {
+    async fn test_chain_config_storage(store: Store) {
         let chain_config = example_chain_config();
-        store.set_chain_config(&chain_config).unwrap();
+        store.set_chain_config(&chain_config).await.unwrap();
         let retrieved_chain_config = store.get_chain_config().unwrap();
         assert_eq!(chain_config, retrieved_chain_config);
     }

@@ -1,8 +1,11 @@
-name: Benchmark Block execution against main
+name: Benchmark Block execution
 
 on:
   pull_request:
     branches: ["**"]
+
+permissions:
+  pull-requests: write
 
 jobs:
   build-binaries:

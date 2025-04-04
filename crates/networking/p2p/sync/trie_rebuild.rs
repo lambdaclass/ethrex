@@ -138,7 +138,7 @@ async fn rebuild_state_trie_in_backgound(
         }
         // Update DB checkpoint
         let checkpoint = (root, rebuild_status.clone().map(|st| st.current));
-        store.set_state_trie_rebuild_checkpoint(checkpoint)?;
+        store.set_state_trie_rebuild_checkpoint(checkpoint).await?;
         // Move on to the next segment
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
@@ -235,7 +235,9 @@ async fn rebuild_storage_trie_in_background(
             res?;
         }
     }
-    store.set_storage_trie_rebuild_pending(pending_storages)?;
+    store
+        .set_storage_trie_rebuild_pending(pending_storages)
+        .await?;
     Ok(())
 }
 
@@ -270,7 +272,9 @@ async fn rebuild_storage_trie(
     }
     if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
         warn!("Mismatched storage root for account {account_hash}");
-        store.set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])?;
+        store
+            .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
+            .await?;
     }
     Ok(())
 }

@@ -3,8 +3,9 @@
 // - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
 use crate::{
+    rpc::{RpcApiContext, RpcHandler},
     types::{block_identifier::BlockIdentifier, receipt::RpcLog},
-    RpcApiContext, RpcErr, RpcHandler,
+    utils::RpcErr,
 };
 use ethrex_common::{H160, H256};
 use ethrex_storage::Store;
@@ -84,7 +85,7 @@ impl RpcHandler for LogsFilter {
             )),
         }
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let filtered_logs = fetch_logs_with_filter(self, context.storage)?;
         serde_json::to_value(filtered_logs).map_err(|error| {
             tracing::error!("Log filtering request failed with: {error}");

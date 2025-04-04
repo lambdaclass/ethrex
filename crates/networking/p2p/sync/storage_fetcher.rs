@@ -18,8 +18,8 @@ use tracing::debug;
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, BATCH_SIZE, MAX_CHANNEL_MESSAGES,
-        MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES,
+        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS,
+        MAX_PARALLEL_FETCHES, STORAGE_BATCH_SIZE,
     },
 };
 
@@ -78,14 +78,15 @@ pub(crate) async fn storage_fetcher(
         // or if we have no more incoming batches, spawn a fetch process
         // If the pivot became stale don't process anything and just save incoming requests
         while !stale
-            && (pending_storage.len() >= BATCH_SIZE || (!incoming && !pending_storage.is_empty()))
+            && (pending_storage.len() >= STORAGE_BATCH_SIZE
+                || (!incoming && !pending_storage.is_empty()))
         {
             // We will be spawning multiple tasks and then collecting their results
             // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
             let mut storage_tasks = tokio::task::JoinSet::new();
             for _ in 0..MAX_PARALLEL_FETCHES {
                 let next_batch = pending_storage
-                    .drain(..BATCH_SIZE.min(pending_storage.len()))
+                    .drain(..STORAGE_BATCH_SIZE.min(pending_storage.len()))
                     .collect::<Vec<_>>();
                 storage_tasks.spawn(fetch_storage_batch(
                     next_batch,
@@ -96,7 +97,9 @@ pub(crate) async fn storage_fetcher(
                     storage_trie_rebuilder_sender.clone(),
                 ));
                 // End loop if we don't have enough elements to fill up a batch
-                if pending_storage.is_empty() || (incoming && pending_storage.len() < BATCH_SIZE) {
+                if pending_storage.is_empty()
+                    || (incoming && pending_storage.len() < STORAGE_BATCH_SIZE)
+                {
                     break;
                 }
             }
@@ -113,12 +116,14 @@ pub(crate) async fn storage_fetcher(
         pending_storage.len()
     );
     if !pending_storage.is_empty() {
-        store.set_storage_heal_paths(
-            pending_storage
-                .into_iter()
-                .map(|(hash, _)| (hash, vec![Nibbles::default()]))
-                .collect(),
-        )?;
+        store
+            .set_storage_heal_paths(
+                pending_storage
+                    .into_iter()
+                    .map(|(hash, _)| (hash, vec![Nibbles::default()]))
+                    .collect(),
+            )
+            .await?;
     }
     // Signal large storage fetcher
     large_storage_sender.send(vec![]).await?;
@@ -157,7 +162,9 @@ async fn fetch_storage_batch(
                 let (account_hash, storage_root) = batch.remove(0);
                 let last_key = *last_keys.last().unwrap();
                 // Store downloaded range
-                store.write_snapshot_storage_batch(account_hash, last_keys, last_values)?;
+                store
+                    .write_snapshot_storage_batch(account_hash, last_keys, last_values)
+                    .await?;
                 // Delegate the rest of the trie to the large trie fetcher
                 large_storage_sender
                     .send(vec![LargeStorageRequest {
@@ -173,7 +180,9 @@ async fn fetch_storage_batch(
         // Store the storage ranges & rebuild the storage trie for each account
         let filled_storages: Vec<(H256, H256)> = batch.drain(..values.len()).collect();
         let account_hashes: Vec<H256> = filled_storages.iter().map(|(hash, _)| *hash).collect();
-        store.write_snapshot_storage_batches(account_hashes, keys, values)?;
+        store
+            .write_snapshot_storage_batches(account_hashes, keys, values)
+            .await?;
         // Send complete storages to the rebuilder
         storage_trie_rebuilder_sender.send(filled_storages).await?;
         // Return remaining code hashes in the batch if we couldn't fetch all of them
@@ -259,7 +268,7 @@ async fn large_storage_fetcher(
             .iter()
             .map(|req| (req.account_hash, REBUILDER_INCOMPLETE_STORAGE_ROOT))
             .collect();
-        store.set_storage_heal_paths(heal_paths)?;
+        store.set_storage_heal_paths(heal_paths).await?;
         storage_trie_rebuilder_sender
             .send(account_hashes_and_roots)
             .await?;
@@ -293,7 +302,9 @@ async fn fetch_large_storage(
         // Update next batch's start
         request.last_key = *keys.last().unwrap();
         // Write storage range to snapshot
-        store.write_snapshot_storage_batch(request.account_hash, keys, values)?;
+        store
+            .write_snapshot_storage_batch(request.account_hash, keys, values)
+            .await?;
         if incomplete {
             Ok((Some(request), false))
         } else {

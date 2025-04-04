@@ -19,7 +19,7 @@ At startup, the discovery server launches three concurrent tokio tasks:
 
 Before starting these tasks, we run a [startup](#startup) process to connect to an array of initial nodes.
 
-Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a [Kademlia table](https://github.com/lambdaclass/ethrex/blob/main/crates/net/kademlia.rs#L20-L23), though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more [here](https://en.wikipedia.org/wiki/Kademlia). This table holds:
+Before diving into what each task does, first, we need to understand how we are storing our nodes. Nodes are stored in an in-memory matrix which we call a [Kademlia table](https://github.com/lambdaclass/ethrex/blob/main/crates/networking/p2p/kademlia.rs#L25-L28), though it isn't really a Kademlia table as we don't thoroughly follow the spec but we take it as a reference, you can read more [here](https://en.wikipedia.org/wiki/Kademlia). This table holds:
 
 -   Our `node_id`: `node_id`s are derived from the public key. They are the 64 bytes starting from index 1 of the encoded pub key.
 -   A vector of 256 `bucket`s which holds:

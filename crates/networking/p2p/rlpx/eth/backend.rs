@@ -103,9 +103,9 @@ mod tests {
     use ethrex_storage::{EngineType, Store};
     use std::{fs::File, io::BufReader};
 
-    #[test]
+    #[tokio::test]
     // TODO add tests for failing validations
-    fn test_validate_status() {
+    async fn test_validate_status() {
         // Setup
         // TODO we should have this setup exported to some test_utils module and use from there
         let storage =
@@ -117,6 +117,7 @@ mod tests {
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         storage
             .add_initial_state(genesis.clone())
+            .await
             .expect("Failed to add genesis block to DB");
         let config = genesis.config;
         let total_difficulty = U256::from(config.terminal_total_difficulty.unwrap_or_default());

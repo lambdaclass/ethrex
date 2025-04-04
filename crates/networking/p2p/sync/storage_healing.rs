@@ -42,7 +42,8 @@ pub(crate) async fn storage_healer(
         if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
             pending_paths.extend(
                 store
-                    .take_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)?
+                    .take_storage_heal_paths(MINUMUM_STORAGES_IN_QUEUE)
+                    .await?
                     .into_iter(),
             );
         }
@@ -77,7 +78,9 @@ pub(crate) async fn storage_healer(
     }
     let healing_complete = pending_paths.is_empty();
     // Store pending paths
-    store.set_storage_heal_paths(pending_paths.into_iter().collect())?;
+    store
+        .set_storage_heal_paths(pending_paths.into_iter().collect())
+        .await?;
     Ok(healing_complete)
 }
 
