@@ -3515,6 +3515,7 @@ name = "ethrex-storage"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus 0.4.2",
+ "alloy-primitives 0.8.25",
  "anyhow",
  "bytes",
  "ethereum-types",

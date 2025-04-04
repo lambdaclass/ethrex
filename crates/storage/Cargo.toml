@@ -34,6 +34,7 @@ reth-nippy-jar = { git = "https://github.com/paradigmxyz/reth", package = "reth-
 reth-provider = { git = "https://github.com/paradigmxyz/reth", package = "reth-provider" , tag = "v1.1.0"}
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth", package = "reth-storage-api" , tag = "v1.1.0"}
 alloy-consensus = "0.4.2"
+alloy-primitives = "0.8.25"
 
 [features]
 default = []

@@ -1,3 +1,6 @@
+use std::cell::{Cell, OnceCell};
+use std::marker::PhantomData;
+use std::sync::atomic::AtomicBool;
 // Storage implementation using reth's fork of libmdbx
 // to compare against our own.
 use std::sync::{Arc, Mutex};
@@ -22,18 +25,25 @@ use ethrex_common::{Bloom, H160};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, Trie, TrieDB, TrieError};
 use reth_db::mdbx::{init_db, DatabaseArguments, DatabaseEnv};
-use reth_db::tables;
+use reth_db::AccountsTrie;
+use reth_db::{tables, StoragesTrie};
 use reth_db::{
     transaction::{DbTx, DbTxMut},
     Database,
 };
+use reth_db_api::cursor::DbCursorRO;
+use reth_db_api::cursor::DbCursorRW;
+use reth_db_api::cursor::DbDupCursorRO;
+use reth_db_api::cursor::DbDupCursorRW;
 
 #[derive(Debug)]
 pub struct MDBXFork {
     env: DatabaseEnv,
 }
+
+pub static SYNC_STATUS: AtomicBool = AtomicBool::new(false);
 
 impl MDBXFork {
     pub fn new(path: &str) -> Result<Self, StoreError> {
@@ -95,6 +105,42 @@ fn reth_header_to_ethrex_header(header: Header) -> BlockHeader {
         excess_blob_gas: header.excess_blob_gas,
         parent_beacon_block_root: header.parent_beacon_block_root.map(|root| H256(root.0)),
         requests_hash: header.requests_root.map(|hash| H256(hash.0)),
+    }
+}
+
+use reth_db_api::table::Table as RethTable;
+use reth_libmdbx::Environment;
+
+pub struct MDBXTrieDB<T: RethTable> {
+    db: Environment,
+    phantom: PhantomData<T>,
+}
+impl<T> MDBXTrieDB<T>
+where
+    T: RethTable,
+{
+    pub fn new(db: Environment) -> Self {
+        Self {
+            db,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> TrieDB for MDBXTrieDB<T>
+where
+    T: RethTable,
+{
+    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+        todo!()
+    }
+
+    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
+        todo!()
+    }
+
+    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+        todo!()
     }
 }
 
@@ -285,7 +331,8 @@ impl StoreEngine for MDBXFork {
     }
 
     fn open_state_trie(&self, state_root: H256) -> Trie {
-        todo!()
+        let db = Box::new(MDBXTrieDB::<StoragesTrie>::new(self.env.clone()));
+        Trie::open(db, state_root)
     }
 
     fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
@@ -401,11 +448,12 @@ impl StoreEngine for MDBXFork {
     }
 
     fn is_synced(&self) -> Result<bool, StoreError> {
-        todo!()
+        Ok(SYNC_STATUS.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        todo!()
+        SYNC_STATUS.store(status, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
 
     fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
