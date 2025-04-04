@@ -42,7 +42,7 @@ async fn read_incoming_requests<T>(
     if !receiver.is_empty() || queue.is_empty() {
         let mut msg_buffer = vec![];
         receiver.recv_many(&mut msg_buffer, MAX_CHANNEL_READS).await;
-        let incoming = msg_buffer.is_empty() || msg_buffer.iter().any(|reqs| reqs.is_empty());
+        let incoming = !(msg_buffer.is_empty() || msg_buffer.iter().any(|reqs| reqs.is_empty()));
         queue.extend(msg_buffer.into_iter().flatten());
         incoming
     } else {
