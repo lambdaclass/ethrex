@@ -29,6 +29,7 @@ jobs:
           workdir: "crates/l2"
           files: "crates/l2/docker-compose-l2.yaml"
           set: |
+            ethrex.cache-to=type=local,dest=/tmp/buildx-cache/ethrex,mode=max
             ethrex_l2.cache-to=type=local,dest=/tmp/buildx-cache/ethrex_l2,mode=max
             contract_deployer.cache-to=type=local,dest=/tmp/buildx-cache/contract_deployer,mode=max
 
@@ -69,6 +70,7 @@ jobs:
           files: "crates/l2/docker-compose-l2.yaml"
           load: true
           set: |
+            ethrex.cache-from=type=local,src=/tmp/buildx-cache/ethrex
             ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
             contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
@@ -117,6 +119,7 @@ jobs:
           files: "crates/l2/docker-compose-l2.yaml"
           load: true
           set: |
+            ethrex.cache-from=type=local,src=/tmp/buildx-cache/ethrex
             ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
             contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
