@@ -167,13 +167,13 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
-init-prover: ## 🚀 Initializes the Prover
+init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
 	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
 	PROVER_CLIENT_CONFIG_FILE=${ethrex_L2_PROVER_CLIENT_CONFIG_FILE} \
 	PROVER_ENV_FILE=${PROVER_ENV_FILE} \
 	../../target/release/ethrex_prover
 
-build-prover:
+../../target/release/ethrex_prover:
 	@if [ -z "$$PROVER" ]; then \
 		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
 		echo "Please provide it as an argument:"; \
@@ -198,7 +198,7 @@ build-prover:
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
 
-integration-test: build-prover rm-db-l2 rm-db-l1
+integration-test: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
 	touch .env
