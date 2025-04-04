@@ -172,18 +172,19 @@ async fn large_storage_fetcher(
     let mut pending_storage: Vec<LargeStorageRequest> = vec![];
     // Create an async closure to pass to the generic task spawner
     let s_sender = storage_trie_rebuilder_sender.clone();
-    let fetch_batch = move |mut batch: Vec<LargeStorageRequest>, peers: PeerHandler, store: Store| {
-        let s_sender = s_sender.clone();
-        // Batch size should always be 1
-        if batch.len() != 1 {
-            error!("Invalid large storage batch size, check source code");
-        }
-        async move {
-            fetch_large_storage(batch.remove(0), state_root, peers, store, s_sender.clone())
-                .await
-                .map(|(rem, stale)| (rem.map(|r| vec![r]).unwrap_or_default(), stale))
-        }
-    };
+    let fetch_batch =
+        move |mut batch: Vec<LargeStorageRequest>, peers: PeerHandler, store: Store| {
+            let s_sender = s_sender.clone();
+            // Batch size should always be 1
+            if batch.len() != 1 {
+                error!("Invalid large storage batch size, check source code");
+            }
+            async move {
+                fetch_large_storage(batch.remove(0), state_root, peers, store, s_sender.clone())
+                    .await
+                    .map(|(rem, stale)| (rem.map(|r| vec![r]).unwrap_or_default(), stale))
+            }
+        };
     run_queue(
         &mut receiver,
         &mut pending_storage,
