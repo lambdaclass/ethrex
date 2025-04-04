@@ -11,6 +11,7 @@ concurrency:
 
 env:
   CI_ETHREX_WORKDIR: /usr/local/bin
+  PROVER: exec
 
 jobs:
   docker-bake:
