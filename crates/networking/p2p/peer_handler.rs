@@ -1,9 +1,13 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 use ethrex_common::{
     types::{AccountState, BlockBody, BlockHeader, Receipt},
-    H256, U256,
+    H256, H512, U256,
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Nibbles;
@@ -28,7 +32,7 @@ use crate::{
     },
     snap::encodable_to_proof,
 };
-use tracing::info;
+use tracing::{info, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
@@ -58,21 +62,113 @@ impl PeerHandler {
     pub fn new(peer_table: Arc<Mutex<KademliaTable>>) -> PeerHandler {
         Self { peer_table }
     }
-    /// Returns the channel ends to an active peer connection that supports the given capability
-    /// The peer is selected randomly, and doesn't guarantee that the selected peer is not currently busy
-    /// If no peer is found, this method will try again after 10 seconds
-    async fn get_peer_channel_with_retry(&self, capability: Capability) -> Option<PeerChannels> {
+
+    /// Returns the channel ends to an active peer connection that supports the given capability.  
+    ///
+    /// The peer is selected based on its scoring and if it is not currently busy. If no suitable peer is found, this method retries  
+    /// after 10 seconds.
+    async fn get_peer_channel_with_retry(
+        &self,
+        capability: Capability,
+    ) -> Option<(PeerChannels, H512)> {
         for _ in 0..PEER_SELECT_RETRY_ATTEMPTS {
-            let table = self.peer_table.lock().await;
-            if let Some(channels) = table.get_peer_channels(capability.clone()) {
-                return Some(channels);
+            let mut table_lock = self.peer_table.lock().await;
+            if let Some(peer) = table_lock.get_idle_peer_with_capability_mut(capability.clone()) {
+                peer.set_as_busy();
+                return Some((peer.channels.clone().unwrap(), peer.node.node_id));
             };
             // drop the lock early to no block the rest of processes
-            drop(table);
+            drop(table_lock);
             info!("[Sync] No peers available, retrying in 10 sec");
             // This is the unlikely case where we just started the node and don't have peers, wait a bit and try again
             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
+        None
+    }
+
+    pub async fn peer_failed_to_respond(&self, node_id: H512) {
+        let mut table_lock = self.peer_table.lock().await;
+        let Some(peer) = table_lock.get_by_node_id_mut(node_id) else {
+            return;
+        };
+
+        peer.set_as_idle();
+        peer.scoring = peer.scoring.saturating_sub(1);
+        if peer.scoring == 0 {
+            warn!(
+                "Peer {:?} is being replaced. Reason: scoring reached zero.",
+                table_lock.replace_peer(node_id)
+            )
+        }
+    }
+
+    pub async fn peer_responded_successfully(&self, node_id: H512, scoring_points: u16) {
+        let mut table_lock = self.peer_table.lock().await;
+        let Some(peer) = table_lock.get_by_node_id_mut(node_id) else {
+            return;
+        };
+
+        peer.set_as_idle();
+        peer.scoring = peer.scoring.saturating_add(scoring_points);
+    }
+
+    /// Sends a request to a peer with the specified capability.
+    ///
+    /// ### Params
+    /// - `request_msg`: A callback function that constructs the request message. This avoids the need to derive `Clone` for `RLPxMessage`,
+    ///   as each request attempt takes ownership of the message. This is beneficial because some `RLPxMessage` structures can be expensive to clone.
+    /// - `validate_response`: A function that validates the received response. If the response is successful, it is returned.
+    ///
+    /// The request is retried up to [`REQUEST_RETRY_ATTEMPTS`] times if necessary.
+    ///
+    /// ### Scoring
+    /// Additionally, peers receive points for successful validations and low-latency responses,
+    /// so that we prioritize the selection of peers when sending messages.
+    async fn send_request<T: crate::rlpx::message::RLPxMessage + 'static>(
+        &self,
+        cap: Capability,
+        request_msg: impl Fn() -> RLPxMessage,
+        validate_response: impl Fn(&T) -> bool,
+    ) -> Option<T> {
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let channels = self.get_peer_channel_with_retry(cap.clone()).await;
+            let (channel, node_id) = channels?;
+
+            let mut receiver = channel.receiver.lock().await;
+            channel.sender.send(request_msg()).await.ok();
+            let since = Instant::now();
+            let response =
+                tokio::time::timeout(PEER_REPLY_TIMEOUT, async move { receiver.recv().await })
+                    .await
+                    .ok()
+                    .flatten();
+
+            let Some(response) = response else {
+                self.peer_failed_to_respond(node_id).await;
+                continue;
+            };
+
+            let response: T = response.inner()?;
+            let validation = validate_response(&response);
+            if !validation {
+                self.peer_failed_to_respond(node_id).await;
+                return None;
+            }
+
+            // Assign 1 point for a successful response.
+            // If the response time is under 100ms, assign 1 additional points for speed.
+            let mut scoring_points = 1;
+            let latency = since.elapsed().as_millis();
+            if latency < 100 {
+                scoring_points += 1;
+            }
+
+            self.peer_responded_successfully(node_id, scoring_points)
+                .await;
+
+            return Some(response);
+        }
+
         None
     }
 
@@ -85,41 +181,25 @@ impl PeerHandler {
         start: H256,
         order: BlockRequestOrder,
     ) -> Option<Vec<BlockHeader>> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetBlockHeaders(GetBlockHeaders {
                 id: request_id,
                 startblock: start.into(),
                 limit: BLOCK_HEADER_LIMIT,
                 skip: 0,
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
-                            if id == request_id =>
-                        {
-                            return Some(block_headers)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|headers| (!headers.is_empty()).then_some(headers))
-            {
-                return Some(block_headers);
-            }
-        }
-        None
+        };
+        let validation = |response: &BlockHeaders| {
+            response.id == request_id && !response.block_headers.is_empty()
+        };
+
+        let response = self
+            .send_request::<BlockHeaders>(Capability::Eth, request, validation)
+            .await?;
+
+        Some(response.block_headers)
     }
 
     /// Requests block bodies from any suitable peer given their block hashes
@@ -128,40 +208,23 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_block_bodies(&self, block_hashes: Vec<H256>) -> Option<Vec<BlockBody>> {
         let block_hashes_len = block_hashes.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetBlockBodies(GetBlockBodies {
                 id: request_id,
                 block_hashes: block_hashes.clone(),
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
-                            if id == request_id =>
-                        {
-                            return Some(block_bodies)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|bodies| {
-                // Check that the response is not empty and does not contain more bodies than the ones requested
-                (!bodies.is_empty() && bodies.len() <= block_hashes_len).then_some(bodies)
-            }) {
-                return Some(block_bodies);
-            }
-        }
-        None
+        };
+        let validation = |response: &BlockBodies| {
+            response.id == request_id
+                && !response.block_bodies.is_empty()
+                && response.block_bodies.len() <= block_hashes_len
+        };
+        let response = self
+            .send_request::<BlockBodies>(Capability::Eth, request, validation)
+            .await?;
+
+        Some(response.block_bodies)
     }
 
     /// Requests all receipts in a set of blocks from any suitable peer given their block hashes
@@ -170,40 +233,23 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_receipts(&self, block_hashes: Vec<H256>) -> Option<Vec<Vec<Receipt>>> {
         let block_hashes_len = block_hashes.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetReceipts(GetReceipts {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetReceipts(GetReceipts {
                 id: request_id,
                 block_hashes: block_hashes.clone(),
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::Receipts(Receipts { id, receipts }))
-                            if id == request_id =>
-                        {
-                            return Some(receipts)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|receipts|
-                // Check that the response is not empty and does not contain more bodies than the ones requested
-                (!receipts.is_empty() && receipts.len() <= block_hashes_len).then_some(receipts))
-            {
-                return Some(receipts);
-            }
-        }
-        None
+        };
+        let validation = |response: &Receipts| {
+            response.id == request_id
+                && !response.receipts.is_empty()
+                && response.receipts.len() <= block_hashes_len
+        };
+        let response = self
+            .send_request::<Receipts>(Capability::Eth, request, validation)
+            .await?;
+
+        Some(response.receipts)
     }
 
     /// Requests an account range from any suitable peer given the state trie's root and the starting hash and the limit hash.
@@ -218,57 +264,44 @@ impl PeerHandler {
         start: H256,
         limit: H256,
     ) -> Option<(Vec<H256>, Vec<AccountState>, bool)> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetAccountRange(GetAccountRange {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetAccountRange(GetAccountRange {
                 id: request_id,
                 root_hash: state_root,
                 starting_hash: start,
                 limit_hash: limit,
                 response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some((accounts, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::AccountRange(AccountRange {
-                            id,
-                            accounts,
-                            proof,
-                        })) if id == request_id => return Some((accounts, proof)),
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
-            .await
-            .ok()
-            .flatten()
-            {
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
-                    .into_iter()
-                    .map(|unit| (unit.hash, AccountState::from(unit.account)))
-                    .unzip();
-                let encoded_accounts = accounts
-                    .iter()
-                    .map(|acc| acc.encode_to_vec())
-                    .collect::<Vec<_>>();
-                if let Ok(should_continue) = verify_range(
-                    state_root,
-                    &start,
-                    &account_hashes,
-                    &encoded_accounts,
-                    &proof,
-                ) {
-                    return Some((account_hashes, accounts, should_continue));
-                }
-            }
+        };
+        let validation = |response: &AccountRange| response.id == request_id;
+
+        let response = self
+            .send_request::<AccountRange>(Capability::Eth, request, validation)
+            .await?;
+
+        let (accounts, proof) = (response.accounts, response.proof);
+
+        // Unzip & validate response
+        let proof = encodable_to_proof(&proof);
+        let (account_hashes, accounts): (Vec<_>, Vec<_>) = accounts
+            .into_iter()
+            .map(|unit| (unit.hash, AccountState::from(unit.account)))
+            .unzip();
+        let encoded_accounts = accounts
+            .iter()
+            .map(|acc| acc.encode_to_vec())
+            .collect::<Vec<_>>();
+        if let Ok(should_continue) = verify_range(
+            state_root,
+            &start,
+            &account_hashes,
+            &encoded_accounts,
+            &proof,
+        ) {
+            return Some((account_hashes, accounts, should_continue));
         }
+
         None
     }
 
@@ -278,39 +311,25 @@ impl PeerHandler {
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_bytecodes(&self, hashes: Vec<H256>) -> Option<Vec<Bytes>> {
         let hashes_len = hashes.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetByteCodes(GetByteCodes {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetByteCodes(GetByteCodes {
                 id: request_id,
                 hashes: hashes.clone(),
                 bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(codes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::ByteCodes(ByteCodes { id, codes }))
-                            if id == request_id =>
-                        {
-                            return Some(codes)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
-            .await
-            .ok()
-            .flatten()
-            .and_then(|codes| (!codes.is_empty() && codes.len() <= hashes_len).then_some(codes))
-            {
-                return Some(codes);
-            }
-        }
-        None
+        };
+        let validation = |response: &ByteCodes| {
+            response.id == request_id
+                && !response.codes.is_empty()
+                && response.codes.len() <= hashes_len
+        };
+
+        let response = self
+            .send_request::<ByteCodes>(Capability::Eth, request, validation)
+            .await?;
+
+        Some(response.codes)
     }
 
     /// Requests storage ranges for accounts given their hashed address and storage roots, and the root of their state trie
@@ -321,94 +340,78 @@ impl PeerHandler {
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
     /// - No peer returned a valid response in the given time and retry limits
     pub async fn request_storage_ranges(
-        &self,
+        &mut self,
         state_root: H256,
         mut storage_roots: Vec<H256>,
         account_hashes: Vec<H256>,
         start: H256,
     ) -> Option<(Vec<Vec<H256>>, Vec<Vec<U256>>, bool)> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetStorageRanges(GetStorageRanges {
                 id: request_id,
                 root_hash: state_root,
                 account_hashes: account_hashes.clone(),
                 starting_hash: start,
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
-                            if id == request_id =>
-                        {
-                            return Some((slots, proof))
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
-            .await
-            .ok()
-            .flatten()
-            {
-                // Check we got a reasonable amount of storage ranges
-                if slots.len() > storage_roots.len() || slots.is_empty() {
-                    return None;
-                }
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let mut storage_keys = vec![];
-                let mut storage_values = vec![];
-                let mut should_continue = false;
-                // Validate each storage range
-                while !slots.is_empty() {
-                    let (hashed_keys, values): (Vec<_>, Vec<_>) = slots
-                        .remove(0)
-                        .into_iter()
-                        .map(|slot| (slot.hash, slot.data))
-                        .unzip();
-                    // We won't accept empty storage ranges
-                    if hashed_keys.is_empty() {
-                        continue;
-                    }
-                    let encoded_values = values
-                        .iter()
-                        .map(|val| val.encode_to_vec())
-                        .collect::<Vec<_>>();
-                    let storage_root = storage_roots.remove(0);
+        };
+        let validation = |response: &StorageRanges| {
+            // Check we got a reasonable amount of storage ranges
+            response.id == request_id
+                && !response.slots.is_empty()
+                && response.slots.len() <= storage_roots.len()
+        };
 
-                    // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
-                    if slots.is_empty() && !proof.is_empty() {
-                        let Ok(sc) = verify_range(
-                            storage_root,
-                            &start,
-                            &hashed_keys,
-                            &encoded_values,
-                            &proof,
-                        ) else {
-                            continue;
-                        };
-                        should_continue = sc;
-                    } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
-                        .is_err()
-                    {
-                        continue;
-                    }
+        let response = self
+            .send_request::<StorageRanges>(Capability::Eth, request, validation)
+            .await?;
 
-                    storage_keys.push(hashed_keys);
-                    storage_values.push(values);
-                }
-                return Some((storage_keys, storage_values, should_continue));
+        let (mut slots, proof) = (response.slots, response.proof);
+
+        // Unzip & validate response
+        let proof = encodable_to_proof(&proof);
+        let mut storage_keys = vec![];
+        let mut storage_values = vec![];
+        let mut should_continue = false;
+
+        // Validate each storage range
+        while !slots.is_empty() {
+            let (hashed_keys, values): (Vec<_>, Vec<_>) = slots
+                .remove(0)
+                .into_iter()
+                .map(|slot| (slot.hash, slot.data))
+                .unzip();
+            // We won't accept empty storage ranges
+            if hashed_keys.is_empty() {
+                continue;
             }
+            let encoded_values = values
+                .iter()
+                .map(|val| val.encode_to_vec())
+                .collect::<Vec<_>>();
+            let storage_root = storage_roots.remove(0);
+
+            // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
+            if slots.is_empty() && !proof.is_empty() {
+                let Ok(sc) =
+                    verify_range(storage_root, &start, &hashed_keys, &encoded_values, &proof)
+                else {
+                    continue;
+                };
+                should_continue = sc;
+            } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
+                .is_err()
+            {
+                continue;
+            }
+
+            storage_keys.push(hashed_keys);
+            storage_values.push(values);
         }
-        None
+
+        Some((storage_keys, storage_values, should_continue))
     }
 
     /// Requests state trie nodes given the root of the trie where they are contained and their path (be them full or partial)
@@ -421,9 +424,9 @@ impl PeerHandler {
         paths: Vec<Nibbles>,
     ) -> Option<Vec<Node>> {
         let expected_nodes = paths.len();
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetTrieNodes(GetTrieNodes {
                 id: request_id,
                 root_hash: state_root,
                 // [acc_path, acc_path,...] -> [[acc_path], [acc_path]]
@@ -432,42 +435,25 @@ impl PeerHandler {
                     .map(|vec| vec![Bytes::from(vec.encode_compact())])
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
-                            if id == request_id =>
-                        {
-                            return Some(nodes)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
-            .await
+        };
+
+        let validation = |response: &TrieNodes| {
+            response.id == request_id
+                && !response.nodes.is_empty()
+                && response.nodes.len() <= expected_nodes
+        };
+
+        let response = self
+            .send_request::<TrieNodes>(Capability::Eth, request, validation)
+            .await?;
+
+        response
+            .nodes
+            .iter()
+            .map(|node| Node::decode_raw(node))
+            .collect::<Result<Vec<_>, _>>()
             .ok()
-            .flatten()
-            .and_then(|nodes| {
-                (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                    .then(|| {
-                        nodes
-                            .iter()
-                            .map(|node| Node::decode_raw(node))
-                            .collect::<Result<Vec<_>, _>>()
-                            .ok()
-                    })
-                    .flatten()
-            }) {
-                return Some(nodes);
-            }
-        }
-        None
     }
 
     /// Requests storage trie nodes given the root of the state trie where they are contained and
@@ -480,10 +466,10 @@ impl PeerHandler {
         state_root: H256,
         paths: BTreeMap<H256, Vec<Nibbles>>,
     ) -> Option<Vec<Node>> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let expected_nodes = paths.iter().fold(0, |acc, item| acc + item.1.len());
-            let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
+        let request_id = rand::random();
+        let expected_nodes = paths.iter().fold(0, |acc, item| acc + item.1.len());
+        let request = || {
+            RLPxMessage::GetTrieNodes(GetTrieNodes {
                 id: request_id,
                 root_hash: state_root,
                 // {acc_path: [path, path, ...]} -> [[acc_path, path, path, ...]]
@@ -501,42 +487,25 @@ impl PeerHandler {
                     })
                     .collect(),
                 bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::TrieNodes(TrieNodes { id, nodes }))
-                            if id == request_id =>
-                        {
-                            return Some(nodes)
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
-            .await
+        };
+
+        let validation = |response: &TrieNodes| {
+            response.id == request_id
+                && !response.nodes.is_empty()
+                && response.nodes.len() <= expected_nodes
+        };
+
+        let response = self
+            .send_request::<TrieNodes>(Capability::Eth, request, validation)
+            .await?;
+
+        response
+            .nodes
+            .iter()
+            .map(|node| Node::decode_raw(node))
+            .collect::<Result<Vec<_>, _>>()
             .ok()
-            .flatten()
-            .and_then(|nodes| {
-                (!nodes.is_empty() && nodes.len() <= expected_nodes)
-                    .then(|| {
-                        nodes
-                            .iter()
-                            .map(|node| Node::decode_raw(node))
-                            .collect::<Result<Vec<_>, _>>()
-                            .ok()
-                    })
-                    .flatten()
-            }) {
-                return Some(nodes);
-            }
-        }
-        None
     }
 
     /// Requests a single storage range for an accouns given its hashed address and storage root, and the root of its state trie
@@ -554,60 +523,45 @@ impl PeerHandler {
         account_hash: H256,
         start: H256,
     ) -> Option<(Vec<H256>, Vec<U256>, bool)> {
-        for _ in 0..REQUEST_RETRY_ATTEMPTS {
-            let request_id = rand::random();
-            let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
+        let request_id = rand::random();
+        let request = || {
+            RLPxMessage::GetStorageRanges(GetStorageRanges {
                 id: request_id,
                 root_hash: state_root,
                 account_hashes: vec![account_hash],
                 starting_hash: start,
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
-            });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
-            let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
-            if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
-                loop {
-                    match receiver.recv().await {
-                        Some(RLPxMessage::StorageRanges(StorageRanges { id, slots, proof }))
-                            if id == request_id =>
-                        {
-                            return Some((slots, proof))
-                        }
-                        // Ignore replies that don't match the expected id (such as late responses)
-                        Some(_) => continue,
-                        None => return None,
-                    }
-                }
             })
-            .await
-            .ok()
-            .flatten()
-            {
-                // Check we got a reasonable amount of storage ranges
-                if slots.len() != 1 {
-                    return None;
-                }
-                // Unzip & validate response
-                let proof = encodable_to_proof(&proof);
-                let (storage_keys, storage_values): (Vec<H256>, Vec<U256>) = slots
-                    .remove(0)
-                    .into_iter()
-                    .map(|slot| (slot.hash, slot.data))
-                    .unzip();
-                let encoded_values = storage_values
-                    .iter()
-                    .map(|val| val.encode_to_vec())
-                    .collect::<Vec<_>>();
-                // Verify storage range
-                if let Ok(should_continue) =
-                    verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof)
-                {
-                    return Some((storage_keys, storage_values, should_continue));
-                }
-            }
+        };
+
+        let validation =
+            |response: &StorageRanges| response.id == request_id && response.slots.len() == 1;
+
+        let response = self
+            .send_request::<StorageRanges>(Capability::Eth, request, validation)
+            .await?;
+
+        let (mut slots, proof) = (response.slots, response.proof);
+
+        // Unzip & validate response
+        let proof = encodable_to_proof(&proof);
+        let (storage_keys, storage_values): (Vec<H256>, Vec<U256>) = slots
+            .remove(0)
+            .into_iter()
+            .map(|slot| (slot.hash, slot.data))
+            .unzip();
+        let encoded_values = storage_values
+            .iter()
+            .map(|val| val.encode_to_vec())
+            .collect::<Vec<_>>();
+        // Verify storage range
+        if let Ok(should_continue) =
+            verify_range(storage_root, &start, &storage_keys, &encoded_values, &proof)
+        {
+            return Some((storage_keys, storage_values, should_continue));
         }
+
         None
     }
 }
