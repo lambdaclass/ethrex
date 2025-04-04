@@ -15,6 +15,7 @@ cargo run --release \
     --path ./test_data/private_keys.txt -i $iterations -v --value $value --to $account --url http://localhost:1729 >/dev/null
 
 # TODO: replace with rex, ethrex_l2 checks on port 1729
+# ISSUE: https://github.com/lambdaclass/ethrex/issues/2407
 output=$(ethrex_l2 info -b -a $account --wei 2>&1)
 
 while [[ $output -lt $end_val ]]; do

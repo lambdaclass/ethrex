@@ -238,6 +238,7 @@ jobs:
           fi
 
       # TODO: replace with rex
+      # ISSUE: https://github.com/lambdaclass/ethrex/issues/2407
       - name: Install ethrex_l2 cli
         run: |
           if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
@@ -373,6 +374,7 @@ jobs:
           fi
 
       # TODO: replace with rex
+      # ISSUE: https://github.com/lambdaclass/ethrex/issues/2407
       - name: Install ethrex_l2 cli
         run: |
           if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
