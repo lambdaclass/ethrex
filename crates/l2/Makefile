@@ -173,6 +173,8 @@ init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
 	PROVER_ENV_FILE=${PROVER_ENV_FILE} \
 	../../target/release/ethrex_prover
 
+build-prover: ../../target/release/ethrex_prover
+
 ../../target/release/ethrex_prover:
 	@if [ -z "$$PROVER" ]; then \
 		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
