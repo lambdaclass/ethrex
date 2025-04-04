@@ -10,7 +10,7 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::peer_handler::PeerHandler;
 
-use super::{utils::read_incoming_requests, SyncError, BYTECODE_BATCH_SIZE};
+use super::{utils::run_queue, SyncError, BYTECODE_BATCH_SIZE};
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 pub(crate) async fn bytecode_fetcher(
@@ -19,26 +19,12 @@ pub(crate) async fn bytecode_fetcher(
     store: Store,
 ) -> Result<(), SyncError> {
     let mut pending_bytecodes: Vec<H256> = vec![];
-    let mut incoming = true;
     let fetch_batch = move |batch: Vec<H256>, peers: PeerHandler, store: Store| async {
         let rem = fetch_bytecode_batch(batch, peers, store).await.unwrap();
         // Bytecode fetcher will never become stale
         (rem, false)
     };
-    while incoming {
-        // Read incoming messages and add them to the queue
-        incoming = read_incoming_requests(&mut receiver, &mut pending_bytecodes).await;
-        // Spawn fetch tasks for the queued elements
-        crate::sync::utils::spawn_fetch_tasks(
-            &mut pending_bytecodes,
-            incoming,
-            &fetch_batch,
-            peers.clone(),
-            store.clone(),
-            BYTECODE_BATCH_SIZE,
-        )
-        .await;
-    }
+    run_queue(&mut receiver, &mut pending_bytecodes, &fetch_batch, peers.clone(), store.clone(), BYTECODE_BATCH_SIZE).await;
     Ok(())
 }
 
