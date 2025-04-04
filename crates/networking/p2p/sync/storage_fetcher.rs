@@ -7,7 +7,11 @@
 //! If the pivot becomes stale while there are still pending storages in queue these will be sent to the storage healer
 //! Even if the pivot becomes stale, the fetcher will remain active and listening until a termination signal (an empty batch) is received
 
+<<<<<<< HEAD
 use std::cmp::min;
+=======
+use std::time::Instant;
+>>>>>>> ae78ebfac (feat: use new generic function across fetchers)
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
@@ -18,7 +22,7 @@ use crate::{
     peer_handler::PeerHandler,
     sync::{
         trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, utils::read_incoming_requests, BATCH_SIZE,
-        MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES,
+        MAX_CHANNEL_MESSAGES,
     },
 };
 
@@ -189,6 +193,7 @@ async fn large_storage_fetcher(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
+<<<<<<< HEAD
     while incoming || !pending_storage.is_empty() {
         // Fetch incoming requests
         incoming = read_incoming_requests(&mut receiver, &mut pending_storage).await;
@@ -216,6 +221,41 @@ async fn large_storage_fetcher(
                 }
                 stale |= is_stale;
             }
+=======
+    // Create an async closure to pass to the generic task spawner
+    let s_sender = storage_trie_rebuilder_sender.clone();
+    let fetch_batch = move |batch: Vec<(H256, H256, H256)>, peers: PeerHandler, store: Store| {
+        let s_sender = s_sender.clone();
+        // Batch size should always be 1
+        if batch.len() != 1 {
+            warn!("Invalid large storage batch size, check source code");
+        }
+        async move {
+            let (rem, stale) =
+                fetch_large_storage_batch(batch[0], state_root, peers, store, s_sender.clone())
+                    .await
+                    .unwrap();
+            let remaining = rem.map(|r| vec![r]).unwrap_or_default();
+            (remaining, stale)
+        }
+    };
+    while incoming {
+        // Read incoming messages and add them to the queue
+        incoming = read_incoming_requests(&mut receiver, &mut pending_storage).await;
+        // If the pivot isn't stale, spawn fetch tasks for the queued elements
+        if stale {
+            info!("Fetch storage: Stale Pivot");
+        } else {
+            stale = crate::sync::utils::spawn_fetch_tasks(
+                &mut pending_storage,
+                incoming,
+                &fetch_batch,
+                peers.clone(),
+                store.clone(),
+                1,
+            )
+            .await;
+>>>>>>> ae78ebfac (feat: use new generic function across fetchers)
         }
     }
     info!(

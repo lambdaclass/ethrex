@@ -7,7 +7,6 @@
 use ethrex_common::H256;
 use ethrex_storage::{error::StoreError, Store};
 use tokio::sync::mpsc::Receiver;
-use tracing::debug;
 
 use crate::peer_handler::PeerHandler;
 
@@ -21,20 +20,24 @@ pub(crate) async fn bytecode_fetcher(
 ) -> Result<(), SyncError> {
     let mut pending_bytecodes: Vec<H256> = vec![];
     let mut incoming = true;
+    let fetch_batch = move |batch: Vec<H256>, peers: PeerHandler, store: Store| async {
+        let rem = fetch_bytecode_batch(batch, peers, store).await.unwrap();
+        // Bytecode fetcher will never become stale
+        (rem, false)
+    };
     while incoming {
+        // Read incoming messages and add them to the queue
         incoming = read_incoming_requests(&mut receiver, &mut pending_bytecodes).await;
-        // If we have enough pending bytecodes to fill a batch
-        // or if we have no more incoming batches, spawn a fetch process
-        while pending_bytecodes.len() >= BYTECODE_BATCH_SIZE
-            || !incoming && !pending_bytecodes.is_empty()
-        {
-            let next_batch = pending_bytecodes
-                .drain(..BYTECODE_BATCH_SIZE.min(pending_bytecodes.len()))
-                .collect::<Vec<_>>();
-            let remaining = fetch_bytecode_batch(next_batch, peers.clone(), store.clone()).await?;
-            // Add unfeched bytecodes back to the queue
-            pending_bytecodes.extend(remaining);
-        }
+        // Spawn fetch tasks for the queued elements
+        crate::sync::utils::spawn_fetch_tasks(
+            &mut pending_bytecodes,
+            incoming,
+            &fetch_batch,
+            peers.clone(),
+            store.clone(),
+            BYTECODE_BATCH_SIZE,
+        )
+        .await;
     }
     Ok(())
 }
@@ -46,7 +49,6 @@ async fn fetch_bytecode_batch(
     store: Store,
 ) -> Result<Vec<H256>, StoreError> {
     if let Some(bytecodes) = peers.request_bytecodes(batch.clone()).await {
-        debug!("Received {} bytecodes", bytecodes.len());
         // Store the bytecodes
         for code in bytecodes.into_iter() {
             store.add_account_code(batch.remove(0), code).await?;
