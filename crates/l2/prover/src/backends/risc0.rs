@@ -62,12 +62,12 @@ pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error
     // bytes32 journalDigest
     let calldata = vec![
         Value::Bytes(seal.into()),
-        Value::FixedBytes(image_id.into()),
         Value::FixedBytes(journal_digest.into()),
     ];
 
     Ok(ProofCalldata {
         prover_type: ProverType::RISC0,
         calldata,
+        vkey: image_id.into(),
     })
 }

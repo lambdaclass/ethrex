@@ -1,4 +1,4 @@
-use ethrex_common::{H256, U256};
+use ethrex_common::{Bytes, H256, U256};
 use ethrex_l2_sdk::calldata::Value;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -32,19 +32,13 @@ impl ProverType {
                 vec![
                     Value::Bytes(vec![].into()),
                     Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
                 ]
             }
             ProverType::SP1 => {
-                vec![
-                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
-                    Value::Bytes(vec![].into()),
-                    Value::Bytes(vec![].into()),
-                ]
+                vec![Value::Bytes(vec![].into()), Value::Bytes(vec![].into())]
             }
             ProverType::Pico => {
                 vec![
-                    Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
                     Value::Bytes(vec![].into()),
                     Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
                 ]
@@ -59,4 +53,5 @@ impl ProverType {
 pub struct ProofCalldata {
     pub prover_type: ProverType,
     pub calldata: Vec<Value>,
+    pub vkey: Bytes,
 }

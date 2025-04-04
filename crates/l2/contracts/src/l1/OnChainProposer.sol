@@ -42,10 +42,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     mapping(address _authorizedAddress => bool)
         public authorizedSequencerAddresses;
 
+    /// @dev Contracts
     address public BRIDGE;
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
+
+    /// @dev Verifying Keys
+    bytes32 public SP1_VKEY;
+    bytes32 public RISC0_VKEY;
+    bytes32 public PICO_VKEY;
 
     /// @notice Address used to avoid the verification process.
     /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
@@ -135,6 +141,37 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     }
 
     /// @inheritdoc IOnChainProposer
+    function setSp1Vkey(bytes32 sp1ProgramVKey) external onlySequencer {
+        SP1_VKEY = sp1ProgramVKey;
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function setRisc0Vkey(bytes32 risc0ImageId) external onlySequencer {
+        require(
+            RISC0_VKEY == bytes32(0),
+            "OnChainProposer: RISC0_VKEY already initialized"
+        );
+        require(
+            risc0ImageId != bytes32(0),
+            "OnChainProposer: risc0ImageId shouldn't be zero"
+        );
+        RISC0_VKEY = risc0ImageId;
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function setPicoVkey(bytes32 picoRiscvVkey) external onlySequencer {
+        require(
+            PICO_VKEY == bytes32(0),
+            "OnChainProposer: PICO_VKEY already initialized"
+        );
+        require(
+            picoRiscvVkey != bytes32(0),
+            "OnChainProposer: picoRiscvVkey shouldn't be zero"
+        );
+        PICO_VKEY = picoRiscvVkey;
+    }
+
+    /// @inheritdoc IOnChainProposer
     function commit(
         uint256 blockNumber,
         bytes32 commitment,
@@ -183,14 +220,11 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         uint256 blockNumber,
         //risc0
         bytes calldata risc0BlockProof,
-        bytes32 risc0ImageId,
         bytes32 risc0JournalDigest,
         //sp1
-        bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
         bytes calldata sp1ProofBytes,
         //pico
-        bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
         uint256[8] calldata picoProof
     ) external override onlySequencer {
@@ -209,7 +243,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         if (PICOVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             IPicoVerifier(PICOVERIFIER).verifyPicoProof(
-                picoRiscvVkey,
+                PICO_VKEY,
                 picoPublicValues,
                 picoProof
             );
@@ -219,7 +253,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             // If the verification fails, it will revert.
             IRiscZeroVerifier(R0VERIFIER).verify(
                 risc0BlockProof,
-                risc0ImageId,
+                RISC0_VKEY,
                 risc0JournalDigest
             );
         }
@@ -227,7 +261,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             ISP1Verifier(SP1VERIFIER).verifyProof(
-                sp1ProgramVKey,
+                SP1_VKEY,
                 sp1PublicValues,
                 sp1ProofBytes
             );
