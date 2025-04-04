@@ -385,20 +385,18 @@ pub fn block_number_has_all_needed_proofs(
 mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
-    use ethrex_vm::{
-        backends::{Evm, EvmEngine},
-        ExecutionDB,
-    };
-    use test_casing::test_casing;
+    use ethrex_vm::ExecutionDB;
 
     use super::*;
     use crate::utils::test_data_io;
+    use ethrex_vm::EvmEngine;
     use std::fs::{self};
+    use test_casing::test_casing;
 
     #[test_casing(2, [EvmEngine::LEVM, EvmEngine::REVM])]
     #[test]
     fn test_state_file_integration(
-        evm_engine: EvmEngine,
+        _evm_engine: EvmEngine,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = fs::remove_dir_all(default_datadir()?) {
             if e.kind() != std::io::ErrorKind::NotFound {
@@ -445,9 +443,8 @@ mod tests {
 
         // Write all the account_updates and proofs for each block
         for block in &blocks {
-            let mut evm = Evm::new(evm_engine, store.clone(), block.hash());
             let account_updates =
-                ExecutionDB::get_account_updates(blocks.last().unwrap(), &mut evm).unwrap();
+                ExecutionDB::get_account_updates(blocks.last().unwrap(), &store).unwrap();
 
             account_updates_vec.push(account_updates.clone());
 

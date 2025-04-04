@@ -5,6 +5,9 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["**"]
+    paths:
+      - "crates/l2/prover/**"
+      - ".github/workflows/pr-main_l2_prover_nightly.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
