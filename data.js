@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743785456616,
+  "lastUpdate": 1743801475808,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2575,6 +2575,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 190126874748,
             "range": "± 430342626",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ee2369f18ff027a7dc359dcad038e504a76c9e50",
+          "message": "refactor(l1,levm): refactor state transtitions for LEVM (#2396)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Fix, improve clarity and behavior of `get_state_transitions()` for\nLEVM\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Before we were adding unnecessary information to account updates and\nwe were saying some things were updated when they actually stayed the\nsame. We now don't do this.\n- I refactored the function so that it is more simple and clear; it was\nunnecessarily messy.\n- A few more EF State Tests from some old forks pass.\n\nAdditional: Adds `refresh-evm-ef-tests` to levm Makefile. It is\nnecessary because tests get outdated pretty easily.",
+          "timestamp": "2025-04-04T20:27:45Z",
+          "tree_id": "b0b43b11dd73d322e50f5a411674a44abacd0145",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ee2369f18ff027a7dc359dcad038e504a76c9e50"
+        },
+        "date": 1743801474231,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183902124093,
+            "range": "± 921900689",
             "unit": "ns/iter"
           }
         ]
