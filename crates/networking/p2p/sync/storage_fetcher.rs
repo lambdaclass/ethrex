@@ -59,17 +59,7 @@ pub(crate) async fn storage_fetcher(
     let fetch_batch = move |batch: Vec<(H256, H256)>, peers: PeerHandler, store: Store| {
         let l_sender = l_sender.clone();
         let s_sender = s_sender.clone();
-        async move {
-            fetch_storage_batch(
-                batch,
-                state_root,
-                peers,
-                store,
-                l_sender,
-                s_sender,
-            )
-            .await
-        }
+        async move { fetch_storage_batch(batch, state_root, peers, store, l_sender, s_sender).await }
     };
     run_queue(
         &mut receiver,
