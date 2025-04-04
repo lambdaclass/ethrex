@@ -16,7 +16,7 @@ interface IOnChainProposer {
 
     /// @notice A batch has been committed.
     /// @dev Event emitted when a batch is committed.
-    event BatchCommited(bytes32 indexed currentBatchCommitment);
+    event BatchCommitted(bytes32 indexed currentBatchCommitment);
 
     /// @notice A batch has been verified.
     /// @dev Event emitted when a batch is verified.

@@ -13,16 +13,17 @@ import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 /// @title OnChainProposer contract.
 /// @author LambdaClass
 contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
-    struct BlockCommitmentInfo {
+    struct BatchCommitmentInfo {
         bytes32 commitmentHash;
         bytes32 depositLogs;
     }
 
-    /// @notice The commitments of the committed blocks.
-    /// @dev If a block is committed, the commitment is stored here.
-    /// @dev If a block was not committed yet, it won't be here.
-    /// @dev It is used by other contracts to verify if a block was committed.
-    mapping(uint256 => BlockCommitmentInfo) public blockCommitments;
+    /// @notice The commitments of the committed batches.
+    /// @dev If a batch is committed, the commitment is stored here.
+    /// @dev If a batch was not committed yet, it won't be here.
+    /// @dev It is used by other contracts to verify if a batch was committed.
+    /// @dev The key is the block number of the last block of the batch.
+    mapping(uint256 => BatchCommitmentInfo) public batchCommitments;
 
     /// @notice The latest verified block number.
     /// @dev This variable holds the block number of the most recently verified block.
@@ -135,19 +136,20 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     }
 
     /// @inheritdoc IOnChainProposer
-    function commit(
-        uint256 blockNumber,
+    function commitBatch(
+        uint256 firstBlockNumber,
+        uint256 lastBlockNumber,
         bytes32 commitment,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 depositLogs
     ) external override onlySequencer {
         require(
-            blockNumber == lastCommittedBlock + 1,
-            "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
+            firstBlockNumber == lastCommittedBlock + 1,
+            "OnChainProposer: firstBlockNumber is not the immediate successor of lastCommittedBlock"
         );
         require(
-            blockCommitments[blockNumber].commitmentHash == bytes32(0),
-            "OnChainProposer: block already committed"
+            batchCommitments[lastBlockNumber].commitmentHash == bytes32(0),
+            "OnChainProposer: batch already committed"
         );
         // Check if commitment is equivalent to blob's KZG commitment.
 
@@ -161,26 +163,27 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
-                blockNumber,
+                lastBlockNumber,
                 withdrawalsLogsMerkleRoot
             );
         }
-        blockCommitments[blockNumber] = BlockCommitmentInfo(
+        batchCommitments[lastBlockNumber] = BatchCommitmentInfo(
             commitment,
             depositLogs
         );
-        lastCommittedBlock = blockNumber;
-        emit BlockCommitted(commitment);
+        lastCommittedBlock = lastBlockNumber;
+        emit BatchCommitted(commitment);
     }
 
     /// @inheritdoc IOnChainProposer
-    /// @notice The first `require` checks that the block number is the subsequent block.
-    /// @notice The second `require` checks if the block has been committed.
+    /// @notice The first `require` checks that the first block number is the subsequent block.
+    /// @notice The second `require` checks if the batch has been committed.
     /// @notice The order of these `require` statements is important.
-    /// Ordering Reason: After the verification process, we delete the `blockCommitments` for `blockNumber - 1`. This means that when checking the block,
-    /// we might get an error indicating that the block hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
+    /// Ordering Reason: After the verification process, we delete the `batchCommitments` for `firstBlockNumber - 1`. This means that when checking the batch,
+    /// we might get an error indicating that the batch hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
     function verify(
-        uint256 blockNumber,
+        uint256 firstBlockNumber,
+        uint256 lastBlockNumber,
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
@@ -197,13 +200,13 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
         require(
-            blockNumber == lastVerifiedBlock + 1,
-            "OnChainProposer: block already verified"
+            firstBlockNumber == lastVerifiedBlock + 1,
+            "OnChainProposer: batch already verified"
         );
 
         require(
-            blockCommitments[blockNumber].commitmentHash != bytes32(0),
-            "OnChainProposer: block not committed"
+            batchCommitments[lastBlockNumber].commitmentHash != bytes32(0),
+            "OnChainProposer: batch not committed"
         );
 
         if (PICOVERIFIER != DEV_MODE) {
@@ -233,18 +236,18 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
         }
 
-        lastVerifiedBlock = blockNumber;
+        lastVerifiedBlock = lastBlockNumber;
         // The first 2 bytes are the number of deposits.
         uint16 deposits_amount = uint16(
-            bytes2(blockCommitments[blockNumber].depositLogs)
+            bytes2(batchCommitments[firstBlockNumber].depositLogs)
         );
         if (deposits_amount > 0) {
             ICommonBridge(BRIDGE).removeDepositLogs(deposits_amount);
         }
 
-        // Remove previous block commitment as it is no longer needed.
-        delete blockCommitments[blockNumber - 1];
+        // Remove previous batch commitment as it is no longer needed.
+        delete batchCommitments[firstBlockNumber - 1];
 
-        emit BlockVerified(blockNumber);
+        emit BatchVerified(lastVerifiedBlock);
     }
 }
