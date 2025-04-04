@@ -19,7 +19,7 @@ use tracing::{debug, info, warn};
 use crate::{
     peer_handler::{PeerHandler, RequestRangesMetrics},
     sync::{
-        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, utils::read_incoming_requests, BATCH_SIZE,
+        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, utils::run_queue, BATCH_SIZE,
         MAX_CHANNEL_MESSAGES,
     },
 };
@@ -73,10 +73,6 @@ pub(crate) async fn storage_fetcher(
     ));
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
-    // The pivot may become stale while the fetcher is active, we will still keep the process
-    // alive until the end signal so we don't lose queued messages
-    let mut stale = false;
-    let mut incoming = true;
     // Create an async closure to pass to the generic task spawner
     let l_sender = large_storage_sender.clone();
     let fetch_batch = move |batch: Vec<(H256, H256)>, peers: PeerHandler, store: Store| {
@@ -95,30 +91,18 @@ pub(crate) async fn storage_fetcher(
             .unwrap()
         }
     };
-    while incoming {
-        // Read incoming messages and add them to the queue
-        incoming = read_incoming_requests(&mut receiver, &mut pending_storage).await;
-        // If the pivot isn't stale, spawn fetch tasks for the queued elements
-        if stale {
-            info!("Fetch storage: Stale Pivot");
-        } else {
-            stale = crate::sync::utils::spawn_fetch_tasks(
-                &mut pending_storage,
-                incoming,
-                &fetch_batch,
-                peers.clone(),
-                store.clone(),
-                BATCH_SIZE,
-            )
-            .await;
-        }
-    }
+    run_queue(&mut receiver, &mut pending_storage, &fetch_batch, peers.clone(), store.clone(), BATCH_SIZE).await;
     info!(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
     if !pending_storage.is_empty() {
-        store.set_storage_heal_paths(pending_storage.into_iter().map(|(hash, _)| (hash, vec![Nibbles::default()])).collect())?;
+        store.set_storage_heal_paths(
+            pending_storage
+                .into_iter()
+                .map(|(hash, _)| (hash, vec![Nibbles::default()]))
+                .collect(),
+        )?;
     }
     // Signal large storage fetcher
     large_storage_sender.send(vec![]).await?;
@@ -207,10 +191,6 @@ pub(crate) async fn large_storage_fetcher(
     // Pending list of storages to fetch
     // (account_hash, storage_root, last_key)
     let mut pending_storage: Vec<(H256, H256, H256)> = vec![];
-    // The pivot may become stale while the fetcher is active, we will still keep the process
-    // alive until the end signal so we don't lose queued messages
-    let mut stale = false;
-    let mut incoming = true;
     // Create an async closure to pass to the generic task spawner
     let s_sender = storage_trie_rebuilder_sender.clone();
     let fetch_batch = move |batch: Vec<(H256, H256, H256)>, peers: PeerHandler, store: Store| {
@@ -228,24 +208,7 @@ pub(crate) async fn large_storage_fetcher(
             (remaining, stale)
         }
     };
-    while incoming {
-        // Read incoming messages and add them to the queue
-        incoming = read_incoming_requests(&mut receiver, &mut pending_storage).await;
-        // If the pivot isn't stale, spawn fetch tasks for the queued elements
-        if stale {
-            info!("Fetch storage: Stale Pivot");
-        } else {
-            stale = crate::sync::utils::spawn_fetch_tasks(
-                &mut pending_storage,
-                incoming,
-                &fetch_batch,
-                peers.clone(),
-                store.clone(),
-                1,
-            )
-            .await;
-        }
-    }
+    run_queue(&mut receiver, &mut pending_storage, &fetch_batch, peers.clone(), store.clone(), BATCH_SIZE).await;
     info!(
         "Concluding large storage fetcher, {} large storages left in queue to be healed later",
         pending_storage.len()
