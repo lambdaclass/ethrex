@@ -1,4 +1,4 @@
-name: Benchmark Block execution against main
+name: Benchmark Block execution
 
 on:
   pull_request:
