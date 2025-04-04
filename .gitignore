@@ -24,7 +24,6 @@ ethereum-package/
 **/.vscode
 **/.idea
 
-
 # EVM Mlir stuff
 **/*.mlir
 **/*.ll
@@ -63,3 +62,4 @@ cmd/ef_tests/state/levm_perfgraphs
 *.svg
 prof_*.json
 prof.json
+profile.json.gz

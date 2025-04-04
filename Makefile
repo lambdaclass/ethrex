@@ -13,7 +13,14 @@ lint: ## 🧹 Linter check
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
-	cargo test -p '$(CRATE)' --workspace --exclude ethrex-prover --exclude ethrex-prover-bench --exclude ethrex-levm --exclude ef_tests-blockchain --exclude ef_tests-state --exclude ethrex-l2 -- --skip test_contract_compilation
+	cargo test -p '$(CRATE)' --workspace \
+	--exclude ethrex-prover \
+	--exclude ethrex-prover-bench \
+	--exclude ethrex-levm \
+	--exclude ef_tests-blockchain \
+	--exclude ef_tests-state \
+	--exclude ethrex-l2 \
+	-- --skip test_contract_compilation
 	$(MAKE) -C cmd/ef_tests/blockchain test
 
 clean: clean-vectors ## 🧹 Remove build artifacts
@@ -141,8 +148,11 @@ clean-hive-logs: ## 🧹 Clean Hive logs
 install-cli: ## 🛠️ Installs the ethrex-l2 cli
 	cargo install --path cmd/ethrex_l2/ --force
 
+# Using --http.port 1729 in order to use the bench/scripts/flamegraph.sh, which used ethrex_l2 to get the balance on port 1729.
+# When we have the rex CLI, we should change it. The port is also coupled to the load_test.
+# That's why the port 1729 is being used in all targets related to perf/loadtests.
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
-	@if [ -z "$$L" ]; then \
+	@if [ -z "$$LEVM" ]; then \
 		LEVM="revm"; \
 		echo "Running the test-node without the LEVM feature"; \
 		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
@@ -155,27 +165,54 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--features "dev" \
 	--  \
 	--evm $$LEVM \
-	--network test_data/genesis-l2.json \
+	--network test_data/genesis-l1-dev.json \
 	--http.port 1729 \
 	--dev \
 	--datadir test_ethrex
 
-load-test: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000
+start-node-with-samply: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing // Then open te profile.json.gz in https://profiler.firefox.com/
+	@if [ -z "$$LEVM" ]; then \
+		LEVM="revm"; \
+		echo "Running the test-node without the LEVM feature"; \
+		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
+	else \
+		LEVM="levm"; \
+		echo "Running the test-node with the LEVM feature"; \
+	fi; \
+	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
+	cargo run --release --bin ethrex \
+	--features "dev" \
+	--  \
+	--evm $$LEVM \
+	--network test_data/genesis-l1-dev.json \
+	--http.port 1729 \
+	--dev \
+	--datadir test_ethrex
 
-load-test-fibonacci:
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --fibonacci
+load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test
+	cargo run --release \
+	--manifest-path cmd/load_test/Cargo.toml -- \
+	--path test_data/private_keys.txt -v --url http://localhost:1729
 
-load-test-io:
-	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --io
+load-test-fibonacci: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test-fibonacci
+	cargo run --release \
+	--manifest-path cmd/load_test/Cargo.toml -- \
+	--path test_data/private_keys.txt -v --test_type fibonacci --url http://localhost:1729
+
+load-test-io: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test-io
+	cargo run --release \
+	--manifest-path cmd/load_test/Cargo.toml -- \
+	--path test_data/private_keys.txt -v --test_type io-heavy --url http://localhost:1729
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
 
-flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
+flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph. You have to install the `ethrex_l2 cli`
 	sudo bash bench/scripts/flamegraph.sh
 
 test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./test_data/ERC20.sol -o $@
-load-test-erc20: test_data/ERC20/ERC20.bin install-cli
-	ethrex_l2 test erc20 --path test_data/private_keys.txt -t 100
+load-test-erc20: test_data/ERC20/ERC20.bin ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test-erc20
+	cargo run --release \
+	--manifest-path cmd/load_test/Cargo.toml -- \
+	--path test_data/private_keys.txt -v --test_type erc20 --url http://localhost:1729
