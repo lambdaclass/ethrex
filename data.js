@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743779206450,
+  "lastUpdate": 1743780942941,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2485,6 +2485,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183372687645,
             "range": "± 745106382",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iamslown@gmail.com",
+            "name": "iamslown",
+            "username": "iamslown"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "cf6cc6c5e3aeb86dc529751d6130de8eb251ee7e",
+          "message": "docs(l2, l1): fixed dead links (#2363)\n\n**Motivation**\n\nDead links negatively impact developer experience and make it harder to\nunderstand architectural decisions.\n\n**Description**\n\nI updated two dead documentation links:\n\n1. In `state_diffs.md`:\n   - Updated zkSync pubdata architecture reference from:\n     `docs/specs/data_availability/pubdata.md`\n     to:\n     `docs/src/specs/data_availability/pubdata.md`\n\n2. In `Network.md` (ref #639 ):\n   - Updated Kademlia table implementation reference from:\n     `crates/net/kademlia.rs`\n     to:\n     `crates/networking/p2p/kademlia.rs`",
+          "timestamp": "2025-04-04T14:45:52Z",
+          "tree_id": "d6c3c80b9b8def26834312ce8dee120c7536cc96",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cf6cc6c5e3aeb86dc529751d6130de8eb251ee7e"
+        },
+        "date": 1743780940514,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185862907204,
+            "range": "± 942764473",
             "unit": "ns/iter"
           }
         ]
