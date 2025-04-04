@@ -5,21 +5,20 @@ use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::db::{ExecutionDB, StoreWrapper};
 use ethrex_levm::db::error::DatabaseError;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::result::Result;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct DatabaseLogger {
-    pub block_hashes_accessed: RefCell<HashMap<u64, CoreH256>>,
+    pub block_hashes_accessed: Arc<Mutex<HashMap<u64, CoreH256>>>,
     pub store: Arc<dyn LevmDatabase>,
 }
 
 impl DatabaseLogger {
     pub fn new(store: Arc<dyn LevmDatabase>) -> Self {
         Self {
-            block_hashes_accessed: RefCell::new(HashMap::new()),
+            block_hashes_accessed: Arc::new(Mutex::new(HashMap::new())),
             store,
         }
     }
@@ -50,7 +49,8 @@ impl LevmDatabase for DatabaseLogger {
         let block_hash = self.store.get_block_hash(block_number)?;
         if let Some(hash) = block_hash {
             self.block_hashes_accessed
-                .borrow_mut()
+                .lock()
+                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
                 .insert(block_number, hash);
         }
         Ok(block_hash)

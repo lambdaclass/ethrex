@@ -487,7 +487,10 @@ impl LEVM {
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
         let block_hashes = logger
             .block_hashes_accessed
-            .borrow()
+            .lock()
+            .map_err(|_| {
+                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+            })?
             .clone()
             .into_iter()
             .map(|(num, hash)| (num, H256::from(hash.0)))
