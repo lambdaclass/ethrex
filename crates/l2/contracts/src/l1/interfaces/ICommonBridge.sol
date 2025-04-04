@@ -24,11 +24,10 @@ interface ICommonBridge {
 
     /// @notice L2 withdrawals have been published on L1.
     /// @dev Event emitted when the L2 withdrawals are published on L1.
-    /// @param withdrawalLogsBlockNumber the block number in L2 where the
-    /// withdrawal logs were emitted.
+    /// @param withdrawalLogsBatchNumber the batch number where the withdrawal logs were emitted.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs.
     event WithdrawalsPublished(
-        uint256 indexed withdrawalLogsBlockNumber,
+        uint256 indexed withdrawalLogsBatchNumber,
         bytes32 indexed withdrawalsLogsMerkleRoot
     );
 
@@ -77,20 +76,19 @@ interface ICommonBridge {
 
     /// @notice Publishes the L2 withdrawals on L1.
     /// @dev This method is used by the L2 OnChainOperator to publish the L2
-    /// withdrawals when an L2 block is committed.
-    /// @param withdrawalLogsBlockNumber the block number in L2 where the
-    /// withdrawal logs were emitted.
+    /// withdrawals when an L2 batch is committed.
+    /// @param withdrawalLogsBatchNumber the batch number in L2 where the withdrawal logs were emitted.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs.
     function publishWithdrawals(
-        uint256 withdrawalLogsBlockNumber,
+        uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
     ) external;
 
     /// @notice Method that claims an L2 withdrawal.
     /// @dev For a user to claim a withdrawal, this method verifies:
-    /// - The l2WithdrawalBlockNumber was committed. If the given block was not
+    /// - The l2WithdrawalBatchNumber was committed. If the given batch was not
     /// committed, this means that the withdrawal was not published on L1.
-    /// - The l2WithdrawalBlockNumber was verified. If the given block was not
+    /// - The l2WithdrawalBatchNumber was verified. If the given batch was not
     /// verified, this means that the withdrawal claim was not enabled.
     /// - The withdrawal was not claimed yet. This is to avoid double claims.
     /// - The withdrawal proof is valid. This is, there exists a merkle path
@@ -106,12 +104,12 @@ interface ICommonBridge {
     /// This is the index of the withdraw transaction relative to the block's
     /// withdrawal transctions.
     /// A pseudocode would be [tx if tx is withdrawx for tx in block.txs()].index(leaf_tx).
-    /// @param l2WithdrawalBlockNumber the block number where the withdrawal log
+    /// @param l2WithdrawalBatchNumber the batch number where the withdrawal log
     /// was emitted.
     function claimWithdrawal(
         bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
-        uint256 l2WithdrawalBlockNumber,
+        uint256 l2WithdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) external;

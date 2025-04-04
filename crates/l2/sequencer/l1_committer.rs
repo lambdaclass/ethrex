@@ -85,7 +85,7 @@ impl Committer {
 
     async fn main_logic(&mut self) -> Result<(), CommitterError> {
         let last_committed_block_number =
-            EthClient::get_last_committed_block(&self.eth_client, self.on_chain_proposer_address)
+            EthClient::get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
                 .await?;
         let first_block_to_commit = last_committed_block_number + 1;
 

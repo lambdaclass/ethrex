@@ -9,7 +9,7 @@ import "./interfaces/IOnChainProposer.sol";
 /// @title CommonBridge contract.
 /// @author LambdaClass
 contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
-    /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
+    /// @notice Mapping of claimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping (a merkle root) for the hash
     /// of the L2 transaction that requested the withdrawal.
     /// @dev The key is the hash of the L2 transaction that requested the
@@ -18,11 +18,11 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     mapping(bytes32 => bool) public claimedWithdrawals;
 
     /// @notice Mapping of merkle roots to the L2 withdrawal transaction logs.
-    /// @dev The key is the L2 block number where the logs were emitted.
+    /// @dev The key is the L2 batch number where the logs were emitted.
     /// @dev The value is the merkle root of the logs.
-    /// @dev If there exist a merkle root for a given block number it means
-    /// that the logs were published on L1, and that that block was committed.
-    mapping(uint256 => bytes32) public blockWithdrawalsLogs;
+    /// @dev If there exist a merkle root for a given batch number it means
+    /// that the logs were published on L1, and that that batch was committed.
+    mapping(uint256 => bytes32) public batchWithdrawalsLogs;
 
     bytes32[] public depositLogs;
 
@@ -132,18 +132,18 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
 
     /// @inheritdoc ICommonBridge
     function publishWithdrawals(
-        uint256 withdrawalLogsBlockNumber,
+        uint256 withdrawalLogsBatchNumber,
         bytes32 withdrawalsLogsMerkleRoot
     ) public onlyOnChainProposer {
         require(
-            blockWithdrawalsLogs[withdrawalLogsBlockNumber] == bytes32(0),
+            batchWithdrawalsLogs[withdrawalLogsBatchNumber] == bytes32(0),
             "CommonBridge: withdrawal logs already published"
         );
-        blockWithdrawalsLogs[
-            withdrawalLogsBlockNumber
+        batchWithdrawalsLogs[
+            withdrawalLogsBatchNumber
         ] = withdrawalsLogsMerkleRoot;
         emit WithdrawalsPublished(
-            withdrawalLogsBlockNumber,
+            withdrawalLogsBatchNumber,
             withdrawalsLogsMerkleRoot
         );
     }
@@ -152,17 +152,18 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     function claimWithdrawal(
         bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
-        uint256 withdrawalBlockNumber,
+        uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
         require(
-            blockWithdrawalsLogs[withdrawalBlockNumber] != bytes32(0),
-            "CommonBridge: the block that emitted the withdrawal logs was not committed"
+            withdrawalBatchNumber <=
+                IOnChainProposer(ON_CHAIN_PROPOSER).lastCommittedBatch(),
+            "CommonBridge: the block that emitted the withdrawal logs was not commited"
         );
         require(
-            withdrawalBlockNumber <=
-                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBlock(),
+            withdrawalBatchNumber <=
+                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
             "CommonBridge: the block that emitted the withdrawal logs was not verified"
         );
         require(
@@ -173,7 +174,7 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             _verifyWithdrawProof(
                 l2WithdrawalTxHash,
                 claimedAmount,
-                withdrawalBlockNumber,
+                withdrawalBatchNumber,
                 withdrawalLogIndex,
                 withdrawalProof
             ),
@@ -192,7 +193,7 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     function _verifyWithdrawProof(
         bytes32 l2WithdrawalTxHash,
         uint256 claimedAmount,
-        uint256 withdrawalBlockNumber,
+        uint256 withdrawalBatchNumber,
         uint256 withdrawalLogIndex,
         bytes32[] calldata withdrawalProof
     ) internal view returns (bool) {
@@ -211,6 +212,6 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             }
             withdrawalLogIndex /= 2;
         }
-        return withdrawalLeaf == blockWithdrawalsLogs[withdrawalBlockNumber];
+        return withdrawalLeaf == batchWithdrawalsLogs[withdrawalBatchNumber];
     }
 }

@@ -22,24 +22,24 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev If a batch is committed, the commitment is stored here.
     /// @dev If a batch was not committed yet, it won't be here.
     /// @dev It is used by other contracts to verify if a batch was committed.
-    /// @dev The key is the block number of the last block of the batch.
+    /// @dev The key is the batch number.
     mapping(uint256 => BatchCommitmentInfo) public batchCommitments;
 
-    /// @notice The latest verified block number.
-    /// @dev This variable holds the block number of the most recently verified block.
-    /// @dev All blocks with a block number less than or equal to `lastVerifiedBlock` are considered verified.
-    /// @dev Blocks with a block number greater than `lastVerifiedBlock` have not been verified yet.
-    /// @dev This is crucial for ensuring that only valid and confirmed blocks are processed in the contract.
-    uint256 public lastVerifiedBlock;
+    /// @notice The latest verified batch number.
+    /// @dev This variable holds the batch number of the most recently verified batch.
+    /// @dev All batches with a batch number less than or equal to `lastVerifiedBatch` are considered verified.
+    /// @dev Batches with a batch number greater than `lastVerifiedBatch` have not been verified yet.
+    /// @dev This is crucial for ensuring that only valid and confirmed batches are processed in the contract.
+    uint256 public lastVerifiedBatch;
 
-    /// @notice The latest committed block number.
-    /// @dev This variable holds the block number of the most recently committed block.
-    /// @dev All blocks with a block number less than or equal to `lastCommittedBlock` are considered committed.
-    /// @dev Blocks with a block number greater than `lastCommittedBlock` have not been committed yet.
+    /// @notice The latest committed batch number.
+    /// @dev This variable holds the batch number of the most recently committed batch.
+    /// @dev All batches with a batch number less than or equal to `lastCommittedBatch` are considered committed.
+    /// @dev Batches with a block number greater than `lastCommittedBatch` have not been committed yet.
     /// @dev This is crucial for ensuring that only subsequents blocks are committed in the contract.
-    uint256 public lastCommittedBlock;
+    uint256 public lastCommittedBatch;
 
-    /// @dev The sequencer addresses that are authorized to commit and verify blocks.
+    /// @dev The sequencer addresses that are authorized to commit and verify batches.
     mapping(address _authorizedAddress => bool)
         public authorizedSequencerAddresses;
 
@@ -137,18 +137,17 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
     /// @inheritdoc IOnChainProposer
     function commitBatch(
-        uint256 firstBlockNumber,
-        uint256 lastBlockNumber,
+        uint256 batchNumber,
         bytes32 commitment,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 depositLogs
     ) external override onlySequencer {
         require(
-            firstBlockNumber == lastCommittedBlock + 1,
-            "OnChainProposer: firstBlockNumber is not the immediate successor of lastCommittedBlock"
+            batchNumber == lastCommittedBatch + 1,
+            "OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch"
         );
         require(
-            batchCommitments[lastBlockNumber].commitmentHash == bytes32(0),
+            batchCommitments[batchNumber].commitmentHash == bytes32(0),
             "OnChainProposer: batch already committed"
         );
         // Check if commitment is equivalent to blob's KZG commitment.
@@ -163,27 +162,26 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
-                lastBlockNumber,
+                batchNumber,
                 withdrawalsLogsMerkleRoot
             );
         }
-        batchCommitments[lastBlockNumber] = BatchCommitmentInfo(
+        batchCommitments[batchNumber] = BatchCommitmentInfo(
             commitment,
             depositLogs
         );
-        lastCommittedBlock = lastBlockNumber;
+        lastCommittedBatch = batchNumber;
         emit BatchCommitted(commitment);
     }
 
     /// @inheritdoc IOnChainProposer
-    /// @notice The first `require` checks that the first block number is the subsequent block.
+    /// @notice The first `require` checks that the batch number is the subsequent block.
     /// @notice The second `require` checks if the batch has been committed.
     /// @notice The order of these `require` statements is important.
-    /// Ordering Reason: After the verification process, we delete the `batchCommitments` for `firstBlockNumber - 1`. This means that when checking the batch,
+    /// Ordering Reason: After the verification process, we delete the `batchCommitments` for `batchNumber - 1`. This means that when checking the batch,
     /// we might get an error indicating that the batch hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
     function verify(
-        uint256 firstBlockNumber,
-        uint256 lastBlockNumber,
+        uint256 batchNumber,
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
@@ -200,12 +198,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
         require(
-            firstBlockNumber == lastVerifiedBlock + 1,
+            batchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: batch already verified"
         );
 
         require(
-            batchCommitments[lastBlockNumber].commitmentHash != bytes32(0),
+            batchCommitments[batchNumber].commitmentHash != bytes32(0),
             "OnChainProposer: batch not committed"
         );
 
@@ -236,18 +234,18 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
         }
 
-        lastVerifiedBlock = lastBlockNumber;
+        lastVerifiedBatch = batchNumber;
         // The first 2 bytes are the number of deposits.
         uint16 deposits_amount = uint16(
-            bytes2(batchCommitments[firstBlockNumber].depositLogs)
+            bytes2(batchCommitments[batchNumber].depositLogs)
         );
         if (deposits_amount > 0) {
             ICommonBridge(BRIDGE).removeDepositLogs(deposits_amount);
         }
 
         // Remove previous batch commitment as it is no longer needed.
-        delete batchCommitments[firstBlockNumber - 1];
+        delete batchCommitments[batchNumber - 1];
 
-        emit BatchVerified(lastVerifiedBlock);
+        emit BatchVerified(lastVerifiedBatch);
     }
 }

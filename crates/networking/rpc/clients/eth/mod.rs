@@ -877,7 +877,7 @@ impl EthClient {
         self.get_nonce(address, BlockByNumber::Latest).await
     }
 
-    pub async fn get_last_committed_block(
+    pub async fn get_last_committed_batch(
         eth_client: &EthClient,
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {

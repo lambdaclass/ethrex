@@ -4,15 +4,15 @@ pragma solidity ^0.8.27;
 /// @title Interface for the OnChainProposer contract.
 /// @author LambdaClass
 /// @notice A OnChainProposer contract ensures the advancement of the L2. It is used
-/// by the proposer to commit blocks in batches and verify proofs.
+/// by the proposer to commit batches of l2 blocks and verify proofs.
 interface IOnChainProposer {
-    /// @notice The latest committed block number.
+    /// @notice The latest committed batch number.
     /// @return The latest committed block number as a uint256.
-    function lastCommittedBlock() external view returns (uint256);
+    function lastCommittedBatch() external view returns (uint256);
 
-    /// @notice The latest verified block number.
-    /// @return The latest verified block number as a uint256.
-    function lastVerifiedBlock() external view returns (uint256);
+    /// @notice The latest verified batch number.
+    /// @return The latest verified batch number as a uint256.
+    function lastVerifiedBatch() external view returns (uint256);
 
     /// @notice A batch has been committed.
     /// @dev Event emitted when a batch is committed.
@@ -20,7 +20,7 @@ interface IOnChainProposer {
 
     /// @notice A batch has been verified.
     /// @dev Event emitted when a batch is verified.
-    event BatchVerified(uint256 indexed lastVerifiedBlock);
+    event BatchVerified(uint256 indexed lastVerifiedBatch);
 
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
@@ -39,15 +39,13 @@ interface IOnChainProposer {
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
     /// and to publish withdrawals if any.
-    /// @param firstBlockNumber the number of the first block to be committed.
-    /// @param lastBlockNumber the number of the last block to be committed.
+    /// @param batchNumber the number of the batch to be committed.
     /// @param commitment of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
     /// @param depositLogs the deposit logs of the batch to be committed.
     function commitBatch(
-        uint256 firstBlockNumber,
-        uint256 lastBlockNumber,
+        uint256 batchNumber,
         bytes32 commitment,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 depositLogs
@@ -56,8 +54,7 @@ interface IOnChainProposer {
     /// @notice Method used to verify a batch of L2 blocks.
     /// @dev This method is used by the operator when a batch is ready to be
     /// verified (this is after proved).
-    /// @param FirstblockNumber is the number of the first block to be verified.
-    /// @param LastblockNumber is the number of the last block to be verified.
+    /// @param batchNumber is the number of the batch to be verified.
     /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the batch to be verified.
     /// @param risc0ImageId Digest of the zkVM imageid.
@@ -71,8 +68,7 @@ interface IOnChainProposer {
     /// @param picoPublicValues Values used to perform the execution
     /// @param picoProof Groth16 proof
     function verify(
-        uint256 FirstblockNumber,
-        uint256 LastblockNumber,
+        uint256 batchNumber,
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
