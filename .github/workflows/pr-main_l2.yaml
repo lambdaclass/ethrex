@@ -1,11 +1,12 @@
-name: L2 Contracts
+name: L2
 on:
   push:
     branches: ["main"]
   pull_request:
     branches: ["**"]
     paths:
-      - "crates/l2/contracts/**"
+      - "crates/l2/**"
+      - ".github/workflows/pr-main_l2.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -13,19 +14,21 @@ concurrency:
 
 jobs:
   test:
-    # "Test" is a required check, don't change the name
-    name: Test
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-      - name: Rust toolchain install
+
+      - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
-      - name: Install solc
-        uses: pontem-network/get-solc@master
+
       - name: Caching
         uses: Swatinem/rust-cache@v2
-      - name: Run test of deployer.rs
+
+      - name: Run L2 integration test
         run: |
-          cd crates/l2/contracts
-          cargo test
+          cd crates/l2
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
+          make ci_test
