@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743703958185,
+  "lastUpdate": 1743761549202,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2425,6 +2425,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 188928141075,
             "range": "± 793787747",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b672cd078b2d9112fd6d800ff849d65e9c13b7a6",
+          "message": "ci(core): standarize workflow naming. (#2395)\n\n**Motivation**\nBe able to easily see what triggers each workflow\n\n**Description**\n- Standarized naming of workflow files.\n- Restricted some workflows to certain path changes\n- Minor naming changes",
+          "timestamp": "2025-04-04T09:23:12Z",
+          "tree_id": "16b31ec633d9393d1028df53a82324773c863a12",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b672cd078b2d9112fd6d800ff849d65e9c13b7a6"
+        },
+        "date": 1743761547438,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182442624526,
+            "range": "± 2114014788",
             "unit": "ns/iter"
           }
         ]
