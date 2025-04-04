@@ -244,8 +244,9 @@ impl StateSyncProgress {
         progress.data.lock().await.current_keys[segment_number] = current_key
     }
     async fn end_segment(progress: StateSyncProgress, segment_number: usize, last_key: H256) {
-        progress.data.lock().await.ended[segment_number] = true;
-        progress.data.lock().await.current_keys[segment_number] = last_key;
+        let data = progress.data.lock().await;
+        data.ended[segment_number] = true;
+        data.current_keys[segment_number] = last_key;
     }
 
     // Returns true if the state sync ended
