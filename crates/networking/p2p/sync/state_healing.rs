@@ -40,7 +40,7 @@ pub(crate) async fn heal_state_trie(
     let mut paths = store.get_state_heal_paths()?.unwrap_or_default();
     // Spawn a bytecode fetcher for this block
     let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
-    let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(99,
+    let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
         bytecode_receiver,
         peers.clone(),
         store.clone(),

@@ -154,7 +154,6 @@ async fn state_sync_segment(
     let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
     let (storage_sender, storage_receiver) = channel::<Vec<(H256, H256)>>(MAX_CHANNEL_MESSAGES);
     let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
-        segment_number,
         bytecode_receiver,
         peers.clone(),
         store.clone(),

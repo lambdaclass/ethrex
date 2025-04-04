@@ -8,7 +8,7 @@
 //! This method is called while fetching a storage batch and can stall the fetching of other smaller storages.
 //! Large storage handling could be moved to its own separate queue process so that it runs parallel to regular storage fetching
 
-use std::{cmp::min, time::Instant};
+use std::time::Instant;
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
@@ -20,7 +20,7 @@ use crate::{
     peer_handler::{PeerHandler, RequestRangesMetrics},
     sync::{
         trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, utils::read_incoming_requests, BATCH_SIZE,
-        MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES,
+        MAX_CHANNEL_MESSAGES,
     },
 };
 
@@ -211,33 +211,39 @@ pub(crate) async fn large_storage_fetcher(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut incoming = true;
+    // Create an async closure to pass to the generic task spawner
+    let s_sender = storage_trie_rebuilder_sender.clone();
+    let fetch_batch = move |batch: Vec<(H256, H256, H256)>, peers: PeerHandler, store: Store| {
+        let s_sender = s_sender.clone();
+        // Batch size should always be 1
+        if batch.len() != 1 {
+            warn!("Invalid large storage batch size, check source code");
+        }
+        async move {
+            let (rem, stale) =
+                fetch_large_storage_batch(batch[0], state_root, peers, store, s_sender.clone())
+                    .await
+                    .unwrap();
+            let remaining = rem.map(|r| vec![r]).unwrap_or_default();
+            (remaining, stale)
+        }
+    };
     while incoming {
-        // Fetch incoming requests
+        // Read incoming messages and add them to the queue
         incoming = read_incoming_requests(&mut receiver, &mut pending_storage).await;
-        // If we have enough pending storages to fill a batch
-        // or if we have no more incoming batches, spawn a fetch process
-        // If the pivot became stale don't process anything and just save incoming requests
-        while !stale && !pending_storage.is_empty() {
-            // We will be spawning multiple tasks and then collecting their results
-            // This uses a loop inside the main loop as the result from these tasks may lead to more values in queue
-            let mut storage_tasks = tokio::task::JoinSet::new();
-            for batch in pending_storage.drain(..min(pending_storage.len(), MAX_PARALLEL_FETCHES)) {
-                storage_tasks.spawn(fetch_large_storage_batch(
-                    batch,
-                    state_root,
-                    peers.clone(),
-                    store.clone(),
-                    storage_trie_rebuilder_sender.clone(),
-                ));
-            }
-            // Add unfetched storages to the queue and handle stale signal
-            for res in storage_tasks.join_all().await {
-                let (next_batch, is_stale) = res?;
-                if let Some(next_batch) = next_batch {
-                    pending_storage.push(next_batch)
-                }
-                stale |= is_stale;
-            }
+        // If the pivot isn't stale, spawn fetch tasks for the queued elements
+        if stale {
+            info!("Fetch storage: Stale Pivot");
+        } else {
+            stale = crate::sync::utils::spawn_fetch_tasks(
+                &mut pending_storage,
+                incoming,
+                &fetch_batch,
+                peers.clone(),
+                store.clone(),
+                1,
+            )
+            .await;
         }
     }
     info!(
