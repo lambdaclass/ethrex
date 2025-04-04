@@ -17,7 +17,7 @@ impl RpcHandler for GasPrice {
         Ok(GasPrice {})
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let latest_block_number = context.storage.get_latest_block_number()?;
 
         let estimated_gas_tip = estimate_gas_tip(&context.storage)?;
@@ -71,8 +71,8 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
-    fn default_context() -> RpcApiContext {
-        let storage = setup_store();
+    async fn default_context() -> RpcApiContext {
+        let storage = setup_store().await;
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         RpcApiContext {
             storage,
@@ -95,58 +95,58 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_for_legacy_txs() {
-        let context = default_context();
+    #[tokio::test]
+    async fn test_for_legacy_txs() {
+        let context = default_context().await;
 
-        add_legacy_tx_blocks(&context.storage, 100, 10);
+        add_legacy_tx_blocks(&context.storage, 100, 10).await;
 
         let gas_price = GasPrice {};
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
 
-    #[test]
-    fn test_for_eip_1559_txs() {
-        let context = default_context();
+    #[tokio::test]
+    async fn test_for_eip_1559_txs() {
+        let context = default_context().await;
 
-        add_eip1559_tx_blocks(&context.storage, 100, 10);
+        add_eip1559_tx_blocks(&context.storage, 100, 10).await;
 
         let gas_price = GasPrice {};
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
-    #[test]
-    fn test_with_mixed_transactions() {
-        let context = default_context();
+    #[tokio::test]
+    async fn test_with_mixed_transactions() {
+        let context = default_context().await;
 
-        add_mixed_tx_blocks(&context.storage, 100, 10);
+        add_mixed_tx_blocks(&context.storage, 100, 10).await;
 
         let gas_price = GasPrice {};
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
-    #[test]
-    fn test_with_not_enough_blocks_or_transactions() {
-        let context = default_context();
+    #[tokio::test]
+    async fn test_with_not_enough_blocks_or_transactions() {
+        let context = default_context().await;
 
-        add_mixed_tx_blocks(&context.storage, 100, 0);
+        add_mixed_tx_blocks(&context.storage, 100, 0).await;
 
         let gas_price = GasPrice {};
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
-    #[test]
-    fn test_with_no_blocks_but_genesis() {
-        let context = default_context();
+    #[tokio::test]
+    async fn test_with_no_blocks_but_genesis() {
+        let context = default_context().await;
         let gas_price = GasPrice {};
         // genesis base fee is = BASE_PRICE_IN_WEI
         let expected_gas_price = BASE_PRICE_IN_WEI;
-        let response = gas_price.handle(context).unwrap();
+        let response = gas_price.handle(context).await.unwrap();
         let parsed_result = parse_json_hex(&response).unwrap();
         assert_eq!(parsed_result, expected_gas_price);
     }
@@ -160,10 +160,10 @@ mod tests {
         });
         let expected_response = json!("0x3b9aca00");
         let request: RpcRequest = serde_json::from_value(raw_json).expect("Test json is not valid");
-        let mut context = default_context();
+        let mut context = default_context().await;
         context.local_p2p_node = example_p2p_node();
 
-        add_legacy_tx_blocks(&context.storage, 100, 1);
+        add_legacy_tx_blocks(&context.storage, 100, 1).await;
 
         let response = map_http_requests(&request, context).await.unwrap();
         assert_eq!(response, expected_response)

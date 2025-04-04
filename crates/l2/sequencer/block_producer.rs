@@ -59,8 +59,9 @@ impl BlockProducer {
         execution_cache: Arc<ExecutionCache>,
     ) {
         loop {
-            if let Err(err) =
-                self.main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+            if let Err(err) = self
+                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+                .await
             {
                 error!("Block Producer Error: {}", err);
             }
@@ -69,7 +70,7 @@ impl BlockProducer {
         }
     }
 
-    pub fn main_logic(
+    pub async fn main_logic(
         &self,
         store: Store,
         blockchain: Arc<Blockchain>,
@@ -104,7 +105,7 @@ impl BlockProducer {
         let payload = create_payload(&args, &store)?;
 
         // Blockchain builds the payload from mempool txs and executes them
-        let payload_build_result = build_payload(blockchain.clone(), payload, &store)?;
+        let payload_build_result = build_payload(blockchain.clone(), payload, &store).await?;
         info!(
             "Built payload for new block {}",
             payload_build_result.payload.header.number
@@ -121,7 +122,9 @@ impl BlockProducer {
             requests: Vec::new(),
         };
 
-        blockchain.store_block(&block, execution_result.clone())?;
+        blockchain
+            .store_block(&block, execution_result.clone())
+            .await?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
@@ -129,7 +132,7 @@ impl BlockProducer {
         execution_cache.push(block.hash(), execution_result.account_updates)?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&store, block.hash(), block.hash(), block.hash())?;
+        apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
 
         Ok(())
     }

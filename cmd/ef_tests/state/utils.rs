@@ -14,11 +14,11 @@ use ethrex_vm::{
 use spinoff::Spinner;
 
 /// Loads initial state, used for REVM as it contains EvmState.
-pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
+pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
     let genesis = Genesis::from(test);
 
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
-    storage.add_initial_state(genesis.clone()).unwrap();
+    storage.add_initial_state(genesis.clone()).await.unwrap();
 
     (
         evm_state(
@@ -30,11 +30,11 @@ pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
 }
 
 /// Loads initial state, function for LEVM as it does not require EvmState
-pub fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
+pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let genesis = Genesis::from(test);
 
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
-    storage.add_initial_state(genesis.clone()).unwrap();
+    storage.add_initial_state(genesis.clone()).await.unwrap();
 
     let block_hash = genesis.get_block().header.compute_block_hash();
 
