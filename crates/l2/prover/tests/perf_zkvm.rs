@@ -44,7 +44,7 @@ async fn setup() -> (ProgramInput, Block) {
 
     let genesis =
         ethrex_l2::utils::test_data_io::read_genesis_file(genesis_file_path.to_str().unwrap());
-    store.add_initial_state(genesis.clone()).unwrap();
+    store.add_initial_state(genesis.clone()).await.unwrap();
 
     let blocks = ethrex_l2::utils::test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
     info!("Number of blocks to insert: {}", blocks.len());
@@ -56,7 +56,7 @@ async fn setup() -> (ProgramInput, Block) {
             block.body.transactions.len(),
             block.header.number
         );
-        blockchain.add_block(block).unwrap();
+        blockchain.add_block(block).await.unwrap();
     }
     let block_to_prove = blocks.get(3).unwrap();
 

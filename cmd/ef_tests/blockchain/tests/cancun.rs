@@ -14,6 +14,7 @@ use std::path::Path;
 // test or set of tests
 
 fn parse_and_execute_until_cancun(path: &Path) -> datatest_stable::Result<()> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_test_file(path);
 
     for (test_key, test) in tests {
@@ -22,7 +23,7 @@ fn parse_and_execute_until_cancun(path: &Path) -> datatest_stable::Result<()> {
             // them. This produces false positives
             continue;
         }
-        run_ef_test(&test_key, &test);
+        rt.block_on(run_ef_test(&test_key, &test));
     }
 
     Ok(())
@@ -30,6 +31,7 @@ fn parse_and_execute_until_cancun(path: &Path) -> datatest_stable::Result<()> {
 
 #[allow(dead_code)]
 fn parse_and_execute_all(path: &Path) -> datatest_stable::Result<()> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_test_file(path);
 
     for (test_key, test) in tests {
@@ -37,7 +39,7 @@ fn parse_and_execute_all(path: &Path) -> datatest_stable::Result<()> {
             // These tests fall into the not supported forks. This produces false positives
             continue;
         }
-        run_ef_test(&test_key, &test);
+        rt.block_on(run_ef_test(&test_key, &test));
     }
 
     Ok(())

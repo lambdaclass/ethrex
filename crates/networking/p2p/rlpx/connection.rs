@@ -505,7 +505,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             }
             Message::PooledTransactions(msg) if peer_supports_eth => {
                 if is_synced {
-                    msg.handle(&self.node, &self.blockchain)?;
+                    msg.handle(&self.node, &self.blockchain).await?;
                 }
             }
             Message::GetStorageRanges(req) => {

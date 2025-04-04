@@ -47,7 +47,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
         Ok(ExchangeTransitionConfigV1Req { payload })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!("Received new engine request: {self}");
         let payload = &self.payload;
 

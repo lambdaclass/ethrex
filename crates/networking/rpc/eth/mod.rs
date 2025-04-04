@@ -73,7 +73,7 @@ pub mod test_utils {
         }
     }
 
-    fn add_blocks_with_transactions(
+    async fn add_blocks_with_transactions(
         storage: &Store,
         block_count: u64,
         txs_per_block: Vec<Transaction>,
@@ -86,11 +86,12 @@ pub mod test_utils {
             };
             let block_header = test_header(block_num);
             let block = Block::new(block_header.clone(), block_body);
-            storage.add_block(block).unwrap();
+            storage.add_block(block).await.unwrap();
             storage
                 .set_canonical_block(block_num, block_header.compute_block_hash())
+                .await
                 .unwrap();
-            storage.update_latest_block_number(block_num).unwrap();
+            storage.update_latest_block_number(block_num).await.unwrap();
         }
     }
 
@@ -131,37 +132,37 @@ pub mod test_utils {
         })
     }
 
-    pub fn setup_store() -> Store {
+    pub async fn setup_store() -> Store {
         let genesis: &str = include_str!("../../../../test_data/genesis-l1.json");
         let genesis: Genesis =
             serde_json::from_str(genesis).expect("Fatal: test config is invalid");
         let store = Store::new("test-store", EngineType::InMemory)
             .expect("Fail to create in-memory db test");
-        store.add_initial_state(genesis).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
         store
     }
 
-    pub fn add_legacy_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {
+    pub async fn add_legacy_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {
         for block_num in 1..=block_count {
             let mut txs = vec![];
             for nonce in 1..=tx_count {
                 txs.push(legacy_tx_for_test(nonce));
             }
-            add_blocks_with_transactions(storage, block_num, txs);
+            add_blocks_with_transactions(storage, block_num, txs).await;
         }
     }
 
-    pub fn add_eip1559_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {
+    pub async fn add_eip1559_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {
         for block_num in 1..=block_count {
             let mut txs = vec![];
             for nonce in 1..=tx_count {
                 txs.push(eip1559_tx_for_test(nonce));
             }
-            add_blocks_with_transactions(storage, block_num, txs);
+            add_blocks_with_transactions(storage, block_num, txs).await;
         }
     }
 
-    pub fn add_mixed_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {
+    pub async fn add_mixed_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {
         for block_num in 1..=block_count {
             let mut txs = vec![];
             for nonce in 1..=tx_count {
@@ -171,7 +172,7 @@ pub mod test_utils {
                     txs.push(eip1559_tx_for_test(nonce));
                 }
             }
-            add_blocks_with_transactions(storage, block_num, txs);
+            add_blocks_with_transactions(storage, block_num, txs).await;
         }
     }
 }

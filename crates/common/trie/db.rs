@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub trait TrieDB {
+pub trait TrieDB: Send + Sync {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError>;
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError>;
     // fn put_batch(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError>;

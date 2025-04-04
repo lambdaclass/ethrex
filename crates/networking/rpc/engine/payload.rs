@@ -32,9 +32,9 @@ impl RpcHandler for NewPayloadV1Request {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v1(&self.payload)?;
-        handle_new_payload_v1_v2(&self.payload, context)
+        handle_new_payload_v1_v2(&self.payload, context).await
     }
 }
 
@@ -49,7 +49,7 @@ impl RpcHandler for NewPayloadV2Request {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let chain_config = &context.storage.get_chain_config()?;
         if chain_config.is_shanghai_activated(self.payload.timestamp) {
             validate_execution_payload_v2(&self.payload)?;
@@ -58,7 +58,7 @@ impl RpcHandler for NewPayloadV2Request {
             validate_execution_payload_v1(&self.payload)?;
         }
 
-        handle_new_payload_v1_v2(&self.payload, context)
+        handle_new_payload_v1_v2(&self.payload, context).await
     }
 }
 
@@ -117,7 +117,7 @@ impl RpcHandler for NewPayloadV3Request {
             request.parent_beacon_block_root,
         );
 
-        let client_response = Self::call(req, context);
+        let client_response = Self::call(req, context).await;
 
         let gateway_response = gateway_request
             .await
@@ -139,7 +139,7 @@ impl RpcHandler for NewPayloadV3Request {
         gateway_response.or(client_response)
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block =
             get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root), None)?;
         validate_fork(&block, Fork::Cancun, &context)?;
@@ -149,7 +149,8 @@ impl RpcHandler for NewPayloadV3Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
-        )?;
+        )
+        .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -180,7 +181,7 @@ impl RpcHandler for NewPayloadV4Request {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
 
@@ -206,7 +207,8 @@ impl RpcHandler for NewPayloadV4Request {
             context,
             block,
             self.expected_blob_versioned_hashes.clone(),
-        )?;
+        )
+        .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -222,12 +224,12 @@ impl RpcHandler for GetPayloadV1Request {
         Ok(Self { payload_id })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
         // NOTE: This validation is actually not required to run Hive tests. Not sure if it's
         // necessary
         validate_payload_v1_v2(&payload.block, &context)?;
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
         let response = ExecutionPayload::from_block(payload_bundle.block);
 
@@ -245,10 +247,10 @@ impl RpcHandler for GetPayloadV2Request {
         Ok(Self { payload_id })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
         validate_payload_v1_v2(&payload.block, &context)?;
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -295,7 +297,7 @@ impl RpcHandler for GetPayloadV3Request {
 
         let gateway_request = gateway_auth_client.engine_get_payload_v3(request.payload_id);
 
-        let client_response = Self::call(req, context);
+        let client_response = Self::call(req, context).await;
 
         let gateway_response = gateway_request
             .await
@@ -317,10 +319,10 @@ impl RpcHandler for GetPayloadV3Request {
         gateway_response.or(client_response)
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
         validate_fork(&payload.block, Fork::Cancun, &context)?;
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -354,7 +356,7 @@ impl RpcHandler for GetPayloadV4Request {
         Ok(Self { payload_id })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let payload = get_payload(self.payload_id, &context)?;
         let chain_config = &context.storage.get_chain_config()?;
 
@@ -365,7 +367,7 @@ impl RpcHandler for GetPayloadV4Request {
             )));
         }
 
-        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context)?;
+        let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(payload_bundle.block),
@@ -403,7 +405,7 @@ impl RpcHandler for GetPayloadBodiesByHashV1Request {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         if self.hashes.len() >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
@@ -440,7 +442,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         Ok(GetPayloadBodiesByRangeV1Request { start, count })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         if self.count as usize >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
@@ -556,7 +558,7 @@ fn validate_ancestors(
 }
 
 // TODO: We need to check why we return a Result<Value, RpcErr> here instead of a Result<PayloadStatus, RpcErr> as in v3.
-fn handle_new_payload_v1_v2(
+async fn handle_new_payload_v1_v2(
     payload: &ExecutionPayload,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
@@ -583,11 +585,11 @@ fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status = execute_payload(&block, &context)?;
+    let payload_status = execute_payload(&block, &context).await?;
     serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
-fn handle_new_payload_v3(
+async fn handle_new_payload_v3(
     payload: &ExecutionPayload,
     context: RpcApiContext,
     block: Block,
@@ -625,7 +627,7 @@ fn handle_new_payload_v3(
     }
 
     // All checks passed, execute payload
-    execute_payload(&block, &context)
+    execute_payload(&block, &context).await
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
@@ -671,7 +673,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
-fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStatus, RpcErr> {
+async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
     let storage = &context.storage;
     // Return the valid message directly if we have it.
@@ -699,7 +701,7 @@ fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStat
         }
     };
 
-    match context.blockchain.add_block(block) {
+    match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state
         // transition of any new payload as long as the parent is present. If we received the
@@ -786,7 +788,7 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     Ok(())
 }
 
-fn build_payload_if_necessary(
+async fn build_payload_if_necessary(
     payload_id: u64,
     mut payload: PayloadBundle,
     context: RpcApiContext,
@@ -803,6 +805,7 @@ fn build_payload_if_necessary(
             } = context
                 .blockchain
                 .build_payload(&mut payload.block)
+                .await
                 .map_err(|err| RpcErr::Internal(err.to_string()))?;
             (blobs_bundle, requests, block_value)
         };
@@ -817,7 +820,8 @@ fn build_payload_if_necessary(
 
         context
             .storage
-            .update_payload(payload_id, new_payload.clone())?;
+            .update_payload(payload_id, new_payload.clone())
+            .await?;
 
         Ok(new_payload)
     }

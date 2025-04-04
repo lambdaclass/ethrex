@@ -87,33 +87,33 @@ mod tests {
         BASE_PRICE_IN_WEI,
     };
 
-    #[test]
-    fn test_for_legacy_txs() {
-        let storage = setup_store();
-        add_legacy_tx_blocks(&storage, 20, 10);
+    #[tokio::test]
+    async fn test_for_legacy_txs() {
+        let storage = setup_store().await;
+        add_legacy_tx_blocks(&storage, 20, 10).await;
         let gas_tip = estimate_gas_tip(&storage).unwrap().unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
-    #[test]
-    fn test_for_eip1559_txs() {
-        let storage = setup_store();
-        add_eip1559_tx_blocks(&storage, 20, 10);
+    #[tokio::test]
+    async fn test_for_eip1559_txs() {
+        let storage = setup_store().await;
+        add_eip1559_tx_blocks(&storage, 20, 10).await;
         let gas_tip = estimate_gas_tip(&storage).unwrap().unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
-    #[test]
-    fn test_for_mixed_txs() {
-        let storage = setup_store();
-        add_mixed_tx_blocks(&storage, 20, 10);
+    #[tokio::test]
+    async fn test_for_mixed_txs() {
+        let storage = setup_store().await;
+        add_mixed_tx_blocks(&storage, 20, 10).await;
         let gas_tip = estimate_gas_tip(&storage).unwrap().unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
-    #[test]
-    fn test_for_empty_blocks() {
-        let storage = setup_store();
+    #[tokio::test]
+    async fn test_for_empty_blocks() {
+        let storage = setup_store().await;
         let gas_tip = estimate_gas_tip(&storage).unwrap();
         assert_eq!(gas_tip, None);
     }

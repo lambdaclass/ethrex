@@ -56,7 +56,7 @@ async fn fetch_bytecode_batch(
         debug!("Received {} bytecodes", bytecodes.len());
         // Store the bytecodes
         for code in bytecodes.into_iter() {
-            store.add_account_code(batch.remove(0), code)?;
+            store.add_account_code(batch.remove(0), code).await?;
         }
     }
     // Return remaining code hashes in the batch if we couldn't fetch all of them

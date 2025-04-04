@@ -15,6 +15,7 @@ serde_json.workspace = true
 bytes.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 datatest-stable = "0.2.9"

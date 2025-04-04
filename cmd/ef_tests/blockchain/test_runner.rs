@@ -8,14 +8,14 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 
-pub fn run_ef_test(test_key: &str, test: &TestUnit) {
+pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
     let decoded_block = CoreBlock::decode(&genesis_rlp).unwrap();
     let genesis_block_header = CoreBlockHeader::from(test.genesis_block_header.clone());
     assert_eq!(decoded_block.header, genesis_block_header);
 
-    let store = build_store_for_test(test);
+    let store = build_store_for_test(test).await;
 
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
@@ -33,7 +33,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block);
+        let chain_result = blockchain.add_block(block).await;
         match chain_result {
             Err(error) => {
                 assert!(
@@ -50,7 +50,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
                     test_key,
                     block_fixture.expect_exception.clone().unwrap()
                 );
-                apply_fork_choice(&store, hash, hash, hash).unwrap();
+                apply_fork_choice(&store, hash, hash, hash).await.unwrap();
             }
         }
     }
@@ -82,12 +82,13 @@ pub fn parse_test_file(path: &Path) -> HashMap<String, TestUnit> {
 }
 
 /// Creats a new in-memory store and adds the genesis state
-pub fn build_store_for_test(test: &TestUnit) -> Store {
+pub async fn build_store_for_test(test: &TestUnit) -> Store {
     let store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
     let genesis = test.get_genesis();
     store
         .add_initial_state(genesis)
+        .await
         .expect("Failed to add genesis state");
     store
 }

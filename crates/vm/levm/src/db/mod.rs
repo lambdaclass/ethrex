@@ -10,7 +10,7 @@ pub mod cache;
 pub use cache::CacheDB;
 pub mod error;
 
-pub trait Database {
+pub trait Database: Send + Sync {
     fn get_account_info(&self, address: Address) -> Result<AccountInfo, DatabaseError>;
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<U256, DatabaseError>;
     fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, DatabaseError>;
