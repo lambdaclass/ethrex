@@ -20,11 +20,10 @@ pub(crate) async fn bytecode_fetcher(
 ) -> Result<(), SyncError> {
     let mut pending_bytecodes: Vec<H256> = vec![];
     let fetch_batch = move |batch: Vec<H256>, peers: PeerHandler, store: Store| async {
-        let rem = fetch_bytecode_batch(batch, peers, store).await.unwrap();
         // Bytecode fetcher will never become stale
-        (rem, false)
+        fetch_bytecode_batch(batch, peers, store).await.map(|res| (res, false))
     };
-    run_queue(&mut receiver, &mut pending_bytecodes, &fetch_batch, peers.clone(), store.clone(), BYTECODE_BATCH_SIZE).await;
+    run_queue(&mut receiver, &mut pending_bytecodes, &fetch_batch, peers.clone(), store.clone(), BYTECODE_BATCH_SIZE).await?;
     Ok(())
 }
 
@@ -33,7 +32,7 @@ async fn fetch_bytecode_batch(
     mut batch: Vec<H256>,
     peers: PeerHandler,
     store: Store,
-) -> Result<Vec<H256>, StoreError> {
+) -> Result<Vec<H256>, SyncError> {
     if let Some(bytecodes) = peers.request_bytecodes(batch.clone()).await {
         // Store the bytecodes
         for code in bytecodes.into_iter() {
