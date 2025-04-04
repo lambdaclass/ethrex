@@ -335,7 +335,7 @@ impl Command {
                             coinbase,
                             number: last_number + 1,
                             parent_hash: last_hash,
-                            ..state_diff.header
+                            ..header
                         };
                         let new_block_hash = new_block.compute_block_hash();
 
