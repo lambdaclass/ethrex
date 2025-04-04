@@ -21,7 +21,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Rust
-        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         uses: dtolnay/rust-toolchain@stable
 
       - name: Benchmarks
