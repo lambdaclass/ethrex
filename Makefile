@@ -202,7 +202,7 @@ load-test-fibonacci: ## 🚧 Runs a load-test. Run make start-node-with-flamegra
 load-test-io: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test-io
 	cargo run --release \
 	--manifest-path cmd/load_test/Cargo.toml -- \
-	--path test_data/private_keys.txt -v --test_type io-heavy
+	--path test_data/private_keys.txt -v --test_type io-heavy --url http://localhost:1729
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
