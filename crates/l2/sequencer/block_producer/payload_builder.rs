@@ -43,7 +43,7 @@ const TX_STATE_DIFF_SIZE: usize = 116;
 /// L2 payload builder
 /// Completes the payload building process, return the block value
 /// Same as `blockchain::build_payload` without applying system operations and using a different `fill_transactions`
-pub fn build_payload(
+pub async fn build_payload(
     blockchain: Arc<Blockchain>,
     payload: Block,
     store: &Store,
@@ -57,7 +57,7 @@ pub fn build_payload(
     blockchain.apply_withdrawals(&mut context)?;
     fill_transactions(blockchain.clone(), &mut context, store)?;
     blockchain.extract_requests(&mut context)?;
-    blockchain.finalize_payload(&mut context)?;
+    blockchain.finalize_payload(&mut context).await?;
 
     let interval = Instant::now().duration_since(since).as_millis();
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");

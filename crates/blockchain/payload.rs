@@ -525,7 +525,7 @@ impl Blockchain {
 
     pub async fn finalize_payload(
         &self,
-        context: &mut PayloadBuildContext<'_>,
+        context: &mut PayloadBuildContext,
     ) -> Result<(), ChainError> {
         let chain_config = &context.store.get_chain_config()?;
         let fork = chain_config.fork(context.payload.header.timestamp);
