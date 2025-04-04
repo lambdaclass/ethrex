@@ -56,6 +56,8 @@ clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
 	rm -rf $(TMP_DIR)
 	rm -f $(STATETEST_ARTIFACT)
 
+refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-downloads tests, useful when they are outdated!
+
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
 		cd ../../../ && \
