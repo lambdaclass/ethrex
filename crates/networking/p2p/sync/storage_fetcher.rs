@@ -54,19 +54,17 @@ pub(crate) async fn storage_fetcher(
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
     // Create an async closure to pass to the generic task spawner
-    let l_sender = large_storage_sender.clone();
-    let s_sender = storage_trie_rebuilder_sender.clone();
-    let fetch_batch = move |batch: Vec<(H256, H256)>, peers: PeerHandler, store: Store| {
-        let l_sender = l_sender.clone();
-        let s_sender = s_sender.clone();
+    let fetch_batch = |batch: Vec<(H256, H256)>, peers: PeerHandler, store: Store| {
+        let l_sender = large_storage_sender.clone();
+        let s_sender = storage_trie_rebuilder_sender.clone();
         async move { fetch_storage_batch(batch, state_root, peers, store, l_sender, s_sender).await }
     };
     run_queue(
         &mut receiver,
         &mut pending_storage,
         &fetch_batch,
-        peers.clone(),
-        store.clone(),
+        peers,
+        store,
         STORAGE_BATCH_SIZE,
     )
     .await?;
@@ -161,26 +159,24 @@ async fn large_storage_fetcher(
     // (account_hash, storage_root, last_key)
     let mut pending_storage: Vec<LargeStorageRequest> = vec![];
     // Create an async closure to pass to the generic task spawner
-    let s_sender = storage_trie_rebuilder_sender.clone();
-    let fetch_batch =
-        move |mut batch: Vec<LargeStorageRequest>, peers: PeerHandler, store: Store| {
-            let s_sender = s_sender.clone();
-            // Batch size should always be 1
-            if batch.len() != 1 {
-                error!("Invalid large storage batch size, check source code");
-            }
-            async move {
-                fetch_large_storage(batch.remove(0), state_root, peers, store, s_sender)
-                    .await
-                    .map(|(rem, stale)| (rem.map(|r| vec![r]).unwrap_or_default(), stale))
-            }
-        };
+    let fetch_batch = |mut batch: Vec<LargeStorageRequest>, peers: PeerHandler, store: Store| {
+        let s_sender = storage_trie_rebuilder_sender.clone();
+        // Batch size should always be 1
+        if batch.len() != 1 {
+            error!("Invalid large storage batch size, check source code");
+        }
+        async move {
+            fetch_large_storage(batch.remove(0), state_root, peers, store, s_sender)
+                .await
+                .map(|(rem, stale)| (rem.map(|r| vec![r]).unwrap_or_default(), stale))
+        }
+    };
     run_queue(
         &mut receiver,
         &mut pending_storage,
         &fetch_batch,
-        peers.clone(),
-        store.clone(),
+        peers,
+        store,
         STORAGE_BATCH_SIZE,
     )
     .await?;

@@ -30,8 +30,8 @@ pub(crate) async fn bytecode_fetcher(
         &mut receiver,
         &mut pending_bytecodes,
         &fetch_batch,
-        peers.clone(),
-        store.clone(),
+        peers,
+        store,
         BYTECODE_BATCH_SIZE,
     )
     .await?;
