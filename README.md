@@ -89,7 +89,7 @@ make dev
 
 For testing, we're using three kinds of tests.
 
-##### Ethereum Foundation Tests
+#### Ethereum Foundation Tests
 
 These are the official execution spec tests, you can execute them with:
 
@@ -100,7 +100,7 @@ make test
 This will download the test cases from the [official execution spec tests repo](https://github.com/ethereum/execution-spec-tests/) and run them with our glue code
 under `cmd/ef_tests/tests`.
 
-##### Crate Specific Tests
+#### Crate Specific Tests
 
 The second kind are each crate's tests, you can run them like this:
 
@@ -112,13 +112,17 @@ For example:
 make test CRATE="ethrex-blockchain"
 ```
 
-##### Hive Tests
+#### Load tests
+
+More information in the [load test documentation](cmd/load_test/README.md).
+
+#### Hive Tests
 
 Finally, we have End-to-End tests with hive.
 Hive is a system which simply sends RPC commands to our node,
 and expects a certain response. You can read more about it [here](https://github.com/ethereum/hive/blob/master/docs/overview.md).
 
-###### Prereqs
+##### Prereqs
 We need to have go installed for the first time we run hive, an easy way to do this is adding the asdf go plugin:
 
 ```shell
@@ -133,7 +137,7 @@ rust 1.82.0
 golang 1.23.2
 ```
 
-###### Running Simulations
+##### Running Simulations
 Hive tests are categorized by "simulations', and test instances can be filtered with a regex:
 ```bash
 make run-hive-debug SIMULATION=<simulation> TEST_PATTERN=<test-regex>
@@ -149,7 +153,7 @@ make run-hive-debug SIMULATION=ethereum/rpc-compat TEST_PATTERN="*"
 ```
 This example runs **every** test under rpc, with debug output
 
-###### Assertoor
+##### Assertoor
 
 We run some assertoot checks on our CI, to execute them locally you can run the following:
 ```bash
