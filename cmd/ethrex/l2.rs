@@ -99,7 +99,7 @@ impl Command {
 
                 let network = get_network(&opts.node_opts);
 
-                let store = init_store(&data_dir, &network);
+                let store = init_store(&data_dir, &network).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
 
