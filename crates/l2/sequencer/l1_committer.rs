@@ -84,8 +84,12 @@ impl Committer {
     }
 
     async fn main_logic(&mut self) -> Result<(), CommitterError> {
-        let last_committed_block_number =
+        let last_committed_batch_number =
             EthClient::get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
+                .await?;
+        let batch_to_commit = last_committed_batch_number + 1;
+        let last_committed_block_number =
+            EthClient::get_last_committed_block(&self.eth_client, self.on_chain_proposer_address)
                 .await?;
         let first_block_to_commit = last_committed_block_number + 1;
 
@@ -94,6 +98,7 @@ impl Committer {
 
         match self
             .send_commitment(
+                batch_to_commit,
                 first_block_to_commit,
                 last_block_to_commit,
                 withdrawal_logs_merkle_root,
@@ -104,12 +109,12 @@ impl Committer {
         {
             Ok(commit_tx_hash) => {
                 info!(
-                    "Sent commitment from block {first_block_to_commit}, to block {last_block_to_commit}, with tx hash {commit_tx_hash:#x}",
+                    "Sent commitment from batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}. first_block: {first_block_to_commit}, last_block {last_block_to_commit}.",
                 );
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
-                "Failed to send commitment from block {first_block_to_commit} to block {last_block_to_commit}: {error}"
+                "Failed to send commitment for batch {batch_to_commit}. first_block: {first_block_to_commit} last_block: {last_block_to_commit}: {error}"
             ))),
         }
     }
@@ -400,16 +405,18 @@ impl Committer {
 
     async fn send_commitment(
         &self,
+        batch_number: u64,
         first_block_number: u64,
         last_block_number: u64,
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, CommitterError> {
-        info!("Sending commitment from block {first_block_number} to block {last_block_number}");
+        info!("Sending commitment for batch {batch_number}. first_block: {first_block_number}, last_block: {last_block_number}");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
         let calldata_values = vec![
+            Value::Uint(U256::from(batch_number)),
             Value::Uint(U256::from(first_block_number)),
             Value::Uint(U256::from(last_block_number)),
             Value::FixedBytes(

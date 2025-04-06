@@ -36,8 +36,15 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev This variable holds the batch number of the most recently committed batch.
     /// @dev All batches with a batch number less than or equal to `lastCommittedBatch` are considered committed.
     /// @dev Batches with a block number greater than `lastCommittedBatch` have not been committed yet.
-    /// @dev This is crucial for ensuring that only subsequents blocks are committed in the contract.
+    /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
+
+    /// @notice The latest committed block number.
+    /// @dev This variable holds the block number of the most recently committed block.
+    /// @dev All blocks with a block number less than or equal to `lastCommittedBlock` are considered committed.
+    /// @dev Blocks with a block number greater than `lastCommittedBlock` have not been committed yet.
+    /// @dev This is crucial for ensuring that only subsequents blocks are committed in the contract.
+    uint256 public lastCommittedBlock;
 
     /// @dev The sequencer addresses that are authorized to commit and verify batches.
     mapping(address _authorizedAddress => bool)
@@ -138,6 +145,8 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @inheritdoc IOnChainProposer
     function commitBatch(
         uint256 batchNumber,
+        uint256 firstBlockNumber,
+        uint256 lastBlockNumber,
         bytes32 commitment,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 depositLogs
@@ -150,6 +159,11 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             batchCommitments[batchNumber].commitmentHash == bytes32(0),
             "OnChainProposer: batch already committed"
         );
+        require(
+            firstBlockNumber == lastCommittedBlock + 1,
+            "OnChainProposer: firstBlockNumber is not the immediate successor of lastCommittedBlock"
+        );
+
         // Check if commitment is equivalent to blob's KZG commitment.
 
         if (depositLogs != bytes32(0)) {
@@ -171,6 +185,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             depositLogs
         );
         lastCommittedBatch = batchNumber;
+        lastCommittedBlock = lastBlockNumber;
         emit BatchCommitted(commitment);
     }
 
