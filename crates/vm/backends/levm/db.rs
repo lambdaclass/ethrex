@@ -12,11 +12,11 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct DatabaseLogger {
     pub block_hashes_accessed: Arc<Mutex<HashMap<u64, CoreH256>>>,
-    pub store: Arc<dyn LevmDatabase>,
+    pub store: StoreWrapper,
 }
 
 impl DatabaseLogger {
-    pub fn new(store: Arc<dyn LevmDatabase>) -> Self {
+    pub fn new(store: StoreWrapper) -> Self {
         Self {
             block_hashes_accessed: Arc::new(Mutex::new(HashMap::new())),
             store,

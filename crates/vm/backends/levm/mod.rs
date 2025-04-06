@@ -397,16 +397,15 @@ impl LEVM {
         let parent_hash = block.header.parent_hash;
         let chain_config = store.get_chain_config()?;
 
-        let mut db = GeneralizedDatabase::new(
-            Arc::new(StoreWrapper {
-                store: store.clone(),
-                block_hash: block.header.parent_hash,
-            }),
-            CacheDB::new(),
-        );
+        let logger = Arc::new(DatabaseLogger::new(StoreWrapper {
+            store: store.clone(),
+            block_hash: block.header.parent_hash,
+        }));
+        let logger_ref = Arc::clone(&logger);
+        let mut db = GeneralizedDatabase::new(logger, CacheDB::new());
 
         // pre-execute and get all state changes
-        let (execution_updates, logger) =
+        let execution_updates =
             Self::pre_execute(block, &mut db).map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
 
         // index read and touched account addresses and storage keys
@@ -426,7 +425,7 @@ impl LEVM {
             let address = update.address;
             // filter new accounts (accounts that didn't exist before) assuming our store is
             // correct (based on the success of the pre-execution).
-            if logger
+            if db
                 .store
                 .get_account_info_by_hash(parent_hash, address)
                 .is_ok_and(|account| account.is_some())
@@ -440,7 +439,7 @@ impl LEVM {
             .clone()
             .map(|(address, _)| {
                 // return error if account is missing
-                let account = match logger.store.get_account_info_by_hash(parent_hash, address) {
+                let account = match db.store.get_account_info_by_hash(parent_hash, address) {
                     Ok(Some(some)) => Ok(some),
                     Err(err) => Err(ExecutionDBError::Database(err)),
                     Ok(None) => unreachable!(), // we are filtering out accounts that are not present
@@ -457,8 +456,7 @@ impl LEVM {
                 let hash = update.info.clone().unwrap_or_default().code_hash;
                 Ok((
                     hash,
-                    logger
-                        .store
+                    db.store
                         .get_account_code(hash)?
                         .ok_or(ExecutionDBError::NewMissingCode(hash))?,
                 ))
@@ -485,7 +483,7 @@ impl LEVM {
                 ))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let block_hashes = logger
+        let block_hashes = logger_ref
             .block_hashes_accessed
             .lock()
             .map_err(|_| {
@@ -574,38 +572,24 @@ impl LEVM {
     fn pre_execute(
         block: &Block,
         db: &mut GeneralizedDatabase,
-    ) -> Result<(Vec<AccountUpdate>, DatabaseLogger), ExecutionDBError> {
+    ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
         // this code was copied from the L1
         // TODO: if we change EvmState so that it accepts a CacheDB<RpcDB> then we can
         // simply call execute_block().
 
-        let logger = DatabaseLogger::new(db.store.clone());
-        let mut db = GeneralizedDatabase::new(Arc::new(logger.clone()), db.cache.clone());
-
-        let mut account_updates = vec![];
         // beacon root call
         #[cfg(not(feature = "l2"))]
         {
-            let chain_config = db.store.get_chain_config();
-            let block_header = &block.header;
-            let fork = chain_config.fork(block_header.timestamp);
-            Self::beacon_root_contract_call(&block.header, &mut db)
+            Self::beacon_root_contract_call(&block.header, db)
                 .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
-            let account_updates_beacon = Self::get_state_transitions(&mut db, fork)
-                .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
-
-            // db.store
-            //     .apply_account_updates(block.hash(), &account_updates_beacon)
-            //     .map_err(ExecutionDBError::Store)?;
-
-            account_updates.extend(account_updates_beacon);
         }
 
         // execute block
-        let report = Self::execute_block(block, &mut db).map_err(Box::new)?;
-        account_updates.extend(report.account_updates);
+        let account_updates = Self::execute_block(block, db)
+            .map_err(Box::new)?
+            .account_updates;
 
-        Ok((account_updates, logger))
+        Ok(account_updates)
     }
 }
 
