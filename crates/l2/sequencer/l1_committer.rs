@@ -128,7 +128,6 @@ impl Committer {
 
         let mut acc_withdrawals = vec![];
         let mut acc_deposits = vec![];
-        let mut acc_headers = vec![];
         let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         let mut withdrawal_hashes = vec![];
         let mut deposit_logs_hashes = vec![];
@@ -180,7 +179,6 @@ impl Committer {
             };
             acc_withdrawals.extend(withdrawals.clone());
             acc_deposits.extend(deposits.clone());
-            acc_headers.push(block_to_commit_header);
             for account in account_updates {
                 let address = account.address;
                 if let Some(existing) = acc_account_updates.get_mut(&address) {
@@ -191,7 +189,8 @@ impl Committer {
             }
 
             let state_diff = self.prepare_state_diff(
-                acc_headers.clone(),
+                from_block,
+                block_to_commit_header,
                 self.store.clone(),
                 &acc_withdrawals,
                 &acc_deposits,
@@ -314,18 +313,13 @@ impl Committer {
     /// Prepare the state diff for the blocks.
     fn prepare_state_diff(
         &self,
-        headers: Vec<BlockHeader>,
+        first_block_number: BlockNumber,
+        last_header: BlockHeader,
         store: Store,
         withdrawals: &[(H256, Transaction)],
         deposits: &[PrivilegedL2Transaction],
         account_updates: Vec<AccountUpdate>,
     ) -> Result<StateDiff, CommitterError> {
-        let first_block_number = headers
-            .first()
-            .ok_or(CommitterError::InternalError(
-                "No block headers provided".to_owned(),
-            ))?
-            .number;
         info!("Preparing state diff from block {}", first_block_number);
 
         let mut modified_accounts = HashMap::new();
@@ -366,7 +360,7 @@ impl Committer {
         let state_diff = StateDiff {
             modified_accounts,
             version: StateDiff::default().version,
-            headers,
+            last_header,
             withdrawal_logs: withdrawals
                 .iter()
                 .map(|(hash, tx)| WithdrawalLog {
