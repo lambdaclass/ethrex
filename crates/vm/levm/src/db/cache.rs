@@ -22,11 +22,9 @@ pub fn get_account_mut<'cache>(
     if let Some(call_frame) = call_frame {
         if !call_frame.backup.contains_key(address) {
             if let Some(account) = account_option.as_ref() {
-                call_frame
-                    .backup
-                    .insert(address.clone(), Some((*account).clone()));
+                call_frame.backup.insert(*address, Some((*account).clone()));
             } else {
-                call_frame.backup.insert(address.clone(), None);
+                call_frame.backup.insert(*address, None);
             }
         }
     }
@@ -47,15 +45,10 @@ pub fn insert_account(
 
     // insert account_option cloned into call_frame backup if not already there
     if let Some(call_frame) = call_frame {
-        if !call_frame.backup.contains_key(&address) {
-            if let Some(account) = account_option.as_ref() {
-                call_frame
-                    .backup
-                    .insert(address.clone(), Some((*account).clone()));
-            } else {
-                call_frame.backup.insert(address.clone(), None);
-            }
-        }
+        call_frame
+            .backup
+            .entry(address)
+            .or_insert_with(|| account_option.as_ref().map(|account| (*account).clone()));
     }
 
     account_option
@@ -70,13 +63,11 @@ pub fn remove_account(
 
     // insert account_option cloned into call_frame backup if not already there
     if let Some(call_frame) = call_frame {
-        if !call_frame.backup.contains_key(&address) {
+        if !call_frame.backup.contains_key(address) {
             if let Some(account) = account_option.as_ref() {
-                call_frame
-                    .backup
-                    .insert(address.clone(), Some((*account).clone()));
+                call_frame.backup.insert(*address, Some((*account).clone()));
             } else {
-                call_frame.backup.insert(address.clone(), None);
+                call_frame.backup.insert(*address, None);
             }
         }
     }

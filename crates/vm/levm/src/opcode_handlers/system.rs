@@ -1,5 +1,4 @@
 use crate::{
-    account,
     call_frame::CallFrame,
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
@@ -734,9 +733,10 @@ impl<'a> VM<'a> {
                     .push(address_to_word(new_address))?;
 
                 for (address, account_opt) in new_call_frame.backup {
-                    if !current_call_frame.backup.contains_key(&address) {
-                        current_call_frame.backup.insert(address, account_opt);
-                    }
+                    current_call_frame
+                        .backup
+                        .entry(address)
+                        .or_insert(account_opt);
                 }
             }
             TxResult::Revert(err) => {
@@ -877,9 +877,10 @@ impl<'a> VM<'a> {
             TxResult::Success => {
                 current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
                 for (address, account_opt) in new_call_frame.backup {
-                    if !current_call_frame.backup.contains_key(&address) {
-                        current_call_frame.backup.insert(address, account_opt);
-                    }
+                    current_call_frame
+                        .backup
+                        .entry(address)
+                        .or_insert(account_opt);
                 }
             }
             TxResult::Revert(_) => {
