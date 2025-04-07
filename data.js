@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744039118104,
+  "lastUpdate": 1744043094832,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2635,6 +2635,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185253654742,
             "range": "± 668661570",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "50bf2e54c02ed89e18bdb75b95c0a50420eca52a",
+          "message": "perf(l1,l2): avoid double RLP encoding. (#2353)\n\n**Description**\nThis PR introduces a change to avoid an unnecessary double-encoding for\nRLP sequences\n\ncloses #2414\n\n---------\n\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-04-07T15:35:50Z",
+          "tree_id": "dffd43609b5b5be6d22e77fe7533a51db57b5820",
+          "url": "https://github.com/lambdaclass/ethrex/commit/50bf2e54c02ed89e18bdb75b95c0a50420eca52a"
+        },
+        "date": 1744043092282,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182632011793,
+            "range": "± 689287871",
             "unit": "ns/iter"
           }
         ]
