@@ -44,10 +44,10 @@ pub enum TestType {
 struct Command {
     #[arg(
         short = 'p',
-        long = "path",
+        long = "private-keys",
         help = "Path to the file containing private keys."
     )]
-    path: String,
+    private_keys: String,
     #[arg(
         short = 't',
         long = "to",
@@ -388,7 +388,7 @@ async fn _generic_load_test(
 impl Command {
     pub async fn run(self) -> eyre::Result<()> {
         let Command {
-            path,
+            private_keys,
             to,
             value,
             iterations,
@@ -402,7 +402,7 @@ impl Command {
 
         let rich_address = get_address_from_secret_key(&private_key)?;
 
-        let private_keys: Vec<SecretKey> = read_lines(path)?
+        let private_keys: Vec<SecretKey> = read_lines(private_keys)?
             .map(|pk| SecretKey::from_str(pk.unwrap().trim_start_matches("0x")).unwrap())
             .collect();
 

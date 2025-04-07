@@ -10,10 +10,10 @@ This module presents the following possible loadtest scenarios/types:
 ## Usage
 
 ```
-Usage: load_test [OPTIONS] --path <PATH>
+Usage: load_test [OPTIONS] --private_keys <PATH>
 
 Options:
-  -p, --path <PATH>              Path to the file containing private keys.
+  -p, --private-keys <PATH>      Path to the file containing private keys.
   -t, --to <TO>                  Address to send the transactions. Defaults to random.
   -a, --value <VALUE>            Value to send in each transaction. [default: 1000]
   -i, --iterations <ITERATIONS>  Number of transactions per private key. [default: 1000]
@@ -47,7 +47,7 @@ cargo run --release --bin ethrex \
 2. Run the Loadtest:
 
 ```sh
-cargo run --manifest-path cmd/load_test/Cargo.toml -- --path ./test_data/private_keys.txt --url http://localhost:1729
+cargo run --manifest-path cmd/load_test/Cargo.toml -- --private-keys ./test_data/private_keys.txt --url http://localhost:1729
 ```
 
 Also, the root's Makefile contains some targets to facilitate the process `load test` process.
@@ -76,6 +76,6 @@ Samply:
        - `load-test-fibonacci`
        - `load-test-io`
 
-When the node is stopeed, it will generate a file named `profile.json.gz`, you can open it at https://profiler.firefox.com/.
+When the node is terminated, it will generate a file named `profile.json.gz`, you can open it at <https://profiler.firefox.com/>.
 
 > [!NOTE] > `sudo` privileges may be needed to start the node and then for the load-test

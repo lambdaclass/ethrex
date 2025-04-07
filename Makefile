@@ -192,17 +192,17 @@ start-node-with-samply: rm-test-db ## 🚀🔥 Starts an ethrex client used for 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test
 	cargo run --release \
 	--manifest-path cmd/load_test/Cargo.toml -- \
-	--path test_data/private_keys.txt -v --url http://localhost:1729
+	--private-keys test_data/private_keys.txt -v --url http://localhost:1729
 
 load-test-fibonacci: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test-fibonacci
 	cargo run --release \
 	--manifest-path cmd/load_test/Cargo.toml -- \
-	--path test_data/private_keys.txt -v --test_type fibonacci --url http://localhost:1729
+	--private-keys test_data/private_keys.txt -v --test_type fibonacci --url http://localhost:1729
 
 load-test-io: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph/samply and in a new terminal make load-test-io
 	cargo run --release \
 	--manifest-path cmd/load_test/Cargo.toml -- \
-	--path test_data/private_keys.txt -v --test_type io-heavy --url http://localhost:1729
+	--private-keys test_data/private_keys.txt -v --test_type io-heavy --url http://localhost:1729
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
@@ -215,4 +215,4 @@ test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 load-test-erc20: test_data/ERC20/ERC20.bin ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-test-erc20
 	cargo run --release \
 	--manifest-path cmd/load_test/Cargo.toml -- \
-	--path test_data/private_keys.txt -v --test_type erc20 --url http://localhost:1729
+	--private-keys test_data/private_keys.txt -v --test_type erc20 --url http://localhost:1729

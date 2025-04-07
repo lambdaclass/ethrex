@@ -12,7 +12,7 @@ end_val=$((171 * $iterations * $value))
 start_time=$(date +%s)
 cargo run --release \
     --manifest-path cmd/load_test/Cargo.toml -- \
-    --path ./test_data/private_keys.txt -i $iterations -v --value $value --to $account --url http://localhost:1729 >/dev/null
+    --private-keys ./test_data/private_keys.txt -i $iterations -v --value $value --to $account --url http://localhost:1729 >/dev/null
 
 # TODO: replace with rex, ethrex_l2 checks on port 1729
 # ISSUE: https://github.com/lambdaclass/ethrex/issues/2407
