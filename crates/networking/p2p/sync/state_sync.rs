@@ -17,7 +17,7 @@ use tokio::{
     },
     time::{sleep, Instant},
 };
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::{
     peer_handler::PeerHandler,
@@ -193,7 +193,7 @@ async fn state_sync_segment(
             break;
         }
     }
-    debug!("[Segment {segment_number}]: Account Trie Fetching ended, signaling storage & bytecode fetcher process");
+    info!("[Segment {segment_number}]: Account Trie Fetching ended, signaling storage & bytecode fetcher process");
     // Update sync progress (this task is not vital so we can detach it)
     tokio::task::spawn(StateSyncProgress::end_segment(
         state_sync_progress.clone(),
@@ -264,7 +264,7 @@ impl StateSyncProgress {
                 .unwrap_or_default();
             let segment_completion_rate = (U512::from(segment_synced_accounts + 1) * 100)
                 / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
-            debug!("Segment {i} completion rate: {segment_completion_rate}%");
+            info!("Segment {i} completion rate: {segment_completion_rate}%");
             synced_accounts += segment_synced_accounts;
             synced_accounts_this_cycle += data.current_keys[i]
                 .into_uint()

@@ -235,7 +235,7 @@ impl Syncer {
                 .map(|header| header.compute_block_hash())
                 .collect::<Vec<_>>();
 
-            debug!(
+            info!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
                 first_block_header.number,
@@ -325,7 +325,7 @@ impl Syncer {
                 let pivot_header = store
                     .get_block_header_by_hash(all_block_hashes[pivot_idx])?
                     .ok_or(SyncError::CorruptDB)?;
-                debug!(
+                info!(
                     "Selected block {} as pivot for snap sync",
                     pivot_header.number
                 );

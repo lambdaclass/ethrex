@@ -11,7 +11,7 @@ use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::Nibbles;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -67,7 +67,7 @@ pub(crate) async fn storage_fetcher(
         STORAGE_BATCH_SIZE,
     )
     .await?;
-    debug!(
+    info!(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
@@ -183,7 +183,7 @@ async fn large_storage_fetcher(
         STORAGE_BATCH_SIZE,
     )
     .await?;
-    debug!(
+    info!(
         "Concluding large storage fetcher, {} large storages left in queue to be healed later",
         pending_storage.len()
     );
@@ -216,7 +216,7 @@ async fn fetch_large_storage(
     store: Store,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
 ) -> Result<(Option<LargeStorageRequest>, bool), SyncError> {
-    debug!(
+    info!(
         "Requesting large storage range for trie: {} from key: {}",
         request.storage_root, request.last_key,
     );
