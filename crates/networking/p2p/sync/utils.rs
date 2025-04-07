@@ -28,6 +28,7 @@ where
     // alive until the end signal so we don't lose incoming messages
     let mut incoming = true;
     let mut stale = false;
+    let mut stale_pivot_notice = false;
     while incoming {
         // Read incoming messages and add them to the queue
         let queue_len = queue.len();
@@ -41,7 +42,8 @@ where
                 queue_len_after_read
             );
         }
-        if stale {
+        if stale && !stale_pivot_notice {
+            stale_pivot_notice = true;
             info!("[{}] STALE PIVOT!", name);
         }
         // If the pivot isn't stale, spawn fetch tasks for the queued elements
