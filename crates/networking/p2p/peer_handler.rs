@@ -40,7 +40,50 @@ struct RetrySummary {
     no_peer: usize,
     send_error: usize,
     timeout: usize,
-    invalid_response: usize,
+    invalid_response: InvalidResponseSummary,
+}
+
+#[derive(Default)]
+struct InvalidResponseSummary {
+    response_is_empty: usize,
+    more_entries_than_requested: usize,
+    element_within_response_is_empty: usize,
+    failure_to_verify_element: usize,
+}
+
+impl InvalidResponseSummary {
+    fn count(&self) -> usize {
+        self.response_is_empty
+            + self.more_entries_than_requested
+            + self.element_within_response_is_empty
+            + self.failure_to_verify_element
+    }
+
+    fn list_causes(&self) -> String {
+        let mut causes = format!("Invalid response causes:");
+        if self.response_is_empty != 0 {
+            causes.push_str(&format!(" {} empty response", self.response_is_empty));
+        }
+        if self.more_entries_than_requested != 0 {
+            causes.push_str(&format!(
+                " {} response has more entries than requested",
+                self.more_entries_than_requested
+            ));
+        }
+        if self.element_within_response_is_empty != 0 {
+            causes.push_str(&format!(
+                " {} element within response is empty",
+                self.element_within_response_is_empty
+            ));
+        }
+        if self.failure_to_verify_element != 0 {
+            causes.push_str(&format!(
+                " {} failure_to_verify_element",
+                self.failure_to_verify_element
+            ));
+        }
+        causes
+    }
 }
 
 impl RetrySummary {
@@ -61,16 +104,28 @@ impl RetrySummary {
     }
 
     fn count_retries(&self) -> usize {
-        self.no_peer + self.send_error + self.timeout + self.invalid_response
+        self.no_peer + self.send_error + self.timeout + self.invalid_response.count()
     }
 
     fn list_failure_causes(&self) -> String {
-        format!("Attempt failure causes: {} no peer, {} send error, {} timeout, {} invalid peer response",
-            self.no_peer,
-            self.send_error,
-            self.timeout,
-            self.invalid_response
-        )
+        let mut causes = format!("Attempt failure causes:");
+        if self.no_peer != 0 {
+            causes.push_str(&format!(" {} no peer found", self.no_peer));
+        }
+        if self.send_error != 0 {
+            causes.push_str(&format!(" {} send error", self.send_error));
+        }
+        if self.timeout != 0 {
+            causes.push_str(&format!(" {} peer timeout", self.timeout));
+        }
+        if self.invalid_response.count() != 0 {
+            causes.push_str(&format!(
+                " {} invalid peer response",
+                self.invalid_response.count()
+            ));
+            causes.push_str(&format!("\n{}", self.invalid_response.list_causes()));
+        }
+        causes
     }
 }
 
@@ -421,8 +476,12 @@ impl PeerHandler {
             .flatten()
             {
                 // Check we got a reasonable amount of storage ranges
-                if slots.len() > storage_roots.len() || slots.is_empty() {
-                    retry_summary.invalid_response += 1;
+                if slots.is_empty() {
+                    retry_summary.invalid_response.response_is_empty += 1;
+                    continue;
+                }
+                if slots.len() > storage_roots.len() {
+                    retry_summary.invalid_response.more_entries_than_requested += 1;
                     continue;
                 }
                 // Unzip & validate response
@@ -439,7 +498,9 @@ impl PeerHandler {
                         .unzip();
                     // We won't accept empty storage ranges
                     if hashed_keys.is_empty() {
-                        retry_summary.invalid_response += 1;
+                        retry_summary
+                            .invalid_response
+                            .element_within_response_is_empty += 1;
                         continue;
                     }
                     let encoded_values = values
@@ -457,14 +518,14 @@ impl PeerHandler {
                             &encoded_values,
                             &proof,
                         ) else {
-                            retry_summary.invalid_response += 1;
+                            retry_summary.invalid_response.failure_to_verify_element += 1;
                             continue;
                         };
                         should_continue = sc;
                     } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
                         .is_err()
                     {
-                        retry_summary.invalid_response += 1;
+                        retry_summary.invalid_response.failure_to_verify_element += 1;
                         continue;
                     }
 
