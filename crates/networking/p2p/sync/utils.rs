@@ -41,6 +41,9 @@ where
                 queue_len_after_read
             );
         }
+        if stale {
+            info!("[{}] STALE PIVOT!", name);
+        }
         // If the pivot isn't stale, spawn fetch tasks for the queued elements
         if !stale {
             let queue_len = queue.len();
