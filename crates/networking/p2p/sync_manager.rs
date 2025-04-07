@@ -56,7 +56,7 @@ impl SyncManager {
             store: store.clone(),
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
-        // Otherwise we will incorreclty asume the node is already synced and work on invalid state
+        // Otherwise we will incorreclty assume the node is already synced and work on invalid state
         if store
             .get_header_download_checkpoint()
             .is_ok_and(|res| res.is_some())
