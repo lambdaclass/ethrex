@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct DatabaseLogger {
     pub block_hashes_accessed: Arc<Mutex<HashMap<u64, CoreH256>>>,
+    pub accounts_accessed: Arc<Mutex<Vec<CoreAddress>>>,
+    pub storage_accessed: Arc<Mutex<HashMap<(CoreAddress, CoreH256), CoreU256>>>,
     pub store: StoreWrapper,
 }
 
@@ -19,6 +21,8 @@ impl DatabaseLogger {
     pub fn new(store: StoreWrapper) -> Self {
         Self {
             block_hashes_accessed: Arc::new(Mutex::new(HashMap::new())),
+            accounts_accessed: Arc::new(Mutex::new(Vec::new())),
+            storage_accessed: Arc::new(Mutex::new(HashMap::new())),
             store,
         }
     }
@@ -30,6 +34,10 @@ impl LevmDatabase for DatabaseLogger {
         address: CoreAddress,
     ) -> Result<ethrex_levm::AccountInfo, DatabaseError> {
         let acc_info = self.store.get_account_info(address)?;
+        self.accounts_accessed
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .push(address);
         Ok(acc_info)
     }
 
@@ -42,7 +50,12 @@ impl LevmDatabase for DatabaseLogger {
         address: CoreAddress,
         key: CoreH256,
     ) -> Result<CoreU256, DatabaseError> {
-        self.store.get_storage_slot(address, key)
+        let slot = self.store.get_storage_slot(address, key)?;
+        self.storage_accessed
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .insert((address, key), slot);
+        Ok(slot)
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {

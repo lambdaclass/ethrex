@@ -405,32 +405,48 @@ impl LEVM {
         let mut db = GeneralizedDatabase::new(logger, CacheDB::new());
 
         // pre-execute and get all state changes
-        let execution_updates =
-            Self::pre_execute(block, &mut db).map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
+        let execution_updates = Self::execute_block(block, &mut db)
+            .map_err(Box::new)?
+            .account_updates;
 
         // index read and touched account addresses and storage keys
-        let index = execution_updates.iter().map(|update| {
-            // CHECK if we only need the touched storage keys
-            let address = update.address;
-            let storage_keys: Vec<_> = update
-                .added_storage
-                .keys()
-                .map(|key| H256::from_slice(&key.to_fixed_bytes()))
-                .collect();
-            (address, storage_keys)
-        });
+        let account_accessed = logger_ref
+            .accounts_accessed
+            .lock()
+            .map_err(|_| {
+                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+            })?
+            .clone();
+        let index: Vec<_> = account_accessed
+            .iter()
+            .map(|address| {
+                // Search for the storage keys read
+                let storage_keys = logger_ref
+                    .storage_accessed
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter_map(
+                        |((addr, key), _)| {
+                            if *addr == *address {
+                                Some(key)
+                            } else {
+                                None
+                            }
+                        },
+                    )
+                    .map(|key| H256::from_slice(&key.to_fixed_bytes()))
+                    .collect::<Vec<_>>();
+                (address, storage_keys)
+            })
+            .collect();
 
         // fetch all read/written values from store
-        let cache_accounts = execution_updates.iter().filter_map(|update| {
-            let address = update.address;
+        let cache_accounts = account_accessed.iter().filter_map(|address| {
             // filter new accounts (accounts that didn't exist before) assuming our store is
             // correct (based on the success of the pre-execution).
-            if db
-                .store
-                .get_account_info_by_hash(parent_hash, address)
-                .is_ok_and(|account| account.is_some())
-            {
-                Some((address, update.info.clone()))
+            if let Ok(Some(info)) = db.store.get_account_info_by_hash(parent_hash, *address) {
+                Some((address, info))
             } else {
                 None
             }
@@ -439,13 +455,13 @@ impl LEVM {
             .clone()
             .map(|(address, _)| {
                 // return error if account is missing
-                let account = match db.store.get_account_info_by_hash(parent_hash, address) {
+                let account = match db.store.get_account_info_by_hash(parent_hash, *address) {
                     Ok(Some(some)) => Ok(some),
                     Err(err) => Err(ExecutionDBError::Database(err)),
                     Ok(None) => unreachable!(), // we are filtering out accounts that are not present
                                                 // in the store
                 };
-                Ok((address, account?))
+                Ok((*address, account?))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
         let code = execution_updates
@@ -494,8 +510,11 @@ impl LEVM {
             .map(|(num, hash)| (num, H256::from(hash.0)))
             .collect();
 
+        let new_store = store.clone();
+        new_store.apply_account_updates(block.hash(), &execution_updates)?;
+
         // get account proofs
-        let state_trie = store
+        let state_trie = new_store
             .state_trie(block.hash())?
             .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
         let parent_state_trie = store
@@ -503,7 +522,8 @@ impl LEVM {
             .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
         let hashed_addresses: Vec<_> = index
             .clone()
-            .map(|(address, _)| hash_address(&address))
+            .into_iter()
+            .map(|(address, _)| hash_address(address))
             .collect();
         let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
         let final_state_proofs: Vec<_> = hashed_addresses
@@ -524,13 +544,13 @@ impl LEVM {
         let mut storage_proofs = HashMap::new();
         let mut final_storage_proofs = HashMap::new();
         for (address, storage_keys) in index {
-            let Some(parent_storage_trie) = store.storage_trie(parent_hash, address)? else {
+            let Some(parent_storage_trie) = store.storage_trie(parent_hash, *address)? else {
                 // the storage of this account was empty or the account is newly created, either
                 // way the storage trie was initially empty so there aren't any proofs to add.
                 continue;
             };
-            let storage_trie = store.storage_trie(block.hash(), address)?.ok_or(
-                ExecutionDBError::NewMissingStorageTrie(block.hash(), address),
+            let storage_trie = new_store.storage_trie(block.hash(), *address)?.ok_or(
+                ExecutionDBError::NewMissingStorageTrie(block.hash(), *address),
             )?;
             let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
 
@@ -554,7 +574,7 @@ impl LEVM {
                 [initial_proofs.1, potential_child_nodes].concat(),
             );
 
-            storage_proofs.insert(address, proofs);
+            storage_proofs.insert(*address, proofs);
             final_storage_proofs.insert(address, final_proofs);
         }
 
@@ -567,29 +587,6 @@ impl LEVM {
             state_proofs,
             storage_proofs,
         })
-    }
-
-    fn pre_execute(
-        block: &Block,
-        db: &mut GeneralizedDatabase,
-    ) -> Result<Vec<AccountUpdate>, ExecutionDBError> {
-        // this code was copied from the L1
-        // TODO: if we change EvmState so that it accepts a CacheDB<RpcDB> then we can
-        // simply call execute_block().
-
-        // beacon root call
-        #[cfg(not(feature = "l2"))]
-        {
-            Self::beacon_root_contract_call(&block.header, db)
-                .map_err(|e| ExecutionDBError::Evm(Box::new(e)))?;
-        }
-
-        // execute block
-        let account_updates = Self::execute_block(block, db)
-            .map_err(Box::new)?
-            .account_updates;
-
-        Ok(account_updates)
     }
 }
 
