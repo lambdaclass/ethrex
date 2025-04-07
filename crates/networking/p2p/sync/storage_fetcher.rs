@@ -180,7 +180,7 @@ async fn large_storage_fetcher(
         STORAGE_BATCH_SIZE,
     )
     .await?;
-    info!(
+    debug!(
         "Concluding large storage fetcher, {} large storages left in queue to be healed later",
         pending_storage.len()
     );
