@@ -1,9 +1,12 @@
-use std::cell::{Cell, OnceCell};
+use reth_provider::providers::StaticFileProvider;
+use std::cell::{Cell, LazyCell, OnceCell};
 use std::marker::PhantomData;
-use std::sync::atomic::AtomicBool;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 // Storage implementation using reth's fork of libmdbx
 // to compare against our own.
-use std::sync::{Arc, Mutex};
+use reth_provider::{DatabaseProvider, StaticFileAccess};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::api::StoreEngine;
 use crate::error::StoreError;
@@ -13,10 +16,13 @@ use crate::rlp::{
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::utils::{ChainDataIndex, SnapStateIndex};
-use alloy_consensus::Header;
+use alloy_consensus::{Header, Sealed};
+use alloy_eips::eip4895::Withdrawal as RethWithdrawal;
+use alloy_primitives::{Bytes as AlloyBytes, B256};
 use anyhow::Result;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
+use ethrex_common::types::Withdrawal;
 use ethrex_common::types::{
     payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
     ChainConfig, Index, Receipt, Transaction,
@@ -26,6 +32,8 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie, TrieDB, TrieError};
+use reth_blockchain_tree_api::BlockValidationKind;
+use reth_chainspec::ChainSpec;
 use reth_db::mdbx::{init_db, DatabaseArguments, DatabaseEnv};
 use reth_db::AccountsTrie;
 use reth_db::{tables, StoragesTrie};
@@ -37,6 +45,12 @@ use reth_db_api::cursor::DbCursorRO;
 use reth_db_api::cursor::DbCursorRW;
 use reth_db_api::cursor::DbDupCursorRO;
 use reth_db_api::cursor::DbDupCursorRW;
+use reth_primitives::{
+    BlockBody as RethBlockBody, SealedBlock, SealedBlockWithSenders, TransactionSigned, Withdrawals,
+};
+use reth_primitives_traits::SealedHeader;
+use reth_provider::BlockWriter;
+use reth_storage_api::DBProvider;
 
 #[derive(Debug)]
 pub struct MDBXFork {
@@ -44,6 +58,11 @@ pub struct MDBXFork {
 }
 
 pub static SYNC_STATUS: AtomicBool = AtomicBool::new(false);
+pub static LATEST_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
+pub static EARLIEST_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
+lazy_static::lazy_static! {
+    pub static ref CHAIN_CONFIG: Arc<Mutex<Option<ChainConfig>>> = Default::default() ;
+}
 
 impl MDBXFork {
     pub fn new(path: &str) -> Result<Self, StoreError> {
@@ -81,6 +100,14 @@ fn ethrex_header_to_ret_header(header: BlockHeader) -> Header {
         extra_data: header.extra_data.into(),
     }
 }
+pub fn ethrex_withdrawal_to_reth_withdrawal(original: Withdrawal) -> RethWithdrawal {
+    RethWithdrawal {
+        index: original.index,
+        validator_index: original.validator_index,
+        address: original.address.0.into(),
+        amount: original.amount,
+    }
+}
 fn reth_header_to_ethrex_header(header: Header) -> BlockHeader {
     BlockHeader {
         parent_hash: H256(header.parent_hash.0),
@@ -112,14 +139,14 @@ use reth_db_api::table::Table as RethTable;
 use reth_libmdbx::Environment;
 
 pub struct MDBXTrieDB<T: RethTable> {
-    db: Environment,
+    db: DatabaseEnv,
     phantom: PhantomData<T>,
 }
 impl<T> MDBXTrieDB<T>
 where
     T: RethTable,
 {
-    pub fn new(db: Environment) -> Self {
+    pub fn new(db: DatabaseEnv) -> Self {
         Self {
             db,
             phantom: PhantomData,
@@ -140,7 +167,8 @@ where
     }
 
     fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
-        todo!()
+        let txn = self.db.tx_mut().unwrap();
+        Ok(())
     }
 }
 
@@ -196,10 +224,62 @@ impl StoreEngine for MDBXFork {
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
         todo!()
+        // self.env.insert_blo
     }
 
     fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        todo!()
+        let pre_processed: Vec<_> = blocks
+            .iter()
+            .map(|Block { header, body, .. }| {
+                let hash = header.compute_block_hash();
+                let header =
+                    SealedHeader::new(ethrex_header_to_ret_header(header.clone()), hash.0.into());
+                let ommers = body
+                    .ommers
+                    .iter()
+                    .map(|h| ethrex_header_to_ret_header(h.clone()))
+                    .collect();
+                let ws: Option<Withdrawals> = body.withdrawals.as_ref().map(|ws| {
+                    Withdrawals::new(
+                        ws.iter()
+                            .map(|w| ethrex_withdrawal_to_reth_withdrawal(w.clone()))
+                            .collect(),
+                    )
+                });
+                let transactions: Vec<_> = body
+                    .transactions
+                    .iter()
+                    // FIXME: Properly transform the tx type
+                    .map(|_tx| TransactionSigned::default())
+                    .collect();
+
+                let body = RethBlockBody {
+                    transactions: transactions.clone(),
+                    ommers,
+                    withdrawals: ws,
+                    requests: None,
+                };
+                let senders = transactions
+                    .iter()
+                    .map(|_tx_| {
+                        // FIXME: Properly transform the tx type
+                        let tx = TransactionSigned::default();
+                        tx.recover_signer().unwrap()
+                    })
+                    .collect();
+                let block = SealedBlock::new(header, body);
+                SealedBlockWithSenders::new(block, senders).unwrap()
+            })
+            .collect();
+        let tx = self.env.tx_mut().unwrap();
+        let provider = StaticFileProvider::read_write("/tmp/provider").unwrap();
+        // let db_provider = DatabaseProvider
+        let spec: ChainSpec = Default::default();
+        let provider = DatabaseProvider::new_rw(tx, Arc::new(spec), provider, Default::default());
+        for block in pre_processed {
+            provider.insert_block(block).unwrap();
+        }
+        Ok(())
     }
 
     fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
@@ -221,6 +301,9 @@ impl StoreEngine for MDBXFork {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
+        // let tx = self.env.tx().unwrap();
+        // let block_number = tx.get::<tables::HeaderNumbers>(hash.0.into());
+        // let block =
         todo!()
     }
 
@@ -237,7 +320,14 @@ impl StoreEngine for MDBXFork {
     }
 
     fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        todo!()
+        let key: B256 = code_hash.0.into();
+        let code = reth_primitives_traits::Bytecode::new_raw(AlloyBytes(code));
+        let tx = self
+            .env
+            .tx_mut()
+            .expect("could not start tx for account code");
+        tx.put::<tables::Bytecodes>(key, code).unwrap();
+        Ok(())
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
@@ -279,19 +369,24 @@ impl StoreEngine for MDBXFork {
     }
 
     fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        todo!()
+        let mut config = CHAIN_CONFIG.lock().unwrap();
+        *config = Some(chain_config.clone());
+        Ok(())
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        todo!()
+        Ok(CHAIN_CONFIG.lock().unwrap().unwrap().clone())
     }
 
     fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+        EARLIEST_BLOCK_NUMBER.swap(block_number, std::sync::atomic::Ordering::Acquire);
+        Ok(())
     }
 
     fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        Ok(Some(
+            EARLIEST_BLOCK_NUMBER.load(std::sync::atomic::Ordering::Acquire),
+        ))
     }
 
     fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
@@ -311,11 +406,14 @@ impl StoreEngine for MDBXFork {
     }
 
     fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+        LATEST_BLOCK_NUMBER.swap(block_number, std::sync::atomic::Ordering::Acquire);
+        Ok(())
     }
 
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        Ok(Some(
+            LATEST_BLOCK_NUMBER.load(std::sync::atomic::Ordering::Acquire),
+        ))
     }
 
     fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
@@ -327,16 +425,32 @@ impl StoreEngine for MDBXFork {
     }
 
     fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
-        todo!()
+        let env = DatabaseEnv::open(
+            Path::new("/tmp/storage_trie"),
+            reth_db::DatabaseEnvKind::RW,
+            Default::default(),
+        )
+        .unwrap();
+        let db = Box::new(MDBXTrieDB::<AccountsTrie>::new(env));
+        Trie::open(db, storage_root)
     }
 
     fn open_state_trie(&self, state_root: H256) -> Trie {
-        let db = Box::new(MDBXTrieDB::<StoragesTrie>::new(self.env.clone()));
+        let env = DatabaseEnv::open(
+            Path::new("/tmp/state_trie"),
+            reth_db::DatabaseEnvKind::RW,
+            Default::default(),
+        )
+        .unwrap();
+        let db = Box::new(MDBXTrieDB::<StoragesTrie>::new(env));
         Trie::open(db, state_root)
     }
 
     fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
-        todo!()
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<tables::CanonicalHeaders>(number, hash.0.into())
+            .unwrap();
+        Ok(())
     }
 
     fn get_canonical_block_hash(

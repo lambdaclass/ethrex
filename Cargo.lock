@@ -618,9 +618,12 @@ dependencies = [
  "alloy-network-primitives 0.4.2",
  "alloy-primitives 0.8.25",
  "alloy-rlp",
+ "alloy-serde 0.4.2",
  "alloy-sol-types",
  "derive_more 1.0.0",
  "itertools 0.13.0",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3515,6 +3518,7 @@ name = "ethrex-storage"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus 0.4.2",
+ "alloy-eips 0.4.2",
  "alloy-primitives 0.8.25",
  "anyhow",
  "bytes",
@@ -3524,8 +3528,11 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
+ "lazy_static",
  "libmdbx",
  "redb",
+ "reth-blockchain-tree-api",
+ "reth-chainspec",
  "reth-codecs",
  "reth-codecs-derive",
  "reth-db",
@@ -3535,6 +3542,8 @@ dependencies = [
  "reth-libmdbx",
  "reth-mdbx-sys",
  "reth-nippy-jar",
+ "reth-primitives",
+ "reth-primitives-traits",
  "reth-provider",
  "reth-storage-api",
  "reth-storage-errors",
@@ -6084,6 +6093,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-alloy-rpc-types"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "323c65880e2561aa87f74f8af260fd15b9cc930c448c88a60ae95af86c88c634"
+dependencies = [
+ "alloy-consensus 0.4.2",
+ "alloy-eips 0.4.2",
+ "alloy-network-primitives 0.4.2",
+ "alloy-primitives 0.8.25",
+ "alloy-rpc-types-eth 0.4.2",
+ "alloy-serde 0.4.2",
+ "op-alloy-consensus",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "op-alloy-rpc-types-engine"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8374,12 +8400,15 @@ dependencies = [
  "alloy-eips 0.4.2",
  "alloy-primitives 0.8.25",
  "alloy-rlp",
+ "alloy-rpc-types 0.4.2",
+ "alloy-serde 0.4.2",
  "bytes",
  "c-kzg",
  "derive_more 1.0.0",
  "k256",
  "modular-bitfield",
  "once_cell",
+ "op-alloy-rpc-types",
  "rayon",
  "reth-codecs",
  "reth-ethereum-forks",

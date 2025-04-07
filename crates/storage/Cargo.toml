@@ -33,8 +33,15 @@ reth-mdbx-sys = { git = "https://github.com/paradigmxyz/reth", package = "reth-m
 reth-nippy-jar = { git = "https://github.com/paradigmxyz/reth", package = "reth-nippy-jar" , tag = "v1.1.0"}
 reth-provider = { git = "https://github.com/paradigmxyz/reth", package = "reth-provider" , tag = "v1.1.0"}
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth", package = "reth-storage-api" , tag = "v1.1.0"}
+reth-blockchain-tree-api = { git = "https://github.com/paradigmxyz/reth", package = "reth-blockchain-tree-api" , tag = "v1.1.0"}
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", package = "reth-primitives-traits" , tag = "v1.1.0"}
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", package = "reth-primitives" , tag = "v1.1.0"}
+reth-chainspec = { git = "https://github.com/paradigmxyz/reth", package = "reth-chainspec" , tag = "v1.1.0"}
+
 alloy-consensus = "0.4.2"
 alloy-primitives = "0.8.25"
+alloy-eips = "0.4.2"
+lazy_static.workspace = true
 
 [features]
 default = []
