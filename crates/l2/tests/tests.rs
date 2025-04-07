@@ -276,8 +276,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
                         .expect("ON_CHAIN_PROPOSER env var not set"),
                 )
                 .unwrap(),
-                // lastVerifiedBlock()
-                Bytes::from_static(&[0x2f, 0xde, 0x80, 0xe5]),
+                calldata::encode_calldata("lastVerifiedBatch", &[])?.into(),
                 Overrides::default(),
             )
             .await?

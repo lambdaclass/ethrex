@@ -1,9 +1,14 @@
 mod api;
+mod api_l2;
 
 mod account_update;
 mod rlp;
 mod store;
 mod store_db;
+#[cfg(feature = "l2")]
+mod store_db_l2;
+#[cfg(feature = "l2")]
+mod store_l2;
 mod trie_db;
 mod utils;
 
