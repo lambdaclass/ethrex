@@ -17,6 +17,10 @@ pub struct AuthorizationTuple {
     #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     pub chain_id: U256,
     pub address: Address,
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_utils::u64::deser_hex_or_dec_str"
+    )]
     pub nonce: u64,
     #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     pub y_parity: U256,
