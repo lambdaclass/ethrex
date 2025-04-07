@@ -1,10 +1,10 @@
 use serde_json::Value;
 use tracing::info;
 
+use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
-use crate::RpcApiContext;
-use crate::{utils::RpcErr, RpcHandler};
+use crate::utils::RpcErr;
 use ethrex_common::{Address, BigEndianHash, H256, U256};
 
 pub struct GetBalanceRequest {
@@ -47,7 +47,7 @@ impl RpcHandler for GetBalanceRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested balance of account {} at block {}",
             self.address, self.block
@@ -82,7 +82,7 @@ impl RpcHandler for GetCodeRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested code of account {} at block {}",
             self.address, self.block
@@ -118,7 +118,7 @@ impl RpcHandler for GetStorageAtRequest {
             block: BlockIdentifierOrHash::parse(params[2].clone(), 2)?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested storage sot {} of account {} at block {}",
             self.storage_slot, self.address, self.block
@@ -153,7 +153,7 @@ impl RpcHandler for GetTransactionCountRequest {
             block: BlockIdentifierOrHash::parse(params[1].clone(), 1)?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested nonce of account {} at block {}",
             self.address, self.block
@@ -203,7 +203,7 @@ impl RpcHandler for GetProofRequest {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         info!(
             "Requested proof for account {} at block {} with storage keys: {:?}",

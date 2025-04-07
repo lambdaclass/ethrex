@@ -1,9 +1,9 @@
 use crate::{
     clients::eth::get_address_from_secret_key,
     eth::{fee_calculator::estimate_gas_tip, gas_price::GasPrice, transaction::EstimateGasRequest},
+    rpc::{RpcApiContext, RpcHandler},
     types::transaction::SendRawTransactionRequest,
     utils::RpcErr,
-    RpcApiContext, RpcHandler,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -61,7 +61,7 @@ impl RpcHandler for SponsoredTx {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // Dont allow create txs
         if self.to.is_zero() {
             return Err(RpcErr::InvalidEthrexL2Message(
@@ -132,7 +132,7 @@ impl RpcHandler for SponsoredTx {
         let max_priority_fee_per_gas = estimate_gas_tip(&context.storage)
             .map_err(RpcErr::from)?
             .unwrap_or_default();
-        let gas_price_request = GasPrice {}.handle(context.clone())?;
+        let gas_price_request = GasPrice {}.handle(context.clone()).await?;
         let max_fee_per_gas = u64::from_str_radix(
             gas_price_request
                 .as_str()
@@ -185,7 +185,8 @@ impl RpcHandler for SponsoredTx {
             transaction: generic,
             block: None,
         }
-        .handle(context.clone())?;
+        .handle(context.clone())
+        .await?;
         let gas_limit = u64::from_str_radix(
             estimate_gas_request
                 .as_str()
@@ -222,6 +223,6 @@ impl RpcHandler for SponsoredTx {
             }
         }
 
-        tx.handle(context)
+        tx.handle(context).await
     }
 }

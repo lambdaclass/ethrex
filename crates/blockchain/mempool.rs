@@ -291,15 +291,17 @@ mod tests {
     use ethrex_storage::{error::StoreError, Store};
 
     fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
-        let store = Store::new("test", EngineType::InMemory)?;
-        let block_number = header.number;
-        let block_hash = header.compute_block_hash();
-        store.add_block_header(block_hash, header)?;
-        store.set_canonical_block(block_number, block_hash)?;
-        store.update_latest_block_number(block_number)?;
-        store.set_chain_config(&config)?;
-
-        Ok(store)
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let store = Store::new("test", EngineType::InMemory)?;
+            let block_number = header.number;
+            let block_hash = header.compute_block_hash();
+            store.add_block_header(block_hash, header).await?;
+            store.set_canonical_block(block_number, block_hash).await?;
+            store.update_latest_block_number(block_number).await?;
+            store.set_chain_config(&config).await?;
+            Ok(store)
+        })
     }
 
     fn build_basic_config_and_header(
