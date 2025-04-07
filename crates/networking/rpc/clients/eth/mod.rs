@@ -889,7 +889,7 @@ impl EthClient {
         eth_client: &EthClient,
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(
+        Self::_call_variable(
             eth_client,
             b"lastCommittedBatch()",
             on_chain_proposer_address,
@@ -901,22 +901,9 @@ impl EthClient {
         eth_client: &EthClient,
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(
+        Self::_call_variable(
             eth_client,
             b"lastCommittedBlock()",
-            on_chain_proposer_address,
-        )
-        .await
-    }
-
-    // TODO: This is not needed anymore, since we store batches in the DB.
-    pub async fn get_last_verified_block(
-        eth_client: &EthClient,
-        on_chain_proposer_address: Address,
-    ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(
-            eth_client,
-            b"lastVerifiedBlock()",
             on_chain_proposer_address,
         )
         .await
@@ -926,7 +913,7 @@ impl EthClient {
         eth_client: &EthClient,
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(
+        Self::_call_variable(
             eth_client,
             b"lastVerifiedBatch()",
             on_chain_proposer_address,
@@ -956,7 +943,7 @@ impl EthClient {
         eth_client: &EthClient,
         common_bridge_address: Address,
     ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(eth_client, b"lastFetchedL1Block()", common_bridge_address).await
+        Self::_call_variable(eth_client, b"lastFetchedL1Block()", common_bridge_address).await
     }
 
     async fn _generic_call(
@@ -987,7 +974,7 @@ impl EthClient {
         Ok(hex_string)
     }
 
-    async fn _call_block_variable(
+    async fn _call_variable(
         eth_client: &EthClient,
         selector: &[u8],
         on_chain_proposer_address: Address,

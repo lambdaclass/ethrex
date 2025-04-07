@@ -103,13 +103,13 @@ fn get_state_dir_for_block(block_number: u64) -> Result<PathBuf, SaveStateError>
 }
 
 #[inline(always)]
-fn get_state_file_name(block_number: u64, state_file_type: &StateFileType) -> String {
+fn get_state_file_name(batch_number: u64, state_file_type: &StateFileType) -> String {
     match state_file_type {
-        StateFileType::AccountUpdates => format!("account_updates_{block_number}.json"),
+        StateFileType::AccountUpdates => format!("account_updates_{batch_number}.json"),
         // If we have more proving systems we have to match them an create a file name with the following structure:
         // proof_<ProverType>_<block_number>.json
         StateFileType::Proof(prover_type) => {
-            get_proof_file_name_from_prover_type(prover_type, block_number)
+            get_proof_file_name_from_prover_type(prover_type, batch_number)
         }
     }
 }
@@ -199,10 +199,10 @@ fn get_latest_block_number_and_path() -> Result<(u64, PathBuf), SaveStateError> 
     }
 }
 
-fn get_block_state_path(block_number: u64) -> Result<PathBuf, SaveStateError> {
+fn get_batch_state_path(batch_number: u64) -> Result<PathBuf, SaveStateError> {
     let data_dir = default_datadir()?;
-    let block_state_path = data_dir.join(block_number.to_string());
-    Ok(block_state_path)
+    let batch_state_path = data_dir.join(batch_number.to_string());
+    Ok(batch_state_path)
 }
 
 /// GET the latest block_number given the proposed structure
@@ -211,14 +211,14 @@ pub fn get_latest_block_number() -> Result<u64, SaveStateError> {
     Ok(block_number)
 }
 
-/// READ the state given the block_number and the [StateFileType]
+/// READ the state given the batch_number and the [StateFileType]
 pub fn read_state(
-    block_number: u64,
+    batch_number: u64,
     state_file_type: StateFileType,
 ) -> Result<StateType, SaveStateError> {
     // TODO handle path not found
-    let block_state_path = get_block_state_path(block_number)?;
-    let file_path: PathBuf = get_state_file_path(&block_state_path, block_number, &state_file_type);
+    let batch_state_path = get_batch_state_path(batch_number)?;
+    let file_path: PathBuf = get_state_file_path(&batch_state_path, batch_number, &state_file_type);
 
     let inner = File::open(file_path)?;
     let mut reader = BufReader::new(inner);
@@ -240,12 +240,12 @@ pub fn read_state(
     Ok(state)
 }
 
-/// READ the proof given the block_number and the [StateFileType::Proof]
+/// READ the proof given the batch_number and the [StateFileType::Proof]
 pub fn read_proof(
-    block_number: u64,
+    batch_number: u64,
     state_file_type: StateFileType,
 ) -> Result<ProofCalldata, SaveStateError> {
-    match read_state(block_number, state_file_type)? {
+    match read_state(batch_number, state_file_type)? {
         StateType::Proof(p) => Ok(p),
         StateType::AccountUpdates(_) => Err(SaveStateError::Custom(
             "Failed in read_proof(), make sure that the state_file_type is a Proof".to_owned(),
@@ -266,7 +266,7 @@ pub fn delete_state_file(
     block_number: u64,
     state_file_type: StateFileType,
 ) -> Result<(), SaveStateError> {
-    let block_state_path = get_block_state_path(block_number)?;
+    let block_state_path = get_batch_state_path(block_number)?;
     let file_path: PathBuf = get_state_file_path(&block_state_path, block_number, &state_file_type);
     std::fs::remove_file(file_path)?;
 
@@ -277,7 +277,7 @@ pub fn delete_state_file(
 /// latest means the state for the highest block_number available.
 pub fn delete_latest_state_file(state_file_type: StateFileType) -> Result<(), SaveStateError> {
     let (latest_block_state_number, _) = get_latest_block_number_and_path()?;
-    let latest_block_state_path = get_block_state_path(latest_block_state_number)?;
+    let latest_block_state_path = get_batch_state_path(latest_block_state_number)?;
     let file_path: PathBuf = get_state_file_path(
         &latest_block_state_path,
         latest_block_state_number,
@@ -288,10 +288,10 @@ pub fn delete_latest_state_file(state_file_type: StateFileType) -> Result<(), Sa
     Ok(())
 }
 
-/// PRUNE all the files for the given block_number
-pub fn prune_state(block_number: u64) -> Result<(), SaveStateError> {
-    let block_state_path = get_block_state_path(block_number)?;
-    std::fs::remove_dir_all(block_state_path)?;
+/// PRUNE all the files for the given batch_number
+pub fn prune_state(batch_number: u64) -> Result<(), SaveStateError> {
+    let batch_state_path = get_batch_state_path(batch_number)?;
+    std::fs::remove_dir_all(batch_state_path)?;
     Ok(())
 }
 
@@ -299,7 +299,7 @@ pub fn prune_state(block_number: u64) -> Result<(), SaveStateError> {
 /// latest means the state for the highest block_number available.
 pub fn prune_latest_state() -> Result<(), SaveStateError> {
     let (latest_block_state_number, _) = get_latest_block_number_and_path()?;
-    let latest_block_state_path = get_block_state_path(latest_block_state_number)?;
+    let latest_block_state_path = get_batch_state_path(latest_block_state_number)?;
     std::fs::remove_dir_all(latest_block_state_path)?;
     Ok(())
 }
@@ -326,16 +326,16 @@ pub fn path_has_state_file(
     Ok(false)
 }
 
-/// CHECK if the given block_number has the given [StateFileType]
-/// This function will check if the path: ../../../<block_number>/ contains the state_file_type
-pub fn block_number_has_state_file(
+/// CHECK if the given batch_number has the given [StateFileType]
+/// This function will check if the path: ../../../<batch_number>/ contains the state_file_type
+pub fn batch_number_has_state_file(
     state_file_type: StateFileType,
-    block_number: u64,
+    batch_number: u64,
 ) -> Result<bool, SaveStateError> {
-    let block_state_path = get_block_state_path(block_number)?;
-    let file_name_to_seek: OsString = get_state_file_name(block_number, &state_file_type).into();
+    let batch_state_path = get_batch_state_path(batch_number)?;
+    let file_name_to_seek: OsString = get_state_file_name(batch_number, &state_file_type).into();
 
-    for entry in std::fs::read_dir(block_state_path)? {
+    for entry in std::fs::read_dir(batch_state_path)? {
         let entry = entry?;
         let file_name_stored = entry.file_name();
 
@@ -347,26 +347,26 @@ pub fn block_number_has_state_file(
     Ok(false)
 }
 
-/// Check if the given block_number has all the proofs needed
-/// This function will check if the path: ../../../<block_number>/
+/// Check if the given batch_number has all the proofs needed
+/// This function will check if the path: ../../../<batch_number>/
 /// contains the needed_proof_types passed as parameter.
-pub fn block_number_has_all_needed_proofs(
-    block_number: u64,
+pub fn batch_number_has_all_needed_proofs(
+    batch_number: u64,
     needed_proof_types: &[ProverType],
 ) -> Result<bool, SaveStateError> {
     if needed_proof_types.is_empty() {
         return Ok(true);
     }
 
-    let block_state_path = get_block_state_path(block_number)?;
+    let batch_state_path = get_batch_state_path(batch_number)?;
 
     let mut has_all_proofs = true;
     for prover_type in needed_proof_types {
         let file_name_to_seek: OsString =
-            get_state_file_name(block_number, &StateFileType::Proof(*prover_type)).into();
+            get_state_file_name(batch_number, &StateFileType::Proof(*prover_type)).into();
 
         // Check if the proof exists
-        let proof_exists = std::fs::read_dir(&block_state_path)?
+        let proof_exists = std::fs::read_dir(&batch_state_path)?
             .filter_map(Result::ok) // Filter out errors
             .any(|entry| entry.file_name() == file_name_to_seek);
 
@@ -499,7 +499,7 @@ mod tests {
             &latest_path
         )?);
 
-        assert!(block_number_has_state_file(
+        assert!(batch_number_has_state_file(
             StateFileType::AccountUpdates,
             latest_block_state_number
         )?);
@@ -511,7 +511,7 @@ mod tests {
             &latest_path
         )?);
 
-        assert!(!block_number_has_state_file(
+        assert!(!batch_number_has_state_file(
             StateFileType::AccountUpdates,
             latest_block_state_number
         )?);
