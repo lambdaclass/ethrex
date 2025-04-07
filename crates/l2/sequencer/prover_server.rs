@@ -580,28 +580,28 @@ impl ProverServer {
 
     pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
         loop {
-            let last_committed_block = EthClient::get_last_committed_batch(
+            let last_committed_batch = EthClient::get_last_committed_batch(
                 &self.eth_client,
                 self.on_chain_proposer_address,
             )
             .await?;
 
-            let last_verified_block = EthClient::get_last_verified_block(
+            let last_verified_batch = EthClient::get_last_verified_batch(
                 &self.eth_client,
                 self.on_chain_proposer_address,
             )
             .await?;
 
-            if last_committed_block == last_verified_block {
+            if last_committed_batch == last_verified_batch {
                 debug!("No new blocks to prove");
                 continue;
             }
 
-            info!("Last committed: {last_committed_block} - Last verified: {last_verified_block}");
+            info!("Last committed: {last_committed_batch} - Last verified: {last_verified_batch}");
 
             let calldata_values = vec![
                 // blockNumber
-                Value::Uint(U256::from(last_verified_block + 1)),
+                Value::Uint(U256::from(last_verified_batch + 1)),
                 // risc0BlockProof
                 Value::Bytes(vec![].into()),
                 // risc0ImageId
@@ -661,11 +661,11 @@ impl ProverServer {
                 .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
                 .await?;
 
-            info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");
+            info!("Sent proof for batch {last_verified_batch}, with transaction hash {verify_tx_hash:#x}");
 
             info!(
-                "Mocked verify transaction sent for block {}",
-                last_verified_block + 1
+                "Mocked verify transaction sent for batch {}",
+                last_verified_batch + 1
             );
 
             sleep_random(self.dev_interval_ms).await;

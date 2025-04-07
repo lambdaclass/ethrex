@@ -913,6 +913,18 @@ impl EthClient {
         .await
     }
 
+    pub async fn get_last_verified_batch(
+        eth_client: &EthClient,
+        on_chain_proposer_address: Address,
+    ) -> Result<u64, EthClientError> {
+        Self::_call_block_variable(
+            eth_client,
+            b"lastVerifiedBatch()",
+            on_chain_proposer_address,
+        )
+        .await
+    }
+
     pub async fn get_verifier_contracts(
         eth_client: &EthClient,
         verifier_selectors: &[&str],
