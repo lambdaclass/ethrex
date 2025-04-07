@@ -11,7 +11,7 @@ use tracing::debug;
 
 use crate::peer_handler::PeerHandler;
 
-use super::{SyncError, BATCH_SIZE};
+use super::{SyncError, BYTECODE_BATCH_SIZE};
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 pub(crate) async fn bytecode_fetcher(
@@ -32,9 +32,11 @@ pub(crate) async fn bytecode_fetcher(
         }
         // If we have enough pending bytecodes to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
-        while pending_bytecodes.len() >= BATCH_SIZE || !incoming && !pending_bytecodes.is_empty() {
+        while pending_bytecodes.len() >= BYTECODE_BATCH_SIZE
+            || !incoming && !pending_bytecodes.is_empty()
+        {
             let next_batch = pending_bytecodes
-                .drain(..BATCH_SIZE.min(pending_bytecodes.len()))
+                .drain(..BYTECODE_BATCH_SIZE.min(pending_bytecodes.len()))
                 .collect::<Vec<_>>();
             let remaining = fetch_bytecode_batch(next_batch, peers.clone(), store.clone()).await?;
             // Add unfeched bytecodes back to the queue
@@ -54,7 +56,7 @@ async fn fetch_bytecode_batch(
         debug!("Received {} bytecodes", bytecodes.len());
         // Store the bytecodes
         for code in bytecodes.into_iter() {
-            store.add_account_code(batch.remove(0), code)?;
+            store.add_account_code(batch.remove(0), code).await?;
         }
     }
     // Return remaining code hashes in the batch if we couldn't fetch all of them
