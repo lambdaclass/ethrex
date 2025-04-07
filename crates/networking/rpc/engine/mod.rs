@@ -53,7 +53,7 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
             })
     }
 
-    fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
         Ok(json!(CAPABILITIES))
     }
 }

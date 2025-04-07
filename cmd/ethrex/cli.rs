@@ -233,7 +233,7 @@ impl Subcommand {
                     .as_ref()
                     .expect("--network is required and it was not provided");
 
-                import_blocks(&path, &opts.datadir, network, opts.evm);
+                import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
             #[cfg(any(feature = "l2", feature = "based"))]
             Subcommand::L2(command) => command.run().await?,
@@ -255,10 +255,10 @@ pub fn remove_db(datadir: &str) {
     }
 }
 
-pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
+pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
     let data_dir = set_datadir(data_dir);
 
-    let store = init_store(&data_dir, network);
+    let store = init_store(&data_dir, network).await;
 
     let blockchain = init_blockchain(evm, store);
 
@@ -279,5 +279,5 @@ pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) 
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-    blockchain.import_blocks(&blocks);
+    blockchain.import_blocks(&blocks).await;
 }

@@ -394,8 +394,8 @@ mod tests {
     use test_casing::test_casing;
 
     #[test_casing(2, [EvmEngine::LEVM, EvmEngine::REVM])]
-    #[test]
-    fn test_state_file_integration(
+    #[tokio::test]
+    async fn test_state_file_integration(
         _evm_engine: EvmEngine,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = fs::remove_dir_all(default_datadir()?) {
@@ -413,13 +413,13 @@ mod tests {
         let store = Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
 
         let genesis = test_data_io::read_genesis_file(genesis_file_path.to_str().unwrap());
-        store.add_initial_state(genesis.clone()).unwrap();
+        store.add_initial_state(genesis.clone()).await.unwrap();
 
         let blocks = test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
         // create blockchain
         let blockchain = Blockchain::default_with_store(store.clone());
         for block in &blocks {
-            blockchain.add_block(block).unwrap();
+            blockchain.add_block(block).await.unwrap();
         }
 
         let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();

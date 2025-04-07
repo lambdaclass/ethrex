@@ -70,27 +70,27 @@ pub struct EFTestRunnerOptions {
     pub revm: bool,
 }
 
-pub fn run_ef_tests(
+pub async fn run_ef_tests(
     ef_tests: Vec<EFTest>,
     opts: &EFTestRunnerOptions,
 ) -> Result<(), EFTestRunnerError> {
     let mut reports = report::load()?;
     if reports.is_empty() {
         if opts.revm {
-            run_with_revm(&mut reports, &ef_tests, opts)?;
+            run_with_revm(&mut reports, &ef_tests, opts).await?;
             return Ok(());
         } else {
-            run_with_levm(&mut reports, &ef_tests, opts)?;
+            run_with_levm(&mut reports, &ef_tests, opts).await?;
         }
     }
     if opts.summary {
         return Ok(());
     }
-    re_run_with_revm(&mut reports, &ef_tests, opts)?;
+    re_run_with_revm(&mut reports, &ef_tests, opts).await?;
     write_report(&reports)
 }
 
-fn run_with_levm(
+async fn run_with_levm(
     reports: &mut Vec<EFTestReport>,
     ef_tests: &[EFTest],
     opts: &EFTestRunnerOptions,
@@ -113,7 +113,7 @@ fn run_with_levm(
         if !opts.spinner && opts.verbose {
             println!("Running test: {:?}", test.name);
         }
-        let ef_test_report = match levm_runner::run_ef_test(test) {
+        let ef_test_report = match levm_runner::run_ef_test(test).await {
             Ok(ef_test_report) => ef_test_report,
             Err(EFTestRunnerError::Internal(err)) => return Err(EFTestRunnerError::Internal(err)),
             non_internal_errors => {
@@ -154,7 +154,7 @@ fn run_with_levm(
 }
 
 /// ### Runs all tests with REVM
-fn run_with_revm(
+async fn run_with_revm(
     reports: &mut Vec<EFTestReport>,
     ef_tests: &[EFTest],
     opts: &EFTestRunnerOptions,
@@ -183,7 +183,7 @@ fn run_with_revm(
             ),
             opts.spinner,
         );
-        let ef_test_report = match revm_runner::_run_ef_test_revm(test) {
+        let ef_test_report = match revm_runner::_run_ef_test_revm(test).await {
             Ok(ef_test_report) => ef_test_report,
             Err(EFTestRunnerError::Internal(err)) => return Err(EFTestRunnerError::Internal(err)),
             non_internal_errors => {
@@ -210,7 +210,7 @@ fn run_with_revm(
     Ok(())
 }
 
-fn re_run_with_revm(
+async fn re_run_with_revm(
     reports: &mut [EFTestReport],
     ef_tests: &[EFTest],
     opts: &EFTestRunnerOptions,
@@ -262,7 +262,7 @@ fn re_run_with_revm(
                 })
                 .unwrap(),
             failed_test_report,
-        ) {
+        ).await {
             Ok(re_run_report) => {
                 failed_test_report.register_re_run_report(re_run_report.clone());
             }
