@@ -75,7 +75,7 @@ where
     Fut: Future<Output = Result<(Vec<T>, bool), SyncError>> + Send + 'static,
 {
     let mut stale = false;
-    if queue.len() > batch_size || (!full_batches && !queue.is_empty()) {
+    if queue.len() >= batch_size || (!full_batches && !queue.is_empty()) {
         // Spawn fetch tasks
         let mut tasks = tokio::task::JoinSet::new();
         for _ in 0..MAX_PARALLEL_FETCHES {
