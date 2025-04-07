@@ -45,6 +45,9 @@ struct StoreInner {
     state_snapshot: BTreeMap<H256, AccountState>,
     // Stores Storage trie leafs from the last downloaded tries
     storage_snapshot: HashMap<H256, BTreeMap<H256, U256>>,
+    #[cfg(feature = "l2")]
+    // Stores the block numbers for a given batch_number
+    batches: HashMap<u64, Vec<u64>>,
 }
 
 #[derive(Default, Debug)]
@@ -626,6 +629,27 @@ impl StoreEngine for Store {
 
     fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         Ok(self.inner().snap_state.storage_trie_rebuild_pending.clone())
+    }
+
+    #[cfg(feature = "l2")]
+    /// Returns the block numbers for a given batch_number
+    async fn store_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+        block_numbers: Vec<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        self.inner().batches.insert(batch_number, block_numbers);
+        Ok(())
+    }
+
+    #[cfg(feature = "l2")]
+    /// Returns the block numbers for a given batch_number
+    fn get_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        let block_numbers = self.inner().batches.get(&batch_number).cloned();
+        Ok(block_numbers)
     }
 }
 

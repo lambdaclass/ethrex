@@ -1,5 +1,7 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+#[cfg(feature = "l2")]
+use crate::rlp::BlockNumbersRLP;
 use crate::rlp::{
     AccountCodeHashRLP, AccountCodeRLP, AccountHashRLP, AccountStateRLP, BlockBodyRLP,
     BlockHashRLP, BlockHeaderRLP, BlockRLP, PayloadBundleRLP, Rlp, TransactionHashRLP, TupleRLP,
@@ -840,6 +842,29 @@ impl StoreEngine for Store {
             .take(MAX_SNAPSHOT_READS);
         Ok(iter.collect::<Vec<_>>())
     }
+
+    #[cfg(feature = "l2")]
+    fn get_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        Ok(self
+            .read::<Batches>(batch_number)?
+            .map(|numbers| numbers.to()))
+    }
+
+    #[cfg(feature = "l2")]
+    async fn store_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+        block_numbers: Vec<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        self.write::<Batches>(
+            batch_number,
+            BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
+        )
+        .await
+    }
 }
 
 impl Debug for Store {
@@ -1040,6 +1065,12 @@ dupsort!(
     ( StorageSnapShot ) AccountHashRLP => (AccountStorageKeyBytes, AccountStorageValueBytes)[AccountStorageKeyBytes]
 );
 
+#[cfg(feature = "l2")]
+table!(
+    /// Batches table
+    ( Batches ) u64 => BlockNumbersRLP
+);
+
 // Storage values are stored as bytes instead of using their rlp encoding
 // As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
@@ -1140,6 +1171,8 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         table_info!(SnapState),
         table_info!(StateSnapShot),
         table_info!(StorageSnapShot),
+        #[cfg(feature = "l2")]
+        table_info!(Batches),
     ]
     .into_iter()
     .collect();

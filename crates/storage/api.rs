@@ -351,4 +351,19 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         start: H256,
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError>;
+
+    #[cfg(feature = "l2")]
+    /// Stores the block numbers for a given batch_number
+    async fn store_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+        block_numbers: Vec<BlockNumber>,
+    ) -> Result<(), StoreError>;
+
+    #[cfg(feature = "l2")]
+    /// Returns the block numbers for a given batch_number
+    fn get_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError>;
 }

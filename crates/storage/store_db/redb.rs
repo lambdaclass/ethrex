@@ -59,6 +59,8 @@ const STATE_SNAPSHOT_TABLE: TableDefinition<AccountHashRLP, AccountStateRLP> =
     TableDefinition::new("StateSnapshot");
 const STORAGE_SNAPSHOT_TABLE: MultimapTableDefinition<AccountHashRLP, ([u8; 32], [u8; 32])> =
     MultimapTableDefinition::new("StorageSnapshotTable");
+#[cfg(feature = "l2")]
+const BATCHES_TABLE: TableDefinition<u64, Vec<BlockNumbersRLP>> = TableDefinition::new("Batches");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -1077,6 +1079,27 @@ impl StoreEngine for RedBStore {
             .take(MAX_SNAPSHOT_READS)
             .collect())
     }
+
+    #[cfg(feature = "l2")]
+    async fn store_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+        block_numbers: Vec<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        self.write(BATCHES_TABLE, batch_number, block_numbers.encode_to_vec())
+            .await
+    }
+
+    #[cfg(feature = "l2")]
+    fn get_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        self.read(BATCHES_TABLE, batch_number)?
+            .map(|rlp| RLPDecode::decode(&rlp.value()))
+            .transpose()
+            .map_err(StoreError::RLPDecode)
+    }
 }
 
 impl redb::Value for ChainDataIndex {
@@ -1178,6 +1201,8 @@ pub fn init_db() -> Result<Database, StoreError> {
     table_creation_txn.open_table(SNAP_STATE_TABLE)?;
     table_creation_txn.open_table(STATE_SNAPSHOT_TABLE)?;
     table_creation_txn.open_multimap_table(STORAGE_SNAPSHOT_TABLE)?;
+    #[cfg(feature = "l2")]
+    table_creation_txn.open_table(BATCHES_TABLE)?;
     table_creation_txn.commit()?;
 
     Ok(db)

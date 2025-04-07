@@ -1046,6 +1046,27 @@ impl Store {
     ) -> Result<Vec<(H256, U256)>, StoreError> {
         self.engine.read_storage_snapshot(account_hash, start)
     }
+
+    #[cfg(feature = "l2")]
+    /// Returns the block numbers for a given batch_number
+    pub fn get_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        self.engine.get_block_numbers_for_batch(batch_number)
+    }
+
+    #[cfg(feature = "l2")]
+    /// Stores the block numbers for a given batch_number
+    pub async fn store_block_numbers_for_batch(
+        &self,
+        batch_number: u64,
+        block_numbers: Vec<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_block_numbers_for_batch(batch_number, block_numbers)
+            .await
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {

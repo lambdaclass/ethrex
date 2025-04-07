@@ -2,6 +2,8 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use bytes::Bytes;
+#[cfg(feature = "l2")]
+use ethrex_common::types::BlockNumber;
 use ethrex_common::{
     types::{
         payload::PayloadBundle, AccountState, Block, BlockBody, BlockHash, BlockHeader, Receipt,
@@ -27,6 +29,8 @@ pub type BlockHashRLP = Rlp<BlockHash>;
 pub type BlockHeaderRLP = Rlp<BlockHeader>;
 pub type BlockBodyRLP = Rlp<BlockBody>;
 pub type BlockRLP = Rlp<Block>;
+#[cfg(feature = "l2")]
+pub type BlockNumbersRLP = Rlp<Vec<BlockNumber>>;
 
 // Receipt types
 #[allow(unused)]
