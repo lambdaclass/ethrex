@@ -7,6 +7,7 @@ use ethrex_common::{
 use ethrex_storage::{error::StoreError, hash_address, hash_key, Store};
 use ethrex_trie::{Node, NodeRLP, PathRLP, Trie, TrieError};
 use revm::{
+    db::CacheDB,
     primitives::{
         AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
         Bytes as RevmBytes, B256 as RevmB256, U256 as RevmU256,
@@ -215,22 +216,31 @@ impl revm::DatabaseRef for StoreWrapper {
 }
 
 impl ToExecDB for StoreWrapper {
-    fn to_exec_db(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
+    fn to_exec_db(&self, blocks: &[Block]) -> Result<ExecutionDB, ExecutionDBError> {
         // TODO: Simplify this function and potentially merge with the implementation for
         // RpcDB.
-
-        let parent_hash = block.header.parent_hash;
         let chain_config = self.store.get_chain_config()?;
+        let mut cache = CacheDB::new(self.clone());
+        let mut store_wrapper = self.clone();
+        let Some(first_block_parent_hash) = blocks.first().map(|e| e.header.parent_hash) else {
+            return Err(ExecutionDBError::Custom("Unable to get first block".into()));
+        };
 
-        // pre-execute and get all state changes
-        let cache = ExecutionDB::pre_execute(
-            block,
-            chain_config.chain_id,
-            spec_id(&chain_config, block.header.timestamp),
-            self,
-        )
-        .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
-        let store_wrapper = cache.db;
+        let Some(last_block) = blocks.last() else {
+            return Err(ExecutionDBError::Custom("Unable to get last block".into()));
+        };
+
+        for block in blocks {
+            // pre-execute and get all state changes
+            cache = ExecutionDB::pre_execute(
+                block,
+                chain_config.chain_id,
+                spec_id(&chain_config, block.header.timestamp),
+                store_wrapper,
+            )
+            .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
+            store_wrapper = cache.db;
+        }
 
         // index read and touched account addresses and storage keys
         let index = cache.accounts.iter().map(|(address, account)| {
@@ -250,7 +260,7 @@ impl ToExecDB for StoreWrapper {
             // correct (based on the success of the pre-execution).
             if store_wrapper
                 .store
-                .get_account_info_by_hash(parent_hash, address)
+                .get_account_info_by_hash(first_block_parent_hash, address)
                 .is_ok_and(|account| account.is_some())
             {
                 Some((address, account))
@@ -264,7 +274,7 @@ impl ToExecDB for StoreWrapper {
                 // return error if account is missing
                 let account = match store_wrapper
                     .store
-                    .get_account_info_by_hash(parent_hash, address)
+                    .get_account_info_by_hash(first_block_parent_hash, address)
                 {
                     Ok(Some(some)) => Ok(some),
                     Err(err) => Err(ExecutionDBError::Store(err)),
@@ -300,7 +310,7 @@ impl ToExecDB for StoreWrapper {
                             let key = CoreH256::from(key.to_be_bytes());
                             let value = store_wrapper
                                 .store
-                                .get_storage_at_hash(parent_hash, address, key)
+                                .get_storage_at_hash(first_block_parent_hash, address, key)
                                 .map_err(ExecutionDBError::Store)?
                                 .ok_or(ExecutionDBError::NewMissingStorage(address, key))?;
                             Ok((key, value))
@@ -319,17 +329,16 @@ impl ToExecDB for StoreWrapper {
         // get account proofs
         let state_trie = self
             .store
-            .state_trie(block.hash())?
-            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
-        let parent_state_trie = self
-            .store
-            .state_trie(parent_hash)?
-            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
+            .state_trie(last_block.hash())?
+            .ok_or(ExecutionDBError::NewMissingStateTrie(last_block.hash()))?;
+        let first_block_parent_state_trie = self.store.state_trie(first_block_parent_hash)?.ok_or(
+            ExecutionDBError::NewMissingStateTrie(first_block_parent_hash),
+        )?;
         let hashed_addresses: Vec<_> = index
             .clone()
             .map(|(address, _)| hash_address(&address))
             .collect();
-        let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
+        let initial_state_proofs = first_block_parent_state_trie.get_proofs(&hashed_addresses)?;
         let final_state_proofs: Vec<_> = hashed_addresses
             .iter()
             .map(|hashed_address| Ok((hashed_address, state_trie.get_proof(hashed_address)?)))
@@ -348,17 +357,19 @@ impl ToExecDB for StoreWrapper {
         let mut storage_proofs = HashMap::new();
         let mut final_storage_proofs = HashMap::new();
         for (address, storage_keys) in index {
-            let Some(parent_storage_trie) = self.store.storage_trie(parent_hash, address)? else {
+            let Some(first_block_parent_storage_trie) =
+                self.store.storage_trie(first_block_parent_hash, address)?
+            else {
                 // the storage of this account was empty or the account is newly created, either
                 // way the storage trie was initially empty so there aren't any proofs to add.
                 continue;
             };
-            let storage_trie = self.store.storage_trie(block.hash(), address)?.ok_or(
-                ExecutionDBError::NewMissingStorageTrie(block.hash(), address),
+            let storage_trie = self.store.storage_trie(last_block.hash(), address)?.ok_or(
+                ExecutionDBError::NewMissingStorageTrie(last_block.hash(), address),
             )?;
             let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
 
-            let initial_proofs = parent_storage_trie.get_proofs(&paths)?;
+            let initial_proofs = first_block_parent_storage_trie.get_proofs(&paths)?;
             let final_proofs: Vec<(_, Vec<_>)> = storage_keys
                 .iter()
                 .map(|key| {
