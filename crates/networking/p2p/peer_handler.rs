@@ -45,12 +45,32 @@ struct RetrySummary {
 
 impl RetrySummary {
     fn show(&self, request_name: &str) {
-        info!("{request_name} request failed after {REQUEST_RETRY_ATTEMPTS} attempts.\nAttempt failure causes: {} no peer, {} send error, {} timeout, {} invalid peer response",
-        self.no_peer,
-        self.send_error,
-        self.timeout,
-        self.invalid_response
-    )
+        match self.count_retries() {
+            0 => { /* Nothing to show */ }
+            x if x < REQUEST_RETRY_ATTEMPTS => {
+                info!(
+                    "{request_name} succesful after {x} attempts.\n{}",
+                    self.list_failure_causes()
+                )
+            }
+            _ => info!(
+                "{request_name} request failed after {REQUEST_RETRY_ATTEMPTS} attempts.\n{}",
+                self.list_failure_causes()
+            ),
+        }
+    }
+
+    fn count_retries(&self) -> usize {
+        self.no_peer + self.send_error + self.timeout + self.invalid_response
+    }
+
+    fn list_failure_causes(&self) -> String {
+        format!("Attempt failure causes: {} no peer, {} send error, {} timeout, {} invalid peer response",
+            self.no_peer,
+            self.send_error,
+            self.timeout,
+            self.invalid_response
+        )
     }
 }
 
