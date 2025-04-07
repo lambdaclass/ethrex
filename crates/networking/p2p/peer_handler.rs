@@ -471,6 +471,7 @@ impl PeerHandler {
                     storage_keys.push(hashed_keys);
                     storage_values.push(values);
                 }
+                retry_summary.show("storage_range");
                 return Some((storage_keys, storage_values, should_continue));
             } else {
                 retry_summary.timeout += 1;
