@@ -27,6 +27,7 @@ pub(crate) async fn bytecode_fetcher(
             .map(|res| (res, false))
     };
     run_queue(
+        "bytecode_fetcher",
         &mut receiver,
         &mut pending_bytecodes,
         &fetch_batch,

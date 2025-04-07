@@ -59,6 +59,7 @@ pub(crate) async fn storage_fetcher(
         async move { fetch_storage_batch(batch, state_root, peers, store, l_sender, s_sender).await }
     };
     run_queue(
+        "storage_fetcher",
         &mut receiver,
         &mut pending_storage,
         &fetch_batch,
@@ -175,6 +176,7 @@ async fn large_storage_fetcher(
         }
     };
     run_queue(
+        "large_storage_fetcher",
         &mut receiver,
         &mut pending_storage,
         &fetch_batch,

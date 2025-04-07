@@ -2,6 +2,7 @@ use std::future::Future;
 
 use ethrex_storage::Store;
 use tokio::sync::mpsc::Receiver;
+use tracing::info;
 
 use crate::peer_handler::PeerHandler;
 
@@ -10,6 +11,7 @@ use super::{SyncError, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES};
 /// Runs the queue process by reading incoming messages from the receiver, adding the requests to the queue, and then spawning parallel fetch tasks for all queued items
 /// This process will only end when an end signal in the form of an empty vector is read from the receiver
 pub(crate) async fn run_queue<T, F, Fut>(
+    name: &str,
     receiver: &mut Receiver<Vec<T>>,
     queue: &mut Vec<T>,
     fetch_batch: &F,
@@ -28,9 +30,18 @@ where
     let mut stale = false;
     while incoming {
         // Read incoming messages and add them to the queue
+        let queue_len = queue.len();
         incoming = read_incoming_requests(receiver, queue).await;
+        let queue_len_after_read = queue.len();
+        info!(
+            "[{}] read {} incoming requests, queue len: {}",
+            name,
+            queue_len_after_read - queue_len,
+            queue_len_after_read
+        );
         // If the pivot isn't stale, spawn fetch tasks for the queued elements
         if !stale {
+            let queue_len = queue.len();
             stale = spawn_fetch_tasks(
                 queue,
                 incoming,
@@ -40,6 +51,13 @@ where
                 batch_size,
             )
             .await?;
+            let queue_len_after_fetch = queue.len();
+            info!(
+                "[{}] fetched {} elements, queue len: {}",
+                name,
+                queue_len - queue_len_after_fetch,
+                queue_len_after_fetch
+            );
         }
     }
     Ok(())
