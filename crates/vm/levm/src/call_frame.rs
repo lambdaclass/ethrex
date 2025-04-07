@@ -4,9 +4,11 @@ use crate::{
     memory::Memory,
     opcodes::Opcode,
     utils::get_valid_jump_destinations,
+    Account,
 };
 use bytes::Bytes;
 use ethrex_common::{types::Log, Address, U256};
+use revm_primitives::HashMap;
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -85,6 +87,8 @@ pub struct CallFrame {
     pub valid_jump_destinations: HashSet<usize>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
+    /// backup cache
+    pub backup: HashMap<Address, Option<Account>>,
 }
 
 impl CallFrame {

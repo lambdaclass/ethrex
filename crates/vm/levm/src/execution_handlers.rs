@@ -38,7 +38,7 @@ impl<'a> VM<'a> {
 
                 self.call_frames.push(current_call_frame.clone());
 
-                self.restore_state(backup);
+                self.restore_state(backup, current_call_frame);
 
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
@@ -205,12 +205,17 @@ impl<'a> VM<'a> {
             match validate_create {
                 Ok(new_address) => {
                     // Set bytecode to new account if success
-                    update_account_bytecode(self.db, new_address, contract_code)?;
+                    update_account_bytecode(
+                        self.db,
+                        new_address,
+                        contract_code,
+                        &mut Some(current_call_frame),
+                    )?;
                 }
                 Err(error) => {
                     // Revert if error
                     current_call_frame.gas_used = current_call_frame.gas_limit;
-                    self.restore_state(backup);
+                    self.restore_state(backup, current_call_frame);
 
                     return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
@@ -252,7 +257,7 @@ impl<'a> VM<'a> {
             current_call_frame.gas_used = current_call_frame.gas_used.saturating_add(left_gas);
         }
 
-        self.restore_state(backup);
+        self.restore_state(backup, current_call_frame);
 
         Ok(ExecutionReport {
             result: TxResult::Revert(error),

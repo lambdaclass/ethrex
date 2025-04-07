@@ -129,6 +129,7 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
 pub fn get_account(
     db: &mut GeneralizedDatabase,
     address: Address,
+    call_frame: &mut Option<&mut CallFrame>,
 ) -> Result<Account, DatabaseError> {
     match cache::get_account(&db.cache, &address) {
         Some(acc) => Ok(acc.clone()),
@@ -138,7 +139,7 @@ pub fn get_account(
                 info: account_info,
                 storage: HashMap::new(),
             };
-            cache::insert_account(&mut db.cache, address, account.clone());
+            cache::insert_account(&mut db.cache, address, account.clone(), call_frame);
             Ok(account)
         }
     }
@@ -160,19 +161,20 @@ pub fn get_account_no_push_cache(
     }
 }
 
-pub fn get_account_mut_vm(
-    db: &mut GeneralizedDatabase,
+pub fn get_account_mut_vm<'a>(
+    db: &'a mut GeneralizedDatabase,
     address: Address,
-) -> Result<&mut Account, VMError> {
+    call_frame: &mut Option<&mut CallFrame>,
+) -> Result<&'a mut Account, VMError> {
     if !cache::is_account_cached(&db.cache, &address) {
         let account_info = db.store.get_account_info(address)?;
         let account = Account {
             info: account_info,
             storage: HashMap::new(),
         };
-        cache::insert_account(&mut db.cache, address, account.clone());
+        cache::insert_account(&mut db.cache, address, account.clone(), call_frame);
     }
-    cache::get_account_mut(&mut db.cache, &address)
+    cache::get_account_mut(&mut db.cache, &address, call_frame)
         .ok_or(VMError::Internal(InternalError::AccountNotFound))
 }
 
@@ -180,8 +182,9 @@ pub fn increase_account_balance(
     db: &mut GeneralizedDatabase,
     address: Address,
     increase: U256,
+    call_frame: &mut Option<&mut CallFrame>,
 ) -> Result<(), VMError> {
-    let account = get_account_mut_vm(db, address)?;
+    let account = get_account_mut_vm(db, address, call_frame)?;
     account.info.balance = account
         .info
         .balance
@@ -194,8 +197,9 @@ pub fn decrease_account_balance(
     db: &mut GeneralizedDatabase,
     address: Address,
     decrease: U256,
+    call_frame: &mut Option<&mut CallFrame>,
 ) -> Result<(), VMError> {
-    let account = get_account_mut_vm(db, address)?;
+    let account = get_account_mut_vm(db, address, call_frame)?;
     account.info.balance = account
         .info
         .balance
@@ -226,8 +230,9 @@ pub fn update_account_bytecode(
     db: &mut GeneralizedDatabase,
     address: Address,
     new_bytecode: Bytes,
+    call_frame: &mut Option<&mut CallFrame>,
 ) -> Result<(), VMError> {
-    let account = get_account_mut_vm(db, address)?;
+    let account = get_account_mut_vm(db, address, call_frame)?;
     account.info.bytecode = new_bytecode;
     Ok(())
 }
@@ -426,8 +431,9 @@ pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
 pub fn increment_account_nonce(
     db: &mut GeneralizedDatabase,
     address: Address,
+    call_frame: &mut Option<&mut CallFrame>,
 ) -> Result<u64, VMError> {
-    let account = get_account_mut_vm(db, address)?;
+    let account = get_account_mut_vm(db, address, call_frame)?;
     account.info.nonce = account
         .info
         .nonce
@@ -439,8 +445,9 @@ pub fn increment_account_nonce(
 pub fn decrement_account_nonce(
     db: &mut GeneralizedDatabase,
     address: Address,
+    call_frame: &mut Option<&mut CallFrame>,
 ) -> Result<(), VMError> {
-    let account = get_account_mut_vm(db, address)?;
+    let account = get_account_mut_vm(db, address, call_frame)?;
     account.info.nonce = account
         .info
         .nonce
@@ -561,15 +568,16 @@ pub fn eip7702_set_access_code(
 
         // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
         // Clear the account’s code and reset the account’s code hash to the empty hash.
-        let auth_account = match cache::get_account_mut(&mut db.cache, &authority_address) {
-            Some(account_mut) => account_mut,
-            None => {
-                // This is to add the account to the cache
-                // NOTE: Refactor in the future
-                get_account(db, authority_address)?;
-                get_account_mut_vm(db, authority_address)?
-            }
-        };
+        let auth_account =
+            match cache::get_account_mut(&mut db.cache, &authority_address, &mut None) {
+                Some(account_mut) => account_mut,
+                None => {
+                    // This is to add the account to the cache
+                    // NOTE: Refactor in the future
+                    get_account(db, authority_address, &mut None)?;
+                    get_account_mut_vm(db, authority_address, &mut None)?
+                }
+            };
 
         auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
             delegation_bytes.into()
@@ -578,7 +586,7 @@ pub fn eip7702_set_access_code(
         };
 
         // 9. Increase the nonce of authority by one.
-        increment_account_nonce(db, authority_address)
+        increment_account_nonce(db, authority_address, &mut None)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
     }
 

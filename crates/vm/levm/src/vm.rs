@@ -46,7 +46,6 @@ pub struct Substate {
 ///   - Gas Refunds
 ///   - Transient Storage
 pub struct StateBackup {
-    cache: CacheDB,
     substate: Substate,
     refunded_gas: u64,
     transient_storage: TransientStorage,
@@ -54,13 +53,11 @@ pub struct StateBackup {
 
 impl StateBackup {
     pub fn new(
-        cache: CacheDB,
         substate: Substate,
         refunded_gas: u64,
         transient_storage: TransientStorage,
     ) -> StateBackup {
         StateBackup {
-            cache,
             substate,
             refunded_gas,
             transient_storage,
@@ -282,7 +279,7 @@ impl<'a> VM<'a> {
                 })
             }
             TxKind::Create => {
-                let sender_nonce = get_account(db, env.origin)?.info.nonce;
+                let sender_nonce = get_account(db, env.origin, &mut None)?.info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -332,7 +329,6 @@ impl<'a> VM<'a> {
     ) -> Result<ExecutionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let backup = StateBackup::new(
-            self.db.cache.clone(),
             self.accrued_substate.clone(),
             self.env.refunded_gas,
             self.env.transient_storage.clone(),
@@ -360,8 +356,16 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn restore_state(&mut self, backup: StateBackup) {
-        self.db.cache = backup.cache;
+    pub fn restore_state(&mut self, backup: StateBackup, call_frame: &mut CallFrame) {
+        // self.db.cache = backup.cache;
+        for (address, account_opt) in &call_frame.backup {
+            if let Some(account) = account_opt {
+                cache::insert_account(&mut self.db.cache, *address, account.clone(), &mut None);
+            } else {
+                // remove from cache
+                cache::remove_account(&mut self.db.cache, address, None);
+            }
+        }
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
@@ -428,7 +432,7 @@ impl<'a> VM<'a> {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(self.db, new_contract_address)?;
+            let new_account = get_account(self.db, new_contract_address, &mut None)?;
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -438,7 +442,7 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
             if new_account.has_code_or_nonce() {
-                return self.handle_create_non_empty_account(&initial_call_frame);
+                return self.handle_create_non_empty_account(&mut initial_call_frame);
             }
 
             // https://eips.ethereum.org/EIPS/eip-161
@@ -447,12 +451,17 @@ impl<'a> VM<'a> {
             } else {
                 Account::new(balance, Bytes::new(), 1, HashMap::new())
             };
-            cache::insert_account(&mut self.db.cache, new_contract_address, created_contract);
+            cache::insert_account(
+                &mut self.db.cache,
+                new_contract_address,
+                created_contract,
+                &mut None,
+            );
         }
 
         let mut report = self.run_execution(&mut initial_call_frame)?;
 
-        self.finalize_execution(&initial_call_frame, &mut report)?;
+        self.finalize_execution(&mut initial_call_frame, &mut report)?;
 
         Ok(report)
     }
@@ -471,6 +480,7 @@ impl<'a> VM<'a> {
         &mut self,
         address: Address,
         key: H256,
+        call_frame: &mut CallFrame,
     ) -> Result<(StorageSlot, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let mut storage_slot_was_cold = false;
@@ -504,7 +514,7 @@ impl<'a> VM<'a> {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = get_account_mut_vm(self.db, address)?;
+        let account = get_account_mut_vm(self.db, address, &mut Some(call_frame))?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -515,8 +525,9 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
         new_value: U256,
+        call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(self.db, address)?;
+        let account = get_account_mut_vm(self.db, address, &mut Some(call_frame))?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)
@@ -531,7 +542,7 @@ impl<'a> VM<'a> {
 
     fn handle_create_non_empty_account(
         &mut self,
-        initial_call_frame: &CallFrame,
+        initial_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         let mut report = ExecutionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
@@ -559,7 +570,7 @@ impl<'a> VM<'a> {
 
     fn finalize_execution(
         &mut self,
-        initial_call_frame: &CallFrame,
+        initial_call_frame: &mut CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
         // NOTE: ATTOW the default hook is created in VM::new(), so

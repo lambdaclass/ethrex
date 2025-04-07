@@ -72,6 +72,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
             accounts[0].1.info.nonce,
             HashMap::new(),
         ),
+        &mut None,
     );
     cache::insert_account(
         &mut db.cache,
@@ -82,6 +83,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
             accounts[1].1.info.nonce,
             HashMap::new(),
         ),
+        &mut None,
     );
 
     for _ in 0..runs - 1 {
