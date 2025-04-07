@@ -4,6 +4,7 @@ mod state_sync;
 mod storage_fetcher;
 mod storage_healing;
 mod trie_rebuild;
+mod utils;
 
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
