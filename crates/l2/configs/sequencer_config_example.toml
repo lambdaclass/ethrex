@@ -20,10 +20,6 @@ salt_is_zero = true
 [eth]
 rpc_url = "http://localhost:8545"
 
-[engine]
-rpc_url = "http://localhost:8552"
-jwt_path = "./jwt.hex"
-
 [watcher]
 bridge_address = "0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440"
 check_interval_ms = 1000

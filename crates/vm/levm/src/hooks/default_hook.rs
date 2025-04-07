@@ -30,11 +30,11 @@ impl Hook for DefaultHook {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(
         &self,
-        vm: &mut VM,
+        vm: &mut VM<'_>,
         initial_call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let sender_account = get_account(&mut vm.cache, vm.db.clone(), sender_address);
+        let sender_account = get_account(vm.db, sender_address)?;
 
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
@@ -148,7 +148,7 @@ impl Hook for DefaultHook {
         // technically, the sender will not be able to pay it.
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        decrease_account_balance(&mut vm.cache, vm.db.clone(), sender_address, up_front_cost)
+        decrease_account_balance(vm.db, sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
@@ -180,7 +180,7 @@ impl Hook for DefaultHook {
         )?;
 
         // (7) NONCE_IS_MAX
-        increment_account_nonce(&mut vm.cache, vm.db.clone(), sender_address)
+        increment_account_nonce(vm.db, sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
@@ -285,8 +285,7 @@ impl Hook for DefaultHook {
             }
 
             vm.env.refunded_gas = eip7702_set_access_code(
-                &mut vm.cache,
-                vm.db.clone(),
+                vm.db,
                 vm.env.chain_id,
                 &mut vm.accrued_substate,
                 // TODO: avoid clone()
@@ -303,12 +302,7 @@ impl Hook for DefaultHook {
         } else {
             // Transfer value to receiver
             // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            increase_account_balance(
-                &mut vm.cache,
-                vm.db.clone(),
-                initial_call_frame.to,
-                initial_call_frame.msg_value,
-            )?;
+            increase_account_balance(vm.db, initial_call_frame.to, initial_call_frame.msg_value)?;
         }
         Ok(())
     }
@@ -320,7 +314,7 @@ impl Hook for DefaultHook {
     /// 4. Destruct addresses in selfdestruct set.
     fn finalize_execution(
         &self,
-        vm: &mut VM,
+        vm: &mut VM<'_>,
         initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
@@ -330,7 +324,7 @@ impl Hook for DefaultHook {
 
         // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            let existing_account = get_account(&mut vm.cache, vm.db.clone(), receiver_address); //TO Account
+            let existing_account = get_account(vm.db, receiver_address)?; //TO Account
 
             if has_delegation(&existing_account.info)? {
                 // This is the case where the "to" address and the
@@ -342,23 +336,13 @@ impl Hook for DefaultHook {
                 // If transaction execution results in failure (any
                 // exceptional condition or code reverting), setting
                 // delegation designations is not rolled back.
-                decrease_account_balance(
-                    &mut vm.cache,
-                    vm.db.clone(),
-                    receiver_address,
-                    initial_call_frame.msg_value,
-                )?;
+                decrease_account_balance(vm.db, receiver_address, initial_call_frame.msg_value)?;
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
-                remove_account(&mut vm.cache, &receiver_address);
+                remove_account(&mut vm.db.cache, &receiver_address);
             }
 
-            increase_account_balance(
-                &mut vm.cache,
-                vm.db.clone(),
-                sender_address,
-                initial_call_frame.msg_value,
-            )?;
+            increase_account_balance(vm.db, sender_address, initial_call_frame.msg_value)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
@@ -398,12 +382,7 @@ impl Hook for DefaultHook {
             .checked_mul(U256::from(gas_to_return))
             .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
-        increase_account_balance(
-            &mut vm.cache,
-            vm.db.clone(),
-            sender_address,
-            wei_return_amount,
-        )?;
+        increase_account_balance(vm.db, sender_address, wei_return_amount)?;
 
         // 3. Pay coinbase fee
         let coinbase_address = vm.env.coinbase;
@@ -422,14 +401,14 @@ impl Hook for DefaultHook {
             .ok_or(VMError::BalanceOverflow)?;
 
         if coinbase_fee != U256::zero() {
-            increase_account_balance(&mut vm.cache, vm.db.clone(), coinbase_address, coinbase_fee)?;
+            increase_account_balance(vm.db, coinbase_address, coinbase_fee)?;
         };
 
         // 4. Destruct addresses in vm.estruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = get_account_mut_vm(&mut vm.cache, vm.db.clone(), address)?;
+            let account_to_remove = get_account_mut_vm(vm.db, address)?;
             *account_to_remove = Account::default();
         }
 

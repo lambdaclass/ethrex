@@ -4,12 +4,12 @@ use std::sync::Arc;
 use crate::utils::RpcRequest;
 use crate::{
     eth::block,
+    rpc::{RpcApiContext, RpcHandler},
     types::{
         block_identifier::BlockIdentifier,
         transaction::{RpcTransaction, SendRawTransactionRequest},
     },
     utils::RpcErr,
-    RpcApiContext, RpcHandler,
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
@@ -102,7 +102,7 @@ impl RpcHandler for CallRequest {
             block,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = self.block.clone().unwrap_or_default();
         info!("Requested call on block: {}", block);
         let header = match block.resolve_block_header(&context.storage)? {
@@ -144,7 +144,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested transaction at index: {} of block with number: {}",
             self.transaction_index, self.block,
@@ -195,7 +195,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
                 .map_err(|error| RpcErr::BadParams(error.to_string()))?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         info!(
             "Requested transaction at index: {} of block with hash: {:#x}",
             self.transaction_index, self.block,
@@ -233,7 +233,7 @@ impl RpcHandler for GetTransactionByHashRequest {
             transaction_hash: serde_json::from_value(params[0].clone())?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         info!(
             "Requested transaction with hash: {:#x}",
@@ -272,7 +272,7 @@ impl RpcHandler for GetTransactionReceiptRequest {
             transaction_hash: serde_json::from_value(params[0].clone())?,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         info!(
             "Requested receipt for transaction {:#x}",
@@ -319,7 +319,7 @@ impl RpcHandler for CreateAccessListRequest {
             block,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let block = self.block.clone().unwrap_or_default();
         info!("Requested access list creation for tx on block: {}", block);
         let block_number = match block.resolve_block_number(&context.storage)? {
@@ -379,7 +379,7 @@ impl RpcHandler for GetRawTransaction {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let tx = context
             .storage
             .get_transaction_by_hash(self.transaction_hash)?;
@@ -418,7 +418,7 @@ impl RpcHandler for EstimateGasRequest {
             block,
         })
     }
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let blockchain = &context.blockchain;
         let block = self.block.clone().unwrap_or_default();
@@ -597,7 +597,7 @@ impl RpcHandler for SendRawTransactionRequest {
 
         let gateway_request = gateway_eth_client.send_raw_transaction(&tx_data);
 
-        let client_response = Self::call(req, context);
+        let client_response = Self::call(req, context).await;
 
         let gateway_response = gateway_request
             .await
@@ -620,7 +620,7 @@ impl RpcHandler for SendRawTransactionRequest {
         gateway_response.or(client_response)
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             context.blockchain.add_blob_transaction_to_pool(
                 wrapped_blob_tx.tx.clone(),
