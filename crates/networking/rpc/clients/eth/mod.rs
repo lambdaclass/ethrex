@@ -883,7 +883,7 @@ impl EthClient {
     ) -> Result<u64, EthClientError> {
         Self::_call_block_variable(
             eth_client,
-            b"lastCommittedBlock()",
+            b"lastCommittedBatch()",
             on_chain_proposer_address,
         )
         .await
@@ -895,12 +895,13 @@ impl EthClient {
     ) -> Result<u64, EthClientError> {
         Self::_call_block_variable(
             eth_client,
-            b"lastCommittedBatch()",
+            b"lastCommittedBlock()",
             on_chain_proposer_address,
         )
         .await
     }
 
+    // TODO: This is not needed anymore, since we store batches in the DB.
     pub async fn get_last_verified_block(
         eth_client: &EthClient,
         on_chain_proposer_address: Address,

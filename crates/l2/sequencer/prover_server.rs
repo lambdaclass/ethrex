@@ -39,7 +39,7 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0xAA,
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verifyBatch(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {

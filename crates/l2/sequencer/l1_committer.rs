@@ -28,7 +28,8 @@ use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str =
+    "commitBatch(uint256,uint256,uint256,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -96,6 +97,11 @@ impl Committer {
         let (blobs_bundle, withdrawal_logs_merkle_root, deposit_logs_hash, last_block_to_commit) =
             self.prepare_batch_from_block(first_block_to_commit)?;
 
+        // dbg!(&&blobs_bundle);
+        dbg!(&withdrawal_logs_merkle_root);
+        dbg!(&deposit_logs_hash);
+        dbg!(&last_block_to_commit);
+
         match self
             .send_commitment(
                 batch_to_commit,
@@ -109,7 +115,7 @@ impl Committer {
         {
             Ok(commit_tx_hash) => {
                 info!(
-                    "Sent commitment from batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}. first_block: {first_block_to_commit}, last_block {last_block_to_commit}.",
+                    "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}. first_block: {first_block_to_commit}, last_block {last_block_to_commit}.",
                 );
                 Ok(())
             }

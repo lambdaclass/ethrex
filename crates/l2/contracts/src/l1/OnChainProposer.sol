@@ -195,7 +195,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @notice The order of these `require` statements is important.
     /// Ordering Reason: After the verification process, we delete the `batchCommitments` for `batchNumber - 1`. This means that when checking the batch,
     /// we might get an error indicating that the batch hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
-    function verify(
+    function verifyBatch(
         uint256 batchNumber,
         //risc0
         bytes calldata risc0BlockProof,

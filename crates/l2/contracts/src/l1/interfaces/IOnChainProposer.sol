@@ -18,10 +18,6 @@ interface IOnChainProposer {
     /// @return The latest committed block number as a uint256.
     function lastCommittedBlock() external view returns (uint256);
 
-    /// @notice The latest verified block number.
-    /// @return The latest verified block number as a uint256.
-    function lastVerifiedBlock() external view returns (uint256);
-
     /// @notice A batch has been committed.
     /// @dev Event emitted when a batch is committed.
     event BatchCommitted(bytes32 indexed currentBatchCommitment);
@@ -79,7 +75,7 @@ interface IOnChainProposer {
     /// @param picoRiscvVkey Public verifying key
     /// @param picoPublicValues Values used to perform the execution
     /// @param picoProof Groth16 proof
-    function verify(
+    function verifyBatch(
         uint256 batchNumber,
         //risc0
         bytes calldata risc0BlockProof,
