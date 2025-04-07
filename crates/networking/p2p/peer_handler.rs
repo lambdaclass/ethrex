@@ -35,6 +35,25 @@ pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
+#[derive(Default)]
+struct RetrySummary {
+    no_peer: usize,
+    send_error: usize,
+    timeout: usize,
+    invalid_response: usize,
+}
+
+impl RetrySummary {
+    fn show(&self, request_name: &str) {
+        info!("{request_name} request failed after {REQUEST_RETRY_ATTEMPTS} attempts.\nAttempt failure causes: {} no peer, {} send error, {} timeout, {} invalid peer response",
+        self.no_peer,
+        self.send_error,
+        self.timeout,
+        self.invalid_response
+    )
+    }
+}
+
 // Ask as much as 128 block bodies per request
 // this magic number is not part of the protocol and is taken from geth, see:
 // https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
@@ -342,6 +361,7 @@ impl PeerHandler {
         account_hashes: Vec<H256>,
         start: H256,
     ) -> Option<(Vec<Vec<H256>>, Vec<Vec<U256>>, bool)> {
+        let mut retry_summary = RetrySummary::default();
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
@@ -352,9 +372,13 @@ impl PeerHandler {
                 limit_hash: HASH_MAX,
                 response_bytes: MAX_RESPONSE_BYTES,
             });
-            let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
+            let Some(peer) = self.get_peer_channel_with_retry(Capability::Snap).await else {
+                retry_summary.no_peer += 1;
+                continue;
+            };
             let mut receiver = peer.receiver.lock().await;
             if let Err(err) = peer.sender.send(request).await {
+                retry_summary.send_error += 1;
                 debug!("Failed to send message to peer: {err}");
                 continue;
             }
@@ -378,7 +402,8 @@ impl PeerHandler {
             {
                 // Check we got a reasonable amount of storage ranges
                 if slots.len() > storage_roots.len() || slots.is_empty() {
-                    return None;
+                    retry_summary.invalid_response += 1;
+                    continue;
                 }
                 // Unzip & validate response
                 let proof = encodable_to_proof(&proof);
@@ -394,6 +419,7 @@ impl PeerHandler {
                         .unzip();
                     // We won't accept empty storage ranges
                     if hashed_keys.is_empty() {
+                        retry_summary.invalid_response += 1;
                         continue;
                     }
                     let encoded_values = values
@@ -411,12 +437,14 @@ impl PeerHandler {
                             &encoded_values,
                             &proof,
                         ) else {
+                            retry_summary.invalid_response += 1;
                             continue;
                         };
                         should_continue = sc;
                     } else if verify_range(storage_root, &start, &hashed_keys, &encoded_values, &[])
                         .is_err()
                     {
+                        retry_summary.invalid_response += 1;
                         continue;
                     }
 
@@ -424,8 +452,11 @@ impl PeerHandler {
                     storage_values.push(values);
                 }
                 return Some((storage_keys, storage_values, should_continue));
+            } else {
+                retry_summary.timeout += 1;
             }
         }
+        retry_summary.show("storage_range");
         None
     }
 
