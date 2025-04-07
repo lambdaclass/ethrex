@@ -10,7 +10,7 @@
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -68,7 +68,7 @@ pub(crate) async fn storage_fetcher(
         STORAGE_BATCH_SIZE,
     )
     .await?;
-    info!(
+    debug!(
         "Concluding storage fetcher, {} storages left in queue to be healed later",
         pending_storage.len()
     );
