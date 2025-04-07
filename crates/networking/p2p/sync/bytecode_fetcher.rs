@@ -15,6 +15,7 @@ use super::{utils::run_queue, SyncError, BYTECODE_BATCH_SIZE};
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 pub(crate) async fn bytecode_fetcher(
+    segment_no: usize,
     mut receiver: Receiver<Vec<H256>>,
     peers: PeerHandler,
     store: Store,
@@ -27,7 +28,7 @@ pub(crate) async fn bytecode_fetcher(
             .map(|res| (res, false))
     };
     run_queue(
-        "bytecode_fetcher",
+        &format!("bytecode_fetcher_{}", segment_no),
         &mut receiver,
         &mut pending_bytecodes,
         &fetch_batch,

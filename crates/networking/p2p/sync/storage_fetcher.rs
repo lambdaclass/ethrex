@@ -34,6 +34,7 @@ struct LargeStorageRequest {
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
 /// Upon finish, remaining storages will be sent to the storage healer
 pub(crate) async fn storage_fetcher(
+    segment_no: usize,
     mut receiver: Receiver<Vec<(H256, H256)>>,
     peers: PeerHandler,
     store: Store,
@@ -44,6 +45,7 @@ pub(crate) async fn storage_fetcher(
     let (large_storage_sender, large_storage_receiver) =
         channel::<Vec<LargeStorageRequest>>(MAX_CHANNEL_MESSAGES);
     let large_storage_fetcher_handler = tokio::spawn(large_storage_fetcher(
+        segment_no,
         large_storage_receiver,
         peers.clone(),
         store.clone(),
@@ -59,7 +61,7 @@ pub(crate) async fn storage_fetcher(
         async move { fetch_storage_batch(batch, state_root, peers, store, l_sender, s_sender).await }
     };
     run_queue(
-        "storage_fetcher",
+        &format!("storage_fetcher_{}", segment_no),
         &mut receiver,
         &mut pending_storage,
         &fetch_batch,
@@ -153,6 +155,7 @@ async fn fetch_storage_batch(
 /// This function will remain active until either an empty vec is sent to the receiver or the pivot becomes stale
 /// Upon finish, remaining storages will be sent to the storage healer and storage rebuilder (so we can rebuild the partial tries)
 async fn large_storage_fetcher(
+    segment_no: usize,
     mut receiver: Receiver<Vec<LargeStorageRequest>>,
     peers: PeerHandler,
     store: Store,
@@ -176,7 +179,7 @@ async fn large_storage_fetcher(
         }
     };
     run_queue(
-        "large_storage_fetcher",
+        &format!("large_storage_fetcher_{}", segment_no),
         &mut receiver,
         &mut pending_storage,
         &fetch_batch,
