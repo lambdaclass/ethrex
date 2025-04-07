@@ -185,7 +185,7 @@ async fn large_storage_fetcher(
         &fetch_batch,
         peers,
         store.clone(),
-        STORAGE_BATCH_SIZE,
+        1,
     )
     .await?;
     info!(
