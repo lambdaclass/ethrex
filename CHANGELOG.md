@@ -2,6 +2,11 @@
 
 ## Perf
 
+
+#### 2025-04-03
+- Fix a bug where RLP encoding was being done twice: [#2353](https://github.com/lambdaclass/ethrex/pull/2353), check
+  the report under perf_report for more information.
+  
 #### 2025-04-01
 
 - Asyncify DB write APIs, as well as its users [#2336](https://github.com/lambdaclass/ethrex/pull/2336)
