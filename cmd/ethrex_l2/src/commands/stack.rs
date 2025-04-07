@@ -303,7 +303,8 @@ impl Command {
                     store_path.to_str().expect("Invalid store path"),
                     EngineType::Libmdbx,
                     genesis.to_str().expect("Invalid genesis path"),
-                )?;
+                )
+                .await?;
 
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
                 let genesis_block_hash = genesis_header.compute_block_hash();
@@ -328,6 +329,7 @@ impl Command {
 
                     new_trie = store
                         .apply_account_updates_from_trie(new_trie, &account_updates)
+                        .await
                         .expect("Error applying account updates");
 
                     let new_block = BlockHeader {
@@ -339,15 +341,19 @@ impl Command {
                     };
                     let new_block_hash = new_block.compute_block_hash();
 
-                    store.add_block_header(new_block_hash, new_block)?;
-                    store.add_block_number(new_block_hash, last_number + 1)?;
-                    store.set_canonical_block(last_number + 1, new_block_hash)?;
+                    store.add_block_header(new_block_hash, new_block).await?;
+                    store
+                        .add_block_number(new_block_hash, last_number + 1)
+                        .await?;
+                    store
+                        .set_canonical_block(last_number + 1, new_block_hash)
+                        .await?;
 
                     last_number += 1;
                     last_hash = new_block_hash;
                 }
 
-                store.update_latest_block_number(last_number)?;
+                store.update_latest_block_number(last_number).await?;
             }
         }
         Ok(())

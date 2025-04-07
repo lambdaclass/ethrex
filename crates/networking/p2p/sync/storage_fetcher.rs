@@ -158,7 +158,9 @@ async fn fetch_storage_batch(
                 let (account_hash, storage_root) = batch.remove(0);
                 let last_key = *last_keys.last().unwrap();
                 // Store downloaded range
-                store.write_snapshot_storage_batch(account_hash, last_keys, last_values)?;
+                store
+                    .write_snapshot_storage_batch(account_hash, last_keys, last_values)
+                    .await?;
                 // Delegate the rest of the trie to the large trie fetcher
                 large_storage_sender
                     .send(vec![LargeStorageRequest {
@@ -174,7 +176,9 @@ async fn fetch_storage_batch(
         // Store the storage ranges & rebuild the storage trie for each account
         let filled_storages: Vec<(H256, H256)> = batch.drain(..values.len()).collect();
         let account_hashes: Vec<H256> = filled_storages.iter().map(|(hash, _)| *hash).collect();
-        store.write_snapshot_storage_batches(account_hashes, keys, values)?;
+        store
+            .write_snapshot_storage_batches(account_hashes, keys, values)
+            .await?;
         // Send complete storages to the rebuilder
         storage_trie_rebuilder_sender.send(filled_storages).await?;
         // Return remaining code hashes in the batch if we couldn't fetch all of them
@@ -295,7 +299,9 @@ async fn fetch_large_storage(
         // Update next batch's start
         request.last_key = *keys.last().unwrap();
         // Write storage range to snapshot
-        store.write_snapshot_storage_batch(request.account_hash, keys, values)?;
+        store
+            .write_snapshot_storage_batch(request.account_hash, keys, values)
+            .await?;
         if incomplete {
             Ok((Some(request), false))
         } else {

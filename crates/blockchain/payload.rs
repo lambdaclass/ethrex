@@ -254,7 +254,10 @@ impl<'a> From<PayloadBuildContext<'a>> for PayloadBuildResult {
 
 impl Blockchain {
     /// Completes the payload building process, return the block value
-    pub fn build_payload(&self, payload: &mut Block) -> Result<PayloadBuildResult, ChainError> {
+    pub async fn build_payload(
+        &self,
+        payload: &mut Block,
+    ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
         let gas_limit = payload.header.gas_limit;
 
@@ -266,7 +269,7 @@ impl Blockchain {
         self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
         self.extract_requests(&mut context)?;
-        self.finalize_payload(&mut context)?;
+        self.finalize_payload(&mut context).await?;
 
         let interval = Instant::now().duration_since(since).as_millis();
         tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
@@ -523,14 +526,18 @@ impl Blockchain {
         Ok(())
     }
 
-    fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+    async fn finalize_payload(
+        &self,
+        context: &mut PayloadBuildContext<'_>,
+    ) -> Result<(), ChainError> {
         let chain_config = &context.store.get_chain_config()?;
         let fork = chain_config.fork(context.payload.header.timestamp);
         let account_updates = context.vm.get_state_transitions(fork)?;
 
         context.payload.header.state_root = context
             .store
-            .apply_account_updates(context.parent_hash(), &account_updates)?
+            .apply_account_updates(context.parent_hash(), &account_updates)
+            .await?
             .unwrap_or_default();
         context.payload.header.transactions_root =
             compute_transactions_root(&context.payload.body.transactions);

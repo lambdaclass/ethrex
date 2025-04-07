@@ -71,7 +71,9 @@ pub(crate) async fn state_sync(
         state_trie_checkpoint[index] = last_key;
     }
     // Update state trie checkpoint
-    store.set_state_trie_key_checkpoint(state_trie_checkpoint)?;
+    store
+        .set_state_trie_key_checkpoint(state_trie_checkpoint)
+        .await?;
     Ok(stale_pivot)
 }
 
@@ -105,6 +107,7 @@ async fn state_sync_segment(
         tokio::task::spawn(StateSyncProgress::end_segment(
             state_sync_progress.clone(),
             segment_number,
+            start_account_hash,
         ));
         return Ok((segment_number, false, start_account_hash));
     }
@@ -180,7 +183,9 @@ async fn state_sync_segment(
                     .await?;
             }
             // Update Snapshot
-            store.write_snapshot_account_batch(account_hashes, accounts)?;
+            store
+                .write_snapshot_account_batch(account_hashes, accounts)
+                .await?;
             // As we are downloading the state trie in segments the `should_continue` flag will mean that there
             // are more accounts to be fetched but these accounts may belong to the next segment
             if !should_continue || start_account_hash >= STATE_TRIE_SEGMENTS_END[segment_number] {
@@ -197,6 +202,7 @@ async fn state_sync_segment(
     tokio::task::spawn(StateSyncProgress::end_segment(
         state_sync_progress.clone(),
         segment_number,
+        start_account_hash,
     ));
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
@@ -241,8 +247,10 @@ impl StateSyncProgress {
     async fn update_key(progress: StateSyncProgress, segment_number: usize, current_key: H256) {
         progress.data.lock().await.current_keys[segment_number] = current_key
     }
-    async fn end_segment(progress: StateSyncProgress, segment_number: usize) {
-        progress.data.lock().await.ended[segment_number] = true
+    async fn end_segment(progress: StateSyncProgress, segment_number: usize, last_key: H256) {
+        let mut data = progress.data.lock().await;
+        data.ended[segment_number] = true;
+        data.current_keys[segment_number] = last_key;
     }
 
     // Returns true if the state sync ended
