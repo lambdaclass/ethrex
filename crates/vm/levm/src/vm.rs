@@ -350,15 +350,7 @@ impl<'a> VM<'a> {
     }
 
     pub fn restore_state(&mut self, backup: StateBackup, call_frame: &mut CallFrame) {
-        // self.db.cache = backup.cache;
-        for (address, account_opt) in &call_frame.backup {
-            if let Some(account) = account_opt {
-                cache::insert_account(&mut self.db.cache, *address, account.clone(), &mut None);
-            } else {
-                // remove from cache
-                cache::remove_account(&mut self.db.cache, address, &mut None);
-            }
-        }
+        self.restore_cache_state(call_frame);
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
@@ -415,14 +407,7 @@ impl<'a> VM<'a> {
 
         if let Err(e) = self.prepare_execution(&mut initial_call_frame) {
             // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
-            for (address, account_opt) in &initial_call_frame.backup {
-                if let Some(account) = account_opt {
-                    cache::insert_account(&mut self.db.cache, *address, account.clone(), &mut None);
-                } else {
-                    // remove from cache
-                    cache::remove_account(&mut self.db.cache, address, &mut None);
-                }
-            }
+            self.restore_cache_state(&initial_call_frame);
             return Err(e);
         }
 
@@ -579,5 +564,16 @@ impl<'a> VM<'a> {
         }
 
         Ok(())
+    }
+
+    fn restore_cache_state(&mut self, call_frame: &CallFrame) {
+        for (address, account_opt) in &call_frame.backup {
+            if let Some(account) = account_opt {
+                cache::insert_account(&mut self.db.cache, *address, account.clone(), &mut None);
+            } else {
+                // remove from cache
+                cache::remove_account(&mut self.db.cache, address, &mut None);
+            }
+        }
     }
 }
