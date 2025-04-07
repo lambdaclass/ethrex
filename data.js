@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1743801475808,
+  "lastUpdate": 1744039118104,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2605,6 +2605,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183902124093,
             "range": "± 921900689",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "575f7d2f07c2af95ddd420f002781b54e062515a",
+          "message": "chore(levm): remove unused levm import (#2394)\n\n**Motivation**\n\nThis was the last remnant of revm on the levm codebase and gluecode for\nethrex\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-07T14:28:36Z",
+          "tree_id": "b7de3f5a6e42aee3b6a9ef41ebade2371a2766da",
+          "url": "https://github.com/lambdaclass/ethrex/commit/575f7d2f07c2af95ddd420f002781b54e062515a"
+        },
+        "date": 1744039115643,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185253654742,
+            "range": "± 668661570",
             "unit": "ns/iter"
           }
         ]
