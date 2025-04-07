@@ -171,7 +171,6 @@ pub struct VM<'a> {
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
-    pub cache_backup: CacheDB, // Backup of the cache before executing the transaction
 }
 
 pub struct GeneralizedDatabase {
@@ -264,8 +263,6 @@ impl<'a> VM<'a> {
                     false,
                 );
 
-                let cache_backup = db.cache.clone();
-
                 Ok(Self {
                     call_frames: vec![initial_call_frame],
                     env,
@@ -275,7 +272,6 @@ impl<'a> VM<'a> {
                     access_list,
                     authorization_list,
                     hooks,
-                    cache_backup,
                 })
             }
             TxKind::Create => {
@@ -306,8 +302,6 @@ impl<'a> VM<'a> {
                     created_accounts: HashSet::from([new_contract_address]),
                 };
 
-                let cache_backup = db.cache.clone();
-
                 Ok(Self {
                     call_frames: vec![initial_call_frame],
                     env,
@@ -317,7 +311,6 @@ impl<'a> VM<'a> {
                     access_list,
                     authorization_list,
                     hooks,
-                    cache_backup,
                 })
             }
         }
@@ -415,8 +408,6 @@ impl<'a> VM<'a> {
 
     /// Main function for executing an external transaction
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        self.cache_backup = self.db.cache.clone();
-
         let mut initial_call_frame = self
             .call_frames
             .pop()
@@ -424,7 +415,14 @@ impl<'a> VM<'a> {
 
         if let Err(e) = self.prepare_execution(&mut initial_call_frame) {
             // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
-            self.db.cache = self.cache_backup.clone();
+            for (address, account_opt) in &initial_call_frame.backup {
+                if let Some(account) = account_opt {
+                    cache::insert_account(&mut self.db.cache, *address, account.clone(), &mut None);
+                } else {
+                    // remove from cache
+                    cache::remove_account(&mut self.db.cache, address, &mut None);
+                }
+            }
             return Err(e);
         }
 
