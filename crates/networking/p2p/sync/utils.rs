@@ -33,12 +33,14 @@ where
         let queue_len = queue.len();
         incoming = read_incoming_requests(receiver, queue).await;
         let queue_len_after_read = queue.len();
-        info!(
-            "[{}] read {} incoming requests, queue len: {}",
-            name,
-            queue_len_after_read - queue_len,
-            queue_len_after_read
-        );
+        if queue_len_after_read != queue_len {
+            info!(
+                "[{}] read {} incoming requests, queue len: {}",
+                name,
+                queue_len_after_read - queue_len,
+                queue_len_after_read
+            );
+        }
         // If the pivot isn't stale, spawn fetch tasks for the queued elements
         if !stale {
             let queue_len = queue.len();
@@ -52,12 +54,14 @@ where
             )
             .await?;
             let queue_len_after_fetch = queue.len();
-            info!(
-                "[{}] fetched {} elements, queue len: {}",
-                name,
-                queue_len - queue_len_after_fetch,
-                queue_len_after_fetch
-            );
+            if queue_len_after_fetch != queue_len {
+                info!(
+                    "[{}] fetched {} elements, queue len: {}",
+                    name,
+                    queue_len - queue_len_after_fetch,
+                    queue_len_after_fetch
+                );
+            }
         }
     }
     Ok(())
