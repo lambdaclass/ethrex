@@ -8,8 +8,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{types::Log, Address, U256};
-use revm_primitives::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Stack {

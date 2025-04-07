@@ -749,7 +749,11 @@ impl<'a> VM<'a> {
                 )?;
 
                 // Deployment failed so account shouldn't exist
-                cache::remove_account(&mut self.db.cache, &new_address, Some(current_call_frame));
+                cache::remove_account(
+                    &mut self.db.cache,
+                    &new_address,
+                    &mut Some(current_call_frame),
+                );
                 self.accrued_substate.created_accounts.remove(&new_address);
 
                 // If revert we have to copy the return_data

@@ -64,7 +64,7 @@ pub fn insert_account(
 pub fn remove_account(
     cached_accounts: &mut CacheDB,
     address: &Address,
-    call_frame: Option<&mut CallFrame>,
+    call_frame: &mut Option<&mut CallFrame>,
 ) -> Option<Account> {
     let account_option = cached_accounts.remove(address);
 

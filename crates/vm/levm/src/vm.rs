@@ -363,7 +363,7 @@ impl<'a> VM<'a> {
                 cache::insert_account(&mut self.db.cache, *address, account.clone(), &mut None);
             } else {
                 // remove from cache
-                cache::remove_account(&mut self.db.cache, address, None);
+                cache::remove_account(&mut self.db.cache, address, &mut None);
             }
         }
         self.accrued_substate = backup.substate;
