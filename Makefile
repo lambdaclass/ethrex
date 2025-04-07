@@ -152,38 +152,38 @@ install-cli: ## 🛠️ Installs the ethrex-l2 cli
 # When we have the rex CLI, we should change it. The port is also coupled to the load_test.
 # That's why the port 1729 is being used in all targets related to perf/loadtests.
 start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing
-	@if [ -z "$$LEVM" ]; then \
-		LEVM="revm"; \
-		echo "Running the test-node without the LEVM feature"; \
+	@if [ -z "$$EVM" ]; then \
+		EVM="revm"; \
+		echo "Running the test-node without levm"; \
 		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
 	else \
-		LEVM="levm"; \
-		echo "Running the test-node with the LEVM feature"; \
+		EVM="levm"; \
+		echo "Running the test-node with levm"; \
 	fi; \
 	sudo -E CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
 	--bin ethrex \
 	--features "dev" \
 	--  \
-	--evm $$LEVM \
+	--evm $$EVM \
 	--network test_data/genesis-l1-dev.json \
 	--http.port 1729 \
 	--dev \
 	--datadir test_ethrex
 
 start-node-with-samply: rm-test-db ## 🚀🔥 Starts an ethrex client used for testing // Then open te profile.json.gz in https://profiler.firefox.com/
-	@if [ -z "$$LEVM" ]; then \
-		LEVM="revm"; \
-		echo "Running the test-node without the LEVM feature"; \
+	@if [ -z "$$EVM" ]; then \
+		EVM="revm"; \
+		echo "Running the test-node without levm"; \
 		echo "If you want to use levm, run the target with an L at the end: make <target> L=1"; \
 	else \
-		LEVM="levm"; \
-		echo "Running the test-node with the LEVM feature"; \
+		EVM="levm"; \
+		echo "Running the test-node with levm"; \
 	fi; \
 	CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 	cargo run --release --bin ethrex \
 	--features "dev" \
 	--  \
-	--evm $$LEVM \
+	--evm $$EVM \
 	--network test_data/genesis-l1-dev.json \
 	--http.port 1729 \
 	--dev \
