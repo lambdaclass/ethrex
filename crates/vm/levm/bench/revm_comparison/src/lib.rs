@@ -86,19 +86,19 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         &mut None,
     );
 
-    for _ in 0..runs - 1 {
-        let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
+    for i in 0..runs - 1 {
+        let mut vm = new_vm_with_bytecode(&mut db, i).unwrap();
         vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
         vm.env.gas_limit = u64::MAX - 1;
         vm.env.block_gas_limit = u64::MAX;
-        let tx_report = black_box(vm.stateless_execute().unwrap());
+        let tx_report = black_box(vm.execute().unwrap());
         assert!(tx_report.result == TxResult::Success);
     }
-    let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
+    let mut vm = new_vm_with_bytecode(&mut db, runs - 1).unwrap();
     vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
     vm.env.gas_limit = u64::MAX - 1;
     vm.env.block_gas_limit = u64::MAX;
-    let tx_report = black_box(vm.stateless_execute().unwrap());
+    let tx_report = black_box(vm.execute().unwrap());
     assert!(tx_report.result == TxResult::Success);
 
     match tx_report.result {
