@@ -26,29 +26,4 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-datatest_stable::harness!(
-    parse_and_execute,
-    "vectors/prague/",
-    r"eip2537_bls_12_381_precompiles/.*/.*\.json",
-    parse_and_execute,
-    "vectors/prague/",
-    r"eip2935_historical_block_hashes_from_state/.*/.*\.json",
-    parse_and_execute,
-    "vectors/prague/",
-    r"eip6110_deposits/.*/.*\.json",
-    parse_and_execute,
-    "vectors/prague/",
-    r"eip7002_el_triggerable_withdrawals/.*/.*\.json",
-    parse_and_execute,
-    "vectors/prague/",
-    r"eip7251_consolidations/.*/.*\.json",
-    parse_and_execute,
-    "vectors/prague/",
-    r"eip7623_increase_calldata_cost/.*/.*\.json",
-    parse_and_execute,
-    "vectors/prague/",
-    r"eip7685_general_purpose_el_requests/.*/.*\.json",
-    parse_and_execute,
-    "vectors/prague/",
-    r"eip7702_set_code_tx/.*/.*\.json",
-);
+datatest_stable::harness!(parse_and_execute, "vectors/prague/", r".*/.*\.json",);
