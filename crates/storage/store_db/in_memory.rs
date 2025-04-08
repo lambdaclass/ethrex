@@ -39,7 +39,7 @@ struct StoreInner {
     // Stores local blocks by payload id
     payloads: HashMap<u64, PayloadBundle>,
     pending_blocks: HashMap<BlockHash, Block>,
-    // Stores invalid block and its latest valid ancestor
+    // Stores invalid blocks and their latest valid ancestor
     invalid_ancestors: HashMap<BlockHash, BlockHash>,
     // Stores current Snap Sate
     snap_state: SnapState,
