@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744123386653,
+  "lastUpdate": 1744124666811,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2695,6 +2695,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184027510509,
             "range": "± 1516770499",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8be6e86a322bdfd018e0e63f8ec248f65e777aee",
+          "message": "feat(l1): persist bad blocks in db. (#2267)\n\n**Motivation**\nDon't have to rely on the global mutex of the Syncer to fetch invalid\nblocks\n\n**Description**\nNot sure if this is the ultimate solution, Im still unsure if it is\nbetter to store invalid ancestors in db or in memoy\n\n---------\n\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>",
+          "timestamp": "2025-04-08T14:14:39Z",
+          "tree_id": "198b1eebd6cadbd7d6647e1cba166fd15604f77f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8be6e86a322bdfd018e0e63f8ec248f65e777aee"
+        },
+        "date": 1744124665056,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 185471675947,
+            "range": "± 709233683",
             "unit": "ns/iter"
           }
         ]
