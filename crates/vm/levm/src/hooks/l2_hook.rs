@@ -27,15 +27,10 @@ pub struct L2Hook {
 impl Hook for L2Hook {
     fn prepare_execution(
         &self,
-        vm: &mut crate::vm::VM,
+        vm: &mut crate::vm::VM<'_>,
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
-        increase_account_balance(
-            &mut vm.cache,
-            vm.db.clone(),
-            self.recipient,
-            initial_call_frame.msg_value,
-        )?;
+        increase_account_balance(vm.db, self.recipient, initial_call_frame.msg_value)?;
 
         initial_call_frame.msg_value = U256::from(0);
 
@@ -204,8 +199,7 @@ impl Hook for L2Hook {
             }
 
             vm.env.refunded_gas = eip7702_set_access_code(
-                &mut vm.cache,
-                vm.db.clone(),
+                vm.db,
                 vm.env.chain_id,
                 &mut vm.accrued_substate,
                 // TODO: avoid clone()
@@ -225,7 +219,7 @@ impl Hook for L2Hook {
 
     fn finalize_execution(
         &self,
-        vm: &mut crate::vm::VM,
+        vm: &mut crate::vm::VM<'_>,
         initial_call_frame: &crate::call_frame::CallFrame,
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
@@ -234,7 +228,7 @@ impl Hook for L2Hook {
 
         // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            let existing_account = get_account(&mut vm.cache, vm.db.clone(), receiver_address); //TO Account
+            let existing_account = get_account(vm.db, receiver_address)?; //TO Account
 
             if has_delegation(&existing_account.info)? {
                 // This is the case where the "to" address and the
@@ -248,7 +242,7 @@ impl Hook for L2Hook {
                 // delegation designations is not rolled back.
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
-                remove_account(&mut vm.cache, &receiver_address);
+                remove_account(&mut vm.db.cache, &receiver_address);
             }
         }
 
@@ -294,14 +288,14 @@ impl Hook for L2Hook {
             .ok_or(VMError::BalanceOverflow)?;
 
         if coinbase_fee != U256::zero() {
-            increase_account_balance(&mut vm.cache, vm.db.clone(), coinbase_address, coinbase_fee)?;
+            increase_account_balance(vm.db, coinbase_address, coinbase_fee)?;
         };
 
         // 4. Destruct addresses in vm.estruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = get_account_mut_vm(&mut vm.cache, vm.db.clone(), address)?;
+            let account_to_remove = get_account_mut_vm(vm.db, address)?;
             *account_to_remove = Account::default();
         }
 
