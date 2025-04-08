@@ -258,25 +258,26 @@ impl StateSyncProgress {
         // Copy the current data so we don't read while it is being written
         let data = self.data.lock().await.clone();
         // Calculate the total amount of accounts synced
-        let mut synced_accounts = U256::zero();
+        let mut synced_accounts = U512::zero();
         // Calculate the total amount of accounts synced this cycle
-        let mut synced_accounts_this_cycle = U256::one();
+        let mut synced_accounts_this_cycle = U512::one();
         for i in 0..STATE_TRIE_SEGMENTS {
-            let segment_synced_accounts = data.current_keys[i]
-                .into_uint()
-                .checked_sub(STATE_TRIE_SEGMENTS_START[i].into_uint())
-                .unwrap_or_default();
-            let segment_completion_rate = (U512::from(segment_synced_accounts + 1) * 100)
-                / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
+            let segment_synced_accounts = U512::from(
+                data.current_keys[i]
+                    .into_uint()
+                    .saturating_sub(STATE_TRIE_SEGMENTS_START[i].into_uint()),
+            );
+            let segment_completion_rate =
+                ((segment_synced_accounts + 1) * 100) / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
             debug!("Segment {i} completion rate: {segment_completion_rate}%");
-            synced_accounts += segment_synced_accounts;
+            synced_accounts += segment_synced_accounts.into();
             synced_accounts_this_cycle += data.current_keys[i]
                 .into_uint()
-                .checked_sub(data.initial_keys[i].into_uint())
-                .unwrap_or_default();
+                .saturating_sub(data.initial_keys[i].into_uint())
+                .into();
         }
         // Calculate current progress percentage
-        let completion_rate: U512 = (U512::from(synced_accounts) * 100) / U512::from(U256::MAX);
+        let completion_rate: U512 = (synced_accounts * 100) / U512::from(U256::MAX);
         // Make a simple time to finish estimation based on current progress
         // The estimation relies on account hashes being (close to) evenly distributed
         let remaining_accounts =
