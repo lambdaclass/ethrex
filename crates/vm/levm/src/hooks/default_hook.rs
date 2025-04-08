@@ -149,7 +149,7 @@ impl Hook for DefaultHook {
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
         vm.db
-            .decrease_account_balance(sender_address, up_front_cost, &mut Some(initial_call_frame))
+            .decrease_account_balance(sender_address, up_front_cost, Some(initial_call_frame))
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
@@ -181,7 +181,7 @@ impl Hook for DefaultHook {
         )?;
 
         // (7) NONCE_IS_MAX
-        increment_account_nonce(vm.db, sender_address, &mut Some(initial_call_frame))
+        increment_account_nonce(vm.db, sender_address, Some(initial_call_frame))
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
@@ -306,7 +306,7 @@ impl Hook for DefaultHook {
             vm.db.increase_account_balance(
                 initial_call_frame.to,
                 initial_call_frame.msg_value,
-                &mut Some(initial_call_frame),
+                Some(initial_call_frame),
             )?;
         }
         Ok(())
@@ -344,7 +344,7 @@ impl Hook for DefaultHook {
                 vm.db.decrease_account_balance(
                     receiver_address,
                     initial_call_frame.msg_value,
-                    &mut None,
+                    None,
                 )?;
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
@@ -354,7 +354,7 @@ impl Hook for DefaultHook {
             vm.db.increase_account_balance(
                 sender_address,
                 initial_call_frame.msg_value,
-                &mut None,
+                None,
             )?;
         }
 
@@ -396,7 +396,7 @@ impl Hook for DefaultHook {
             .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
         vm.db
-            .increase_account_balance(sender_address, wei_return_amount, &mut None)?;
+            .increase_account_balance(sender_address, wei_return_amount, None)?;
 
         // 3. Pay coinbase fee
         let coinbase_address = vm.env.coinbase;
@@ -416,14 +416,14 @@ impl Hook for DefaultHook {
 
         if coinbase_fee != U256::zero() {
             vm.db
-                .increase_account_balance(coinbase_address, coinbase_fee, &mut None)?;
+                .increase_account_balance(coinbase_address, coinbase_fee, None)?;
         };
 
         // 4. Destruct addresses in vm.estruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = vm.db.get_account_mut_vm(address, &mut None)?;
+            let account_to_remove = vm.db.get_account_mut_vm(address, None)?;
             *account_to_remove = Account::default();
         }
 

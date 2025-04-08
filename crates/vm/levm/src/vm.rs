@@ -483,7 +483,7 @@ impl<'a> VM<'a> {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = self.db.get_account_mut_vm(address, &mut Some(call_frame))?;
+        let account = self.db.get_account_mut_vm(address, Some(call_frame))?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -496,7 +496,7 @@ impl<'a> VM<'a> {
         new_value: U256,
         call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
-        let account = self.db.get_account_mut_vm(address, &mut Some(call_frame))?;
+        let account = self.db.get_account_mut_vm(address, Some(call_frame))?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)

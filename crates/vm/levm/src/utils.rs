@@ -316,7 +316,7 @@ pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
 pub fn increment_account_nonce(
     db: &mut GeneralizedDatabase,
     address: Address,
-    call_frame: &mut Option<&mut CallFrame>,
+    call_frame: Option<&mut CallFrame>,
 ) -> Result<u64, VMError> {
     let account = db.get_account_mut_vm(address, call_frame)?;
     account.info.nonce = account
@@ -330,7 +330,7 @@ pub fn increment_account_nonce(
 pub fn decrement_account_nonce(
     db: &mut GeneralizedDatabase,
     address: Address,
-    call_frame: &mut Option<&mut CallFrame>,
+    call_frame: Option<&mut CallFrame>,
 ) -> Result<(), VMError> {
     let account = db.get_account_mut_vm(address, call_frame)?;
     account.info.nonce = account
@@ -453,7 +453,7 @@ pub fn eip7702_set_access_code(
 
         // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
         // Clear the account’s code and reset the account’s code hash to the empty hash.
-        let auth_account = db.get_account_mut_vm(authority_address, &mut None)?;
+        let auth_account = db.get_account_mut_vm(authority_address, None)?;
 
         auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
             delegation_bytes.into()
@@ -462,7 +462,7 @@ pub fn eip7702_set_access_code(
         };
 
         // 9. Increase the nonce of authority by one.
-        increment_account_nonce(db, authority_address, &mut None)
+        increment_account_nonce(db, authority_address, None)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
     }
 

@@ -524,12 +524,12 @@ impl<'a> VM<'a> {
             self.db.increase_account_balance(
                 target_address,
                 balance_to_transfer,
-                &mut Some(current_call_frame),
+                Some(current_call_frame),
             )?;
             self.db.decrease_account_balance(
                 current_call_frame.to,
                 balance_to_transfer,
-                &mut Some(current_call_frame),
+                Some(current_call_frame),
             )?;
 
             // Selfdestruct is executed in the same transaction as the contract was created
@@ -540,7 +540,7 @@ impl<'a> VM<'a> {
             {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.db
-                    .get_account_mut_vm(current_call_frame.to, &mut Some(current_call_frame))?
+                    .get_account_mut_vm(current_call_frame.to, Some(current_call_frame))?
                     .info
                     .balance = U256::zero();
 
@@ -552,10 +552,10 @@ impl<'a> VM<'a> {
             self.db.increase_account_balance(
                 target_address,
                 balance_to_transfer,
-                &mut Some(current_call_frame),
+                Some(current_call_frame),
             )?;
             self.db
-                .get_account_mut_vm(current_call_frame.to, &mut Some(current_call_frame))?
+                .get_account_mut_vm(current_call_frame.to, Some(current_call_frame))?
                 .info
                 .balance = U256::zero();
 
@@ -657,7 +657,7 @@ impl<'a> VM<'a> {
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
         let new_account = self.db.get_account(new_address)?;
         if new_account.has_code_or_nonce() {
-            increment_account_nonce(self.db, deployer_address, &mut Some(current_call_frame))?;
+            increment_account_nonce(self.db, deployer_address, Some(current_call_frame))?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
@@ -680,13 +680,13 @@ impl<'a> VM<'a> {
             .insert_account(new_address, new_account, current_call_frame);
 
         // 2. Increment sender's nonce.
-        increment_account_nonce(self.db, deployer_address, &mut Some(current_call_frame))?;
+        increment_account_nonce(self.db, deployer_address, Some(current_call_frame))?;
 
         // 3. Decrease sender's balance.
         self.db.decrease_account_balance(
             deployer_address,
             value_in_wei_to_send,
-            &mut Some(current_call_frame),
+            Some(current_call_frame),
         )?;
 
         let mut new_call_frame = CallFrame::new(
@@ -736,7 +736,7 @@ impl<'a> VM<'a> {
                 self.db.increase_account_balance(
                     deployer_address,
                     value_in_wei_to_send,
-                    &mut Some(current_call_frame),
+                    Some(current_call_frame),
                 )?;
 
                 // Deployment failed so account shouldn't exist
@@ -836,9 +836,9 @@ impl<'a> VM<'a> {
         // Transfer value from caller to callee.
         if should_transfer_value {
             self.db
-                .decrease_account_balance(msg_sender, value, &mut Some(current_call_frame))?;
+                .decrease_account_balance(msg_sender, value, Some(current_call_frame))?;
             self.db
-                .increase_account_balance(to, value, &mut Some(current_call_frame))?;
+                .increase_account_balance(to, value, Some(current_call_frame))?;
         }
 
         let tx_report = self.run_execution(&mut new_call_frame)?;
@@ -878,11 +878,11 @@ impl<'a> VM<'a> {
                 // Revert value transfer
                 if should_transfer_value {
                     self.db
-                        .decrease_account_balance(to, value, &mut Some(current_call_frame))?;
+                        .decrease_account_balance(to, value, Some(current_call_frame))?;
                     self.db.increase_account_balance(
                         msg_sender,
                         value,
-                        &mut Some(current_call_frame),
+                        Some(current_call_frame),
                     )?;
                 }
                 // Push 0 to stack
