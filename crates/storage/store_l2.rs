@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::store_db_l2::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db_l2::libmdbx::LibmdbxStoreL2;
+use crate::store_db_l2::redb::RedBStoreL2;
 use crate::{api_l2::StoreEngineL2, error::StoreError};
 use ethrex_common::types::BlockNumber;
 use tracing::info;
@@ -35,7 +36,7 @@ impl Store {
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
-                engine: Arc::new(RedBStore::new()?),
+                engine: Arc::new(RedBStoreL2::new()?),
             },
         };
         info!("Started l2 store engine");
@@ -47,5 +48,14 @@ impl Store {
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
         self.engine.get_batch_number_for_block(block_number)
+    }
+    pub async fn store_batch_number_for_block(
+        &self,
+        block_number: BlockNumber,
+        batch_number: u64,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_batch_number_for_block(block_number, batch_number)
+            .await
     }
 }

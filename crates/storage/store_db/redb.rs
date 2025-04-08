@@ -68,13 +68,16 @@ pub struct RedBStore {
 impl RefUnwindSafe for RedBStore {}
 impl RedBStore {
     pub fn new() -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Arc::new(init_db()?),
-        })
+        let db = init_db()?;
+        Self::new_with_db(db)
+    }
+
+    pub fn new_with_db(db: Database) -> Result<Self, StoreError> {
+        Ok(Self { db: Arc::new(db) })
     }
 
     // Helper method to write into a redb table
-    async fn write<'k, 'v, 'a, K, V>(
+    pub async fn write<'k, 'v, 'a, K, V>(
         &self,
         table: TableDefinition<'a, K, V>,
         key: K::SelfType<'k>,
@@ -197,7 +200,7 @@ impl RedBStore {
     }
 
     // Helper method to read from a redb table
-    fn read<'k, 'a, K, V>(
+    pub fn read<'k, 'a, K, V>(
         &self,
         table: TableDefinition<'a, K, V>,
         key: impl Borrow<K::SelfType<'k>>,

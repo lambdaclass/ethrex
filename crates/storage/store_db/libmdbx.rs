@@ -19,7 +19,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::{Nibbles, Trie};
-use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
+use libmdbx::orm::{Decodable, DupSort, Encodable, Table, TableSettings};
 use libmdbx::{
     dupsort,
     orm::{table, Database},
@@ -27,7 +27,7 @@ use libmdbx::{
 };
 use libmdbx::{DatabaseOptions, Mode, PageSize, ReadWriteOptions, TransactionKind};
 use serde_json;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::path::Path;
 use std::sync::Arc;
@@ -37,13 +37,40 @@ pub struct Store {
 }
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
+        let tables = [
+            table_info!(BlockNumbers),
+            table_info!(Headers),
+            table_info!(Bodies),
+            table_info!(AccountCodes),
+            table_info!(Receipts),
+            table_info!(TransactionLocations),
+            table_info!(ChainData),
+            table_info!(StateTrieNodes),
+            table_info!(StorageTriesNodes),
+            table_info!(CanonicalBlockHashes),
+            table_info!(Payloads),
+            table_info!(PendingBlocks),
+            table_info!(SnapState),
+            table_info!(StateSnapShot),
+            table_info!(StorageSnapShot),
+        ]
+        .into_iter()
+        .collect();
+
+        Self::new_with_tables(path, tables)
+    }
+
+    pub fn new_with_tables(
+        path: &str,
+        tables: BTreeMap<&'static str, TableSettings>,
+    ) -> Result<Self, StoreError> {
         Ok(Self {
-            db: Arc::new(init_db(Some(path))),
+            db: Arc::new(init_db(Some(path), tables)),
         })
     }
 
     // Helper method to write into a libmdbx table
-    async fn write<T: Table>(&self, key: T::Key, value: T::Value) -> Result<(), StoreError> {
+    pub async fn write<T: Table>(&self, key: T::Key, value: T::Value) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
@@ -77,7 +104,7 @@ impl Store {
     }
 
     // Helper method to read from a libmdbx table
-    fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
+    pub fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         txn.get::<T>(key).map_err(StoreError::LibmdbxError)
     }
@@ -1123,26 +1150,10 @@ const DB_MAX_VALUE_SIZE: usize = 2022;
 
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
-pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
-    let tables = [
-        table_info!(BlockNumbers),
-        table_info!(Headers),
-        table_info!(Bodies),
-        table_info!(AccountCodes),
-        table_info!(Receipts),
-        table_info!(TransactionLocations),
-        table_info!(ChainData),
-        table_info!(StateTrieNodes),
-        table_info!(StorageTriesNodes),
-        table_info!(CanonicalBlockHashes),
-        table_info!(Payloads),
-        table_info!(PendingBlocks),
-        table_info!(SnapState),
-        table_info!(StateSnapShot),
-        table_info!(StorageSnapShot),
-    ]
-    .into_iter()
-    .collect();
+pub fn init_db(
+    path: Option<impl AsRef<Path>>,
+    tables: BTreeMap<&'static str, TableSettings>,
+) -> Database {
     let path = path.map(|p| p.as_ref().to_path_buf());
     let options = DatabaseOptions {
         page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
