@@ -103,12 +103,14 @@ async fn rebuild_state_trie_in_backgound(
             .unwrap_or(STATE_TRIE_SEGMENTS_START[i]),
         end: STATE_TRIE_SEGMENTS_END[i],
     });
+    info!("Rebuilding state trie");
     let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
     let start_time = Instant::now();
     let initial_rebuild_status = rebuild_status.clone();
     let mut last_show_progress = Instant::now();
     while !rebuild_status.iter().all(|status| status.complete()) {
+        info!("Trie Rebuild Status: {rebuild_status:?}");
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
@@ -204,8 +206,16 @@ async fn rebuild_storage_trie_in_background(
     let mut pending_storages = store
         .get_storage_trie_rebuild_pending()?
         .unwrap_or_default();
+    info!(
+        "Starting storage trie rebuild, pending: {}",
+        pending_storages.len()
+    );
     let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
+        info!(
+            "Rebuilding storages, incoming: {incoming}, pending: {}",
+            pending_storages.len()
+        );
         if cancel_token.is_cancelled() {
             break;
         }
