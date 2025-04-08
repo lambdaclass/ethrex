@@ -2786,6 +2786,7 @@ dependencies = [
  "lazy_static",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -2810,6 +2811,7 @@ dependencies = [
  "serde_json",
  "spinoff",
  "thiserror 2.0.12",
+ "tokio",
 ]
 
 [[package]]
@@ -3096,6 +3098,7 @@ dependencies = [
  "serde_json",
  "sha3",
  "thiserror 2.0.12",
+ "tokio",
  "tracing",
 ]
 
@@ -3397,6 +3400,7 @@ name = "ethrex-storage"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "ethereum-types",
  "ethrex-common",
@@ -3411,6 +3415,7 @@ dependencies = [
  "sha3",
  "tempdir",
  "thiserror 2.0.12",
+ "tokio",
  "tracing",
 ]
 

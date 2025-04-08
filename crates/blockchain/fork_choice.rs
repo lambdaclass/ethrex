@@ -18,7 +18,7 @@ use crate::{
 /// and itself are made canonical.
 ///
 /// If the fork choice state is applied correctly, the head block header is returned.
-pub fn apply_fork_choice(
+pub async fn apply_fork_choice(
     store: &Store,
     head_hash: H256,
     safe_hash: H256,
@@ -104,24 +104,26 @@ pub fn apply_fork_choice(
 
     // Make all ancestors to head canonical.
     for (number, hash) in new_canonical_blocks {
-        store.set_canonical_block(number, hash)?;
+        store.set_canonical_block(number, hash).await?;
     }
 
     // Remove anything after the head from the canonical chain.
     for number in (head.number + 1)..(latest + 1) {
-        store.unset_canonical_block(number)?;
+        store.unset_canonical_block(number).await?;
     }
 
     // Make head canonical and label all special blocks correctly.
-    store.set_canonical_block(head.number, head_hash)?;
+    store.set_canonical_block(head.number, head_hash).await?;
     if let Some(finalized) = finalized_res {
-        store.update_finalized_block_number(finalized.number)?;
+        store
+            .update_finalized_block_number(finalized.number)
+            .await?;
     }
     if let Some(safe) = safe_res {
-        store.update_safe_block_number(safe.number)?;
+        store.update_safe_block_number(safe.number).await?;
     }
-    store.update_latest_block_number(head.number)?;
-    store.update_sync_status(true)?;
+    store.update_latest_block_number(head.number).await?;
+    store.update_sync_status(true).await?;
 
     Ok(head)
 }
