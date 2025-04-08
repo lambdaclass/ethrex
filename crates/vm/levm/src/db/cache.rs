@@ -1,4 +1,4 @@
-use crate::{call_frame::CallFrame, Account};
+use crate::Account;
 use ethrex_common::Address;
 use std::collections::HashMap;
 
@@ -14,22 +14,8 @@ pub fn get_account<'cache>(
 pub fn get_account_mut<'cache>(
     cached_accounts: &'cache mut CacheDB,
     address: &Address,
-    call_frame: &mut Option<&mut CallFrame>,
 ) -> Option<&'cache mut Account> {
-    let account_option = cached_accounts.get_mut(address);
-
-    // insert account_option cloned into call_frame backup if not already there
-    if let Some(call_frame) = call_frame {
-        if !call_frame.backup.contains_key(address) {
-            if let Some(account) = account_option.as_ref() {
-                call_frame.backup.insert(*address, Some((*account).clone()));
-            } else {
-                call_frame.backup.insert(*address, None);
-            }
-        }
-    }
-
-    account_option
+    cached_accounts.get_mut(address)
 }
 
 pub fn insert_account(

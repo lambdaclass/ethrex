@@ -160,6 +160,9 @@ pub fn get_account_no_push_cache(
     }
 }
 
+/// Gets mutable account, first checking the cache and then the database
+/// (caching in the second case)
+/// This isn't a method of VM because it allows us to use it during VM initialization.
 pub fn get_account_mut_vm<'a>(
     db: &'a mut GeneralizedDatabase,
     address: Address,
@@ -173,8 +176,18 @@ pub fn get_account_mut_vm<'a>(
         };
         cache::insert_account(&mut db.cache, address, account.clone());
     }
-    cache::get_account_mut(&mut db.cache, &address, call_frame)
-        .ok_or(VMError::Internal(InternalError::AccountNotFound))
+
+    let original_account = cache::get_account_mut(&mut db.cache, &address)
+        .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
+
+    if let Some(call_frame) = call_frame {
+        call_frame
+            .backup
+            .entry(address)
+            .or_insert_with(|| Some(original_account.clone()));
+    };
+
+    Ok(original_account)
 }
 
 pub fn increase_account_balance(
@@ -567,16 +580,7 @@ pub fn eip7702_set_access_code(
 
         // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
         // Clear the account’s code and reset the account’s code hash to the empty hash.
-        let auth_account =
-            match cache::get_account_mut(&mut db.cache, &authority_address, &mut None) {
-                Some(account_mut) => account_mut,
-                None => {
-                    // This is to add the account to the cache
-                    // NOTE: Refactor in the future
-                    get_account(db, authority_address)?;
-                    get_account_mut_vm(db, authority_address, &mut None)?
-                }
-            };
+        let auth_account = get_account_mut_vm(db, authority_address, &mut None)?;
 
         auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
             delegation_bytes.into()
