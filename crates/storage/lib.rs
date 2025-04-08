@@ -1,4 +1,5 @@
 mod api;
+#[cfg(feature = "l2")]
 mod api_l2;
 
 mod account_update;
