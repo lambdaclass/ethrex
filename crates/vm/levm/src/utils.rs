@@ -129,7 +129,6 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
 pub fn get_account(
     db: &mut GeneralizedDatabase,
     address: Address,
-    call_frame: &mut Option<&mut CallFrame>,
 ) -> Result<Account, DatabaseError> {
     match cache::get_account(&db.cache, &address) {
         Some(acc) => Ok(acc.clone()),
@@ -139,7 +138,7 @@ pub fn get_account(
                 info: account_info,
                 storage: HashMap::new(),
             };
-            cache::insert_account(&mut db.cache, address, account.clone(), call_frame);
+            cache::insert_account(&mut db.cache, address, account.clone());
             Ok(account)
         }
     }
@@ -172,7 +171,7 @@ pub fn get_account_mut_vm<'a>(
             info: account_info,
             storage: HashMap::new(),
         };
-        cache::insert_account(&mut db.cache, address, account.clone(), call_frame);
+        cache::insert_account(&mut db.cache, address, account.clone());
     }
     cache::get_account_mut(&mut db.cache, &address, call_frame)
         .ok_or(VMError::Internal(InternalError::AccountNotFound))
@@ -574,7 +573,7 @@ pub fn eip7702_set_access_code(
                 None => {
                     // This is to add the account to the cache
                     // NOTE: Refactor in the future
-                    get_account(db, authority_address, &mut None)?;
+                    get_account(db, authority_address)?;
                     get_account_mut_vm(db, authority_address, &mut None)?
                 }
             };

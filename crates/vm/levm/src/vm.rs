@@ -275,7 +275,7 @@ impl<'a> VM<'a> {
                 })
             }
             TxKind::Create => {
-                let sender_nonce = get_account(db, env.origin, &mut None)?.info.nonce;
+                let sender_nonce = get_account(db, env.origin)?.info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -417,7 +417,7 @@ impl<'a> VM<'a> {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(self.db, new_contract_address, &mut None)?;
+            let new_account = get_account(self.db, new_contract_address)?;
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -436,12 +436,7 @@ impl<'a> VM<'a> {
             } else {
                 Account::new(balance, Bytes::new(), 1, HashMap::new())
             };
-            cache::insert_account(
-                &mut self.db.cache,
-                new_contract_address,
-                created_contract,
-                &mut None,
-            );
+            cache::insert_account(&mut self.db.cache, new_contract_address, created_contract);
         }
 
         let mut report = self.run_execution(&mut initial_call_frame)?;
@@ -571,11 +566,27 @@ impl<'a> VM<'a> {
     fn restore_cache_state(&mut self, call_frame: &CallFrame) {
         for (address, account_opt) in &call_frame.backup {
             if let Some(account) = account_opt {
-                cache::insert_account(&mut self.db.cache, *address, account.clone(), &mut None);
+                cache::insert_account(&mut self.db.cache, *address, account.clone());
             } else {
                 // remove from cache
                 cache::remove_account(&mut self.db.cache, address, &mut None);
             }
         }
+    }
+
+    pub fn insert_account(
+        &mut self,
+        address: Address,
+        account: Account,
+        call_frame: &mut Option<&mut CallFrame>,
+    ) {
+        let previous_account = cache::insert_account(&mut self.db.cache, address, account);
+
+        if let Some(call_frame) = call_frame {
+            call_frame
+                .backup
+                .entry(address)
+                .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
+        };
     }
 }

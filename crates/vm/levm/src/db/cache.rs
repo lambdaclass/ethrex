@@ -36,22 +36,8 @@ pub fn insert_account(
     cached_accounts: &mut CacheDB,
     address: Address,
     account: Account,
-    call_frame: &mut Option<&mut CallFrame>,
 ) -> Option<Account> {
-    let account_option = cached_accounts.insert(address, account);
-
-    // None -> Key didn't exist in cache
-    // Some -> Key existed in cache and we replaced it
-
-    // insert account_option cloned into call_frame backup if not already there
-    if let Some(call_frame) = call_frame {
-        call_frame
-            .backup
-            .entry(address)
-            .or_insert_with(|| account_option.as_ref().map(|account| (*account).clone()));
-    }
-
-    account_option
+    cached_accounts.insert(address, account.clone())
 }
 
 pub fn remove_account(
