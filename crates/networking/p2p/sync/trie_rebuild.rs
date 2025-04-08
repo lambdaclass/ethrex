@@ -16,7 +16,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::sync::seconds_to_readable;
 
@@ -112,7 +112,7 @@ async fn rebuild_state_trie_in_backgound(
         // Show Progress stats (this task is not vital so we can detach it)
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
-            tokio::spawn(show_trie_rebuild_progress(
+            tokio::spawn(show_state_trie_rebuild_progress(
                 start_time,
                 initial_rebuild_status.clone(),
                 rebuild_status.clone(),
@@ -204,15 +204,29 @@ async fn rebuild_storage_trie_in_background(
     let mut pending_storages = store
         .get_storage_trie_rebuild_pending()?
         .unwrap_or_default();
+    let start_time = Instant::now();
+    let mut last_show_progress = Instant::now();
+    // Count of all storages that have entered the queue
+    let mut pending_historic_count = pending_storages.len();
     let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
         if cancel_token.is_cancelled() {
             break;
         }
+        // Show Progress stats (this task is not vital so we can detach it)
+        if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
+            last_show_progress = Instant::now();
+            tokio::spawn(show_storage_tries_rebuild_progress(
+                start_time,
+                pending_historic_count,
+                pending_storages.len(),
+                store.clone(),
+            ));
+        }
         // Read incoming batch
         if !receiver.is_empty() || pending_storages.is_empty() {
             let mut buffer = vec![];
-            receiver.recv_many(&mut buffer, MAX_CHANNEL_READS).await;
+            pending_historic_count += receiver.recv_many(&mut buffer, MAX_CHANNEL_READS).await;
             incoming = !buffer.iter().any(|batch| batch.is_empty());
             pending_storages.extend(buffer.iter().flatten());
         }
@@ -259,13 +273,12 @@ async fn rebuild_storage_trie(
             start = next_hash(last.0);
         }
         // Process batch
-        // Launch storage rebuild tasks for all non-empty storages
         for (key, val) in batch {
             storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         }
         storage_trie.hash()?;
 
-        // Return if we have no more snapshot accounts to process for this segemnt
+        // Return if we have no more snapshot values to process for this storage
         if unfilled_batch {
             break;
         }
@@ -282,7 +295,7 @@ fn next_hash(hash: H256) -> H256 {
 }
 
 /// Shows the completion rate and estimated finish time of the state trie rebuild
-async fn show_trie_rebuild_progress(
+async fn show_state_trie_rebuild_progress(
     start_time: Instant,
     initial_rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
     rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
@@ -309,4 +322,39 @@ async fn show_trie_rebuild_progress(
         completion_rate,
         seconds_to_readable(time_to_finish)
     );
+}
+
+async fn show_storage_tries_rebuild_progress(
+    start_time: Instant,
+    all_storages_in_queue: usize,
+    current_storages_in_queue: usize,
+    store: Store,
+) {
+    // Calculate current rebuild speed
+    let rebuilt_storages_count = all_storages_in_queue.saturating_sub(current_storages_in_queue);
+    let storage_rebuild_time =
+        start_time.elapsed().as_millis() / (rebuilt_storages_count as u128 + 1);
+    // Check if state sync has already finished before reporting estimated finish time
+    let state_sync_finished = if let Ok(Some(checkpoint)) = store.get_state_trie_key_checkpoint() {
+        checkpoint
+            .iter()
+            .enumerate()
+            .all(|(i, checkpoint)| checkpoint == &STATE_TRIE_SEGMENTS_END[i])
+    } else {
+        false
+    };
+    // Show current speed only as debug data
+    debug!("Rebuilding Storage Tries, average speed: {} milliseconds per storage, currently in queue: {} storages",
+        storage_rebuild_time, current_storages_in_queue,
+    );
+    if state_sync_finished {
+        // storage_rebuild_time (ms) * remaining storages / 1000
+        let estimated_time_to_finish = (U512::from(storage_rebuild_time)
+            * U512::from(current_storages_in_queue))
+            / (U512::from(1000));
+        info!(
+            "Storage Tries Rebuild in Progress, estimated time to finish: {}",
+            seconds_to_readable(estimated_time_to_finish)
+        )
+    }
 }
