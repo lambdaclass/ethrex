@@ -47,7 +47,8 @@ use reth_db_api::cursor::DbCursorRW;
 use reth_db_api::cursor::DbDupCursorRO;
 use reth_db_api::cursor::DbDupCursorRW;
 use reth_primitives::{
-    BlockBody as RethBlockBody, SealedBlock, SealedBlockWithSenders, TransactionSigned, Withdrawals,
+    BlockBody as RethBlockBody, Bytecode, SealedBlock, SealedBlockWithSenders, TransactionSigned,
+    Withdrawals,
 };
 use reth_primitives_traits::SealedHeader;
 use reth_provider::BlockWriter;
@@ -323,7 +324,14 @@ impl StoreEngine for MDBXFork {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
-        todo!()
+        let tx = self
+            .env
+            .tx()
+            .expect("could not start tx to get account code");
+        let Ok(code) = tx.get::<tables::Bytecodes>(code_hash.0.into()) else {
+            panic!("Failed to fetch bytecode from db")
+        };
+        Ok(code.map(|bytecode: Bytecode| -> Bytes { bytecode.bytes().into() }))
     }
 
     fn add_receipt(
