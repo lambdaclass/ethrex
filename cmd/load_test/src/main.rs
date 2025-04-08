@@ -3,8 +3,9 @@ use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::BlockByNumber;
-use ethrex_rpc::clients::{EthClient, Overrides};
+use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
 use ethrex_rpc::types::receipt::RpcReceipt;
+use hex::ToHex;
 use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use std::fs;
@@ -127,46 +128,52 @@ async fn erc20_load_test(
     client: EthClient,
     chain_id: u64,
 ) -> eyre::Result<()> {
-    let mut tasks = JoinSet::new();
+    let mut tasks: JoinSet<Result<(), EthClientError>> = JoinSet::new();
     for (pk, sk) in accounts {
         let pk = pk.clone();
         let sk = sk.clone();
-        let nonce = client
-            .get_nonce(address_from_pub_key(pk), BlockByNumber::Latest)
-            .await
-            .unwrap();
-        for i in 0..tx_amount {
-            let send_calldata = calldata::encode_calldata(
-                "transfer(address,uint256)",
-                &[Value::Address(H160::random()), Value::Uint(U256::one())],
-            )
-            .unwrap();
-            let send_tx = client
-                .build_eip1559_transaction(
-                    contract_address,
-                    address_from_pub_key(pk),
-                    send_calldata.into(),
-                    Overrides {
-                        chain_id: Some(chain_id),
-                        nonce: Some(nonce + i),
-                        max_fee_per_gas: Some(3121115334),
-                        max_priority_fee_per_gas: Some(3000000000),
-                        gas_limit: Some(TX_GAS_COST * 100),
-                        ..Default::default()
-                    },
+        let client = client.clone();
+        tasks.spawn(async move {
+            let nonce = client
+                .get_nonce(address_from_pub_key(pk), BlockByNumber::Latest)
+                .await
+                .unwrap();
+            let src = address_from_pub_key(pk);
+            let encoded_src: String = src.encode_hex();
+            for i in 0..tx_amount {
+                let dst = H160::random();
+
+                let send_calldata = calldata::encode_calldata(
+                    "transfer(address,uint256)",
+                    &[Value::Address(dst), Value::Uint(U256::one())],
                 )
-                .await?;
-            let client = client.clone();
-            sleep(Duration::from_micros(800)).await;
-            tasks.spawn(async move {
+                .unwrap();
+                let send_tx = client
+                    .build_eip1559_transaction(
+                        contract_address,
+                        src,
+                        send_calldata.into(),
+                        Overrides {
+                            chain_id: Some(chain_id),
+                            nonce: Some(nonce + i),
+                            max_fee_per_gas: Some(3121115334),
+                            max_priority_fee_per_gas: Some(3000000000),
+                            gas_limit: Some(TX_GAS_COST * 100),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                let client = client.clone();
+                sleep(Duration::from_micros(800)).await;
                 let _sent = client
                     .send_eip1559_transaction(&send_tx, &sk)
-                    .await
-                    .unwrap();
-                println!("ERC-20 transfer number {} sent!", nonce + i + 1);
-            });
-        }
-    }
+                    .await?;
+                println!("ERC-20 transfer number {} sent! From: {}. To: {}", nonce + i + 1, encoded_src, dst.encode_hex::<String>());
+            }
+            Ok(())
+        });
+    };
+
     tasks.join_all().await;
     Ok(())
 }
