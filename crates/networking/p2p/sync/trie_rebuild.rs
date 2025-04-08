@@ -16,7 +16,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::sync::seconds_to_readable;
 
@@ -276,6 +276,7 @@ async fn rebuild_storage_trie(
         for (key, val) in batch {
             storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         }
+        storage_trie.hash()?;
 
         // Return if we have no more snapshot values to process for this storage
         if unfilled_batch {
