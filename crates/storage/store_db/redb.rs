@@ -1080,7 +1080,7 @@ impl StoreEngine for RedBStore {
             .collect())
     }
 
-    fn get_invalid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+    fn get_latest_valid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
         Ok(self
             .read(
                 INVALID_ANCESOTRS_TABLE,
@@ -1089,7 +1089,7 @@ impl StoreEngine for RedBStore {
             .map(|b| b.value().to()))
     }
 
-    async fn set_invalid_ancestor(
+    async fn set_latest_valid_ancestor(
         &self,
         bad_block: BlockHash,
         latest_valid: BlockHash,

@@ -229,14 +229,14 @@ async fn handle_forkchoice(
             .storage
             .get_block_header_by_hash(fork_choice_state.head_block_hash)?
             .and_then(|head_block| {
-                warn!(
+                debug!(
                     "Checking parent for invalid ancestor {}",
                     head_block.parent_hash
                 );
                 context
                     .storage
                     .get_invalid_ancestor(head_block.parent_hash)
-                    .unwrap()
+                    .ok()?
             });
 
         // Check head block hash in invalid_ancestors

@@ -1078,7 +1078,7 @@ impl Store {
     }
 
     pub fn get_invalid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_invalid_ancestor(block)
+        self.engine.get_latest_valid_ancestor(block)
     }
 
     pub async fn set_invalid_ancestor(
@@ -1087,7 +1087,7 @@ impl Store {
         latest_valid: BlockHash,
     ) -> Result<(), StoreError> {
         self.engine
-            .set_invalid_ancestor(bad_block, latest_valid)
+            .set_latest_valid_ancestor(bad_block, latest_valid)
             .await
     }
 }

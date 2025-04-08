@@ -630,11 +630,11 @@ impl StoreEngine for Store {
         Ok(self.inner().snap_state.storage_trie_rebuild_pending.clone())
     }
 
-    fn get_invalid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+    fn get_latest_valid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
         Ok(self.inner().invalid_ancestors.get(&block).cloned())
     }
 
-    async fn set_invalid_ancestor(
+    async fn set_latest_valid_ancestor(
         &self,
         bad_block: BlockHash,
         latest_valid: BlockHash,

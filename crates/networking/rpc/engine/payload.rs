@@ -701,12 +701,11 @@ async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<Paylo
             Err(RpcErr::Internal(e.to_string()))
         }
         Err(ChainError::InvalidBlock(error)) => {
-            warn!("Error adding block: {error}");
+            warn!("Error executing block: {error}");
             context
                 .storage
                 .set_invalid_ancestor(block_hash, latest_valid_hash)
-                .await
-                .unwrap();
+                .await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -717,8 +716,7 @@ async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<Paylo
             context
                 .storage
                 .set_invalid_ancestor(block_hash, latest_valid_hash)
-                .await
-                .unwrap();
+                .await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),

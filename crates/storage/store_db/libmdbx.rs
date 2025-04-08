@@ -841,12 +841,12 @@ impl StoreEngine for Store {
         Ok(iter.collect::<Vec<_>>())
     }
 
-    fn get_invalid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+    fn get_latest_valid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
         self.read::<InvalidAncestors>(block.into())
             .map(|o| o.map(|a| a.to()))
     }
 
-    async fn set_invalid_ancestor(
+    async fn set_latest_valid_ancestor(
         &self,
         bad_block: BlockHash,
         latest_valid: BlockHash,
