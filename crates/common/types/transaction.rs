@@ -1350,7 +1350,7 @@ impl TxType {
 impl PrivilegedL2Transaction {
     /// Returns the formatted hash of the deposit transaction,
     /// or None if the transaction is not a deposit.
-    /// The hash is computed as keccak256(to || value || deposit_id == nonce || recipient || keccak256(calldata))
+    /// The hash is computed as keccak256(to || value || deposit_id == nonce || recipient || from || gas_limit || keccak256(calldata))
     pub fn get_deposit_hash(&self) -> Option<H256> {
         // Should this function be changed?
         let to = match self.to {
@@ -2159,7 +2159,7 @@ mod serde_impl {
         pub gas: Option<u64>,
         #[serde(default)]
         pub value: U256,
-        #[serde(default, with = "crate::serde_utils::bytes")]
+        #[serde(default, with = "crate::serde_utils::bytes", alias = "data")]
         pub input: Bytes,
         #[serde(default, with = "crate::serde_utils::u64::hex_str")]
         pub gas_price: u64,

@@ -762,7 +762,7 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
             Value::Bytes(Bytes::from_static(b"")),
         ];
 
-        // This should be changed once https://github.com/lambdaclass/ethrex/issues/2384 is addressed
+        // FIXME: This should be changed once https://github.com/lambdaclass/ethrex/issues/2384 is addressed
         let calldata = encode_calldata("deposit((address,address,uint256,bytes))", &values)?;
         let mut data = vec![];
         data.extend_from_slice(calldata.get(..4).ok_or(DeployError::DecodingError(
