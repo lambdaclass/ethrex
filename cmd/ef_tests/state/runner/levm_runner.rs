@@ -5,7 +5,7 @@ use crate::{
     utils::{self, effective_gas_price},
 };
 use ethrex_common::{
-    types::{tx_fields::*, Fork},
+    types::{tx_fields::*, EIP1559Transaction, EIP7702Transaction, Fork, Transaction, TxKind},
     H256, U256,
 };
 use ethrex_levm::{
@@ -97,21 +97,21 @@ pub fn prepare_vm_for_tx<'a>(
     fork: &Fork,
     db: &'a mut GeneralizedDatabase,
 ) -> Result<VM<'a>, EFTestRunnerError> {
-    let tx = test
+    let test_tx = test
         .transactions
         .get(vector)
         .ok_or(EFTestRunnerError::Internal(
             InternalError::FirstRunInternal("Failed to get transaction".to_owned()),
         ))?;
 
-    let access_lists = tx
+    let access_list = test_tx
         .access_list
         .iter()
         .map(|arg| (arg.address, arg.storage_keys.clone()))
         .collect();
 
     // Check if the tx has the authorization_lists field implemented by eip7702.
-    let authorization_list = tx.authorization_list.clone().map(|list| {
+    let authorization_list = test_tx.authorization_list.clone().map(|list| {
         list.iter()
             .map(|auth_tuple| AuthorizationTuple {
                 chain_id: auth_tuple.chain_id,
@@ -127,12 +127,36 @@ pub fn prepare_vm_for_tx<'a>(
     let blob_schedule = EVMConfig::canonical_values(*fork);
     let config = EVMConfig::new(*fork, blob_schedule);
 
+    let tx = match authorization_list {
+        Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
+            to: match test_tx.to {
+                TxKind::Call(to) => to,
+                TxKind::Create => {
+                    return Err(EFTestRunnerError::VMExecutionMismatch(
+                        "Unexpected tx's to".to_string(),
+                    ))
+                }
+            },
+            value: test_tx.value,
+            data: test_tx.data.clone(),
+            access_list,
+            authorization_list: list,
+            ..Default::default()
+        }),
+        None => Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: test_tx.to.clone(),
+            value: test_tx.value,
+            data: test_tx.data.clone(),
+            access_list,
+            ..Default::default()
+        }),
+    };
+
     VM::new(
-        tx.to.clone(),
         Environment {
-            origin: tx.sender,
+            origin: test_tx.sender,
             refunded_gas: 0,
-            gas_limit: tx.gas_limit,
+            gas_limit: test_tx.gas_limit,
             config,
             block_number: test.env.current_number,
             coinbase: test.env.current_coinbase,
@@ -141,24 +165,21 @@ pub fn prepare_vm_for_tx<'a>(
             difficulty: test.env.current_difficulty,
             chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
-            gas_price: effective_gas_price(test, &tx)?,
+            gas_price: effective_gas_price(test, &test_tx)?,
             block_excess_blob_gas: test.env.current_excess_blob_gas,
             block_blob_gas_used: None,
-            tx_blob_hashes: tx.blob_versioned_hashes.clone(),
-            tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
-            tx_max_fee_per_gas: tx.max_fee_per_gas,
-            tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
-            tx_nonce: tx.nonce.try_into().map_err(|_| {
+            tx_blob_hashes: test_tx.blob_versioned_hashes.clone(),
+            tx_max_priority_fee_per_gas: test_tx.max_priority_fee_per_gas,
+            tx_max_fee_per_gas: test_tx.max_fee_per_gas,
+            tx_max_fee_per_blob_gas: test_tx.max_fee_per_blob_gas,
+            tx_nonce: test_tx.nonce.try_into().map_err(|_| {
                 EFTestRunnerError::VMInitializationFailed("Nonce to large".to_string())
             })?,
             block_gas_limit: test.env.current_gas_limit,
             transient_storage: HashMap::new(),
         },
-        tx.value,
-        tx.data.clone(),
         db,
-        access_lists,
-        authorization_list,
+        &tx,
     )
     .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))
 }
