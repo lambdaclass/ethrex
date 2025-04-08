@@ -27,7 +27,7 @@ use tracing::info;
 pub const STATE_TRIE_SEGMENTS: usize = 2;
 // Maximum amount of reads from the snapshot in a single transaction to avoid performance hits due to long-living reads
 // This will always be the amount yielded by snapshot reads unless there are less elements left
-pub const MAX_SNAPSHOT_READS: usize = 100;
+pub const MAX_SNAPSHOT_READS: usize = 200;
 
 #[derive(Debug, Clone)]
 pub struct Store {
