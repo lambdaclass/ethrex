@@ -313,8 +313,9 @@ impl<'a> VM<'a> {
             .try_into()
             .map_err(|_| VMError::VeryLargeNumber)?;
 
-        let (account_info, address_was_cold) =
-            self.db.access_account(&mut self.accrued_substate, address)?;
+        let (account_info, address_was_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, address)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -439,8 +440,9 @@ impl<'a> VM<'a> {
     ) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (account_info, address_was_cold) =
-            self.db.access_account(&mut self.accrued_substate, address)?;
+        let (account_info, address_was_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, address)?;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodehash(
             address_was_cold,

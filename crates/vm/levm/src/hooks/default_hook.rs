@@ -351,11 +351,8 @@ impl Hook for DefaultHook {
                 remove_account(&mut vm.db.cache, &receiver_address);
             }
 
-            vm.db.increase_account_balance(
-                sender_address,
-                initial_call_frame.msg_value,
-                None,
-            )?;
+            vm.db
+                .increase_account_balance(sender_address, initial_call_frame.msg_value, None)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
