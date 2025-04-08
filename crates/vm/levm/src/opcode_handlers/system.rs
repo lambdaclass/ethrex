@@ -540,7 +540,7 @@ impl<'a> VM<'a> {
             {
                 // If target is the same as the contract calling, Ether will be burnt.
                 self.db
-                    .get_account_mut_vm(current_call_frame.to, Some(current_call_frame))?
+                    .get_account_mut(current_call_frame.to, Some(current_call_frame))?
                     .info
                     .balance = U256::zero();
 
@@ -555,7 +555,7 @@ impl<'a> VM<'a> {
                 Some(current_call_frame),
             )?;
             self.db
-                .get_account_mut_vm(current_call_frame.to, Some(current_call_frame))?
+                .get_account_mut(current_call_frame.to, Some(current_call_frame))?
                 .info
                 .balance = U256::zero();
 

@@ -61,7 +61,7 @@ impl GeneralizedDatabase {
     /// Gets mutable account, first checking the cache and then the database
     /// (caching in the second case)
     /// This isn't a method of VM because it allows us to use it during VM initialization.
-    pub fn get_account_mut_vm<'a>(
+    pub fn get_account_mut<'a>(
         &'a mut self,
         address: Address,
         call_frame: Option<&mut CallFrame>,
@@ -94,7 +94,7 @@ impl GeneralizedDatabase {
         increase: U256,
         call_frame: Option<&mut CallFrame>,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut_vm(address, call_frame)?;
+        let account = self.get_account_mut(address, call_frame)?;
         account.info.balance = account
             .info
             .balance
@@ -109,7 +109,7 @@ impl GeneralizedDatabase {
         decrease: U256,
         call_frame: Option<&mut CallFrame>,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut_vm(address, call_frame)?;
+        let account = self.get_account_mut(address, call_frame)?;
         account.info.balance = account
             .info
             .balance
@@ -142,7 +142,7 @@ impl GeneralizedDatabase {
         new_bytecode: Bytes,
         call_frame: Option<&mut CallFrame>,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut_vm(address, call_frame)?;
+        let account = self.get_account_mut(address, call_frame)?;
         account.info.bytecode = new_bytecode;
         Ok(())
     }

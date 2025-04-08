@@ -420,7 +420,7 @@ impl Hook for DefaultHook {
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = vm.db.get_account_mut_vm(address, None)?;
+            let account_to_remove = vm.db.get_account_mut(address, None)?;
             *account_to_remove = Account::default();
         }
 

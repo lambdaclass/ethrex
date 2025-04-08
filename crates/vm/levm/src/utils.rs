@@ -318,7 +318,7 @@ pub fn increment_account_nonce(
     address: Address,
     call_frame: Option<&mut CallFrame>,
 ) -> Result<u64, VMError> {
-    let account = db.get_account_mut_vm(address, call_frame)?;
+    let account = db.get_account_mut(address, call_frame)?;
     account.info.nonce = account
         .info
         .nonce
@@ -332,7 +332,7 @@ pub fn decrement_account_nonce(
     address: Address,
     call_frame: Option<&mut CallFrame>,
 ) -> Result<(), VMError> {
-    let account = db.get_account_mut_vm(address, call_frame)?;
+    let account = db.get_account_mut(address, call_frame)?;
     account.info.nonce = account
         .info
         .nonce
@@ -453,7 +453,7 @@ pub fn eip7702_set_access_code(
 
         // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
         // Clear the account’s code and reset the account’s code hash to the empty hash.
-        let auth_account = db.get_account_mut_vm(authority_address, None)?;
+        let auth_account = db.get_account_mut(authority_address, None)?;
 
         auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
             delegation_bytes.into()
