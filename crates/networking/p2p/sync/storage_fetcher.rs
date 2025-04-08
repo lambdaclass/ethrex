@@ -177,7 +177,7 @@ async fn large_storage_fetcher(
         &fetch_batch,
         peers,
         store,
-        1
+        1,
     )
     .await?;
     debug!(
