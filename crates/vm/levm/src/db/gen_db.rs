@@ -20,11 +20,16 @@ use super::Database;
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,
+    pub memory_db: HashMap<Address, Account>,
 }
 
 impl GeneralizedDatabase {
     pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
-        Self { store, cache }
+        Self {
+            store,
+            cache,
+            memory_db: HashMap::new(),
+        }
     }
 
     // ================== Account related functions =====================

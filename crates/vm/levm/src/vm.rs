@@ -461,30 +461,22 @@ impl<'a> VM<'a> {
                 .or_default()
                 .insert(key);
         }
-        let storage_slot = match cache::get_account(&self.db.cache, &address) {
-            Some(account) => match account.storage.get(&key) {
-                Some(storage_slot) => storage_slot.clone(),
-                None => {
-                    let value = self.db.store.get_storage_slot(address, key)?;
-                    StorageSlot {
-                        original_value: value,
-                        current_value: value,
-                    }
-                }
-            },
+
+        let mut account = self.db.get_account(address)?;
+
+        let storage_slot = match account.storage.get(&key) {
+            Some(storage_slot) => storage_slot.clone(),
             None => {
                 let value = self.db.store.get_storage_slot(address, key)?;
-                StorageSlot {
+                let storage_slot = StorageSlot {
                     original_value: value,
                     current_value: value,
-                }
+                };
+                account.storage.insert(key, storage_slot.clone());
+                self.db.insert_account(address, account, call_frame);
+                storage_slot
             }
         };
-
-        // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
-        // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = self.db.get_account_mut(address, Some(call_frame))?;
-        account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
     }

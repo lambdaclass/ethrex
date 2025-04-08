@@ -255,6 +255,7 @@ impl LEVM {
 
             account_updates.push(account_update);
         }
+        db.memory_db = HashMap::new(); // Because changes ideally are commited to the database. Only pair with cache.drain()
         Ok(account_updates)
     }
 
