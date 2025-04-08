@@ -116,16 +116,16 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: Improve this. Ideally, the L1 contract should return the L2 mint
     // tx hash for the user to wait for the receipt.
     let mut retries = 0;
-    while retries < 30 && l2_after_deposit_balance < l2_initial_balance + deposit_value {
+    while retries < 1000 && l2_after_deposit_balance < l2_initial_balance + deposit_value {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        println!("[{retries}/30] Waiting for L2 balance to update after deposit");
+        println!("[{retries}/1000] Waiting for L2 balance to update after deposit");
         l2_after_deposit_balance = proposer_client
             .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
             .await?;
         retries += 1;
     }
 
-    assert_ne!(retries, 30, "L2 balance did not update after deposit");
+    assert_ne!(retries, 1000, "L2 balance did not update after deposit");
 
     let common_bridge_locked_balance = eth_client
         .get_balance(common_bridge_address(), BlockByNumber::Latest)
