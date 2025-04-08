@@ -19,19 +19,19 @@ use tracing::info;
 pub enum Command {
     #[clap(about = "Initialize an ethrex L2 node", visible_alias = "i")]
     Init {
-        #[clap(flatten)]
+        #[command(flatten)]
         opts: L2Options,
     },
     #[clap(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
-        #[clap(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
         datadir: String,
     },
 }
 
 #[derive(Parser, Default)]
 pub struct L2Options {
-    #[clap(flatten)]
+    #[command(flatten)]
     pub node_opts: Options,
     #[arg(
         long = "sponsorable-addresses",
@@ -43,7 +43,7 @@ pub struct L2Options {
     #[arg(long, value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: Option<SecretKey>,
     #[cfg(feature = "based")]
-    #[clap(flatten)]
+    #[command(flatten)]
     pub based_opts: BasedOptions,
 }
 
@@ -99,7 +99,7 @@ impl Command {
 
                 let network = get_network(&opts.node_opts);
 
-                let store = init_store(&data_dir, &network);
+                let store = init_store(&data_dir, &network).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
 

@@ -47,20 +47,20 @@ pub(crate) enum Command {
     },
     #[clap(about = "Shutdown the stack.")]
     Shutdown {
-        #[clap(long, help = "Shuts down the local L1 node.", default_value_t = true)]
+        #[arg(long, help = "Shuts down the local L1 node.", default_value_t = true)]
         l1: bool,
-        #[clap(long, help = "Shuts down the L2 node.", default_value_t = true)]
+        #[arg(long, help = "Shuts down the L2 node.", default_value_t = true)]
         l2: bool,
-        #[clap(short = 'y', long, help = "Forces the shutdown without confirmation.")]
+        #[arg(short = 'y', long, help = "Forces the shutdown without confirmation.")]
         force: bool,
     },
     #[clap(about = "Starts the stack.")]
     Start {
-        #[clap(long, help = "Starts a local L1 node.", required = false)]
+        #[arg(long, help = "Starts a local L1 node.", required = false)]
         l1: bool,
-        #[clap(long, help = "Starts the L2 node.", required = false)]
+        #[arg(long, help = "Starts the L2 node.", required = false)]
         l2: bool,
-        #[clap(short = 'y', long, help = "Forces the start without confirmation.")]
+        #[arg(short = 'y', long, help = "Forces the start without confirmation.")]
         force: bool,
         #[arg(
             long = "start-prover",
@@ -72,7 +72,7 @@ pub(crate) enum Command {
     },
     #[clap(about = "Cleans up the stack. Prompts for confirmation.")]
     Purge {
-        #[clap(short = 'y', long, help = "Forces the purge without confirmation.")]
+        #[arg(short = 'y', long, help = "Forces the purge without confirmation.")]
         force: bool,
     },
     #[clap(
@@ -80,7 +80,7 @@ pub(crate) enum Command {
         long_about = "Re-initializing a stack means to shutdown, cleanup, and initialize the stack again. It uses the `shutdown` and `cleanup` commands under the hood."
     )]
     Restart {
-        #[clap(short = 'y', long, help = "Forces the restart without confirmation.")]
+        #[arg(short = 'y', long, help = "Forces the restart without confirmation.")]
         force: bool,
     },
     #[clap(about = "Launch a server that listens for Blobs submissions and saves them offline.")]
@@ -91,22 +91,22 @@ pub(crate) enum Command {
             help = "The contract address to listen to."
         )]
         contract_address: Address,
-        #[clap(short = 'd', long, help = "The directory to save the blobs.")]
+        #[arg(short = 'd', long, help = "The directory to save the blobs.")]
         data_dir: PathBuf,
-        #[clap(short = 'e', long)]
+        #[arg(short = 'e', long)]
         l1_eth_rpc: Url,
-        #[clap(short = 'b', long)]
+        #[arg(short = 'b', long)]
         l1_beacon_rpc: Url,
     },
     #[clap(about = "Reconstructs the L2 state from L1 blobs.")]
     Reconstruct {
-        #[clap(short = 'g', long, help = "The genesis file for the L2 network.")]
+        #[arg(short = 'g', long, help = "The genesis file for the L2 network.")]
         genesis: PathBuf,
-        #[clap(short = 'b', long, help = "The directory to read the blobs from.")]
+        #[arg(short = 'b', long, help = "The directory to read the blobs from.")]
         blobs_dir: PathBuf,
-        #[clap(short = 's', long, help = "The path to the store.")]
+        #[arg(short = 's', long, help = "The path to the store.")]
         store_path: PathBuf,
-        #[clap(short = 'c', long, help = "Address of the L2 proposer coinbase")]
+        #[arg(short = 'c', long, help = "Address of the L2 proposer coinbase")]
         coinbase: Address,
     },
 }
@@ -303,7 +303,8 @@ impl Command {
                     store_path.to_str().expect("Invalid store path"),
                     EngineType::Libmdbx,
                     genesis.to_str().expect("Invalid genesis path"),
-                )?;
+                )
+                .await?;
 
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
                 let genesis_block_hash = genesis_header.compute_block_hash();
@@ -328,6 +329,7 @@ impl Command {
 
                     new_trie = store
                         .apply_account_updates_from_trie(new_trie, &account_updates)
+                        .await
                         .expect("Error applying account updates");
 
                     let new_block = BlockHeader {
@@ -339,15 +341,19 @@ impl Command {
                     };
                     let new_block_hash = new_block.compute_block_hash();
 
-                    store.add_block_header(new_block_hash, new_block)?;
-                    store.add_block_number(new_block_hash, last_number + 1)?;
-                    store.set_canonical_block(last_number + 1, new_block_hash)?;
+                    store.add_block_header(new_block_hash, new_block).await?;
+                    store
+                        .add_block_number(new_block_hash, last_number + 1)
+                        .await?;
+                    store
+                        .set_canonical_block(last_number + 1, new_block_hash)
+                        .await?;
 
                     last_number += 1;
                     last_hash = new_block_hash;
                 }
 
-                store.update_latest_block_number(last_number)?;
+                store.update_latest_block_number(last_number).await?;
             }
         }
         Ok(())

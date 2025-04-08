@@ -11,7 +11,7 @@ use std::{
 };
 use tracing::error;
 
-use crate::RpcHandler;
+use crate::rpc::RpcHandler;
 use crate::{
     types::block_identifier::{BlockIdentifier, BlockTag},
     utils::{parse_json_hex, RpcErr, RpcRequest},
@@ -251,7 +251,6 @@ mod tests {
         sync::{Arc, Mutex},
         time::{Duration, Instant},
     };
-    use tokio::sync::Mutex as TokioMutex;
 
     use super::ActiveFilters;
     use crate::{
@@ -259,9 +258,8 @@ mod tests {
             filter::PollableFilter,
             logs::{AddressFilter, LogsFilter, TopicFilter},
         },
-        map_http_requests,
+        rpc::{map_http_requests, RpcApiContext, FILTER_DURATION},
         utils::test_utils::{self, example_local_node_record, start_test_api},
-        RpcApiContext, FILTER_DURATION,
     };
     use crate::{
         types::block_identifier::BlockIdentifier,
@@ -272,7 +270,7 @@ mod tests {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     use ethrex_common::types::Genesis;
-    use ethrex_p2p::sync::SyncManager;
+    use ethrex_p2p::sync_manager::SyncManager;
     use ethrex_storage::{EngineType, Store};
     #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
@@ -448,7 +446,7 @@ mod tests {
             local_p2p_node: example_p2p_node(),
             local_node_record: example_local_node_record(),
             active_filters: filters_pointer.clone(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -467,6 +465,7 @@ mod tests {
         context
             .storage
             .add_initial_state(genesis_config)
+            .await
             .expect("Fatal: could not add test genesis in test");
         let response = map_http_requests(&request, context)
             .await
@@ -520,7 +519,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             jwt_secret: Default::default(),
             active_filters: active_filters.clone(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -557,7 +556,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             active_filters: active_filters.clone(),
             jwt_secret: Default::default(),
-            syncer: Arc::new(TokioMutex::new(SyncManager::dummy())),
+            syncer: Arc::new(SyncManager::dummy()),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]

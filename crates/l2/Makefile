@@ -66,6 +66,8 @@ L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
 # Used in the .env file. Ensure the same port is used for `ENGINE_API_RPC_URL`.
+# https://github.com/lambdaclass/ethrex/issues/2358
+# The authrpc.port has to be deprecated when using the l2 flag
 L2_AUTH_PORT=8552
 
 # Matches the ports used by the blockchain/metrics dir
@@ -167,11 +169,10 @@ restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Clien
 
 init-prover: ## 🚀 Initializes the Prover
 	@if [ -z "$$T" ]; then \
-		echo "Error: ProverType (T) is missing."; \
-		echo "Please provide it as an argument:"; \
-		echo "make init-prover T=<prover_type: (risc0, sp1, pico, exec)> <G=true>."; \
+		echo "Error: ProverType (T) is missing. Running in exec mode."; \
+		echo "You can provide it as an argument:"; \
+		echo "make init-prover T=<prover_type: (risc0, sp1, pico)> <G=true>."; \
 		echo "The prover can also be run with GPU (G)"; \
-		exit 1; \
 	fi; \
 
 	@if [ -z "$$G" ]; then \

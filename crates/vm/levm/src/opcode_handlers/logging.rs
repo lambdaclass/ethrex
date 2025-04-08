@@ -11,7 +11,7 @@ use ethrex_common::{types::Log, H256};
 // Logging Operations (5)
 // Opcodes: LOG0 ... LOG4
 
-impl VM {
+impl<'a> VM<'a> {
     // LOG operation
     pub fn op_log(
         &mut self,
