@@ -72,7 +72,7 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         // "to" field to be an Address
         // For more information, please read:
         // - https://eips.ethereum.org/EIPS/eip-7702
-        // - ADD PR
+        // - https://github.com/lambdaclass/ethrex/pull/2425
         //
         // There is another test which validates the same exact thing, but for an EIP-4844 tx.
         // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
