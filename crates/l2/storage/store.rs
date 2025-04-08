@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use crate::store_db_l2::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
-use crate::store_db_l2::libmdbx::LibmdbxStoreL2;
-use crate::store_db_l2::redb::RedBStoreL2;
-use crate::{api_l2::StoreEngineL2, error::StoreError};
+use super::store_db::libmdbx::Store as LibmdbxStoreL2;
+#[cfg(feature = "redb")]
+use super::store_db::redb::RedBStoreL2;
+use super::{api::StoreEngineL2, store_db::in_memory::Store as InMemoryStore};
 use ethrex_common::types::BlockNumber;
+use ethrex_storage::error::StoreError;
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -29,7 +30,7 @@ impl Store {
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStoreL2::new_l2(path)?),
+                engine: Arc::new(LibmdbxStoreL2::new(path)?),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),

@@ -3,8 +3,8 @@
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use ethrex_common::types::BlockNumber;
+use ethrex_storage::error::StoreError;
 
-use crate::error::StoreError;
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]

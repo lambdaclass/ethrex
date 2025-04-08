@@ -5,8 +5,9 @@ use std::{
 };
 
 use ethrex_common::types::BlockNumber;
+use ethrex_storage::error::StoreError;
 
-use crate::{api_l2::StoreEngineL2, error::StoreError};
+use crate::storage::api::StoreEngineL2;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -21,8 +22,10 @@ impl Store {
     pub fn new() -> Self {
         Self::default()
     }
-    fn inner(&self) -> MutexGuard<'_, StoreInner> {
-        self.0.lock().unwrap()
+    fn inner(&self) -> Result<MutexGuard<'_, StoreInner>, StoreError> {
+        self.0
+            .lock()
+            .map_err(|_| StoreError::Custom("Failed to lock the store".to_string()))
     }
 }
 
@@ -32,7 +35,7 @@ impl StoreEngineL2 for Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
-        Ok(self.inner().batches_by_block.get(&block_number).copied())
+        Ok(self.inner()?.batches_by_block.get(&block_number).copied())
     }
 
     async fn store_batch_number_for_block(
@@ -40,7 +43,7 @@ impl StoreEngineL2 for Store {
         block_number: BlockNumber,
         batch_number: u64,
     ) -> Result<(), StoreError> {
-        self.inner()
+        self.inner()?
             .batches_by_block
             .insert(block_number, batch_number);
         Ok(())

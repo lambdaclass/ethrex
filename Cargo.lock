@@ -3108,6 +3108,7 @@ dependencies = [
 name = "ethrex-l2"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bincode",
  "bytes",
  "directories",
@@ -3126,7 +3127,9 @@ dependencies = [
  "hex",
  "jsonwebtoken",
  "keccak-hash",
+ "libmdbx",
  "rand 0.8.5",
+ "redb",
  "reqwest",
  "secp256k1",
  "serde",

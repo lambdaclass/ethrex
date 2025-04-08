@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-trait.workspace = true
 reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -34,6 +35,8 @@ thiserror.workspace = true
 directories = "5.0.1"
 toml = { version = "0.8.19", features = ["parse"] }
 bincode = "1.3.3"
+redb = { workspace = true, optional = true }
+libmdbx = { workspace = true, optional = true }
 
 zkvm_interface = { path = "./prover/zkvm/interface/", features = ["l2"] }
 
@@ -55,3 +58,5 @@ panic = "deny"
 [features]
 default = []
 metrics = ["ethrex-metrics/l2"]
+libmdbx = ["dep:libmdbx"]
+redb = ["dep:redb"]
