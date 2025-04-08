@@ -15,6 +15,7 @@ use crate::{
     sync::{SyncMode, Syncer},
 };
 
+#[derive(Debug)]
 pub enum SyncStatus {
     Active(SyncMode),
     Inactive,

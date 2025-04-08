@@ -510,8 +510,8 @@ impl StoreEngine for Store {
         Ok(self.inner().chain_data.is_synced)
     }
 
-    async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.inner().chain_data.is_synced = status;
+    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
+        self.inner().chain_data.is_synced = is_synced;
         Ok(())
     }
 

@@ -583,7 +583,7 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status = execute_payload(&block, &context).await?;
+    let payload_status = try_execute_payload(&block, &context).await?;
     serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
@@ -593,13 +593,6 @@ async fn handle_new_payload_v3(
     block: Block,
     expected_blob_versioned_hashes: Vec<H256>,
 ) -> Result<PayloadStatus, RpcErr> {
-    // Ignore incoming
-    // Check sync status
-    match context.syncer.status()? {
-        SyncStatus::Active(_) => return Ok(PayloadStatus::syncing()),
-        SyncStatus::Inactive => {}
-    }
-
     // Validate block hash
     if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
         return Ok(PayloadStatus::invalid_with_err(&error_msg));
@@ -624,8 +617,7 @@ async fn handle_new_payload_v3(
         ));
     }
 
-    // All checks passed, execute payload
-    execute_payload(&block, &context).await
+    try_execute_payload(&block, &context).await
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
@@ -671,7 +663,10 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
-async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<PayloadStatus, RpcErr> {
+async fn try_execute_payload(
+    block: &Block,
+    context: &RpcApiContext,
+) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
     let storage = &context.storage;
     // Return the valid message directly if we have it.
@@ -690,7 +685,18 @@ async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<Paylo
             ))?;
 
     match context.blockchain.add_block(block).await {
-        Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
+        Err(ChainError::ParentNotFound) => {
+            // Start sync
+            context
+                .storage
+                .update_sync_status(false)
+                .await
+                .map_err(|e| RpcErr::Internal(e.to_string()))?;
+            context.syncer.set_head(block_hash);
+            context.syncer.start_sync();
+
+            Ok(PayloadStatus::syncing())
+        }
         // Under the current implementation this is not possible: we always calculate the state
         // transition of any new payload as long as the parent is present. If we received the
         // parent payload but it was stashed, then new payload would stash this one too, with a
