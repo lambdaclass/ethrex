@@ -1,10 +1,9 @@
 use crate::{
-    account::Account,
     call_frame::CallFrame,
     constants::*,
     db::{
         cache::{self},
-        error::DatabaseError,
+        gen_db::GeneralizedDatabase,
     },
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
@@ -12,7 +11,7 @@ use crate::{
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    vm::{EVMConfig, GeneralizedDatabase, Substate},
+    vm::{EVMConfig, Substate},
     AccountInfo,
 };
 use bytes::Bytes;
@@ -121,132 +120,6 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
     }
 
     Ok(valid_jump_destinations)
-}
-
-// ================== Account related functions =====================
-/// Gets account, first checking the cache and then the database
-/// (caching in the second case)
-pub fn get_account(
-    db: &mut GeneralizedDatabase,
-    address: Address,
-) -> Result<Account, DatabaseError> {
-    match cache::get_account(&db.cache, &address) {
-        Some(acc) => Ok(acc.clone()),
-        None => {
-            let account_info = db.store.get_account_info(address)?;
-            let account = Account {
-                info: account_info,
-                storage: HashMap::new(),
-            };
-            cache::insert_account(&mut db.cache, address, account.clone());
-            Ok(account)
-        }
-    }
-}
-
-pub fn get_account_no_push_cache(
-    db: &GeneralizedDatabase,
-    address: Address,
-) -> Result<Account, DatabaseError> {
-    match cache::get_account(&db.cache, &address) {
-        Some(acc) => Ok(acc.clone()),
-        None => {
-            let account_info = db.store.get_account_info(address)?;
-            Ok(Account {
-                info: account_info,
-                storage: HashMap::new(),
-            })
-        }
-    }
-}
-
-/// Gets mutable account, first checking the cache and then the database
-/// (caching in the second case)
-/// This isn't a method of VM because it allows us to use it during VM initialization.
-pub fn get_account_mut_vm<'a>(
-    db: &'a mut GeneralizedDatabase,
-    address: Address,
-    call_frame: &mut Option<&mut CallFrame>,
-) -> Result<&'a mut Account, VMError> {
-    if !cache::is_account_cached(&db.cache, &address) {
-        let account_info = db.store.get_account_info(address)?;
-        let account = Account {
-            info: account_info,
-            storage: HashMap::new(),
-        };
-        cache::insert_account(&mut db.cache, address, account.clone());
-    }
-
-    let original_account = cache::get_account_mut(&mut db.cache, &address)
-        .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
-
-    if let Some(call_frame) = call_frame {
-        call_frame
-            .previous_cache_state
-            .entry(address)
-            .or_insert_with(|| Some(original_account.clone()));
-    };
-
-    Ok(original_account)
-}
-
-pub fn increase_account_balance(
-    db: &mut GeneralizedDatabase,
-    address: Address,
-    increase: U256,
-    call_frame: &mut Option<&mut CallFrame>,
-) -> Result<(), VMError> {
-    let account = get_account_mut_vm(db, address, call_frame)?;
-    account.info.balance = account
-        .info
-        .balance
-        .checked_add(increase)
-        .ok_or(VMError::BalanceOverflow)?;
-    Ok(())
-}
-
-pub fn decrease_account_balance(
-    db: &mut GeneralizedDatabase,
-    address: Address,
-    decrease: U256,
-    call_frame: &mut Option<&mut CallFrame>,
-) -> Result<(), VMError> {
-    let account = get_account_mut_vm(db, address, call_frame)?;
-    account.info.balance = account
-        .info
-        .balance
-        .checked_sub(decrease)
-        .ok_or(VMError::BalanceUnderflow)?;
-    Ok(())
-}
-
-/// Accesses to an account's information.
-///
-/// Accessed accounts are stored in the `touched_accounts` set.
-/// Accessed accounts take place in some gas cost computation.
-pub fn access_account(
-    db: &mut GeneralizedDatabase,
-    accrued_substate: &mut Substate,
-    address: Address,
-) -> Result<(AccountInfo, bool), DatabaseError> {
-    let address_was_cold = accrued_substate.touched_accounts.insert(address);
-    let account = match cache::get_account(&db.cache, &address) {
-        Some(account) => account.info.clone(),
-        None => db.store.get_account_info(address)?,
-    };
-    Ok((account, address_was_cold))
-}
-
-// ================== Bytecode related functions =====================
-pub fn update_account_bytecode(
-    db: &mut GeneralizedDatabase,
-    address: Address,
-    new_bytecode: Bytes,
-    call_frame: &mut Option<&mut CallFrame>,
-) -> Result<(), VMError> {
-    let account = get_account_mut_vm(db, address, call_frame)?;
-    account.info.bytecode = new_bytecode;
-    Ok(())
 }
 
 // ==================== Gas related functions =======================
@@ -445,7 +318,7 @@ pub fn increment_account_nonce(
     address: Address,
     call_frame: &mut Option<&mut CallFrame>,
 ) -> Result<u64, VMError> {
-    let account = get_account_mut_vm(db, address, call_frame)?;
+    let account = db.get_account_mut_vm(address, call_frame)?;
     account.info.nonce = account
         .info
         .nonce
@@ -459,7 +332,7 @@ pub fn decrement_account_nonce(
     address: Address,
     call_frame: &mut Option<&mut CallFrame>,
 ) -> Result<(), VMError> {
-    let account = get_account_mut_vm(db, address, call_frame)?;
+    let account = db.get_account_mut_vm(address, call_frame)?;
     account.info.nonce = account
         .info
         .nonce
@@ -545,7 +418,7 @@ pub fn eip7702_set_access_code(
 
         // 4. Add authority to accessed_addresses (as defined in EIP-2929).
         accrued_substate.touched_accounts.insert(authority_address);
-        let authority_account_info = get_account_no_push_cache(db, authority_address)?.info;
+        let authority_account_info = db.get_account_no_push_cache(authority_address)?.info;
 
         // 5. Verify the code of authority is either empty or already delegated.
         let empty_or_delegated =
@@ -580,7 +453,7 @@ pub fn eip7702_set_access_code(
 
         // As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
         // Clear the account’s code and reset the account’s code hash to the empty hash.
-        let auth_account = get_account_mut_vm(db, authority_address, &mut None)?;
+        let auth_account = db.get_account_mut_vm(authority_address, &mut None)?;
 
         auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
             delegation_bytes.into()
@@ -594,12 +467,12 @@ pub fn eip7702_set_access_code(
     }
 
     let (code_address_info, _) =
-        access_account(db, accrued_substate, initial_call_frame.code_address)?;
+        db.access_account(accrued_substate, initial_call_frame.code_address)?;
 
     if has_delegation(&code_address_info)? {
         initial_call_frame.code_address = get_authorized_address(&code_address_info)?;
         let (auth_address_info, _) =
-            access_account(db, accrued_substate, initial_call_frame.code_address)?;
+            db.access_account(accrued_substate, initial_call_frame.code_address)?;
 
         initial_call_frame.bytecode = auth_address_info.bytecode.clone();
     } else {
@@ -703,7 +576,7 @@ pub fn eip7702_get_code(
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = get_account_no_push_cache(db, address)?;
+    let account = db.get_account_no_push_cache(address)?;
     let bytecode = account.info.bytecode.clone();
 
     // If the Address doesn't have a delegation code
@@ -725,7 +598,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = get_account_no_push_cache(db, auth_address)?.info.bytecode;
+    let authorized_bytecode = db.get_account_no_push_cache(auth_address)?.info.bytecode;
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }

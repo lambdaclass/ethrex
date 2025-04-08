@@ -4,9 +4,9 @@ use ethrex_common::{
     Address as EthrexAddress, U256,
 };
 use ethrex_levm::{
-    db::{cache, CacheDB},
+    db::{cache, gen_db::GeneralizedDatabase, CacheDB},
     errors::{TxResult, VMError},
-    vm::{GeneralizedDatabase, VM},
+    vm::VM,
     Environment,
 };
 use ethrex_vm::db::ExecutionDB;

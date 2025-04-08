@@ -9,9 +9,7 @@ use ethrex_common::{
     H256, U256,
 };
 use ethrex_levm::{
-    errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{EVMConfig, GeneralizedDatabase, VM},
-    Environment,
+    db::gen_db::GeneralizedDatabase, errors::{ExecutionReport, TxValidationError, VMError}, vm::{EVMConfig, VM}, Environment
 };
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::backends;

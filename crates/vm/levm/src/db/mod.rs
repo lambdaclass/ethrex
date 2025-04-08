@@ -9,6 +9,7 @@ use ethrex_common::{
 pub mod cache;
 pub use cache::CacheDB;
 pub mod error;
+pub mod gen_db;
 
 pub trait Database: Send + Sync {
     fn get_account_info(&self, address: Address) -> Result<AccountInfo, DatabaseError>;
