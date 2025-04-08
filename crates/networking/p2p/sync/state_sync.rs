@@ -270,7 +270,7 @@ impl StateSyncProgress {
             let segment_completion_rate =
                 ((segment_synced_accounts + 1) * 100) / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
             debug!("Segment {i} completion rate: {segment_completion_rate}%");
-            synced_accounts += segment_synced_accounts.into();
+            synced_accounts += segment_synced_accounts;
             synced_accounts_this_cycle += data.current_keys[i]
                 .into_uint()
                 .saturating_sub(data.initial_keys[i].into_uint())
@@ -286,7 +286,7 @@ impl StateSyncProgress {
         let time_to_finish_secs =
             U512::from(Instant::now().duration_since(data.cycle_start).as_secs())
                 * remaining_accounts
-                / U512::from(synced_accounts_this_cycle);
+                / synced_accounts_this_cycle;
         info!(
             "Downloading state trie, completion rate: {}%, estimated time to finish: {}",
             completion_rate,
