@@ -35,6 +35,11 @@ use std::sync::Arc;
 pub struct Store {
     db: Arc<Database>,
 }
+use ethrex_trie::InMemoryTrieDB;
+lazy_static::lazy_static! {
+    pub static ref STORAGE_TRIE: InMemoryTrieDB = Default::default();
+    pub static ref STATE_TRIE: InMemoryTrieDB = Default::default();
+}
 impl Store {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         Ok(Self {
@@ -372,15 +377,12 @@ impl StoreEngine for Store {
     }
 
     fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
-        let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
-            self.db.clone(),
-            hashed_address.0,
-        ));
+        let db = Box::new(STORAGE_TRIE.clone());
         Trie::open(db, storage_root)
     }
 
     fn open_state_trie(&self, state_root: H256) -> Trie {
-        let db = Box::new(LibmdbxTrieDB::<StateTrieNodes>::new(self.db.clone()));
+        let db = Box::new(STATE_TRIE.clone());
         Trie::open(db, state_root)
     }
 

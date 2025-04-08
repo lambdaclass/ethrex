@@ -3330,6 +3330,7 @@ dependencies = [
  "ethrex-trie",
  "hex",
  "hex-literal",
+ "lazy_static",
  "libmdbx",
  "redb",
  "serde",
