@@ -40,25 +40,8 @@ pub fn insert_account(
     cached_accounts.insert(address, account.clone())
 }
 
-pub fn remove_account(
-    cached_accounts: &mut CacheDB,
-    address: &Address,
-    call_frame: &mut Option<&mut CallFrame>,
-) -> Option<Account> {
-    let account_option = cached_accounts.remove(address);
-
-    // insert account_option cloned into call_frame backup if not already there
-    if let Some(call_frame) = call_frame {
-        if !call_frame.backup.contains_key(address) {
-            if let Some(account) = account_option.as_ref() {
-                call_frame.backup.insert(*address, Some((*account).clone()));
-            } else {
-                call_frame.backup.insert(*address, None);
-            }
-        }
-    }
-
-    account_option
+pub fn remove_account(cached_accounts: &mut CacheDB, address: &Address) -> Option<Account> {
+    cached_accounts.remove(address)
 }
 
 pub fn is_account_cached(cached_accounts: &CacheDB, address: &Address) -> bool {

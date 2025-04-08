@@ -354,7 +354,7 @@ impl Hook for DefaultHook {
                 )?;
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
-                remove_account(&mut vm.db.cache, &receiver_address, &mut None);
+                remove_account(&mut vm.db.cache, &receiver_address);
             }
 
             increase_account_balance(

@@ -569,7 +569,7 @@ impl<'a> VM<'a> {
                 cache::insert_account(&mut self.db.cache, *address, account.clone());
             } else {
                 // remove from cache
-                cache::remove_account(&mut self.db.cache, address, &mut None);
+                cache::remove_account(&mut self.db.cache, address);
             }
         }
     }
@@ -581,6 +581,15 @@ impl<'a> VM<'a> {
         call_frame: &mut CallFrame,
     ) {
         let previous_account = cache::insert_account(&mut self.db.cache, address, account);
+
+        call_frame
+            .backup
+            .entry(address)
+            .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
+    }
+
+    pub fn remove_account(&mut self, address: Address, call_frame: &mut CallFrame) {
+        let previous_account = cache::remove_account(&mut self.db.cache, &address);
 
         call_frame
             .backup
