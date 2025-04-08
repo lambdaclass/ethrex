@@ -280,7 +280,7 @@ impl StateSyncProgress {
         // Make a simple time to finish estimation based on current progress
         // The estimation relies on account hashes being (close to) evenly distributed
         let remaining_accounts =
-            (U512::from(U256::MAX) / 100) * (U512::from(100) - completion_rate);
+            (U512::from(U256::MAX) / 100) * (U512::from(100).saturating_sub(completion_rate));
         // Time to finish = Time since start / Accounts synced this cycle * Remaining accounts
         let time_to_finish_secs =
             U512::from(Instant::now().duration_since(data.cycle_start).as_secs())
