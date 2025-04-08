@@ -410,6 +410,8 @@ impl<'a> VM<'a> {
             self.restore_cache_state(&initial_call_frame);
             return Err(e);
         }
+        // clear callframe backup because prepare_execution succeeded
+        initial_call_frame.backup = HashMap::new();
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied

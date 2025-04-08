@@ -334,8 +334,7 @@ impl Hook for DefaultHook {
 
         // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            let existing_account =
-                get_account(vm.db, receiver_address, &mut Some(initial_call_frame))?; //TO Account
+            let existing_account = get_account(vm.db, receiver_address, &mut None)?; //TO Account
 
             if has_delegation(&existing_account.info)? {
                 // This is the case where the "to" address and the
@@ -351,22 +350,18 @@ impl Hook for DefaultHook {
                     vm.db,
                     receiver_address,
                     initial_call_frame.msg_value,
-                    &mut Some(initial_call_frame),
+                    &mut None,
                 )?;
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
-                remove_account(
-                    &mut vm.db.cache,
-                    &receiver_address,
-                    &mut Some(initial_call_frame),
-                );
+                remove_account(&mut vm.db.cache, &receiver_address, &mut None);
             }
 
             increase_account_balance(
                 vm.db,
                 sender_address,
                 initial_call_frame.msg_value,
-                &mut Some(initial_call_frame),
+                &mut None,
             )?;
         }
 
@@ -407,12 +402,7 @@ impl Hook for DefaultHook {
             .checked_mul(U256::from(gas_to_return))
             .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
-        increase_account_balance(
-            vm.db,
-            sender_address,
-            wei_return_amount,
-            &mut Some(initial_call_frame),
-        )?;
+        increase_account_balance(vm.db, sender_address, wei_return_amount, &mut None)?;
 
         // 3. Pay coinbase fee
         let coinbase_address = vm.env.coinbase;
@@ -431,20 +421,14 @@ impl Hook for DefaultHook {
             .ok_or(VMError::BalanceOverflow)?;
 
         if coinbase_fee != U256::zero() {
-            increase_account_balance(
-                vm.db,
-                coinbase_address,
-                coinbase_fee,
-                &mut Some(initial_call_frame),
-            )?;
+            increase_account_balance(vm.db, coinbase_address, coinbase_fee, &mut None)?;
         };
 
         // 4. Destruct addresses in vm.estruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove =
-                get_account_mut_vm(vm.db, address, &mut Some(initial_call_frame))?;
+            let account_to_remove = get_account_mut_vm(vm.db, address, &mut None)?;
             *account_to_remove = Account::default();
         }
 
