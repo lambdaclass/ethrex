@@ -578,15 +578,13 @@ impl<'a> VM<'a> {
         &mut self,
         address: Address,
         account: Account,
-        call_frame: &mut Option<&mut CallFrame>,
+        call_frame: &mut CallFrame,
     ) {
         let previous_account = cache::insert_account(&mut self.db.cache, address, account);
 
-        if let Some(call_frame) = call_frame {
-            call_frame
-                .backup
-                .entry(address)
-                .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
-        };
+        call_frame
+            .backup
+            .entry(address)
+            .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
     }
 }

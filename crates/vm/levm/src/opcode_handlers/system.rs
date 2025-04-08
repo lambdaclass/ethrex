@@ -679,7 +679,7 @@ impl<'a> VM<'a> {
         } else {
             Account::new(new_balance, Bytes::new(), 1, Default::default())
         };
-        self.insert_account(new_address, new_account, &mut Some(current_call_frame));
+        self.insert_account(new_address, new_account, current_call_frame);
 
         // 2. Increment sender's nonce.
         increment_account_nonce(self.db, deployer_address, &mut Some(current_call_frame))?;
