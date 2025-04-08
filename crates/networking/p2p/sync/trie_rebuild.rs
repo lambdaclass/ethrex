@@ -16,7 +16,7 @@ use tokio::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::sync::seconds_to_readable;
 
@@ -209,7 +209,7 @@ async fn rebuild_storage_trie_in_background(
     let mut pending_storages = store
         .get_storage_trie_rebuild_pending()?
         .unwrap_or_default();
-    let start_time = Instant::now();
+    let mut total_rebuild_time: u128 = 0;
     let mut last_show_progress = Instant::now();
     // Count of all storages that have entered the queue
     let mut pending_historic_count = pending_storages.len();
@@ -222,7 +222,7 @@ async fn rebuild_storage_trie_in_background(
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
             tokio::spawn(show_storage_tries_rebuild_progress(
-                start_time,
+                total_rebuild_time,
                 pending_historic_count,
                 pending_storages.len(),
                 store.clone(),
@@ -237,6 +237,7 @@ async fn rebuild_storage_trie_in_background(
         }
 
         // Spawn tasks to rebuild current storages
+        let rebuild_start = Instant::now();
         let mut rebuild_tasks = JoinSet::new();
         for _ in 0..MAX_PARALLEL_FETCHES {
             if pending_storages.is_empty() {
@@ -253,6 +254,7 @@ async fn rebuild_storage_trie_in_background(
         for res in rebuild_tasks.join_all().await {
             res?;
         }
+        total_rebuild_time += rebuild_start.elapsed().as_millis();
     }
     store
         .set_storage_trie_rebuild_pending(pending_storages)
@@ -330,15 +332,14 @@ async fn show_state_trie_rebuild_progress(
 }
 
 async fn show_storage_tries_rebuild_progress(
-    start_time: Instant,
+    total_rebuild_time: u128,
     all_storages_in_queue: usize,
     current_storages_in_queue: usize,
     store: Store,
 ) {
     // Calculate current rebuild speed
     let rebuilt_storages_count = all_storages_in_queue.saturating_sub(current_storages_in_queue);
-    let storage_rebuild_time =
-        start_time.elapsed().as_millis() / (rebuilt_storages_count as u128 + 1);
+    let storage_rebuild_time = total_rebuild_time / (rebuilt_storages_count as u128 + 1);
     // Check if state sync has already finished before reporting estimated finish time
     let state_sync_finished = if let Ok(Some(checkpoint)) = store.get_state_trie_key_checkpoint() {
         checkpoint
