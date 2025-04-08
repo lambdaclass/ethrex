@@ -45,6 +45,7 @@ impl GeneralizedDatabase {
         }
     }
 
+    /// Gets account without pushing it to the cache
     pub fn get_account_no_push_cache(&self, address: Address) -> Result<Account, DatabaseError> {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
@@ -118,7 +119,7 @@ impl GeneralizedDatabase {
         Ok(())
     }
 
-    /// Accesses to an account's information.
+    /// **Accesses to an account's information.**
     ///
     /// Accessed accounts are stored in the `touched_accounts` set.
     /// Accessed accounts take place in some gas cost computation.
@@ -135,7 +136,7 @@ impl GeneralizedDatabase {
         Ok((account, address_was_cold))
     }
 
-    // ================== Bytecode related functions =====================
+    /// Updates bytecode of given account.
     pub fn update_account_bytecode(
         &mut self,
         address: Address,
@@ -147,6 +148,7 @@ impl GeneralizedDatabase {
         Ok(())
     }
 
+    /// Inserts account to cache backing up the previus state of it in the callframe (if it wasn't already backed up)
     pub fn insert_account(
         &mut self,
         address: Address,
@@ -161,6 +163,7 @@ impl GeneralizedDatabase {
             .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
     }
 
+    /// Removes account from cache backing up the previus state of it in the callframe (if it wasn't already backed up)
     pub fn remove_account(&mut self, address: Address, call_frame: &mut CallFrame) {
         let previous_account = cache::remove_account(&mut self.cache, &address);
 
