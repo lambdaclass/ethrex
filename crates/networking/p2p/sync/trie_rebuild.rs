@@ -105,7 +105,7 @@ async fn rebuild_state_trie_in_backgound(
     });
     let mut root = checkpoint.map(|(root, _)| root).unwrap_or(*EMPTY_TRIE_HASH);
     let mut current_segment = 0;
-    let start_time = Instant::now();
+    let mut total_rebuild_time = 0;
     let initial_rebuild_status = rebuild_status.clone();
     let mut last_show_progress = Instant::now();
     while !rebuild_status.iter().all(|status| status.complete()) {
@@ -113,7 +113,7 @@ async fn rebuild_state_trie_in_backgound(
         if Instant::now().duration_since(last_show_progress) >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_show_progress = Instant::now();
             tokio::spawn(show_state_trie_rebuild_progress(
-                start_time,
+                total_rebuild_time,
                 initial_rebuild_status.clone(),
                 rebuild_status.clone(),
             ));
@@ -122,6 +122,7 @@ async fn rebuild_state_trie_in_backgound(
         if cancel_token.is_cancelled() {
             return Ok(());
         }
+        let rebuild_start = Instant::now();
         if !rebuild_status[current_segment].complete() {
             // Start rebuilding the current trie segment
             let (current_root, current_hash) = rebuild_state_trie_segment(
@@ -132,9 +133,13 @@ async fn rebuild_state_trie_in_backgound(
                 cancel_token.clone(),
             )
             .await?;
-            // Update status
-            root = current_root;
-            rebuild_status[current_segment].current = current_hash;
+            // Update status and count time taken if rebuild took place
+            if current_root != root {
+                total_rebuild_time += rebuild_start.elapsed().as_millis();
+                // Update status
+                root = current_root;
+                rebuild_status[current_segment].current = current_hash;
+            }
         }
         // Update DB checkpoint
         let checkpoint = (root, rebuild_status.clone().map(|st| st.current));
@@ -296,7 +301,7 @@ fn next_hash(hash: H256) -> H256 {
 
 /// Shows the completion rate and estimated finish time of the state trie rebuild
 async fn show_state_trie_rebuild_progress(
-    start_time: Instant,
+    total_rebuild_time: u128,
     initial_rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
     rebuild_status: [SegmentStatus; STATE_TRIE_SEGMENTS],
 ) {
@@ -313,10 +318,10 @@ async fn show_state_trie_rebuild_progress(
     let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100))
         / U512::from(U256::max_value());
     // Time to finish = Time since start / Accounts processed this cycle * Remaining accounts
-    let remaining_accounts = U256::MAX - accounts_processed;
-    let time_to_finish = (U512::from(start_time.elapsed().as_secs())
-        * U512::from(remaining_accounts))
-        / (U512::from(accounts_processed_this_cycle));
+    let remaining_accounts = U256::MAX.saturating_sub(accounts_processed);
+    let time_to_finish = (U512::from(total_rebuild_time) * U512::from(remaining_accounts))
+        / (U512::from(accounts_processed_this_cycle))
+        / 1000;
     info!(
         "State Trie Rebuild Progress: {}%, estimated time to finish: {}",
         completion_rate,
