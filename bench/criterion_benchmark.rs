@@ -15,7 +15,6 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 fn block_import() {
     let data_dir = DEFAULT_DATADIR;
     set_datadir(data_dir);
-
     remove_db(data_dir);
 
     let evm_engine = "revm".to_owned().try_into().unwrap();
