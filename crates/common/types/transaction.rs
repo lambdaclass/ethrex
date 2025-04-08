@@ -1371,7 +1371,7 @@ impl PrivilegedL2Transaction {
                 &value,
                 &nonce,
                 self.recipient.as_bytes(),
-                self.recipient.as_bytes(),
+                self.from.as_bytes(),
                 &U256::from(self.gas_limit).to_big_endian(),
                 keccak(&self.data).as_bytes(),
             ]
