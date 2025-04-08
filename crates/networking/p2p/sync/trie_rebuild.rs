@@ -233,7 +233,7 @@ async fn rebuild_storage_trie_in_background(
             let mut buffer = vec![];
             receiver.recv_many(&mut buffer, MAX_CHANNEL_READS).await;
             incoming = !buffer.iter().any(|batch| batch.is_empty());
-            pending_historic_count += buffer.iter().flatten().count();
+            pending_historic_count += buffer.iter().fold(0, |acc, batch| acc + batch.len());
             pending_storages.extend(buffer.iter().flatten());
         }
 
