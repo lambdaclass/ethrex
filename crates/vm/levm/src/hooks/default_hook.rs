@@ -325,7 +325,7 @@ impl Hook for DefaultHook {
     fn finalize_execution(
         &self,
         vm: &mut VM<'_>,
-        initial_call_frame: &mut CallFrame,
+        initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
         // POST-EXECUTION Changes
