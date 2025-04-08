@@ -6,8 +6,7 @@ use ef_tests_blockchain::{
 };
 
 // TODO: enable these tests once the evm is updated.
-const SKIPPED_TEST: [&str; 2] = [
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_contract_create[fork_Prague-blockchain_test]",
+const SKIPPED_TEST: [&str; 1] = [
     "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_non_empty_storage[fork_Prague-blockchain_test-zero_nonce]",
 ];
 
@@ -29,27 +28,27 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
 
 datatest_stable::harness!(
     parse_and_execute,
-    "vectors/prague/eip2537_bls_12_381_precompiles",
-    r".*/.*\.json",
+    "vectors/prague/",
+    r"eip2537_bls_12_381_precompiles/.*/.*\.json",
     parse_and_execute,
-    "vectors/prague/eip2935_historical_block_hashes_from_state",
-    r".*/.*\.json",
+    "vectors/prague/",
+    r"eip2935_historical_block_hashes_from_state/.*/.*\.json",
     parse_and_execute,
-    "vectors/prague/eip6110_deposits/deposits",
-    r".*/.*\.json",
+    "vectors/prague/",
+    r"eip6110_deposits/.*/.*\.json",
     parse_and_execute,
-    "vectors/prague/eip7002_el_triggerable_withdrawals",
-    r".*/.*\.json",
+    "vectors/prague/",
+    r"eip7002_el_triggerable_withdrawals/.*/.*\.json",
     parse_and_execute,
-    "vectors/prague/eip7251_consolidations",
-    r".*/.*\.json",
+    "vectors/prague/",
+    r"eip7251_consolidations/.*/.*\.json",
     parse_and_execute,
-    "vectors/prague/eip7623_increase_calldata_cost",
-    r".*/.*\.json",
+    "vectors/prague/",
+    r"eip7623_increase_calldata_cost/.*/.*\.json",
     parse_and_execute,
-    "vectors/prague/eip7685_general_purpose_el_requests",
-    r".*/.*\.json",
+    "vectors/prague/",
+    r"eip7685_general_purpose_el_requests/.*/.*\.json",
     parse_and_execute,
-    "vectors/prague/eip7702_set_code_tx",
-    r".*/.*\.json",
+    "vectors/prague/",
+    r"eip7702_set_code_tx/.*/.*\.json",
 );

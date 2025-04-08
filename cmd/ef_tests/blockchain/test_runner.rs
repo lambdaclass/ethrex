@@ -59,10 +59,34 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
 
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
-    let expects_rlp_exception = block_fixture
-        .expect_exception
-        .as_ref()
-        .map_or(false, |s| s.starts_with("BlockException.RLP_"));
+    let decoding_exception_cases = vec![
+        "BlockException.RLP_",
+        // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
+        // have the "to" field set to null (create).
+        // This test expects an exception to be thrown AFTER the Block RLP decoding, when the
+        // transaction is validated. This would imply allowing the "to" field of the
+        // EIP-7702 transaction to be null and validating it on the `prepare_execution` hook.
+        //
+        // Instead, this approach is taken, which allows for the exception to be thrown on
+        // RLPDecoding, so the data type EIP7702Transaction correctly describes the requirement of
+        // "to" field to be an Address
+        // For more information, please read:
+        // - https://eips.ethereum.org/EIPS/eip-7702
+        // - ADD PR
+        //
+        // There is another test which validates the same exact thing, but for an EIP-4844 tx.
+        // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
+        // catched.
+        "TransactionException.TYPE_4_TX_CONTRACT_CREATION",
+    ];
+
+    let expects_rlp_exception = decoding_exception_cases.iter().any(|&case| {
+        block_fixture
+            .expect_exception
+            .as_ref()
+            .map_or(false, |s| s.starts_with(case))
+    });
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
