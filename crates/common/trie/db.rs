@@ -12,6 +12,7 @@ pub trait TrieDB {
 }
 
 /// InMemory implementation for the TrieDB trait, with get and put operations.
+#[derive(Default, Clone)]
 pub struct InMemoryTrieDB {
     inner: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
 }

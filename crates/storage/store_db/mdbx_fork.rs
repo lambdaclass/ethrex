@@ -1,3 +1,4 @@
+use ethrex_trie::InMemoryTrieDB;
 use reth_provider::providers::StaticFileProvider;
 use std::cell::{Cell, LazyCell, OnceCell};
 use std::marker::PhantomData;
@@ -51,6 +52,7 @@ use reth_primitives::{
 use reth_primitives_traits::SealedHeader;
 use reth_provider::BlockWriter;
 use reth_storage_api::DBProvider;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct MDBXFork {
@@ -62,6 +64,8 @@ pub static LATEST_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
 pub static EARLIEST_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
 lazy_static::lazy_static! {
     pub static ref CHAIN_CONFIG: Arc<Mutex<Option<ChainConfig>>> = Default::default() ;
+    pub static ref STORAGE_TRIE: InMemoryTrieDB = Default::default();
+    pub static ref STATE_TRIE: InMemoryTrieDB = Default::default();
 }
 
 impl MDBXFork {
@@ -151,24 +155,6 @@ where
             db,
             phantom: PhantomData,
         }
-    }
-}
-
-impl<T> TrieDB for MDBXTrieDB<T>
-where
-    T: RethTable,
-{
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
-        todo!()
-    }
-
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
-        todo!()
-    }
-
-    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
-        let txn = self.db.tx_mut().unwrap();
-        Ok(())
     }
 }
 
@@ -277,8 +263,10 @@ impl StoreEngine for MDBXFork {
         let spec: ChainSpec = Default::default();
         let provider = DatabaseProvider::new_rw(tx, Arc::new(spec), provider, Default::default());
         for block in pre_processed {
+            dbg!(block.hash());
             provider.insert_block(block).unwrap();
         }
+        provider.commit().unwrap();
         Ok(())
     }
 
@@ -301,10 +289,14 @@ impl StoreEngine for MDBXFork {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        // let tx = self.env.tx().unwrap();
-        // let block_number = tx.get::<tables::HeaderNumbers>(hash.0.into());
-        // let block =
-        todo!()
+        dbg!(&block_hash);
+        let tx = self.env.tx().unwrap();
+        let block_number = tx
+            .get::<tables::HeaderNumbers>(block_hash.0.into())
+            .unwrap()
+            .unwrap();
+        let header = tx.get::<tables::Headers>(block_number).unwrap().unwrap();
+        Ok(Some(reth_header_to_ethrex_header(header)))
     }
 
     fn add_block_number(
@@ -425,24 +417,12 @@ impl StoreEngine for MDBXFork {
     }
 
     fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
-        let env = DatabaseEnv::open(
-            Path::new("/tmp/storage_trie"),
-            reth_db::DatabaseEnvKind::RW,
-            Default::default(),
-        )
-        .unwrap();
-        let db = Box::new(MDBXTrieDB::<AccountsTrie>::new(env));
+        let db = Box::new(STORAGE_TRIE.clone());
         Trie::open(db, storage_root)
     }
 
     fn open_state_trie(&self, state_root: H256) -> Trie {
-        let env = DatabaseEnv::open(
-            Path::new("/tmp/state_trie"),
-            reth_db::DatabaseEnvKind::RW,
-            Default::default(),
-        )
-        .unwrap();
-        let db = Box::new(MDBXTrieDB::<StoragesTrie>::new(env));
+        let db = Box::new(STATE_TRIE.clone());
         Trie::open(db, state_root)
     }
 
