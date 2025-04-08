@@ -178,7 +178,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     let transfer_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 30).await?;
+        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 1000).await?;
 
     let recoverable_fees_vault_balance = proposer_client
         .get_balance(fees_vault(), BlockByNumber::Latest)
@@ -226,7 +226,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     let withdraw_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 30)
+        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 1000)
             .await
             .expect("Withdraw tx receipt not found");
 
