@@ -595,5 +595,5 @@ impl<'a> VM<'a> {
             .backup
             .entry(address)
             .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
-    }    
+    }
 }
