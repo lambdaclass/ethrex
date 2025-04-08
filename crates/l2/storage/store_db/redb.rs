@@ -50,20 +50,27 @@ impl RedBStoreL2 {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
     // Helper method to read from a redb table
-    fn read<'k, 'a, K, V>(
+    async fn read<'k, 'a, K, V>(
         &self,
         table: TableDefinition<'a, K, V>,
-        key: impl Borrow<K::SelfType<'k>>,
+        key: K::SelfType<'k>,
     ) -> Result<Option<AccessGuard<'static, V>>, StoreError>
     where
-        K: Key + 'static,
-        V: Value,
+        K: Key + Send + 'static,
+        V: Value + Send + 'static,
+        K::SelfType<'k>: Send,
+        'a: 'static,
+        'k: 'static,
     {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(table)?;
-        let result = table.get(key)?;
-
-        Ok(result)
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(table)?;
+            let result = table.get(key)?;
+            Ok(result)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 
@@ -80,12 +87,13 @@ pub fn init_db() -> Result<Database, StoreError> {
 
 #[async_trait::async_trait]
 impl StoreEngineL2 for RedBStoreL2 {
-    fn get_batch_number_for_block(
+    async fn get_batch_number_for_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
         Ok(self
-            .read(BATCHES_BY_BLOCK_NUMBER_TABLE, block_number)?
+            .read(BATCHES_BY_BLOCK_NUMBER_TABLE, block_number)
+            .await?
             .map(|b| b.value()))
     }
 

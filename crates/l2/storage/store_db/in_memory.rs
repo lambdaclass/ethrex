@@ -31,7 +31,7 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngineL2 for Store {
-    fn get_batch_number_for_block(
+    async fn get_batch_number_for_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {

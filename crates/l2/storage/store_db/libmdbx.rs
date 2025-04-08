@@ -37,9 +37,14 @@ impl Store {
     }
 
     // Helper method to read from a libmdbx table
-    fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
-        let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
-        txn.get::<T>(key).map_err(StoreError::LibmdbxError)
+    async fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
+            txn.get::<T>(key).map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 }
 
@@ -76,11 +81,11 @@ impl Debug for Store {
 
 #[async_trait::async_trait]
 impl StoreEngineL2 for Store {
-    fn get_batch_number_for_block(
+    async fn get_batch_number_for_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
-        self.read::<BatchesByBlockNumber>(block_number)
+        self.read::<BatchesByBlockNumber>(block_number).await
     }
 
     async fn store_batch_number_for_block(

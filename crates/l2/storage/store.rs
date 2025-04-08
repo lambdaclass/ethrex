@@ -44,11 +44,11 @@ impl Store {
         Ok(store)
     }
 
-    pub fn get_batch_number_for_block(
+    pub async fn get_batch_number_for_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
-        self.engine.get_batch_number_for_block(block_number)
+        self.engine.get_batch_number_for_block(block_number).await
     }
     pub async fn store_batch_number_for_block(
         &self,
