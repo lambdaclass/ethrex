@@ -919,6 +919,24 @@ impl EthClient {
         Ok(map)
     }
 
+    pub async fn get_verifying_keys(
+        eth_client: &EthClient,
+        verifying_keys_selectors: &[&str],
+        on_chain_proposer_address: Address,
+    ) -> Result<HashMap<String, Bytes>, EthClientError> {
+        let mut map: HashMap<_, _> = HashMap::new();
+        for selector in verifying_keys_selectors.iter() {
+            let vkey = Self::_call_bytes32_variable(
+                eth_client,
+                selector.as_bytes(),
+                on_chain_proposer_address,
+            )
+            .await?;
+            map.insert(selector.to_string(), vkey);
+        }
+        Ok(map)
+    }
+
     pub async fn get_last_fetched_l1_block(
         eth_client: &EthClient,
         common_bridge_address: Address,
@@ -985,6 +1003,26 @@ impl EthClient {
 
         let value = Address::from_str(hex_str)
             .map_err(|_| EthClientError::Custom("Failed to convert from_str()".to_owned()))?;
+        Ok(value)
+    }
+
+    async fn _call_bytes32_variable(
+        eth_client: &EthClient,
+        selector: &[u8],
+        on_chain_proposer_address: Address,
+    ) -> Result<Bytes, EthClientError> {
+        let hex_string =
+            Self::_generic_call(eth_client, selector, on_chain_proposer_address).await?;
+
+        let hex_str = hex_string.strip_prefix("0x").ok_or(EthClientError::Custom(
+            "Couldn't strip prefix from request.".to_owned(),
+        ))?;
+
+        let value: Bytes = H256::from_str(hex_str)
+            .map_err(|_| EthClientError::Custom("Failed to convert from_str()".to_owned()))?
+            .as_bytes()
+            .to_vec()
+            .into();
         Ok(value)
     }
 
