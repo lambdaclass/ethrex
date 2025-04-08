@@ -264,7 +264,6 @@ impl StoreEngine for MDBXFork {
         let spec: ChainSpec = Default::default();
         let provider = DatabaseProvider::new_rw(tx, Arc::new(spec), provider, Default::default());
         for block in pre_processed {
-            dbg!(block.hash());
             provider.insert_block(block).unwrap();
         }
         provider.commit().unwrap();
@@ -290,7 +289,6 @@ impl StoreEngine for MDBXFork {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        dbg!(&block_hash);
         let tx = self.env.tx().unwrap();
         let block_number = tx
             .get::<tables::HeaderNumbers>(block_hash.0.into())
@@ -320,6 +318,7 @@ impl StoreEngine for MDBXFork {
             .tx_mut()
             .expect("could not start tx for account code");
         tx.put::<tables::Bytecodes>(key, code).unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
@@ -503,7 +502,8 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        todo!()
+        // todo!()
+        Ok(())
     }
 
     fn add_receipts_for_blocks(
