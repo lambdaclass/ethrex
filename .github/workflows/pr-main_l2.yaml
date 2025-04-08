@@ -70,6 +70,10 @@ jobs:
           workdir: "crates/l2"
           files: "crates/l2/docker-compose-l2.yaml"
           load: true
+          set: |
+            ethrex.cache-from=type=local,src=/tmp/buildx-cache/ethrex
+            ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
+            contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
       - name: Build prover
         run: |

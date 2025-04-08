@@ -2,8 +2,6 @@ name: L2 (SP1 Backend)
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["**"]
   merge_group:
 
 concurrency:
