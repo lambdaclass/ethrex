@@ -4,7 +4,7 @@ use crate::{
     constants::*,
     db::{
         cache::{self},
-        CacheDB, Database,
+        gen_db::GeneralizedDatabase,
     },
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
@@ -173,17 +173,6 @@ pub struct VM<'a> {
     pub hooks: Vec<Arc<dyn Hook>>,
 }
 
-pub struct GeneralizedDatabase {
-    pub store: Arc<dyn Database>,
-    pub cache: CacheDB,
-}
-
-impl GeneralizedDatabase {
-    pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
-        Self { store, cache }
-    }
-}
-
 impl<'a> VM<'a> {
     pub fn new(
         to: TxKind,
@@ -275,7 +264,7 @@ impl<'a> VM<'a> {
                 })
             }
             TxKind::Create => {
-                let sender_nonce = get_account(db, env.origin)?.info.nonce;
+                let sender_nonce = db.get_account(env.origin)?.info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -417,7 +406,7 @@ impl<'a> VM<'a> {
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(self.db, new_contract_address)?;
+            let new_account = self.db.get_account(new_contract_address)?;
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -494,7 +483,7 @@ impl<'a> VM<'a> {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = get_account_mut_vm(self.db, address, &mut Some(call_frame))?;
+        let account = self.db.get_account_mut_vm(address, &mut Some(call_frame))?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -507,7 +496,7 @@ impl<'a> VM<'a> {
         new_value: U256,
         call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(self.db, address, &mut Some(call_frame))?;
+        let account = self.db.get_account_mut_vm(address, &mut Some(call_frame))?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)
@@ -572,28 +561,5 @@ impl<'a> VM<'a> {
                 cache::remove_account(&mut self.db.cache, address);
             }
         }
-    }
-
-    pub fn insert_account(
-        &mut self,
-        address: Address,
-        account: Account,
-        call_frame: &mut CallFrame,
-    ) {
-        let previous_account = cache::insert_account(&mut self.db.cache, address, account);
-
-        call_frame
-            .previous_cache_state
-            .entry(address)
-            .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
-    }
-
-    pub fn remove_account(&mut self, address: Address, call_frame: &mut CallFrame) {
-        let previous_account = cache::remove_account(&mut self.db.cache, &address);
-
-        call_frame
-            .previous_cache_state
-            .entry(address)
-            .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
     }
 }

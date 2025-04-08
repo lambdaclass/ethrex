@@ -46,7 +46,7 @@ impl<'a> VM<'a> {
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
         let (account_info, address_was_cold) =
-            access_account(self.db, &mut self.accrued_substate, callee)?;
+            self.db.access_account(&mut self.accrued_substate, callee)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.accrued_substate, callee)?;
@@ -126,8 +126,9 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (_account_info, address_was_cold) =
-            access_account(self.db, &mut self.accrued_substate, code_address)?;
+        let (_account_info, address_was_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, code_address)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.accrued_substate, code_address)?;
@@ -231,8 +232,9 @@ impl<'a> VM<'a> {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         // GAS
-        let (_account_info, address_was_cold) =
-            access_account(self.db, &mut self.accrued_substate, code_address)?;
+        let (_account_info, address_was_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, code_address)?;
 
         let current_memory_size = current_call_frame.memory.len();
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
@@ -312,8 +314,9 @@ impl<'a> VM<'a> {
             .map_err(|_err| VMError::VeryLargeNumber)?;
 
         // GAS
-        let (_account_info, address_was_cold) =
-            access_account(self.db, &mut self.accrued_substate, code_address)?;
+        let (_account_info, address_was_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, code_address)?;
 
         let current_memory_size = current_call_frame.memory.len();
         let new_memory_size_for_args = calculate_memory_size(args_start_offset, args_size)?;
@@ -495,11 +498,13 @@ impl<'a> VM<'a> {
 
         let target_address = word_to_address(current_call_frame.stack.pop()?);
 
-        let (target_account_info, target_account_is_cold) =
-            access_account(self.db, &mut self.accrued_substate, target_address)?;
+        let (target_account_info, target_account_is_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, target_address)?;
 
-        let (current_account_info, _current_account_is_cold) =
-            access_account(self.db, &mut self.accrued_substate, current_call_frame.to)?;
+        let (current_account_info, _current_account_is_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, current_call_frame.to)?;
         let balance_to_transfer = current_account_info.balance;
 
         let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
@@ -516,14 +521,12 @@ impl<'a> VM<'a> {
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if self.env.config.fork >= Fork::Cancun {
-            increase_account_balance(
-                self.db,
+            self.db.increase_account_balance(
                 target_address,
                 balance_to_transfer,
                 &mut Some(current_call_frame),
             )?;
-            decrease_account_balance(
-                self.db,
+            self.db.decrease_account_balance(
                 current_call_frame.to,
                 balance_to_transfer,
                 &mut Some(current_call_frame),
@@ -536,32 +539,25 @@ impl<'a> VM<'a> {
                 .contains(&current_call_frame.to)
             {
                 // If target is the same as the contract calling, Ether will be burnt.
-                get_account_mut_vm(
-                    self.db,
-                    current_call_frame.to,
-                    &mut Some(current_call_frame),
-                )?
-                .info
-                .balance = U256::zero();
+                self.db
+                    .get_account_mut_vm(current_call_frame.to, &mut Some(current_call_frame))?
+                    .info
+                    .balance = U256::zero();
 
                 self.accrued_substate
                     .selfdestruct_set
                     .insert(current_call_frame.to);
             }
         } else {
-            increase_account_balance(
-                self.db,
+            self.db.increase_account_balance(
                 target_address,
                 balance_to_transfer,
                 &mut Some(current_call_frame),
             )?;
-            get_account_mut_vm(
-                self.db,
-                current_call_frame.to,
-                &mut Some(current_call_frame),
-            )?
-            .info
-            .balance = U256::zero();
+            self.db
+                .get_account_mut_vm(current_call_frame.to, &mut Some(current_call_frame))?
+                .info
+                .balance = U256::zero();
 
             // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
             // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
@@ -614,8 +610,10 @@ impl<'a> VM<'a> {
 
         let deployer_address = current_call_frame.to;
 
-        let deployer_account_info =
-            access_account(self.db, &mut self.accrued_substate, deployer_address)?.0;
+        let deployer_account_info = self
+            .db
+            .access_account(&mut self.accrued_substate, deployer_address)?
+            .0;
 
         let code = Bytes::from(
             memory::load_range(
@@ -657,7 +655,7 @@ impl<'a> VM<'a> {
         }
 
         // THIRD: Validations that push 0 to the stack without returning reserved gas but incrementing deployer's nonce
-        let new_account = get_account(self.db, new_address)?;
+        let new_account = self.db.get_account(new_address)?;
         if new_account.has_code_or_nonce() {
             increment_account_nonce(self.db, deployer_address, &mut Some(current_call_frame))?;
             current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
@@ -678,14 +676,14 @@ impl<'a> VM<'a> {
         } else {
             Account::new(new_balance, Bytes::new(), 1, Default::default())
         };
-        self.insert_account(new_address, new_account, current_call_frame);
+        self.db
+            .insert_account(new_address, new_account, current_call_frame);
 
         // 2. Increment sender's nonce.
         increment_account_nonce(self.db, deployer_address, &mut Some(current_call_frame))?;
 
         // 3. Decrease sender's balance.
-        decrease_account_balance(
-            self.db,
+        self.db.decrease_account_balance(
             deployer_address,
             value_in_wei_to_send,
             &mut Some(current_call_frame),
@@ -735,15 +733,14 @@ impl<'a> VM<'a> {
             }
             TxResult::Revert(err) => {
                 // Return value to sender
-                increase_account_balance(
-                    self.db,
+                self.db.increase_account_balance(
                     deployer_address,
                     value_in_wei_to_send,
                     &mut Some(current_call_frame),
                 )?;
 
                 // Deployment failed so account shouldn't exist
-                self.remove_account(new_address, current_call_frame);
+                self.db.remove_account(new_address, current_call_frame);
                 self.accrued_substate.created_accounts.remove(&new_address);
 
                 // If revert we have to copy the return_data
@@ -785,8 +782,10 @@ impl<'a> VM<'a> {
             memory::load_range(&mut current_call_frame.memory, args_offset, args_size)?.to_vec();
 
         // 1. Validate sender has enough value
-        let sender_account_info =
-            access_account(self.db, &mut self.accrued_substate, msg_sender)?.0;
+        let sender_account_info = self
+            .db
+            .access_account(&mut self.accrued_substate, msg_sender)?
+            .0;
         if should_transfer_value && sender_account_info.balance < value {
             current_call_frame.gas_used = current_call_frame
                 .gas_used
@@ -836,8 +835,10 @@ impl<'a> VM<'a> {
 
         // Transfer value from caller to callee.
         if should_transfer_value {
-            decrease_account_balance(self.db, msg_sender, value, &mut Some(current_call_frame))?;
-            increase_account_balance(self.db, to, value, &mut Some(current_call_frame))?;
+            self.db
+                .decrease_account_balance(msg_sender, value, &mut Some(current_call_frame))?;
+            self.db
+                .increase_account_balance(to, value, &mut Some(current_call_frame))?;
         }
 
         let tx_report = self.run_execution(&mut new_call_frame)?;
@@ -876,9 +877,9 @@ impl<'a> VM<'a> {
             TxResult::Revert(_) => {
                 // Revert value transfer
                 if should_transfer_value {
-                    decrease_account_balance(self.db, to, value, &mut Some(current_call_frame))?;
-                    increase_account_balance(
-                        self.db,
+                    self.db
+                        .decrease_account_balance(to, value, &mut Some(current_call_frame))?;
+                    self.db.increase_account_balance(
                         msg_sender,
                         value,
                         &mut Some(current_call_frame),

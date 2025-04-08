@@ -18,7 +18,8 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_levm::vm::{GeneralizedDatabase, Substate};
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
+use ethrex_levm::vm::Substate;
 use ethrex_levm::AccountInfo as LevmAccountInfo;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},

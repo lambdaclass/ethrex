@@ -205,8 +205,7 @@ impl<'a> VM<'a> {
             match validate_create {
                 Ok(new_address) => {
                     // Set bytecode to new account if success
-                    update_account_bytecode(
-                        self.db,
+                    self.db.update_account_bytecode(
                         new_address,
                         contract_code,
                         &mut Some(current_call_frame),
