@@ -1,4 +1,5 @@
 use crate::authentication::authenticate;
+#[cfg(feature = "based")]
 use crate::clients::{EngineClient, EthClient};
 use crate::engine::{
     exchange_transition_config::ExchangeTransitionConfigV1Req,
@@ -70,6 +71,7 @@ cfg_if::cfg_if! {
         use crate::l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
+        use ethrex_storage::StoreL2;
     }
 }
 
@@ -102,6 +104,8 @@ pub struct RpcApiContext {
     pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
     pub sponsor_pk: SecretKey,
+    #[cfg(feature = "l2")]
+    pub l2_store: StoreL2,
 }
 
 pub trait RpcHandler: Sized {
@@ -150,6 +154,7 @@ pub async fn start_api(
     #[cfg(feature = "based")] gateway_pubkey: Public,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
+    #[cfg(feature = "l2")] l2_store: StoreL2,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -172,6 +177,8 @@ pub async fn start_api(
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
         sponsor_pk,
+        #[cfg(feature = "l2")]
+        l2_store,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -550,6 +557,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store: StoreL2::new("temp.db", EngineType::InMemory)
+                .expect("Failed to create test DB"),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -649,6 +659,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store: StoreL2::new("temp.db", EngineType::InMemory)
+                .expect("Failed to create test DB"),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -693,6 +706,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store: StoreL2::new("temp.db", EngineType::InMemory)
+                .expect("Failed to create test DB"),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -771,6 +787,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store: StoreL2::new("temp.db", EngineType::InMemory)
+                .expect("Failed to create test DB"),
         };
         // Process request
         let result = map_http_requests(&request, context).await;

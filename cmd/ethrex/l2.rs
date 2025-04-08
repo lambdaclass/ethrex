@@ -1,8 +1,8 @@
 use crate::{
     cli::{self as ethrex_cli, Options},
     initializers::{
-        get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_network,
-        init_rpc_api, init_store,
+        get_local_p2p_node, get_network, get_signer, init_blockchain, init_l2_store, init_metrics,
+        init_network, init_rpc_api, init_store,
     },
     utils::{self, set_datadir, store_known_peers},
     DEFAULT_L2_DATADIR,
@@ -96,12 +96,15 @@ impl Command {
         match self {
             Command::Init { opts } => {
                 let data_dir = set_datadir(&opts.node_opts.datadir);
+                let data_dir_l1 = data_dir.clone() + "/l1";
+                let data_dir_l2 = data_dir.clone() + "/l2";
 
                 let network = get_network(&opts.node_opts);
 
-                let store = init_store(&data_dir, &network).await;
+                let l1_store = init_store(&data_dir_l1, &network).await;
+                let l2_store = init_l2_store(&data_dir_l2).await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
+                let blockchain = init_blockchain(opts.node_opts.evm, l1_store.clone());
 
                 let signer = get_signer(&data_dir);
 
@@ -120,10 +123,11 @@ impl Command {
                     &signer,
                     peer_table.clone(),
                     local_p2p_node,
-                    store.clone(),
+                    l1_store.clone(),
                     blockchain.clone(),
                     cancel_token.clone(),
                     tracker.clone(),
+                    l2_store.clone(),
                 );
 
                 // TODO: Add a --metrics flag to enable metrics.
@@ -137,7 +141,7 @@ impl Command {
                         local_p2p_node,
                         signer,
                         peer_table.clone(),
-                        store.clone(),
+                        l1_store.clone(),
                         tracker.clone(),
                         blockchain.clone(),
                     )
@@ -146,7 +150,7 @@ impl Command {
                     info!("P2P is disabled");
                 }
 
-                let l2_sequencer = ethrex_l2::start_l2(store, blockchain).into_future();
+                let l2_sequencer = ethrex_l2::start_l2(l1_store, blockchain).into_future();
 
                 tracker.spawn(l2_sequencer);
 
