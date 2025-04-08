@@ -10,7 +10,7 @@ use ethrex_common::{types::Fork, U256};
 // Push Operations
 // Opcodes: PUSH0, PUSH1 ... PUSH32
 
-impl VM {
+impl<'a> VM<'a> {
     // PUSH operation
     pub fn op_push(
         &mut self,

@@ -29,6 +29,7 @@ revm = { version = "19.0.0", features = [
     "optional_no_base_fee",
     "optional_block_gas_limit",
 ], default-features = false }
+tokio.workspace = true
 
 [dev-dependencies]
 hex = "0.4.3"
@@ -37,7 +38,7 @@ hex = "0.4.3"
 path = "./lib.rs"
 
 [features]
-default = ["c-kzg", "blst", "ethrex-vm/internal"]
+default = ["c-kzg", "blst"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 blst = ["ethrex-vm/blst"]
 

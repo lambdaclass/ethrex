@@ -24,7 +24,7 @@ pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 #[derive(ClapParser)]
 #[command(name="ethrex", author = "Lambdaclass", version=VERSION_STRING, about, about = "ethrex Execution client")]
 pub struct CLI {
-    #[clap(flatten)]
+    #[command(flatten)]
     pub opts: Options,
     #[command(subcommand)]
     pub command: Option<Subcommand>,
@@ -36,7 +36,7 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and mekong.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and hoodi.",
         help_heading = "Node options"
     )]
     pub network: Option<String>,
@@ -199,26 +199,26 @@ impl Default for Options {
 #[allow(clippy::large_enum_variant)]
 #[derive(ClapSubcommand)]
 pub enum Subcommand {
-    #[clap(name = "removedb", about = "Remove the database")]
+    #[command(name = "removedb", about = "Remove the database")]
     RemoveDB {
-        #[clap(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
         datadir: String,
         #[clap(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
         force: bool,
     },
-    #[clap(name = "import", about = "Import blocks to the database")]
+    #[command(name = "import", about = "Import blocks to the database")]
     Import {
-        #[clap(
+        #[arg(
             required = true,
             value_name = "FILE_PATH/FOLDER",
             help = "Path to a RLP chain file or a folder containing files with individual Blocks"
         )]
         path: String,
-        #[clap(long = "removedb", action = ArgAction::SetTrue)]
+        #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
     #[cfg(any(feature = "l2", feature = "based"))]
-    #[clap(subcommand)]
+    #[command(subcommand)]
     L2(l2::Command),
 }
 
@@ -246,7 +246,7 @@ impl Subcommand {
                     .as_ref()
                     .expect("--network is required and it was not provided");
 
-                import_blocks(&path, &opts.datadir, network, opts.evm);
+                import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
             #[cfg(any(feature = "l2", feature = "based"))]
             Subcommand::L2(command) => command.run().await?,
@@ -282,10 +282,10 @@ pub fn remove_db(datadir: &str, force: bool) {
     }
 }
 
-pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
+pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
     let data_dir = set_datadir(data_dir);
 
-    let store = init_store(&data_dir, network);
+    let store = init_store(&data_dir, network).await;
 
     let blockchain = init_blockchain(evm, store);
 
@@ -306,5 +306,5 @@ pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) 
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-    blockchain.import_blocks(&blocks);
+    blockchain.import_blocks(&blocks).await;
 }

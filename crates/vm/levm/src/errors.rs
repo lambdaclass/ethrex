@@ -1,9 +1,9 @@
-use crate::account::Account;
 use bytes::Bytes;
-use ethrex_common::{types::Log, Address};
+use ethrex_common::types::Log;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use thiserror;
+
+use crate::db::error::DatabaseError;
 
 /// Errors that halt the program
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -74,6 +74,8 @@ pub enum VMError {
     OutOfBounds,
     #[error("Precompile execution error: {0}")]
     PrecompileError(#[from] PrecompileError),
+    #[error("Database access error: {0}")]
+    DatabaseError(#[from] DatabaseError),
 }
 
 impl VMError {
@@ -232,7 +234,6 @@ pub enum TxResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
     pub result: TxResult,
-    pub new_state: HashMap<Address, Account>,
     pub gas_used: u64,
     pub gas_refunded: u64,
     pub output: Bytes,

@@ -7,7 +7,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::node_id_from_signing_key,
-    sync::SyncManager,
+    sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
@@ -63,7 +63,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_store(data_dir: &str, network: &str) -> Store {
+pub async fn init_store(data_dir: &str, network: &str) -> Store {
     let path = PathBuf::from(data_dir);
     let store = if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
@@ -84,6 +84,7 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
     let genesis = read_genesis_file(network);
     store
         .add_initial_state(genesis.clone())
+        .await
         .expect("Failed to create genesis block");
     store
 }
@@ -117,6 +118,7 @@ pub fn init_rpc_api(
         opts.syncmode.clone(),
         cancel_token,
         blockchain.clone(),
+        store.clone(),
     );
 
     let rpc_api = ethrex_rpc::start_api(
@@ -250,8 +252,8 @@ pub fn get_network(opts: &Options) -> String {
     if network == "sepolia" {
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
     }
-    if network == "ephemery" {
-        network = String::from(networks::EPHEMERY_GENESIS_PATH);
+    if network == "hoodi" {
+        network = String::from(networks::HOODI_GENESIS_PATH);
     }
 
     network
@@ -271,9 +273,9 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
         bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
     }
 
-    if network == networks::EPHEMERY_GENESIS_PATH {
-        info!("Adding ephemery preset bootnodes");
-        bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
+    if network == networks::HOODI_GENESIS_PATH {
+        info!("Adding hoodi preset bootnodes");
+        bootnodes.extend(networks::HOODI_BOOTNODES.iter());
     }
 
     if bootnodes.is_empty() {
