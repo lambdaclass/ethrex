@@ -216,7 +216,7 @@ async fn handle_forkchoice(
 
     let fork_choice_res = if let Some(latest_valid_hash) = context
         .storage
-        .get_invalid_ancestor(fork_choice_state.head_block_hash)?
+        .get_latest_valid_ancestor(fork_choice_state.head_block_hash)?
     {
         warn!(
             "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
@@ -235,7 +235,7 @@ async fn handle_forkchoice(
                 );
                 context
                     .storage
-                    .get_invalid_ancestor(head_block.parent_hash)
+                    .get_latest_valid_ancestor(head_block.parent_hash)
                     .ok()?
             });
 

@@ -1077,11 +1077,14 @@ impl Store {
         self.engine.read_storage_snapshot(account_hash, start)
     }
 
-    pub fn get_invalid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+    pub fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError> {
         self.engine.get_latest_valid_ancestor(block)
     }
 
-    pub async fn set_invalid_ancestor(
+    pub async fn set_latest_valid_ancestor(
         &self,
         bad_block: BlockHash,
         latest_valid: BlockHash,

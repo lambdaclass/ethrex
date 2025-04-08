@@ -534,7 +534,7 @@ fn validate_ancestors(
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
     // Check if the block has already been invalidated
-    if let Some(latest_valid_hash) = context.storage.get_invalid_ancestor(block.hash())? {
+    if let Some(latest_valid_hash) = context.storage.get_latest_valid_ancestor(block.hash())? {
         return Ok(Some(PayloadStatus::invalid_with(
             latest_valid_hash,
             "Header has been previously invalidated.".into(),
@@ -544,7 +544,7 @@ fn validate_ancestors(
     // Check if the parent block has already been invalidated
     if let Some(latest_valid_hash) = context
         .storage
-        .get_invalid_ancestor(block.header.parent_hash)?
+        .get_latest_valid_ancestor(block.header.parent_hash)?
     {
         return Ok(Some(PayloadStatus::invalid_with(
             latest_valid_hash,
@@ -704,7 +704,7 @@ async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<Paylo
             warn!("Error executing block: {error}");
             context
                 .storage
-                .set_invalid_ancestor(block_hash, latest_valid_hash)
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
@@ -715,7 +715,7 @@ async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<Paylo
             warn!("Error executing block: {error}");
             context
                 .storage
-                .set_invalid_ancestor(block_hash, latest_valid_hash)
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
