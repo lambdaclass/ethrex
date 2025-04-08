@@ -7,20 +7,16 @@ use crate::constants::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
-use ethrex_common::types::requests::Requests;
-use ethrex_common::types::{
-    AccessList, AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE,
-};
 use ethrex_common::{
     types::{
-        code_hash, AccountInfo, Block, BlockHeader, Receipt, Transaction, TxKind, Withdrawal,
-        GWEI_TO_WEI,
+        code_hash, requests::Requests, AccessList, AccountInfo, AuthorizationTuple, Block,
+        BlockHeader, EIP1559Transaction, EIP7702Transaction, Fork, GenericTransaction, Receipt,
+        Transaction, TxKind, Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
     },
     Address, H256, U256,
 };
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
-    hooks::l2_hook::L2Hook,
     vm::{EVMConfig, GeneralizedDatabase, Substate, VM},
     Account, AccountInfo as LevmAccountInfo, Environment,
 };
@@ -28,7 +24,6 @@ use ethrex_storage::error::StoreError;
 use ethrex_storage::AccountUpdate;
 use std::cmp::min;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
@@ -142,30 +137,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
         };
 
-        let mut vm = if let Transaction::PrivilegedL2Transaction(privileged_tx) = tx {
-            VM::new_with_hooks(
-                tx.to(),
-                env,
-                tx.value(),
-                tx.data().clone(),
-                db,
-                tx.access_list(),
-                tx.authorization_list(),
-                vec![Arc::new(L2Hook {
-                    recipient: privileged_tx.recipient,
-                })],
-            )?
-        } else {
-            VM::new(
-                tx.to(),
-                env,
-                tx.value(),
-                tx.data().clone(),
-                db,
-                tx.access_list(),
-                tx.authorization_list(),
-            )?
-        };
+        let mut vm = VM::new(env, db, tx)?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -438,16 +410,13 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
-    let mut vm = VM::new(
-        TxKind::Call(contract_address),
-        env,
-        U256::zero(),
-        calldata,
-        db,
-        vec![],
-        None,
-    )
-    .map_err(EvmError::from)?;
+    let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(contract_address),
+        value: U256::zero(),
+        data: calldata,
+        ..Default::default()
+    });
+    let mut vm = VM::new(env, db, tx).map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
     db.cache.remove(&system_address);
@@ -577,20 +546,36 @@ fn vm_from_generic<'a>(
     env: Environment,
     db: &'a mut GeneralizedDatabase,
 ) -> Result<VM<'a>, VMError> {
-    VM::new(
-        tx.to.clone(),
-        env,
-        tx.value,
-        tx.input.clone(),
-        db,
-        tx.access_list
-            .iter()
-            .map(|list| (list.address, list.storage_keys.clone()))
-            .collect(),
-        tx.authorization_list.clone().map(|list| {
-            list.iter()
-                .map(|list| Into::<AuthorizationTuple>::into(list.clone()))
-                .collect()
+    let tx = match &tx.authorization_list {
+        Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
+            to: match tx.to {
+                TxKind::Call(to) => to,
+                TxKind::Create => return Err(VMError::InvalidTransaction),
+            },
+            value: tx.value,
+            data: tx.input.clone(),
+            access_list: tx
+                .access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            authorization_list: authorization_list
+                .iter()
+                .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
+                .collect(),
+            ..Default::default()
         }),
-    )
+        None => Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: tx.to.clone(),
+            value: tx.value,
+            data: tx.input.clone(),
+            access_list: tx
+                .access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            ..Default::default()
+        }),
+    };
+    VM::new(env, db, &tx)
 }
