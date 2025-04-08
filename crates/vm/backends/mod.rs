@@ -81,8 +81,8 @@ impl Evm {
         }
     }
 
-    pub fn to_execution_db(store: &Store, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
-        LEVM::to_execution_db(block, store)
+    pub async fn to_execution_db(store: &Store, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
+        LEVM::to_execution_db(block, store).await
     }
 
     pub fn default(store: Store, parent_hash: H256) -> Self {

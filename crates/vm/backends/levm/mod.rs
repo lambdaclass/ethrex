@@ -1,4 +1,4 @@
-pub(crate) mod db;
+pub mod db;
 
 use super::revm::db::get_potential_child_nodes;
 use super::BlockExecutionResult;
@@ -400,14 +400,14 @@ impl LEVM {
         Ok((report.into(), access_list))
     }
 
-    pub fn to_execution_db(block: &Block, store: &Store) -> Result<ExecutionDB, ExecutionDBError> {
+    pub async fn to_execution_db(block: &Block, store: &Store) -> Result<ExecutionDB, ExecutionDBError> {
         let parent_hash = block.header.parent_hash;
         let chain_config = store.get_chain_config()?;
 
-        let logger = Arc::new(DatabaseLogger::new(StoreWrapper {
+        let logger = Arc::new(DatabaseLogger::new(Arc::new(StoreWrapper {
             store: store.clone(),
             block_hash: block.header.parent_hash,
-        }));
+        })));
         let logger_ref = Arc::clone(&logger);
         let mut db = GeneralizedDatabase::new(logger, CacheDB::new());
 
@@ -497,7 +497,7 @@ impl LEVM {
                         .map(|key| {
                             let key = H256::from(key.to_fixed_bytes());
                             let value = store
-                                .get_storage_at_hash(parent_hash, update.address, key)
+                                .get_storage_at_hash(block.header.compute_block_hash(), update.address, key)
                                 .map_err(ExecutionDBError::Store)?
                                 .ok_or(ExecutionDBError::NewMissingStorage(update.address, key))?;
                             Ok((key, value))
@@ -518,7 +518,7 @@ impl LEVM {
             .collect();
 
         let new_store = store.clone();
-        new_store.apply_account_updates(block.hash(), &execution_updates)?;
+        new_store.apply_account_updates(block.hash(), &execution_updates).await?;
 
         // get account proofs
         let state_trie = new_store

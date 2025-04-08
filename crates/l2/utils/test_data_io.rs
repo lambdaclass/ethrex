@@ -58,7 +58,7 @@ pub fn generate_rlp(
     Ok(())
 }
 
-pub fn generate_program_input(
+pub async fn generate_program_input(
     genesis: Genesis,
     chain: Vec<Block>,
     block_number: usize,
@@ -83,7 +83,7 @@ pub fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    let db = Evm::to_execution_db(&store, &block)?;
+    let db = Evm::to_execution_db(&store, &block).await?;
 
     Ok(ProgramInput {
         db,

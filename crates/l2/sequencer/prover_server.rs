@@ -408,7 +408,7 @@ impl ProverServer {
             debug!("Block: {block_number} has been submitted.");
             response
         } else {
-            let input = self.create_prover_input(block_number)?;
+            let input = self.create_prover_input(block_number).await?;
             let response = ProofData::response(Some(block_number), Some(input));
             info!("Sent Response for block_number: {block_number}");
             response
@@ -439,7 +439,7 @@ impl ProverServer {
         Ok(())
     }
 
-    fn create_prover_input(&self, block_number: u64) -> Result<ProverInputData, ProverServerError> {
+    async fn create_prover_input(&self, block_number: u64) -> Result<ProverInputData, ProverServerError> {
         let header = self
             .store
             .get_block_header(block_number)?
@@ -453,7 +453,7 @@ impl ProverServer {
 
         let parent_hash = block.header.parent_hash;
         let db =
-            Evm::to_execution_db(&self.store.clone(), &block).map_err(EvmError::ExecutionDB)?;
+            Evm::to_execution_db(&self.store.clone(), &block).await.map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store
