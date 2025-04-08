@@ -11,11 +11,21 @@ path = "src/lib.rs"
 ethrex-levm = { path = "../../" }
 ethrex-vm.workspace = true
 ethrex-common.workspace = true
+ethrex-storage.workspace = true
 hex.workspace = true
 bytes.workspace = true
 
-revm = "9.0.0"
+revm = { version = "19.0.0", features = [
+    "serde",
+    "std",
+    "serde-json",
+    "optional_no_base_fee",
+    "optional_block_gas_limit",
+], default-features = false }
 sha3 = "0.10.8"
+revm-primitives = { version = "14.0.0", features = [
+    "std",
+], default-features = false }
 
 [[bin]]
 name = "compile"

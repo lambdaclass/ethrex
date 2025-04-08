@@ -11,14 +11,15 @@ use ethrex_levm::{
 };
 use ethrex_vm::db::ExecutionDB;
 use revm::{
-    db::BenchmarkDB,
-    primitives::{address, Address, Bytecode, TransactTo},
+    db::{BenchmarkDB, CacheDB as RevmCacheDB, DbAccount},
+    primitives::{Address, Bytecode, HashMap as RevmHashMap, TransactTo},
     Evm,
 };
+use revm_primitives::U256 as RevmU256;
 use sha3::{Digest, Keccak256};
-use std::hint::black_box;
 use std::io::Read;
 use std::{collections::HashMap, fs::File, sync::Arc};
+use std::{hint::black_box, str::FromStr};
 
 pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
     let bytecode = Bytes::from(hex::decode(program).unwrap());
@@ -85,54 +86,76 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
     );
 
     // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
-    for _nonce in 0..runs - 1 {
+    println!("Number of runs: {}", runs);
+    for _nonce in 0..runs {
         let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
         vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
         vm.env.gas_limit = u64::MAX - 1;
         vm.env.block_gas_limit = u64::MAX;
+        // println!("Before LEVM execute {}", _nonce);
         let tx_report = black_box(vm.stateless_execute().unwrap());
+        // println!("After LEVM execute {}", 0);
         assert!(tx_report.result == TxResult::Success);
-    }
-    let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
-    vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
-    vm.env.gas_limit = u64::MAX - 1;
-    vm.env.block_gas_limit = u64::MAX;
-    let tx_report = black_box(vm.stateless_execute().unwrap());
-    assert!(tx_report.result == TxResult::Success);
+        println!("LEVM: Finished run {}", _nonce);
 
-    match tx_report.result {
-        TxResult::Success => {
+        if _nonce == runs - 1 {
             println!("output: \t\t0x{}", hex::encode(tx_report.output));
         }
-        TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
     }
+
+    println!("LEVM: Finished running.");
 }
 
 pub fn run_with_revm(program: &str, runs: u64, calldata: &str) {
-    let rich_acc_address = address!("1000000000000000000000000000000000000000");
-    let bytes = hex::decode(program).unwrap();
-    let raw = Bytecode::new_raw(bytes.clone().into());
+    let bytecode = Bytes::from(hex::decode(program).unwrap());
+    let execution_db = ExecutionDB::default();
 
-    let mut evm = Evm::builder()
-        .modify_tx_env(|tx| {
-            tx.caller = rich_acc_address;
-            tx.transact_to = TransactTo::Call(Address::ZERO);
-            tx.data = hex::decode(calldata).unwrap().into();
-        })
-        .with_db(BenchmarkDB::new_bytecode(raw))
-        .build();
+    let mut revm_cache_db = RevmCacheDB::new(execution_db);
 
-    let result = evm.transact().unwrap();
-    assert!(result.result.is_success());
+    let mut accounts: RevmHashMap<Address, DbAccount> = RevmHashMap::default();
 
-    for _ in 0..runs - 1 {
+    let sender_address =
+        revm_primitives::Address::from_str("0x0000000000000000000000000000000000000064").unwrap();
+    let mut sender_account = DbAccount::new_not_existing();
+    sender_account.info.balance = RevmU256::MAX;
+
+    let contract_address =
+        revm_primitives::Address::from_str("0x000000000000000000000000000000000000002A").unwrap();
+    let mut contract_account = DbAccount::new_not_existing();
+    contract_account.info.balance = RevmU256::MAX;
+    contract_account.info.code = Some(Bytecode::new_raw(bytecode.clone().into()));
+
+    accounts.insert(sender_address, sender_account);
+    accounts.insert(contract_address, contract_account);
+
+    revm_cache_db.accounts = accounts;
+
+    println!("Number of runs: {}", runs);
+    for i in 0..runs {
+        let mut evm = Evm::builder()
+            .modify_tx_env(|tx| {
+                tx.caller = Address::from(sender_address.0);
+                tx.transact_to = TransactTo::Call(
+                    Address::from_str("0x000000000000000000000000000000000000002A").unwrap(),
+                ); // 0x2a = 42
+                tx.data = hex::decode(calldata).unwrap().into();
+            })
+            .with_db(&mut revm_cache_db)
+            .build();
+
         let result = black_box(evm.transact()).unwrap();
         assert!(result.result.is_success());
-    }
-    let result = black_box(evm.transact()).unwrap();
-    assert!(result.result.is_success());
+        println!("REVM: Finished run {}", i);
 
-    println!("output: \t\t{}", result.result.into_output().unwrap());
+        if i == runs - 1 {
+            println!(
+                "output: \t\t0x{}",
+                hex::encode(result.result.into_output().unwrap())
+            );
+        }
+    }
+
+    println!("REVM: Finished running.");
 }
 
 pub fn generate_calldata(function: &str, n: u64) -> String {
