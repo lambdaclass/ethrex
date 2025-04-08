@@ -59,7 +59,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
 
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
-    let decoding_exception_cases = vec![
+    let decoding_exception_cases = [
         "BlockException.RLP_",
         // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
         // have the "to" field set to null (create).
