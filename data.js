@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744043094832,
+  "lastUpdate": 1744123386653,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2665,6 +2665,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182632011793,
             "range": "± 689287871",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Io",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6e5536d5f2231dfeb0dc6025dcfb5e4ccb71cb05",
+          "message": "refactor(l1): use non-hardcoded fork name (#2416)\n\n**Motivation**\n\nAvoids hardcoding fork name in the Transactions RPC as mentioned in\n#2185\n\n**Description**\n\nReads the current fork from the queried block instead of hardcoding it.",
+          "timestamp": "2025-04-08T13:53:38Z",
+          "tree_id": "b973e3a017227e8aeabb034e10399c19adc5b68b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6e5536d5f2231dfeb0dc6025dcfb5e4ccb71cb05"
+        },
+        "date": 1744123384232,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184027510509,
+            "range": "± 1516770499",
             "unit": "ns/iter"
           }
         ]
