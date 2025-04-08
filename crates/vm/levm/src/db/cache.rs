@@ -23,7 +23,7 @@ pub fn insert_account(
     address: Address,
     account: Account,
 ) -> Option<Account> {
-    cached_accounts.insert(address, account.clone())
+    cached_accounts.insert(address, account)
 }
 
 pub fn remove_account(cached_accounts: &mut CacheDB, address: &Address) -> Option<Account> {

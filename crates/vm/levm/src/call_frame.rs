@@ -86,8 +86,8 @@ pub struct CallFrame {
     pub valid_jump_destinations: HashSet<usize>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
-    /// backup cache
-    pub backup: HashMap<Address, Option<Account>>,
+    /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
+    pub previous_cache_state: HashMap<Address, Option<Account>>,
 }
 
 impl CallFrame {

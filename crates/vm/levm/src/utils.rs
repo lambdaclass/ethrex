@@ -182,7 +182,7 @@ pub fn get_account_mut_vm<'a>(
 
     if let Some(call_frame) = call_frame {
         call_frame
-            .backup
+            .previous_cache_state
             .entry(address)
             .or_insert_with(|| Some(original_account.clone()));
     };

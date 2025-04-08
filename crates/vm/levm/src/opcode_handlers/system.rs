@@ -726,9 +726,9 @@ impl<'a> VM<'a> {
                     .stack
                     .push(address_to_word(new_address))?;
 
-                for (address, account_opt) in new_call_frame.backup {
+                for (address, account_opt) in new_call_frame.previous_cache_state {
                     current_call_frame
-                        .backup
+                        .previous_cache_state
                         .entry(address)
                         .or_insert(account_opt);
                 }
@@ -866,9 +866,9 @@ impl<'a> VM<'a> {
         match tx_report.result {
             TxResult::Success => {
                 current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
-                for (address, account_opt) in new_call_frame.backup {
+                for (address, account_opt) in new_call_frame.previous_cache_state {
                     current_call_frame
-                        .backup
+                        .previous_cache_state
                         .entry(address)
                         .or_insert(account_opt);
                 }

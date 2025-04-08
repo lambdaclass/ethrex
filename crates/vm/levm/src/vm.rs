@@ -411,7 +411,7 @@ impl<'a> VM<'a> {
             return Err(e);
         }
         // clear callframe backup because prepare_execution succeeded
-        initial_call_frame.backup = HashMap::new();
+        initial_call_frame.previous_cache_state = HashMap::new();
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
@@ -564,7 +564,7 @@ impl<'a> VM<'a> {
     }
 
     fn restore_cache_state(&mut self, call_frame: &CallFrame) {
-        for (address, account_opt) in &call_frame.backup {
+        for (address, account_opt) in &call_frame.previous_cache_state {
             if let Some(account) = account_opt {
                 cache::insert_account(&mut self.db.cache, *address, account.clone());
             } else {
@@ -583,7 +583,7 @@ impl<'a> VM<'a> {
         let previous_account = cache::insert_account(&mut self.db.cache, address, account);
 
         call_frame
-            .backup
+            .previous_cache_state
             .entry(address)
             .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
     }
@@ -592,7 +592,7 @@ impl<'a> VM<'a> {
         let previous_account = cache::remove_account(&mut self.db.cache, &address);
 
         call_frame
-            .backup
+            .previous_cache_state
             .entry(address)
             .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
     }
