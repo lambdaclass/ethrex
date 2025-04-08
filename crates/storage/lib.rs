@@ -1,8 +1,9 @@
-mod account_update;
 mod api;
+
+mod account_update;
 mod rlp;
 mod store;
-pub mod store_db;
+mod store_db;
 mod trie_db;
 mod utils;
 

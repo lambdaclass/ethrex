@@ -30,7 +30,6 @@ tokio = { version = "1.41.1", optional = true, default-features = false, feature
 default = []
 libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "dep:tokio"]
 redb = ["dep:redb", "dep:tokio"]
-l2 = []
 
 [dev-dependencies]
 hex.workspace = true
