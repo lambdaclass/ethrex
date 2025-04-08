@@ -134,22 +134,4 @@ impl SyncManager {
             SyncMode::Full
         }
     }
-
-    /// TODO: Very dirty method that should be removed asap once we move invalid ancestors to the store
-    /// Returns a copy of the invalid ancestors if the syncer is not busy
-    pub fn invalid_ancestors(&self) -> Option<std::collections::HashMap<H256, H256>> {
-        self.syncer
-            .try_lock()
-            .map(|syncer| syncer.invalid_ancestors.clone())
-            .ok()
-    }
-
-    /// TODO: Very dirty method that should be removed asap once we move invalid ancestors to the store
-    /// Adds a key value pair to invalid ancestors if the syncer is not busy
-    pub fn add_invalid_ancestor(&self, k: H256, v: H256) -> bool {
-        self.syncer
-            .try_lock()
-            .map(|mut syncer| syncer.invalid_ancestors.insert(k, v))
-            .is_ok()
-    }
 }

@@ -1,5 +1,4 @@
 use crate::authentication::authenticate;
-use crate::clients::{EngineClient, EthClient};
 use crate::engine::{
     exchange_transition_config::ExchangeTransitionConfigV1Req,
     fork_choice::{ForkChoiceUpdatedV1, ForkChoiceUpdatedV2, ForkChoiceUpdatedV3},
@@ -38,6 +37,8 @@ use crate::utils::{
 };
 use crate::{admin, net};
 use crate::{eth, web3};
+#[cfg(feature = "based")]
+use crate::{EngineClient, EthClient};
 use axum::extract::State;
 use axum::{routing::post, Json, Router};
 use axum_extra::{
