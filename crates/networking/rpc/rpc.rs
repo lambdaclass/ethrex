@@ -449,6 +449,7 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
+        "net_peerCount" => net::peer_count(req, contex),
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
 }
