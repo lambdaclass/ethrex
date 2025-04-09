@@ -208,20 +208,12 @@ impl LevmDatabase for ExecutionDB {
     fn get_account_info_by_hash(
         &self,
         _block_hash: ethrex_common::types::BlockHash,
-        _address: CoreAddress,
+        address: CoreAddress,
     ) -> Result<Option<ethrex_common::types::AccountInfo>, DatabaseError> {
-        Err(DatabaseError::Custom(
-            "Error: You should not be calling `get_account_info_by_hash` on the ExecutionDb"
-                .to_owned(),
-        ))
+        Ok(self.accounts.get(&address).cloned())
     }
 
-    fn get_account_code(
-        &self,
-        _code_hash: CoreH256,
-    ) -> Result<Option<bytes::Bytes>, DatabaseError> {
-        Err(DatabaseError::Custom(
-            "Error: You should not be calling `get_account_code` on the ExecutionDb".to_owned(),
-        ))
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
+        Ok(self.code.get(&code_hash).cloned())
     }
 }

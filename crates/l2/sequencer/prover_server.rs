@@ -439,7 +439,10 @@ impl ProverServer {
         Ok(())
     }
 
-    async fn create_prover_input(&self, block_number: u64) -> Result<ProverInputData, ProverServerError> {
+    async fn create_prover_input(
+        &self,
+        block_number: u64,
+    ) -> Result<ProverInputData, ProverServerError> {
         let header = self
             .store
             .get_block_header(block_number)?
@@ -452,8 +455,9 @@ impl ProverServer {
         let block = Block::new(header, body);
 
         let parent_hash = block.header.parent_hash;
-        let db =
-            Evm::to_execution_db(&self.store.clone(), &block).await.map_err(EvmError::ExecutionDB)?;
+        let db = Evm::to_execution_db(&self.store.clone(), &block)
+            .await
+            .map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store

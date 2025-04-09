@@ -46,7 +46,6 @@ pub struct ExecutionDB {
 }
 
 impl ExecutionDB {
-
     pub fn get_chain_config(&self) -> ChainConfig {
         self.chain_config
     }

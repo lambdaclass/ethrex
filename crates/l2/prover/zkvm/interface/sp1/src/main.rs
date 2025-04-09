@@ -36,7 +36,7 @@ pub fn main() {
     let result = evm.execute_block(&block).expect("failed to execute block");
     let receipts = result.receipts;
     let account_updates = result.account_updates;
-    // validate_gas_used(&receipts, &block.header).expect("invalid gas used");
+    validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
     // Output gas for measurement purposes
     let cumulative_gas_used = receipts
@@ -51,9 +51,9 @@ pub fn main() {
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
-    // if final_state_hash != block.header.state_root {
-    //     panic!("invalid final state trie");
-    // }
+    if final_state_hash != block.header.state_root {
+        panic!("invalid final state trie");
+    }
 
     sp1_zkvm::io::commit(&ProgramOutput {
         initial_state_hash,

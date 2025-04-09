@@ -5,7 +5,6 @@ use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
 use crate::rpc::{get_account, retry};
 
 use bytes::Bytes;
-use ethrex_common::types::ChainConfig;
 use ethrex_common::{
     types::{AccountInfo, AccountState, Block, TxKind},
     Address, H256, U256,
@@ -14,17 +13,14 @@ use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::vm::GeneralizedDatabase;
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
-use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{fork_to_spec_id, EvmError, ExecutionDB, ExecutionDBError};
+use ethrex_vm::backends::levm::{CacheDB, LEVM};
+use ethrex_vm::{ExecutionDB, ExecutionDBError};
 use futures_util::future::join_all;
 use tokio_utils::RateLimiter;
-use ethrex_vm::backends::levm::{CacheDB, LEVM};
-use ethrex_storage::error::StoreError;
 
+use ethrex_levm::db::error::DatabaseError;
 use std::sync::Arc;
 use std::sync::Mutex;
-use ethrex_vm::StoreWrapper;
-use ethrex_levm::db::error::DatabaseError;
 
 use super::{Account, NodeRLP};
 
@@ -181,30 +177,35 @@ impl RpcDB {
             .map_err(Box::new)?
             .account_updates;
 
-        let accounts_accessed : Vec<_> = self.cache.lock().unwrap().iter().map(|(address, account)| {
-            *address
-        }).collect();
+        let index: Vec<(Address, Vec<H256>)> = self
+            .cache
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(address, account)| match account {
+                Account::Existing {
+                    account_state,
+                    storage,
+                    account_proof,
+                    storage_proofs,
+                    code,
+                } => (*address, storage.keys().cloned().collect()),
+                Account::NonExisting {
+                    account_proof,
+                    storage_proofs,
+                } => {
+                    let address_account_update = execution_updates
+                        .iter()
+                        .find(|update| update.address == *address);
 
-        let index : Vec<(Address, Vec<H256>)> = 
-            self.cache.lock().unwrap().iter().map(|(address, account)| {
-                match account {
-                    Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                        (*address, storage.keys().cloned().collect())
-                    },
-                    Account::NonExisting { account_proof, storage_proofs } => {
-                        let address_account_update = execution_updates.iter().find(|update| {
-                            update.address == *address
-                        });
-
-                        if let Some(update) = address_account_update {
-                            (*address, update.added_storage.keys().cloned().collect())
-                        } else {
-                            (*address, vec![])
-                        }
-                    },
+                    if let Some(update) = address_account_update {
+                        (*address, update.added_storage.keys().cloned().collect())
+                    } else {
+                        (*address, vec![])
+                    }
                 }
-            }).collect();
-
+            })
+            .collect();
 
         // fetch all of them, both before and after block execution
         let initial_accounts = self.fetch_accounts_blocking(&index, false).unwrap();
@@ -300,7 +301,8 @@ impl RpcDB {
             .collect();
         let block_hashes = self
             .block_hashes
-            .lock().unwrap()
+            .lock()
+            .unwrap()
             .iter()
             .map(|(num, hash)| (*num, *hash))
             .collect();
@@ -351,8 +353,23 @@ impl RpcDB {
 
 impl LevmDatabase for RpcDB {
     fn account_exists(&self, address: Address) -> bool {
-        let account = self.fetch_account_blocking(address, &[], false).unwrap();
-        matches!(account, Account::Existing { .. })
+        // look into the cache
+        {
+            if self
+                .cache
+                .lock().unwrap()
+                .get(&address)
+                .is_some_and(|account| matches!(account, Account::Existing { .. }))
+            {
+                return true;
+            }
+        }
+        if self.fetch_account_blocking(address, &[], false).is_ok_and(|account| {
+            matches!(account, Account::Existing { .. })
+        }) {
+            return true;
+        }
+        false
     }
 
     fn get_account_code(&self, _code_hash: H256) -> Result<Option<Bytes>, DatabaseError> {
@@ -363,14 +380,22 @@ impl LevmDatabase for RpcDB {
         &self,
         address: Address,
     ) -> std::result::Result<ethrex_levm::AccountInfo, ethrex_levm::db::error::DatabaseError> {
-        let account = self
-            .fetch_accounts_blocking(&[(address, vec![])], false)
-            .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?;
-        if let Some(Account::Existing {
+        let cache = self.cache.lock().unwrap();
+        let account = if let Some(account) = cache.get(&address).cloned() {
+            account
+        } else {
+            drop(cache);
+            self.fetch_accounts_blocking(&[(address, vec![])], false)
+                .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
+                .get(&address)
+                .unwrap()
+                .clone()
+        };
+        if let Account::Existing {
             account_state,
             code,
             ..
-        }) = account.get(&address)
+        } = account
         {
             Ok(ethrex_levm::AccountInfo {
                 bytecode: code.clone().unwrap_or_default(),
@@ -383,9 +408,17 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        let account = self
-            .fetch_account_blocking(address, &[key], false)
-            .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?;
+        let cache = self.cache.lock().unwrap();
+        let account = if let Some(account) = cache.get(&address).cloned() {
+            account
+        } else {
+            drop(cache);
+            self.fetch_accounts_blocking(&[(address, vec![])], false)
+                .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
+                .get(&address)
+                .unwrap()
+                .clone()
+        };
         if let Account::Existing { storage, .. } = account {
             if let Some(value) = storage.get(&key) {
                 Ok(*value)
@@ -398,7 +431,12 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, DatabaseError> {
-        Ok(self.block_hashes.lock().unwrap().get(&block_number).cloned())
+        Ok(self
+            .block_hashes
+            .lock()
+            .unwrap()
+            .get(&block_number)
+            .cloned())
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {

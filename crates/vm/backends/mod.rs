@@ -81,7 +81,10 @@ impl Evm {
         }
     }
 
-    pub async fn to_execution_db(store: &Store, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
+    pub async fn to_execution_db(
+        store: &Store,
+        block: &Block,
+    ) -> Result<ExecutionDB, ExecutionDBError> {
         LEVM::to_execution_db(block, store).await
     }
 
