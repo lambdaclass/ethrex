@@ -271,6 +271,7 @@ async fn rebuild_storage_trie(
     expected_root: H256,
     store: Store,
 ) -> Result<(), SyncError> {
+    info!("Rebuilding Storage Trie!");
     let full_time_start = Instant::now();
     let mut start = H256::zero();
     let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
