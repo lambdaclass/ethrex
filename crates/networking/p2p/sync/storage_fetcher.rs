@@ -15,8 +15,8 @@ use tracing::{debug, error};
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT, fetcher_queue::run_queue, MAX_CHANNEL_MESSAGES,
-        STORAGE_BATCH_SIZE,
+        fetcher_queue::run_queue, trie_rebuild::REBUILDER_INCOMPLETE_STORAGE_ROOT,
+        MAX_CHANNEL_MESSAGES, STORAGE_BATCH_SIZE,
     },
 };
 
