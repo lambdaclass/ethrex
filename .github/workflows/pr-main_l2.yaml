@@ -5,6 +5,9 @@ on:
   merge_group:
   pull_request:
     branches: ["**"]
+    paths:
+      - "crates/l2/**"
+      - ".github/workflows/pr-main_l2.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
