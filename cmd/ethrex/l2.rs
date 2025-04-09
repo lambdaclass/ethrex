@@ -26,6 +26,8 @@ pub enum Command {
     RemoveDB {
         #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_L2_DATADIR, required = false)]
         datadir: String,
+        #[clap(long = "force", required = false, action = clap::ArgAction::SetTrue)]
+        force: bool,
     },
 }
 
@@ -162,9 +164,9 @@ impl Command {
                     }
                 }
             }
-            Self::RemoveDB { datadir } => {
+            Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
-                    ethrex_cli::Subcommand::RemoveDB { datadir }
+                    ethrex_cli::Subcommand::RemoveDB { datadir, force }
                         .run(&Options::default()) // This is not used by the RemoveDB command.
                         .await
                 })
