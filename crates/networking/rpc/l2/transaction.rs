@@ -85,9 +85,10 @@ impl RpcHandler for SponsoredTx {
                     context
                         .storage
                         .get_latest_block_number()
+                        .await
                         .map_err(RpcErr::from)?,
                     self.to,
-                )
+                ).await
                 .map_err(RpcErr::from)?
                 .unwrap_or_default();
             let code = context
@@ -121,15 +122,18 @@ impl RpcHandler for SponsoredTx {
         let latest_block_number = context
             .storage
             .get_latest_block_number()
+            .await
             .map_err(RpcErr::from)?;
         let chain_config = context.storage.get_chain_config().map_err(RpcErr::from)?;
         let chain_id = chain_config.chain_id;
         let nonce = context
             .storage
             .get_nonce_by_account_address(latest_block_number, sponsor_address)
+            .await
             .map_err(RpcErr::from)?
             .ok_or(RpcErr::InvalidEthrexL2Message("Invalid nonce".to_string()))?;
         let max_priority_fee_per_gas = estimate_gas_tip(&context.storage)
+            .await
             .map_err(RpcErr::from)?
             .unwrap_or_default();
         let gas_price_request = GasPrice {}.handle(context.clone()).await?;
