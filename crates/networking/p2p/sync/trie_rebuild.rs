@@ -291,10 +291,10 @@ async fn rebuild_storage_trie(
         keys_read += batch.len();
         time_spent_reading += read_start.elapsed().as_millis();
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
-        // // Update start
-        // if let Some(last) = batch.last() {
-        //     start = next_hash(last.0);
-        // }
+        // Update start
+        if let Some(last) = batch.last() {
+            start = next_hash(last.0);
+        }
         // Process batch
         let write_start = Instant::now();
         for (key, val) in batch {
@@ -309,13 +309,13 @@ async fn rebuild_storage_trie(
             break;
         }
     }
-    let full_time = full_time_start.elapsed().as_millis();
     if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
         warn!("Mismatched storage root for account {account_hash}");
         store
             .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
             .await?;
     }
+    let full_time = full_time_start.elapsed().as_millis();
     StorageRebuildMetrics {
         cycles,
         time_spent_reading,
