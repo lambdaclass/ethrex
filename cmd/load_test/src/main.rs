@@ -106,15 +106,15 @@ async fn claim_erc20_balances(
     for (pk, sk) in accounts {
         let contract = contract_address;
         let client = client.clone();
-        let pk = pk.clone();
-        let sk = sk.clone();
+        let pk = *pk;
+        let sk = *sk;
 
         tasks.spawn(async move {
             let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
             let claim_tx = client
                 .build_eip1559_transaction(
                     contract,
-                    address_from_pub_key(pk.clone()),
+                    address_from_pub_key(pk),
                     claim_balance_calldata.into(),
                     Default::default(),
                 )
@@ -180,8 +180,8 @@ async fn load_test(
 ) -> eyre::Result<()> {
     let mut tasks = FuturesUnordered::new();
     for (pk, sk) in accounts {
-        let pk = pk.clone();
-        let sk = sk.clone();
+        let pk = *pk;
+        let sk = *sk;
         let client = client.clone();
         let tx_builder = tx_builder.clone();
         tasks.push(async move {
@@ -201,7 +201,7 @@ async fn load_test(
                         calldata.into(),
                         Overrides {
                             chain_id: Some(chain_id),
-                            value: value,
+                            value,
                             nonce: Some(nonce + i),
                             max_fee_per_gas: Some(3121115334),
                             max_priority_fee_per_gas: Some(3000000000),
@@ -243,10 +243,10 @@ fn parse_pk_file(path: &Path) -> eyre::Result<Vec<Account>> {
 fn parse_private_key_into_account(pkey: &str) -> Account {
     let key = pkey
         .parse::<H256>()
-        .expect(format!("Private key is not a valid hex representation {}", pkey).as_str());
+        .unwrap_or_else(|_| panic!("Private key is not a valid hex representation {}", pkey));
     let secret_key = SecretKey::from_slice(key.as_bytes())
-        .expect(format!("Invalid private key {}", pkey).as_str());
-    let public_key = secret_key.public_key(secp256k1::SECP256K1).clone();
+        .unwrap_or_else(|_| panic!("Invalid private key {}", pkey));
+    let public_key = secret_key.public_key(secp256k1::SECP256K1);
     (public_key, secret_key)
 }
 
@@ -255,7 +255,7 @@ async fn main() {
     let cli = Cli::parse();
     let pkeys_path = Path::new(&cli.pkeys);
     let accounts = parse_pk_file(pkeys_path)
-        .expect(format!("Failed to parse private keys file {}", pkeys_path.display()).as_str());
+        .unwrap_or_else(|_| panic!("Failed to parse private keys file {}", pkeys_path.display()));
     let client = EthClient::new(&cli.node);
 
     // We ask the client for the chain id.
