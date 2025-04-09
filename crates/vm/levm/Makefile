@@ -102,7 +102,6 @@ define run_benchmark
 	@echo
 endef
 
-
 define run_benchmark_ci
 	@printf "%s\n" "revm_$(1)"
 	@target/release/benchmark revm $(1) 1 $($(3))
