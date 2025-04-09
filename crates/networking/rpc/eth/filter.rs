@@ -257,6 +257,7 @@ mod tests {
         eth::{
             filter::PollableFilter,
             logs::{AddressFilter, LogsFilter, TopicFilter},
+            test_utils::default_context_with_storage,
         },
         rpc::{map_http_requests, RpcApiContext, FILTER_DURATION},
         utils::test_utils::{self, example_local_node_record, start_test_api},
@@ -441,32 +442,9 @@ mod tests {
     ) -> u64 {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
+        let mut context = default_context_with_storage(storage).await;
+        context.active_filters = filters_pointer.clone();
 
-        #[cfg(feature = "l2")]
-        let l2_store = StoreL2::new("in-mem", EngineTypeL2::InMemory)
-            .expect("Fatal: could not create in memory test db");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: filters_pointer.clone(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-            #[cfg(feature = "l2")]
-            l2_store,
-        };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
             serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
