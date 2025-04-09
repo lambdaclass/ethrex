@@ -71,7 +71,7 @@ cfg_if::cfg_if! {
         use crate::l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
-        use ethrex_storage::StoreL2;
+        use ethrex_storage::{StoreL2};
     }
 }
 
@@ -85,6 +85,7 @@ enum RpcRequestWrapper {
     Multiple(Vec<RpcRequest>),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RpcApiContext {
     pub storage: Store,
@@ -519,6 +520,8 @@ mod tests {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     #[cfg(feature = "l2")]
+    use ethrex_storage::{EngineTypeL2, StoreL2};
+    #[cfg(feature = "l2")]
     use secp256k1::rand;
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
@@ -558,7 +561,7 @@ mod tests {
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
             #[cfg(feature = "l2")]
-            l2_store: StoreL2::new("temp.db", EngineType::InMemory)
+            l2_store: StoreL2::new("temp.db", EngineTypeL2::InMemory)
                 .expect("Failed to create test DB"),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
@@ -660,7 +663,7 @@ mod tests {
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
             #[cfg(feature = "l2")]
-            l2_store: StoreL2::new("temp.db", EngineType::InMemory)
+            l2_store: StoreL2::new("temp.db", EngineTypeL2::InMemory)
                 .expect("Failed to create test DB"),
         };
         let result = map_http_requests(&request, context).await;
@@ -707,7 +710,7 @@ mod tests {
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
             #[cfg(feature = "l2")]
-            l2_store: StoreL2::new("temp.db", EngineType::InMemory)
+            l2_store: StoreL2::new("temp.db", EngineTypeL2::InMemory)
                 .expect("Failed to create test DB"),
         };
         let result = map_http_requests(&request, context).await;
@@ -788,7 +791,7 @@ mod tests {
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
             #[cfg(feature = "l2")]
-            l2_store: StoreL2::new("temp.db", EngineType::InMemory)
+            l2_store: StoreL2::new("temp.db", EngineTypeL2::InMemory)
                 .expect("Failed to create test DB"),
         };
         // Process request

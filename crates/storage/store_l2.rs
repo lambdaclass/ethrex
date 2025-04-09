@@ -13,6 +13,14 @@ pub struct Store {
     engine: Arc<dyn StoreEngineL2>,
 }
 
+impl Default for Store {
+    fn default() -> Self {
+        Self {
+            engine: Arc::new(InMemoryStore::new()),
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineType {
@@ -36,7 +44,7 @@ impl Store {
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
-                engine: Arc::new(RedBStoreL2::new()?),
+                engine: Arc::new(RedBStoreL2::new_l2(path)?),
             },
         };
         info!("Started l2 store engine");

@@ -67,12 +67,15 @@ mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_p2p::sync_manager::SyncManager;
     #[cfg(feature = "l2")]
+    use ethrex_storage::{EngineTypeL2, StoreL2};
+    #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
     use serde_json::json;
     use std::sync::Arc;
 
     async fn default_context() -> RpcApiContext {
         let storage = setup_store().await;
+
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         RpcApiContext {
             storage,
@@ -92,6 +95,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store: StoreL2::new("test-store", EngineTypeL2::InMemory)
+                .expect("Fail to create in-memory db test"),
         }
     }
 

@@ -275,6 +275,9 @@ mod tests {
     #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
 
+    #[cfg(feature = "l2")]
+    use ethrex_storage::{EngineTypeL2, StoreL2};
+
     use serde_json::{json, Value};
     use test_utils::TEST_GENESIS;
 
@@ -438,6 +441,10 @@ mod tests {
     ) -> u64 {
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
+
+        #[cfg(feature = "l2")]
+        let l2_store = StoreL2::new("in-mem", EngineTypeL2::InMemory)
+            .expect("Fatal: could not create in memory test db");
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             storage,
@@ -457,6 +464,8 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store,
         };
         let request: RpcRequest = serde_json::from_value(json_req).expect("Test json is incorrect");
         let genesis_config: Genesis =
@@ -511,6 +520,9 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
+        #[cfg(feature = "l2")]
+        let l2_store = StoreL2::new("in-mem", EngineTypeL2::InMemory)
+            .expect("Fatal: could not create in memory test db");
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
             storage,
@@ -530,6 +542,8 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store,
         };
 
         map_http_requests(&uninstall_filter_req, context)
@@ -547,6 +561,9 @@ mod tests {
         let active_filters = Arc::new(Mutex::new(HashMap::new()));
 
         let storage = Store::new("in-mem", EngineType::InMemory)
+            .expect("Fatal: could not create in memory test db");
+        #[cfg(feature = "l2")]
+        let l2_store = StoreL2::new("in-mem", EngineTypeL2::InMemory)
             .expect("Fatal: could not create in memory test db");
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let context = RpcApiContext {
@@ -567,6 +584,8 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store,
         };
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {

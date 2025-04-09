@@ -17,8 +17,8 @@ pub mod error;
 pub use account_update::AccountUpdate;
 #[cfg(feature = "l2")]
 pub use api_l2::StoreEngineL2;
-#[cfg(feature = "l2")]
-pub use store::Store as StoreL2;
 pub use store::{
     hash_address, hash_key, EngineType, Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS,
 };
+#[cfg(feature = "l2")]
+pub use store_l2::{EngineType as EngineTypeL2, Store as StoreL2};

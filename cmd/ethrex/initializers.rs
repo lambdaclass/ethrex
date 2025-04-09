@@ -33,7 +33,7 @@ use crate::l2::L2Options;
 use ::{
     ethrex_common::Address,
     ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
-    ethrex_storage::StoreL2,
+    ethrex_storage::{EngineTypeL2, StoreL2},
     secp256k1::SecretKey,
 };
 
@@ -93,23 +93,22 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
 #[cfg(feature = "l2")]
 pub async fn init_l2_store(data_dir: &str) -> StoreL2 {
     let path = PathBuf::from(data_dir);
-    let store = if path.ends_with("memory") {
-        StoreL2::new(data_dir, EngineType::InMemory).expect("Failed to create StoreL2")
+    if path.ends_with("memory") {
+        StoreL2::new(data_dir, EngineTypeL2::InMemory).expect("Failed to create StoreL2")
     } else {
         cfg_if::cfg_if! {
             if #[cfg(feature = "redb")] {
-                let engine_type = EngineType::RedB;
+                let engine_type = EngineTypeL2::RedB;
             } else if #[cfg(feature = "libmdbx")] {
-                let engine_type = EngineType::Libmdbx;
+                let engine_type = EngineTypeL2::Libmdbx;
             } else {
-                let engine_type = EngineType::InMemory;
+                let engine_type = EngineTypeL2::InMemory;
                 error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
         }
         StoreL2::new(data_dir, engine_type).expect("Failed to create StoreL2")
-    };
-    store
+    }
 }
 
 pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
