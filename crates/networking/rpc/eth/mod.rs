@@ -23,8 +23,10 @@ pub mod test_utils {
     };
     use ethrex_p2p::sync_manager::SyncManager;
     use ethrex_storage::{EngineType, Store};
+    #[cfg(feature = "l2")]
     use ethrex_storage_l2::{EngineTypeL2, StoreL2};
     use hex_literal::hex;
+    #[cfg(feature = "based")]
     use secp256k1::SecretKey;
     use std::{str::FromStr, sync::Arc};
 
