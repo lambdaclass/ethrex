@@ -205,10 +205,12 @@ async fn rebuild_storage_trie_in_background(
     cancel_token: CancellationToken,
     mut receiver: Receiver<Vec<(H256, H256)>>,
 ) -> Result<(), SyncError> {
+    info!("Starting storage rebuilder");
     // (AccountHash, ExpectedRoot)
     let mut pending_storages = store
         .get_storage_trie_rebuild_pending()?
         .unwrap_or_default();
+    info!("Starting storage rebuilder, pending storages: {}", pending_storages.len());
     let mut total_rebuild_time: u128 = 0;
     let mut last_show_progress = Instant::now();
     // Count of all storages that have entered the queue
