@@ -11,12 +11,6 @@ use ethrex_levm::{
 use ethrex_vm::ExecutionDB;
 
 fn main() {
-    println!("Hello, world!");
-
-    // insert a lot of stuff into huge_cache
-
-    // Doesn't matter because everything we need is in cache
-
     let huge_cache = CacheDB::new();
     let execution_db = ExecutionDB::default();
     let mut db = GeneralizedDatabase::new(Arc::new(execution_db), huge_cache);
@@ -33,7 +27,7 @@ fn main() {
     println!("Cache size in memory: {} bytes", cache_size);
 
     // ADDRESS 42 NEEDS TO HAVE THE CODE WHEN USING new_vm_with_bytecode
-    // empty contract now!
+    // empty contract for now!
     let contract_address = Address::from_low_u64_be(42);
     let contract_code = Bytes::new();
     let contract_account =
@@ -47,7 +41,6 @@ fn main() {
     //     let elapsed = start.elapsed();
     //     println!("Time to clone cache: {:?}", elapsed);
     // }
-
     // If cache is huge then it will take a lot of time to clone it
 
     let runs = 10;
