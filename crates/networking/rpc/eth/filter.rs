@@ -245,7 +245,6 @@ impl FilterChangesRequest {
 
 #[cfg(test)]
 mod tests {
-    use ethrex_blockchain::Blockchain;
     use std::{
         collections::HashMap,
         sync::{Arc, Mutex},
@@ -259,25 +258,12 @@ mod tests {
             logs::{AddressFilter, LogsFilter, TopicFilter},
             test_utils::default_context_with_storage,
         },
-        rpc::{map_http_requests, RpcApiContext, FILTER_DURATION},
-        utils::test_utils::{self, example_local_node_record, start_test_api},
+        rpc::{map_http_requests, FILTER_DURATION},
+        utils::test_utils::{self, start_test_api},
     };
-    use crate::{
-        types::block_identifier::BlockIdentifier,
-        utils::{test_utils::example_p2p_node, RpcRequest},
-    };
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
+    use crate::{types::block_identifier::BlockIdentifier, utils::RpcRequest};
     use ethrex_common::types::Genesis;
-    use ethrex_p2p::sync_manager::SyncManager;
     use ethrex_storage::{EngineType, Store};
-    #[cfg(feature = "l2")]
-    use secp256k1::{rand, SecretKey};
-
-    #[cfg(feature = "l2")]
-    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
 
     use serde_json::{json, Value};
     use test_utils::TEST_GENESIS;
@@ -498,31 +484,9 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        #[cfg(feature = "l2")]
-        let l2_store = StoreL2::new("in-mem", EngineTypeL2::InMemory)
-            .expect("Fatal: could not create in memory test db");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            jwt_secret: Default::default(),
-            active_filters: active_filters.clone(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-            #[cfg(feature = "l2")]
-            l2_store,
-        };
+
+        let mut context = default_context_with_storage(storage).await;
+        context.active_filters = active_filters.clone();
 
         map_http_requests(&uninstall_filter_req, context)
             .await
@@ -540,31 +504,9 @@ mod tests {
 
         let storage = Store::new("in-mem", EngineType::InMemory)
             .expect("Fatal: could not create in memory test db");
-        #[cfg(feature = "l2")]
-        let l2_store = StoreL2::new("in-mem", EngineTypeL2::InMemory)
-            .expect("Fatal: could not create in memory test db");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: active_filters.clone(),
-            jwt_secret: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-            #[cfg(feature = "l2")]
-            l2_store,
-        };
+        let mut context = default_context_with_storage(storage).await;
+        context.active_filters = active_filters.clone();
+
         let uninstall_filter_req: RpcRequest = serde_json::from_value(json!(
         {
             "jsonrpc":"2.0",
