@@ -88,7 +88,8 @@ impl RpcHandler for SponsoredTx {
                         .await
                         .map_err(RpcErr::from)?,
                     self.to,
-                ).await
+                )
+                .await
                 .map_err(RpcErr::from)?
                 .unwrap_or_default();
             let code = context

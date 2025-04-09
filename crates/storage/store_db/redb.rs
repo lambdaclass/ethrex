@@ -366,7 +366,10 @@ impl StoreEngine for RedBStore {
             .await
     }
 
-    async fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
+    async fn get_block_body(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockBody>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
             self.get_block_body_by_hash(hash).await
         } else {
@@ -429,7 +432,10 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    async fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_block_number(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
         Ok(self
             .read(
                 BLOCK_NUMBERS_TABLE,
@@ -873,7 +879,9 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    async fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+    async fn get_storage_heal_paths(
+        &self,
+    ) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
         self.read(SNAP_STATE_TABLE, SnapStateIndex::StorageHealPaths)?
             .map(|rlp| RLPDecode::decode(&rlp.value()))
             .transpose()
@@ -1026,7 +1034,9 @@ impl StoreEngine for RedBStore {
         .await
     }
 
-    async fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+    async fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         self.read(SNAP_STATE_TABLE, SnapStateIndex::StorageTrieRebuildPending)?
             .map(|p| RLPDecode::decode(&p.value()))
             .transpose()
@@ -1080,7 +1090,10 @@ impl StoreEngine for RedBStore {
             .collect())
     }
 
-    async fn get_latest_valid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+    async fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError> {
         Ok(self
             .read(
                 INVALID_ANCESOTRS_TABLE,

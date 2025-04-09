@@ -208,14 +208,15 @@ pub async fn init_network(
 }
 
 #[cfg(feature = "dev")]
-pub fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
+pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
     if opts.dev {
         info!("Running in DEV_MODE");
 
         let head_block_hash = {
-            let current_block_number = store.get_latest_block_number().unwrap();
+            let current_block_number = store.get_latest_block_number().await.unwrap();
             store
                 .get_canonical_block_hash(current_block_number)
+                .await
                 .unwrap()
                 .unwrap()
         };
