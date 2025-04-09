@@ -12,8 +12,9 @@ use ethrex_levm::{
 use ethrex_vm::db::ExecutionDB;
 use revm::{
     db::{BenchmarkDB, CacheDB as RevmCacheDB, DbAccount},
-    primitives::{Address, Bytecode, HashMap as RevmHashMap, TransactTo},
-    Evm,
+    interpreter::instructions::bitwise::byte,
+    primitives::{eip7702::bytecode, Address, Bytecode, HashMap as RevmHashMap, TransactTo},
+    DatabaseRef, Evm,
 };
 use revm_primitives::U256 as RevmU256;
 use sha3::{Digest, Keccak256};
@@ -21,12 +22,10 @@ use std::io::Read;
 use std::{collections::HashMap, fs::File, sync::Arc};
 use std::{hint::black_box, str::FromStr};
 
-pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
-    let bytecode = Bytes::from(hex::decode(program).unwrap());
-    let calldata = Bytes::from(hex::decode(calldata).unwrap());
+fn setup_execution_db(sender_address: EthrexAddress, bytecode: Bytes) -> ExecutionDB {
+    let mut execution_db = ExecutionDB::default();
 
     let code_hash = code_hash(&bytecode);
-    let sender_address = EthrexAddress::from_low_u64_be(100);
     let accounts = [
         // This is the contract account that is going to be executed
         (
@@ -48,7 +47,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
                 info: AccountInfo {
                     nonce: 0,
                     balance: U256::MAX,
-                    code_hash,
+                    code_hash: ethrex_common::types::code_hash(&Bytes::new()),
                 },
                 storage: HashMap::new(),
                 code: Bytes::new(),
@@ -56,34 +55,35 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         ),
     ];
 
-    let mut execution_db = ExecutionDB::default();
-
     accounts.iter().for_each(|(address, account)| {
         execution_db.accounts.insert(*address, account.info.clone());
+        execution_db
+            .code
+            .insert(account.info.code_hash, account.code.clone());
+        execution_db.storage.insert(
+            *address,
+            account
+                .storage
+                .iter()
+                .map(|(k, v)| (*k, v.clone()))
+                .collect(),
+        );
+        execution_db
+            .block_hashes
+            .insert(0, *ethrex_common::types::EMPTY_TRIE_HASH);
     });
 
-    let mut db = GeneralizedDatabase::new(Arc::new(execution_db), CacheDB::new());
+    execution_db
+}
 
-    cache::insert_account(
-        &mut db.cache,
-        accounts[0].0,
-        ethrex_levm::Account::new(
-            accounts[0].1.info.balance,
-            accounts[0].1.code.clone(),
-            accounts[0].1.info.nonce,
-            HashMap::new(),
-        ),
-    );
-    cache::insert_account(
-        &mut db.cache,
-        accounts[1].0,
-        ethrex_levm::Account::new(
-            accounts[1].1.info.balance,
-            accounts[1].1.code.clone(),
-            accounts[1].1.info.nonce,
-            HashMap::new(),
-        ),
-    );
+pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
+    let calldata = Bytes::from(hex::decode(calldata).unwrap());
+
+    let sender_address = EthrexAddress::from_low_u64_be(100);
+    let bytecode = Bytes::from(hex::decode(program).unwrap());
+    let execution_db = setup_execution_db(sender_address, bytecode);
+
+    let mut db = GeneralizedDatabase::new(Arc::new(execution_db), CacheDB::new());
 
     // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
     println!("Number of runs: {}", runs);
@@ -96,7 +96,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         let tx_report = black_box(vm.stateless_execute().unwrap());
         // println!("After LEVM execute {}", 0);
         assert!(tx_report.result == TxResult::Success);
-        println!("LEVM: Finished run {}", _nonce);
+        // println!("LEVM: Finished run {}", _nonce);
 
         if _nonce == runs - 1 {
             println!("output: \t\t0x{}", hex::encode(tx_report.output));
@@ -107,37 +107,19 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
 }
 
 pub fn run_with_revm(program: &str, runs: u64, calldata: &str) {
+    let sender_address = EthrexAddress::from_low_u64_be(100);
     let bytecode = Bytes::from(hex::decode(program).unwrap());
-    let execution_db = ExecutionDB::default();
+
+    let execution_db = setup_execution_db(sender_address, bytecode);
 
     let mut revm_cache_db = RevmCacheDB::new(execution_db);
-
-    let mut accounts: RevmHashMap<Address, DbAccount> = RevmHashMap::default();
-
-    let sender_address =
-        revm_primitives::Address::from_str("0x0000000000000000000000000000000000000064").unwrap();
-    let mut sender_account = DbAccount::new_not_existing();
-    sender_account.info.balance = RevmU256::MAX;
-
-    let contract_address =
-        revm_primitives::Address::from_str("0x000000000000000000000000000000000000002A").unwrap();
-    let mut contract_account = DbAccount::new_not_existing();
-    contract_account.info.balance = RevmU256::MAX;
-    contract_account.info.code = Some(Bytecode::new_raw(bytecode.clone().into()));
-
-    accounts.insert(sender_address, sender_account);
-    accounts.insert(contract_address, contract_account);
-
-    revm_cache_db.accounts = accounts;
 
     println!("Number of runs: {}", runs);
     for i in 0..runs {
         let mut evm = Evm::builder()
             .modify_tx_env(|tx| {
                 tx.caller = Address::from(sender_address.0);
-                tx.transact_to = TransactTo::Call(
-                    Address::from_str("0x000000000000000000000000000000000000002A").unwrap(),
-                ); // 0x2a = 42
+                tx.transact_to = TransactTo::Call(Address::from(sender_address.0));
                 tx.data = hex::decode(calldata).unwrap().into();
             })
             .with_db(&mut revm_cache_db)
@@ -145,7 +127,7 @@ pub fn run_with_revm(program: &str, runs: u64, calldata: &str) {
 
         let result = black_box(evm.transact()).unwrap();
         assert!(result.result.is_success());
-        println!("REVM: Finished run {}", i);
+        // println!("REVM: Finished run {}", i);
 
         if i == runs - 1 {
             println!(
