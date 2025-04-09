@@ -58,7 +58,7 @@ impl GeneralizedDatabase {
             }
         }
     }
-    
+
     pub fn get_account_mut<'a>(
         &'a mut self,
         address: Address,
