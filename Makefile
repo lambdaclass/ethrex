@@ -170,7 +170,7 @@ load-test-io:
 	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --io
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
-	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
+	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
 flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
 	sudo bash bench/scripts/flamegraph.sh
