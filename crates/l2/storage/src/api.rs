@@ -3,14 +3,14 @@
 use std::{fmt::Debug, panic::RefUnwindSafe};
 
 use ethrex_common::types::BlockNumber;
+use ethrex_storage::error::StoreError;
 
-use crate::error::StoreError;
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
 pub trait StoreEngineL2: Debug + Send + Sync + RefUnwindSafe {
     /// Returns the batch number for a given block number.
-    fn get_batch_number_for_block(
+    async fn get_batch_number_for_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError>;

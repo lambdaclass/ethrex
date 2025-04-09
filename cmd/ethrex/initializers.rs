@@ -33,7 +33,7 @@ use crate::l2::L2Options;
 use ::{
     ethrex_common::Address,
     ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
-    ethrex_storage::{EngineTypeL2, StoreL2},
+    ethrex_storage_l2::{EngineTypeL2, StoreL2},
     secp256k1::SecretKey,
 };
 

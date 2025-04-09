@@ -3022,6 +3022,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
+ "ethrex-storage-l2",
  "ethrex-vm",
  "eyre",
  "hex",
@@ -3273,6 +3274,7 @@ dependencies = [
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-storage-l2",
  "ethrex-vm",
  "hex",
  "hex-literal",
@@ -3341,6 +3343,21 @@ dependencies = [
  "sha3",
  "tempdir",
  "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-storage-l2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "ethereum-types",
+ "ethrex-common",
+ "ethrex-storage",
+ "libmdbx",
+ "redb",
  "tokio",
  "tracing",
 ]

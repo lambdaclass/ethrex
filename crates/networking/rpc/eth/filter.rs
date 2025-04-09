@@ -276,7 +276,7 @@ mod tests {
     use secp256k1::{rand, SecretKey};
 
     #[cfg(feature = "l2")]
-    use ethrex_storage::{EngineTypeL2, StoreL2};
+    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
 
     use serde_json::{json, Value};
     use test_utils::TEST_GENESIS;

@@ -50,7 +50,7 @@ mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_p2p::sync_manager::SyncManager;
     #[cfg(feature = "l2")]
-    use ethrex_storage::{EngineTypeL2, StoreL2};
+    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
     #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
     use serde_json::{json, Value};

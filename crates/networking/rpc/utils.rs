@@ -298,7 +298,7 @@ pub mod test_utils {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     #[cfg(feature = "l2")]
-    use ethrex_storage::{EngineTypeL2, StoreL2};
+    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
     #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
 

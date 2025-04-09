@@ -71,7 +71,7 @@ cfg_if::cfg_if! {
         use crate::l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
-        use ethrex_storage::{StoreL2};
+        use ethrex_storage_l2::{StoreL2};
     }
 }
 
@@ -520,7 +520,7 @@ mod tests {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     #[cfg(feature = "l2")]
-    use ethrex_storage::{EngineTypeL2, StoreL2};
+    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
     #[cfg(feature = "l2")]
     use secp256k1::rand;
 

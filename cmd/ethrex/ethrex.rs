@@ -15,7 +15,7 @@ use tracing::info;
 #[cfg(any(feature = "l2", feature = "based"))]
 use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
-use ethrex_storage::StoreL2;
+use ethrex_storage_l2::StoreL2;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {

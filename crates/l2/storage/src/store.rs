@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use crate::error::StoreError;
-
-use super::api_l2::StoreEngineL2;
-use super::store_db_l2::in_memory::Store as InMemoryStore;
+use crate::api::StoreEngineL2;
+use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
-use super::store_db_l2::libmdbx::LibmdbxStoreL2;
-use super::store_db_l2::redb::RedBStoreL2;
+use crate::store_db::libmdbx::Store as LibmdbxStoreL2;
+#[cfg(feature = "redb")]
+use crate::store_db::redb::RedBStoreL2;
 use ethrex_common::types::BlockNumber;
+use ethrex_storage::error::StoreError;
 use tracing::info;
 
 #[derive(Debug, Clone)]
@@ -39,25 +39,25 @@ impl Store {
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStoreL2::new_l2(path)?),
+                engine: Arc::new(LibmdbxStoreL2::new(path)?),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
-                engine: Arc::new(RedBStoreL2::new_l2(path)?),
+                engine: Arc::new(RedBStoreL2::new()?),
             },
         };
         info!("Started l2 store engine");
         Ok(store)
     }
 
-    pub fn get_batch_number_for_block(
+    pub async fn get_batch_number_for_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
-        self.engine.get_batch_number_for_block(block_number)
+        self.engine.get_batch_number_for_block(block_number).await
     }
     pub async fn store_batch_number_for_block(
         &self,
