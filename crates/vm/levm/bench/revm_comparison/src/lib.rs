@@ -181,11 +181,7 @@ fn setup_execution_db(sender_address: EthrexAddress, bytecode: Bytes) -> Executi
             .insert(account.info.code_hash, account.code.clone());
         execution_db.storage.insert(
             *address,
-            account
-                .storage
-                .iter()
-                .map(|(k, v)| (*k, v.clone()))
-                .collect(),
+            account.storage.iter().map(|(k, v)| (*k, *v)).collect(),
         );
         execution_db
             .block_hashes
