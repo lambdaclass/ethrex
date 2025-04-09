@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_l2_sdk::calldata::{self, Value};
@@ -12,6 +12,8 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 use tokio::{task::JoinSet, time::sleep};
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 
 // ERC20 compiled artifact generated from this tutorial:
 // https://medium.com/@kaishinaw/erc20-using-hardhat-a-comprehensive-guide-3211efba98d4
@@ -28,6 +30,15 @@ struct Cli {
 
     #[arg(long)]
     pkeys: String,
+
+    #[arg(long, value_enum, default_value_t=TestType::Erc20)]
+    test_type: TestType,
+}
+
+#[derive(ValueEnum, Clone, Debug)] // Derive ValueEnum for TestType
+pub enum TestType {
+    EthTransfers,
+    Erc20,
 }
 
 const RETRIES: u64 = 1000;
@@ -121,38 +132,55 @@ async fn claim_erc20_balances(
     Ok(())
 }
 
-async fn erc20_load_test(
-    tx_amount: u64,
+trait TxBuilder: Sync + Send + Clone {
+    fn build_tx(&self) -> (Vec<u8>, H160);
+}
+
+#[derive(Clone)]
+struct Erc20Builder {
     contract_address: Address,
+}
+
+impl TxBuilder for Erc20Builder {
+    fn build_tx(&self) -> (Vec<u8>, H160) {
+        let dst = H160::random();
+        let send_calldata = calldata::encode_calldata(
+            "transfer(address,uint256)",
+            &[Value::Address(dst), Value::Uint(U256::one())],
+        )
+        .unwrap();
+        (send_calldata, self.contract_address)
+    }
+}
+
+async fn load_test<T: TxBuilder>(
+    tx_amount: u64,
     accounts: &[Account],
     client: EthClient,
     chain_id: u64,
+    tx_builder: T,
 ) -> eyre::Result<()> {
-    let mut tasks: JoinSet<Result<(), EthClientError>> = JoinSet::new();
+    let mut tasks = FuturesUnordered::new();
     for (pk, sk) in accounts {
         let pk = pk.clone();
         let sk = sk.clone();
         let client = client.clone();
-        tasks.spawn(async move {
+        let tx_builder = tx_builder.clone();
+        tasks.push(async move {
             let nonce = client
                 .get_nonce(address_from_pub_key(pk), BlockByNumber::Latest)
                 .await
                 .unwrap();
             let src = address_from_pub_key(pk);
             let encoded_src: String = src.encode_hex();
-            for i in 0..tx_amount {
-                let dst = H160::random();
 
-                let send_calldata = calldata::encode_calldata(
-                    "transfer(address,uint256)",
-                    &[Value::Address(dst), Value::Uint(U256::one())],
-                )
-                .unwrap();
-                let send_tx = client
+            for i in 0..tx_amount {
+                let (calldata, dst) = tx_builder.build_tx();
+                let tx  = client
                     .build_eip1559_transaction(
-                        contract_address,
+                        dst,
                         src,
-                        send_calldata.into(),
+                        calldata.into(),
                         Overrides {
                             chain_id: Some(chain_id),
                             nonce: Some(nonce + i),
@@ -165,16 +193,16 @@ async fn erc20_load_test(
                     .await?;
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
-                let _sent = client
-                    .send_eip1559_transaction(&send_tx, &sk)
-                    .await?;
-                println!("ERC-20 transfer number {} sent! From: {}. To: {}", nonce + i + 1, encoded_src, dst.encode_hex::<String>());
+                let _sent = client.send_eip1559_transaction(&tx, &sk).await?;
+                println!("Tx number {} sent! From: {}. To: {}", nonce + i + 1, encoded_src, dst.encode_hex::<String>());
             }
-            Ok(())
+            Ok::<(), EthClientError>(())
         });
-    };
+    }
 
-    tasks.join_all().await;
+    while let Some(result) = tasks.next().await {
+        result?; // Propagate errors from tasks
+    }
     Ok(())
 }
 
@@ -215,21 +243,29 @@ async fn main() {
 
     let deployer = parse_private_key_into_account(RICH_ACCOUNT);
 
-    // TODO: does this need the chain id as well?
-    println!("Deploying ERC20 contract...");
-    let contract_address = erc20_deploy(client.clone(), deployer)
-        .await
-        .expect("Failed to deploy ERC20 contract");
-    claim_erc20_balances(contract_address, client.clone(), &accounts)
-        .await
-        .expect("Failed to claim ERC20 balances");
-    erc20_load_test(
-        10_000,
-        contract_address,
-        &accounts,
-        client.clone(),
-        chain_id,
-    )
-    .await
-    .expect("Failed to load test");
+    match cli.test_type {
+        TestType::Erc20 => {
+            // TODO: does this need the chain id as well?
+            println!("ERC20 Load test starting");
+            println!("Deploying ERC20 contract...");
+            let contract_address = erc20_deploy(client.clone(), deployer)
+                .await
+                .expect("Failed to deploy ERC20 contract");
+            claim_erc20_balances(contract_address, client.clone(), &accounts)
+                .await
+                .expect("Failed to claim ERC20 balances");
+            load_test(
+                1_000,
+                &accounts,
+                client.clone(),
+                chain_id,
+                Erc20Builder {contract_address}
+            )
+            .await
+            .expect("Failed to load test");
+        }
+        TestType::EthTransfers => {
+            println!("Eth transfer load test starting");
+        }
+    }
 }
