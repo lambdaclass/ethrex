@@ -119,7 +119,9 @@ pub fn run_with_revm(program: &str, runs: u64, calldata: &str) {
         let mut evm = Evm::builder()
             .modify_tx_env(|tx| {
                 tx.caller = Address::from(sender_address.0);
-                tx.transact_to = TransactTo::Call(Address::from(sender_address.0));
+                tx.transact_to = TransactTo::Call(
+                    Address::from_str("0x000000000000000000000000000000000000002A").unwrap(),
+                );
                 tx.data = hex::decode(calldata).unwrap().into();
             })
             .with_db(&mut revm_cache_db)
