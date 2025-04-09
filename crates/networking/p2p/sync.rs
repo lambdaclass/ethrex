@@ -25,10 +25,7 @@ use std::{
 };
 use storage_healing::storage_healer;
 use tokio::{
-    sync::{
-        mpsc::{self, error::SendError},
-        Mutex,
-    },
+    sync::{mpsc::error::SendError, Mutex},
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -599,13 +596,13 @@ impl Syncer {
             ));
         };
         // Spawn storage healer earlier so we can start healing stale storages
-        let (storage_healer_sender, storage_healer_receiver) =
-            mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+        // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
+        let storage_healer_cancell_token = self.cancel_token.child_token();
         let storage_healer_handler = tokio::spawn(storage_healer(
             state_root,
-            storage_healer_receiver,
             self.peers.clone(),
             store.clone(),
+            storage_healer_cancell_token.clone(),
         ));
         // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
@@ -628,12 +625,11 @@ impl Syncer {
                     .unwrap()
                     .storage_rebuilder_sender
                     .clone(),
-                storage_healer_sender.clone(),
             )
             .await?;
             if stale_pivot {
                 warn!("Stale Pivot, aborting state sync");
-                storage_healer_sender.send(vec![]).await?;
+                storage_healer_cancell_token.cancel();
                 storage_healer_handler.await??;
                 return Ok(false);
             }
@@ -650,15 +646,10 @@ impl Syncer {
         store.clear_snapshot().await?;
 
         // Perform Healing
-        let state_heal_complete = heal_state_trie(
-            state_root,
-            store.clone(),
-            self.peers.clone(),
-            storage_healer_sender.clone(),
-        )
-        .await?;
-        // Send empty batch to signal that no more batches are incoming
-        storage_healer_sender.send(vec![]).await?;
+        let state_heal_complete =
+            heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+        // Wait for storage healer to end
+        storage_healer_cancell_token.cancel();
         let storage_heal_complete = storage_healer_handler.await??;
         if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");
