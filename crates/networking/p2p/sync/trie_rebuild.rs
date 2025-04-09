@@ -300,7 +300,7 @@ async fn show_trie_rebuild_progress(
     let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100))
         / U512::from(U256::max_value());
     // Time to finish = Time since start / Accounts processed this cycle * Remaining accounts
-    let remaining_accounts = U256::MAX - accounts_processed;
+    let remaining_accounts = U256::MAX.saturating_sub(accounts_processed);
     let time_to_finish = (U512::from(start_time.elapsed().as_secs())
         * U512::from(remaining_accounts))
         / (U512::from(accounts_processed_this_cycle));
