@@ -556,12 +556,14 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// Restores the cache state to the state before changes made during a callframe.
     fn restore_cache_state(&mut self, call_frame: &CallFrame) {
         for (address, account_opt) in &call_frame.cache_backup {
             if let Some(account) = account_opt {
+                // restore the account to the state before the call
                 cache::insert_account(&mut self.db.cache, *address, account.clone());
             } else {
-                // remove from cache
+                // remove from cache if it wasn't there before
                 cache::remove_account(&mut self.db.cache, address);
             }
         }
