@@ -28,7 +28,8 @@ pub(crate) async fn storage_healer(
     store: Store,
 ) -> Result<bool, SyncError> {
     let mut pending_paths: BTreeMap<H256, Vec<Nibbles>> = store
-        .get_storage_heal_paths()?
+        .get_storage_heal_paths()
+        .await?
         .unwrap_or_default()
         .into_iter()
         .collect();

@@ -96,7 +96,7 @@ async fn rebuild_state_trie_in_backgound(
     cancel_token: CancellationToken,
 ) -> Result<(), SyncError> {
     // Get initial status from checkpoint if available (aka node restart)
-    let checkpoint = store.get_state_trie_rebuild_checkpoint()?;
+    let checkpoint = store.get_state_trie_rebuild_checkpoint().await?;
     let mut rebuild_status = array::from_fn(|i| SegmentStatus {
         current: checkpoint
             .map(|(_, ch)| ch[i])
@@ -163,7 +163,7 @@ async fn rebuild_state_trie_segment(
         if cancel_token.is_cancelled() {
             break;
         }
-        let mut batch = store.read_account_snapshot(start)?;
+        let mut batch = store.read_account_snapshot(start).await?;
         // Remove out of bounds elements
         batch.retain(|(hash, _)| *hash <= STATE_TRIE_SEGMENTS_END[segment_number]);
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
@@ -180,7 +180,8 @@ async fn rebuild_state_trie_segment(
         // Return if we have no more snapshot accounts to process for this segemnt
         if unfilled_batch {
             let state_sync_complete = store
-                .get_state_trie_key_checkpoint()?
+                .get_state_trie_key_checkpoint()
+                .await?
                 .is_some_and(|ch| ch[segment_number] == STATE_TRIE_SEGMENTS_END[segment_number]);
             // Mark segment as finished if state sync is complete
             if state_sync_complete {
@@ -202,7 +203,8 @@ async fn rebuild_storage_trie_in_background(
 ) -> Result<(), SyncError> {
     // (AccountHash, ExpectedRoot)
     let mut pending_storages = store
-        .get_storage_trie_rebuild_pending()?
+        .get_storage_trie_rebuild_pending()
+        .await?
         .unwrap_or_default();
     let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
@@ -252,7 +254,7 @@ async fn rebuild_storage_trie(
     let mut start = H256::zero();
     let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
     loop {
-        let batch = store.read_storage_snapshot(account_hash, start)?;
+        let batch = store.read_storage_snapshot(account_hash, start).await?;
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
         // Update start
         if let Some(last) = batch.last() {

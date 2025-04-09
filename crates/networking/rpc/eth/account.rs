@@ -53,7 +53,7 @@ impl RpcHandler for GetBalanceRequest {
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
@@ -61,7 +61,8 @@ impl RpcHandler for GetBalanceRequest {
 
         let account = context
             .storage
-            .get_account_info(block_number, self.address)?;
+            .get_account_info(block_number, self.address)
+            .await?;
         let balance = account.map(|acc| acc.balance).unwrap_or_default();
 
         serde_json::to_value(format!("{:#x}", balance))
@@ -88,7 +89,7 @@ impl RpcHandler for GetCodeRequest {
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
@@ -96,7 +97,8 @@ impl RpcHandler for GetCodeRequest {
 
         let code = context
             .storage
-            .get_code_by_account_address(block_number, self.address)?
+            .get_code_by_account_address(block_number, self.address)
+            .await?
             .unwrap_or_default();
 
         serde_json::to_value(format!("0x{:x}", code))
@@ -124,7 +126,7 @@ impl RpcHandler for GetStorageAtRequest {
             self.storage_slot, self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
+        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
@@ -132,7 +134,8 @@ impl RpcHandler for GetStorageAtRequest {
 
         let storage_value = context
             .storage
-            .get_storage_at(block_number, self.address, self.storage_slot)?
+            .get_storage_at(block_number, self.address, self.storage_slot)
+            .await?
             .unwrap_or_default();
         let storage_value = H256::from_uint(&storage_value);
         serde_json::to_value(format!("{:#x}", storage_value))
@@ -169,14 +172,16 @@ impl RpcHandler for GetTransactionCountRequest {
         let nonce = match pending_nonce {
             Some(nonce) => nonce,
             None => {
-                let Some(block_number) = self.block.resolve_block_number(&context.storage)? else {
+                let Some(block_number) = self.block.resolve_block_number(&context.storage).await?
+                else {
                     return serde_json::to_value("0x0")
                         .map_err(|error| RpcErr::Internal(error.to_string()));
                 };
 
                 context
                     .storage
-                    .get_nonce_by_account_address(block_number, self.address)?
+                    .get_nonce_by_account_address(block_number, self.address)
+                    .await?
                     .unwrap_or_default()
             }
         };
@@ -209,21 +214,28 @@ impl RpcHandler for GetProofRequest {
             "Requested proof for account {} at block {} with storage keys: {:?}",
             self.address, self.block, self.storage_keys
         );
-        let Some(block_number) = self.block.resolve_block_number(storage)? else {
+        let Some(block_number) = self.block.resolve_block_number(storage).await? else {
             return Ok(Value::Null);
         };
         // Create account proof
-        let Some(account) = storage.get_account_state(block_number, self.address)? else {
+        let Some(account) = storage
+            .get_account_state(block_number, self.address)
+            .await?
+        else {
             return Ok(Value::Null);
         };
-        let Some(account_proof) = storage.get_account_proof(block_number, &self.address)? else {
+        let Some(account_proof) = storage
+            .get_account_proof(block_number, &self.address)
+            .await?
+        else {
             return Err(RpcErr::Internal("Could not get account proof".to_owned()));
         };
         // Create storage proofs for all provided storage keys
         let mut storage_proofs = Vec::new();
         for storage_key in self.storage_keys.iter() {
             let value = storage
-                .get_storage_at(block_number, self.address, *storage_key)?
+                .get_storage_at(block_number, self.address, *storage_key)
+                .await?
                 .unwrap_or_default();
             let proof =
                 storage.get_storage_proof(self.address, account.storage_root, storage_key)?;

@@ -87,10 +87,10 @@ impl SyncManager {
     /// Attempts to sync to the last received fcu head
     /// Will do nothing if the syncer is already involved in a sync process
     /// If the sync process would require multiple sync cycles (such as snap sync), starts all required sync cycles until the sync is complete
-    pub fn start_sync(&self) {
+    pub async fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
-        let Ok(Some(current_head)) = self.store.get_latest_canonical_block_hash() else {
+        let Ok(Some(current_head)) = self.store.get_latest_canonical_block_hash().await else {
             tracing::error!("Failed to fecth latest canonical block, unable to sync");
             return;
         };
@@ -116,6 +116,7 @@ impl SyncManager {
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
                     .get_header_download_checkpoint()
+                    .await
                     .ok()
                     .flatten()
                     .is_none()

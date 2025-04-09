@@ -48,10 +48,13 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Obtain canonical block body
-    fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError>;
+    async fn get_block_body(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockBody>, StoreError>;
 
     /// Obtain any block body using the hash
-    fn get_block_body_by_hash(
+    async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError>;
@@ -62,7 +65,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<Option<BlockHeader>, StoreError>;
 
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError>;
-    fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError>;
+    async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError>;
 
     /// Add block number for a given hash
     async fn add_block_number(
@@ -72,7 +75,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Obtain block number for a given hash
-    fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError>;
+    async fn get_block_number(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Store transaction location (block number and index of the transaction within the block)
     async fn add_transaction_location(
@@ -90,7 +96,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Obtain transaction location (block hash and index)
-    fn get_transaction_location(
+    async fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError>;
@@ -117,7 +123,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Obtain receipt for a canonical block represented by the block number.
-    fn get_receipt(
+    async fn get_receipt(
         &self,
         block_number: BlockNumber,
         index: Index,
@@ -129,24 +135,24 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     /// Obtain account code via code hash
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError>;
 
-    fn get_transaction_by_hash(
+    async fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
         let (_block_number, block_hash, index) =
-            match self.get_transaction_location(transaction_hash)? {
+            match self.get_transaction_location(transaction_hash).await? {
                 Some(location) => location,
                 None => return Ok(None),
             };
-        self.get_transaction_by_location(block_hash, index)
+        self.get_transaction_by_location(block_hash, index).await
     }
 
-    fn get_transaction_by_location(
+    async fn get_transaction_by_location(
         &self,
         block_hash: H256,
         index: u64,
     ) -> Result<Option<Transaction>, StoreError> {
-        let block_body = match self.get_block_body_by_hash(block_hash)? {
+        let block_body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
         };
@@ -156,12 +162,12 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
             .and_then(|index: usize| block_body.transactions.get(index).cloned()))
     }
 
-    fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
+    async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
         let header = match self.get_block_header_by_hash(block_hash)? {
             Some(header) => header,
             None => return Ok(None),
         };
-        let body = match self.get_block_body_by_hash(block_hash)? {
+        let body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
         };
@@ -169,7 +175,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     }
 
     // Get the canonical block hash for a given block number.
-    fn get_canonical_block_hash(
+    async fn get_canonical_block_hash(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError>;
@@ -188,7 +194,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Obtain earliest block number
-    fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
+    async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Update finalized block number
     async fn update_finalized_block_number(
@@ -197,20 +203,20 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Obtain finalized block number
-    fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
+    async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Update safe block number
     async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError>;
 
     /// Obtain safe block number
-    fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
+    async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Update latest block number
     async fn update_latest_block_number(&self, block_number: BlockNumber)
         -> Result<(), StoreError>;
 
     /// Obtain latest block number
-    fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Update pending block number
     async fn update_pending_block_number(
@@ -219,7 +225,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Obtain pending block number
-    fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
+    async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError>;
 
     /// Obtain a storage trie from the given address and storage_root
     /// Doesn't check if the account is stored
@@ -243,7 +249,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError>;
 
-    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
+    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError>;
 
     async fn update_payload(
         &self,
@@ -251,7 +257,10 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         payload: PayloadBundle,
     ) -> Result<(), StoreError>;
 
-    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError>;
+    async fn get_receipts_for_block(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError>;
 
     // Snap State methods
 
@@ -260,7 +269,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         -> Result<(), StoreError>;
 
     /// Gets the hash of the last header downloaded during a snap sync
-    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
+    async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError>;
 
     /// Sets the last key fetched from the state trie being fetched during snap sync
     async fn set_state_trie_key_checkpoint(
@@ -269,7 +278,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
-    fn get_state_trie_key_checkpoint(
+    async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
 
@@ -281,18 +290,19 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
     #[allow(clippy::type_complexity)]
-    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
+    async fn get_storage_heal_paths(&self)
+        -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
 
     /// Sets the state trie paths in need of healing
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
 
     /// Gets the state trie paths in need of healing
-    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError>;
 
     /// Clears all checkpoint data created during the last snap sync
     async fn clear_snap_state(&self) -> Result<(), StoreError>;
 
-    fn is_synced(&self) -> Result<bool, StoreError>;
+    async fn is_synced(&self) -> Result<bool, StoreError>;
 
     async fn update_sync_status(&self, status: bool) -> Result<(), StoreError>;
 
@@ -326,7 +336,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    fn get_state_trie_rebuild_checkpoint(
+    async fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError>;
 
@@ -337,16 +347,21 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     ) -> Result<(), StoreError>;
 
     /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
+    async fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError>;
 
     /// Clears the state and storage snapshots
     async fn clear_snapshot(&self) -> Result<(), StoreError>;
 
     /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError>;
+    async fn read_account_snapshot(
+        &self,
+        start: H256,
+    ) -> Result<Vec<(H256, AccountState)>, StoreError>;
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
-    fn read_storage_snapshot(
+    async fn read_storage_snapshot(
         &self,
         start: H256,
         account_hash: H256,
@@ -365,5 +380,8 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
 
     /// Returns the latest valid ancestor hash for a given invalid block hash.
     /// Used to provide `latest_valid_hash` in the Engine API when processing invalid payloads.
-    fn get_latest_valid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError>;
+    async fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError>;
 }

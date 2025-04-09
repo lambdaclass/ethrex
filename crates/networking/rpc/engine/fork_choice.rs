@@ -216,7 +216,8 @@ async fn handle_forkchoice(
 
     let fork_choice_res = if let Some(latest_valid_hash) = context
         .storage
-        .get_latest_valid_ancestor(fork_choice_state.head_block_hash)?
+        .get_latest_valid_ancestor(fork_choice_state.head_block_hash)
+        .await?
     {
         warn!(
             "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
@@ -225,19 +226,23 @@ async fn handle_forkchoice(
         Err(InvalidForkChoice::InvalidAncestor(latest_valid_hash))
     } else {
         // Check parent block hash in invalid_ancestors (if head block exists)
-        let check_parent = context
+        let head_block = context
             .storage
-            .get_block_header_by_hash(fork_choice_state.head_block_hash)?
-            .and_then(|head_block| {
-                debug!(
-                    "Checking parent for invalid ancestor {}",
-                    head_block.parent_hash
-                );
-                context
-                    .storage
-                    .get_latest_valid_ancestor(head_block.parent_hash)
-                    .ok()?
-            });
+            .get_block_header_by_hash(fork_choice_state.head_block_hash)?;
+        let check_parent = if let Some(head_block) = head_block {
+            debug!(
+                "Checking parent for invalid ancestor {}",
+                head_block.parent_hash
+            );
+            context
+                .storage
+                .get_latest_valid_ancestor(head_block.parent_hash)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
 
         // Check head block hash in invalid_ancestors
         if let Some(latest_valid_hash) = check_parent {
@@ -266,7 +271,11 @@ async fn handle_forkchoice(
         Ok(head) => {
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            match context.storage.get_block_by_hash(head.compute_block_hash()) {
+            match context
+                .storage
+                .get_block_by_hash(head.compute_block_hash())
+                .await
+            {
                 Ok(Some(block)) => {
                     for tx in &block.body.transactions {
                         context
@@ -297,7 +306,7 @@ async fn handle_forkchoice(
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
                     ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        latest_canonical_block_hash(&context.storage).unwrap(),
+                        latest_canonical_block_hash(&context.storage).await.unwrap(),
                     ))
                 }
                 InvalidForkChoice::Syncing => {
@@ -307,7 +316,7 @@ async fn handle_forkchoice(
                         .update_sync_status(false)
                         .await
                         .map_err(|e| RpcErr::Internal(e.to_string()))?;
-                    context.syncer.start_sync();
+                    context.syncer.start_sync().await;
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
@@ -325,10 +334,13 @@ async fn handle_forkchoice(
                         "Invalid fork choice payload. Reason: {}",
                         reason.to_string()
                     );
-                    let latest_valid_hash =
-                        context.storage.get_latest_canonical_block_hash()?.ok_or(
-                            RpcErr::Internal("Missing latest canonical block".to_owned()),
-                        )?;
+                    let latest_valid_hash = context
+                        .storage
+                        .get_latest_canonical_block_hash()
+                        .await?
+                        .ok_or(RpcErr::Internal(
+                            "Missing latest canonical block".to_owned(),
+                        ))?;
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(
                         latest_valid_hash,
                         reason.to_string(),
