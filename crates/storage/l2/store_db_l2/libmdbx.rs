@@ -2,7 +2,7 @@ use ethrex_common::types::BlockNumber;
 use libmdbx::{table, table_info};
 
 pub use crate::store_db::libmdbx::Store as LibmdbxStoreL2;
-use crate::{api_l2::StoreEngineL2, error::StoreError};
+use crate::{error::StoreError, l2::api_l2::StoreEngineL2};
 
 impl LibmdbxStoreL2 {
     pub fn new_l2(path: &str) -> Result<Self, StoreError> {

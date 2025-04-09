@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use crate::store_db_l2::in_memory::Store as InMemoryStore;
+use crate::error::StoreError;
+
+use super::api_l2::StoreEngineL2;
+use super::store_db_l2::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
-use crate::store_db_l2::libmdbx::LibmdbxStoreL2;
-use crate::store_db_l2::redb::RedBStoreL2;
-use crate::{api_l2::StoreEngineL2, error::StoreError};
+use super::store_db_l2::libmdbx::LibmdbxStoreL2;
+use super::store_db_l2::redb::RedBStoreL2;
 use ethrex_common::types::BlockNumber;
 use tracing::info;
 

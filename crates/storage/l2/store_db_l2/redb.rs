@@ -2,7 +2,7 @@ use ethrex_common::types::BlockNumber;
 use redb::{Database, TableDefinition};
 
 pub use crate::store_db::redb::RedBStore as RedBStoreL2;
-use crate::{api_l2::StoreEngineL2, error::StoreError};
+use crate::{error::StoreError, l2::api_l2::StoreEngineL2};
 
 const BATCHES_BY_BLOCK_NUMBER_TABLE: TableDefinition<BlockNumber, u64> =
     TableDefinition::new("BatchesByBlockNumbers");

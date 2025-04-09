@@ -6,7 +6,7 @@ use std::{
 
 use ethrex_common::types::BlockNumber;
 
-use crate::{api_l2::StoreEngineL2, error::StoreError};
+use crate::{error::StoreError, l2::api_l2::StoreEngineL2};
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
