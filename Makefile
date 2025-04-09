@@ -40,12 +40,12 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 6d10dad884fa848ffa43433f0117a3e4e69ca872
+ETHEREUM_PACKAGE_REVISION := e73f52c34fd785700e9555aa41a78b0d5ca50173
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
 ethereum-package:
-	git clone --single-branch --branch ethrex-integration-pectra-sync https://github.com/lambdaclass/ethereum-package
+	git clone --single-branch --branch ethrex-integration-pectra https://github.com/lambdaclass/ethereum-package
 
 checkout-ethereum-package: ethereum-package ## 📦 Checkout specific Ethereum package revision
 	cd ethereum-package && \
