@@ -24,6 +24,8 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
     let bytecode = Bytes::from(hex::decode(program).unwrap());
     let calldata = Bytes::from(hex::decode(calldata).unwrap());
 
+    println!("{:?}", calldata);
+
     let code_hash = code_hash(&bytecode);
     let sender_address = EthrexAddress::from_low_u64_be(100);
     let accounts = [

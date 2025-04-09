@@ -1,0 +1,11 @@
+[package]
+name = "huge_cache"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ethrex-levm = { path = "../../" }
+ethrex-vm.workspace = true
+ethrex-common.workspace = true
+hex.workspace = true
+bytes.workspace = true
