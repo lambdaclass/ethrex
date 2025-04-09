@@ -1,5 +1,6 @@
-mod account_update;
 mod api;
+
+mod account_update;
 mod rlp;
 mod store;
 mod store_db;
