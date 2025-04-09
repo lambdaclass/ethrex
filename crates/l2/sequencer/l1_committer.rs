@@ -154,15 +154,14 @@ impl Committer {
             }
         };
 
-        let state_diff = self.prepare_state_diff(
-            &block_to_commit,
-            self.store.clone(),
-            withdrawals,
-            deposits,
-            &account_updates,
-        )?;
-
         let blobs_bundle = if !self.validium {
+            let state_diff = self.prepare_state_diff(
+                &block_to_commit,
+                self.store.clone(),
+                withdrawals,
+                deposits,
+                &account_updates,
+            )?;
             self.generate_blobs_bundle(&state_diff)?
         } else {
             BlobsBundle::default()
