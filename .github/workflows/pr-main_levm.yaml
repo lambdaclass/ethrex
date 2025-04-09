@@ -7,10 +7,14 @@ on:
     branches: ["**"]
     paths:
       - "crates/vm/levm/**"
+      - ".github/workflows/pr-main_levm.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
+
+permissions:
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always

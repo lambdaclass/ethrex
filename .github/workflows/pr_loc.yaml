@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: ["**"]
 
+permissions:
+  pull-requests: write
+
 jobs:
   report-loc-changes:
     name: Report PR Line Changes
