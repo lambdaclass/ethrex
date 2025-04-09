@@ -149,7 +149,11 @@ impl Hook for DefaultHook {
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
         vm.db
-            .decrease_account_balance(sender_address, up_front_cost, Some(initial_call_frame))
+            .decrease_account_balance(
+                sender_address,
+                up_front_cost,
+                Some(&mut initial_call_frame.cache_backup),
+            )
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
@@ -181,7 +185,8 @@ impl Hook for DefaultHook {
         )?;
 
         // (7) NONCE_IS_MAX
-        increment_account_nonce(vm.db, sender_address, Some(initial_call_frame))
+        vm.db
+            .increment_account_nonce(sender_address, Some(&mut initial_call_frame.cache_backup))
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
@@ -306,7 +311,7 @@ impl Hook for DefaultHook {
             vm.db.increase_account_balance(
                 initial_call_frame.to,
                 initial_call_frame.msg_value,
-                Some(initial_call_frame),
+                Some(&mut initial_call_frame.cache_backup),
             )?;
         }
         Ok(())

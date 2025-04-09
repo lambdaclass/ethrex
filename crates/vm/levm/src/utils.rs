@@ -312,35 +312,6 @@ pub fn get_number_of_topics(op: Opcode) -> Result<u8, VMError> {
     Ok(number_of_topics)
 }
 
-// =================== Nonce related functions ======================
-pub fn increment_account_nonce(
-    db: &mut GeneralizedDatabase,
-    address: Address,
-    call_frame: Option<&mut CallFrame>,
-) -> Result<u64, VMError> {
-    let account = db.get_account_mut(address, call_frame)?;
-    account.info.nonce = account
-        .info
-        .nonce
-        .checked_add(1)
-        .ok_or(VMError::NonceOverflow)?;
-    Ok(account.info.nonce)
-}
-
-pub fn decrement_account_nonce(
-    db: &mut GeneralizedDatabase,
-    address: Address,
-    call_frame: Option<&mut CallFrame>,
-) -> Result<(), VMError> {
-    let account = db.get_account_mut(address, call_frame)?;
-    account.info.nonce = account
-        .info
-        .nonce
-        .checked_sub(1)
-        .ok_or(VMError::NonceUnderflow)?;
-    Ok(())
-}
-
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&word.to_big_endian()[12..])
@@ -462,7 +433,7 @@ pub fn eip7702_set_access_code(
         };
 
         // 9. Increase the nonce of authority by one.
-        increment_account_nonce(db, authority_address, None)
+        db.increment_account_nonce(authority_address, None)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
     }
 

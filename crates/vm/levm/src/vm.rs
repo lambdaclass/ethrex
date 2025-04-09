@@ -400,7 +400,7 @@ impl<'a> VM<'a> {
             return Err(e);
         }
         // clear callframe backup because prepare_execution succeeded
-        initial_call_frame.previous_cache_state = HashMap::new();
+        initial_call_frame.cache_backup = HashMap::new();
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
@@ -483,7 +483,9 @@ impl<'a> VM<'a> {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = self.db.get_account_mut(address, Some(call_frame))?;
+        let account = self
+            .db
+            .get_account_mut(address, Some(&mut call_frame.cache_backup))?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -496,7 +498,9 @@ impl<'a> VM<'a> {
         new_value: U256,
         call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
-        let account = self.db.get_account_mut(address, Some(call_frame))?;
+        let account = self
+            .db
+            .get_account_mut(address, Some(&mut call_frame.cache_backup))?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)
@@ -553,7 +557,7 @@ impl<'a> VM<'a> {
     }
 
     fn restore_cache_state(&mut self, call_frame: &CallFrame) {
-        for (address, account_opt) in &call_frame.previous_cache_state {
+        for (address, account_opt) in &call_frame.cache_backup {
             if let Some(account) = account_opt {
                 cache::insert_account(&mut self.db.cache, *address, account.clone());
             } else {
