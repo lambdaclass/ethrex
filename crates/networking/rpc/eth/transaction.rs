@@ -596,6 +596,10 @@ impl RpcHandler for SendRawTransactionRequest {
         let transaction = SendRawTransactionRequest::decode_canonical(&data)
             .map_err(|error| RpcErr::BadParams(error.to_string()))?;
 
+        if matches!(transaction, SendRawTransactionRequest::PrivilegedL2(_)) {
+            return Err(RpcErr::BadParams("Invalid transaction type".to_string()));
+        }
+
         Ok(transaction)
     }
 
