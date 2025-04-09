@@ -123,9 +123,15 @@ impl RpcDB {
         }
 
         if from_child {
-            *self.child_cache.lock().unwrap() = fetched.clone();
+            let mut child_cache = self.child_cache.lock().unwrap();
+            for (address, account) in &fetched {
+                child_cache.insert(*address, account.clone());
+            }
         } else {
-            *self.cache.lock().unwrap() = fetched.clone();
+            let mut cache = self.cache.lock().unwrap();
+            for (address, account) in &fetched {
+                cache.insert(*address, account.clone());
+            }
         }
 
         Ok(fetched)
