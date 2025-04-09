@@ -4,10 +4,20 @@
 
 This is a command line tool to execute ERC20 load tests on any execution node.
 
-It requries two arguments:
+```
+Usage: load_test [OPTIONS] --pkeys <PKEYS>
 
-- pkeys: a path to a file with private keys. These will be the EOAs executing the transactions throughout the tests.
-- node: http address for the node under test's rpc.
+Options:
+  -n, --node <NODE>            URL of the node being tested. [default: http://localhost:8545]
+  -k, --pkeys <PKEYS>          Path to the file containing private keys.
+  -t, --test-type <TEST_TYPE>  Type of test to run. Can be eth_transfers or erc20. [default: erc20] [possible values: eth-transfers, erc20]
+  -N, --tx-amount <TX_AMOUNT>  Number of transactions to send for each account. [default: 1000]
+  -h, --help                   Print help
+```
+
+The only mandatory argument is the path to the rich account private keys file.
+
+## Simple run
 
 To run a load test, first run the node using a command like the following in the root folder:
 
@@ -17,13 +27,26 @@ cargo run --bin ethrex --release --features dev -- --network test_data/genesis-l
 
 Genesis-l2-ci has many rich accounts and does not include the prague fork, which is important for dev mode until it's fixed.
 
-After the node is runing, `cd` into this directory (`cmd/load_tests`) and execute the script with `cargo`. For example:
+After the node is runing, still in the repo root folder, execute the script with `make`. For example:
 
 ```bash
-cargo run --bin=load_test -- --node=http://127.0.0.1:8545 --pkeys=../../test_data/private_keys.txt
+make load-test # Eth transfer load test
+make load-test-erc20 # ERC 20 transfer load test
 ```
 
 You should see the ethrex client producing blocks and logs with the gas throughput.
+
+To execute it with non-default parameters, you can do so with `cargo`:
+
+```bash
+cargo run --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20 -N 1000 -n http://localhost:8545
+```
+
+You may want to delete the dev database in between runs with
+
+```bash
+make rm-test-db
+```
 
 ## Getting performance metrics
 

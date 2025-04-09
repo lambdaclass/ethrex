@@ -45,7 +45,6 @@ pub async fn start() -> eyre::Result<()> {
         EthrexL2Command::Wallet(cmd) => cmd.run(cfg).await?,
         EthrexL2Command::Autocomplete(cmd) => cmd.run()?,
         EthrexL2Command::Config(_) => unreachable!(),
-        EthrexL2Command::Test(cmd) => cmd.run(cfg).await?,
         EthrexL2Command::Info(cmd) => cmd.run(cfg).await?,
         EthrexL2Command::Utils(cmd) => cmd.run()?,
     };
