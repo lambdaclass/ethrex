@@ -289,7 +289,7 @@ async fn rebuild_storage_trie(
         let read_start = Instant::now();
         let batch = store.read_storage_snapshot(account_hash, start)?;
         keys_read += batch.len();
-        time_spent_reading += read_start.elapsed().as_millis();
+        time_spent_reading += read_start.elapsed().as_micros();
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
         // Update start
         if let Some(last) = batch.last() {
@@ -300,10 +300,10 @@ async fn rebuild_storage_trie(
         for (key, val) in batch {
             storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         }
-        time_spent_writing_trie += write_start.elapsed().as_millis();
+        time_spent_writing_trie += write_start.elapsed().as_micros();
         let commit_start = Instant::now();
         storage_trie.hash()?;
-        time_spent_commiting_trie += commit_start.elapsed().as_millis();
+        time_spent_commiting_trie += commit_start.elapsed().as_micros();
         // Return if we have no more snapshot values to process for this storage
         if unfilled_batch {
             break;
@@ -316,6 +316,9 @@ async fn rebuild_storage_trie(
             .await?;
     }
     let full_time = full_time_start.elapsed().as_millis();
+    let time_spent_reading = time_spent_reading / 1000;
+    let time_spent_writing_trie = time_spent_writing_trie / 1000;
+    let time_spent_commiting_trie = time_spent_commiting_trie / 1000;
     StorageRebuildMetrics {
         cycles,
         time_spent_reading,
