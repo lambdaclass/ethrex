@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744124666811,
+  "lastUpdate": 1744214307136,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2725,6 +2725,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 185471675947,
             "range": "± 709233683",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9eba126d45bc6bcd68736fbe671431a364d034e9",
+          "message": "fix(l1): potential panics in calculations done to show sync progress (#2427)\n\n**Motivation**\nSome of the calculations done to show the sync progress can overflow\nunder certain conditions. This PR solves them by using safer arithmetic\nfunctions and bigger type sizes\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Replace `-` with `saturating_sub` and use `U512` more often when\ncomputing state sync & trie rebuild progress'\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-09T15:09:23Z",
+          "tree_id": "62b9a5fb6bb9fcd8845b287dac838b125621a161",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9eba126d45bc6bcd68736fbe671431a364d034e9"
+        },
+        "date": 1744214305536,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181076178159,
+            "range": "± 495012675",
             "unit": "ns/iter"
           }
         ]
