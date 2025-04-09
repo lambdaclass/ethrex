@@ -59,10 +59,6 @@ mod tests {
         rpc::{map_http_requests, RpcHandler},
         utils::{parse_json_hex, RpcRequest},
     };
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
     use serde_json::json;
 
     #[tokio::test]
