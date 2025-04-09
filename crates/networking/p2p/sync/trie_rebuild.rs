@@ -274,10 +274,13 @@ async fn rebuild_storage_trie(
     store: Store,
 ) -> Result<(), SyncError> {
     info!("Rebuilding Storage Trie!");
+    let open_trie_start = Instant::now();
     let full_time_start = Instant::now();
     let mut start = H256::zero();
     let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
+    let open_trie_time = open_trie_start.elapsed().as_millis();
     let mut cycles = 0;
+    let mut keys_read = 0;
     let mut time_spent_reading = 0;
     let mut time_spent_writing_trie = 0;
     let mut time_spent_commiting_trie = 0;
@@ -285,6 +288,7 @@ async fn rebuild_storage_trie(
         cycles += 1;
         let read_start = Instant::now();
         let batch = store.read_storage_snapshot(account_hash, start)?;
+        keys_read += batch.len();
         time_spent_reading += read_start.elapsed().as_millis();
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
         // Update start
@@ -312,7 +316,16 @@ async fn rebuild_storage_trie(
             .await?;
     }
     let full_time = full_time_start.elapsed().as_millis();
-    StorageRebuildMetrics{ cycles, time_spent_reading, time_spent_writing_trie, time_spent_commiting_trie, full_time }.show();
+    StorageRebuildMetrics {
+        cycles,
+        time_spent_reading,
+        time_spent_writing_trie,
+        time_spent_commiting_trie,
+        full_time,
+        open_trie_time,
+        keys_read,
+    }
+    .show();
     Ok(())
 }
 
@@ -390,6 +403,8 @@ struct StorageRebuildMetrics {
     time_spent_writing_trie: u128,
     time_spent_commiting_trie: u128,
     full_time: u128,
+    open_trie_time: u128,
+    keys_read: usize,
 }
 
 impl StorageRebuildMetrics {
@@ -405,8 +420,8 @@ impl StorageRebuildMetrics {
         let read_percentage = self.time_spent_reading * 100 / self.full_time;
         let trie_write_percentage = self.time_spent_writing_trie * 100 / self.full_time;
         let trie_commit_percentage = self.time_spent_commiting_trie * 100 / self.full_time;
-        info!("\nRebuilt Storage in {}ms.\n Used {} cycles of {MAX_SNAPSHOT_READS} snapshot reads each.\n Stats:\nAverage time per cycle: {average_time_per_cycle}ms\n Average time spent reading snapshot {average_read_time}ms\n Average time spent writing storage trie: {average_trie_write_time}ms\n Average time spent commiting storage trie {average_commit_trie_time}ms\n\n Percentage of time spent reading snapshot {read_percentage}%\n Percentage of time spent writing storage trie: {trie_write_percentage}%\n Percentage of time spent commiting storage trie {trie_commit_percentage}%\n",
-        self.full_time, self.cycles
+        info!("\nRebuilt Storage in {}ms.\n Used {} cycles of {MAX_SNAPSHOT_READS} snapshot reads each.\n Read {} keys in total\n Stats:\n Time spent opening the trie {} ms\nAverage time per cycle: {average_time_per_cycle}ms\n Average time spent reading snapshot {average_read_time}ms\n Average time spent writing storage trie: {average_trie_write_time}ms\n Average time spent commiting storage trie {average_commit_trie_time}ms\n\n Percentage of time spent reading snapshot {read_percentage}%\n Percentage of time spent writing storage trie: {trie_write_percentage}%\n Percentage of time spent commiting storage trie {trie_commit_percentage}%\n",
+        self.full_time, self.cycles, self.keys_read, self.open_trie_time
     )
     }
 }
