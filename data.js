@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744215903882,
+  "lastUpdate": 1744215943426,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2785,6 +2785,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182144236573,
             "range": "± 695850480",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b82d80003cdb2481674adb45a321f920251cca82",
+          "message": "fix(l2): reject L2PrivilegedTx from RPC (#2429)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe need to reject L2Privileged transactions from the RPC, as it will\nbrake the chain.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-04-09T15:36:36Z",
+          "tree_id": "6449b01bd66d12a69af9d4350ca6e3d688e0f7e7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b82d80003cdb2481674adb45a321f920251cca82"
+        },
+        "date": 1744215941673,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181422253000,
+            "range": "± 735467064",
             "unit": "ns/iter"
           }
         ]
