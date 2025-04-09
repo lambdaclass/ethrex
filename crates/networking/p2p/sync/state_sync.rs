@@ -104,6 +104,7 @@ async fn state_sync_segment(
         tokio::task::spawn(StateSyncProgress::end_segment(
             state_sync_progress.clone(),
             segment_number,
+            start_account_hash,
         ));
         return Ok((segment_number, false, start_account_hash));
     }
@@ -197,6 +198,7 @@ async fn state_sync_segment(
     tokio::task::spawn(StateSyncProgress::end_segment(
         state_sync_progress.clone(),
         segment_number,
+        start_account_hash,
     ));
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
@@ -241,8 +243,10 @@ impl StateSyncProgress {
     async fn update_key(progress: StateSyncProgress, segment_number: usize, current_key: H256) {
         progress.data.lock().await.current_keys[segment_number] = current_key
     }
-    async fn end_segment(progress: StateSyncProgress, segment_number: usize) {
-        progress.data.lock().await.ended[segment_number] = true
+    async fn end_segment(progress: StateSyncProgress, segment_number: usize, last_key: H256) {
+        let mut data = progress.data.lock().await;
+        data.ended[segment_number] = true;
+        data.current_keys[segment_number] = last_key;
     }
 
     // Returns true if the state sync ended

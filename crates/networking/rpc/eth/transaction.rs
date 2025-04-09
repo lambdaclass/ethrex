@@ -110,13 +110,15 @@ impl RpcHandler for CallRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
+        let chain_config = context.storage.get_chain_config()?;
+        let fork = chain_config.get_fork(header.timestamp);
         // Run transaction
         let result = simulate_tx(
             &self.transaction,
             &header,
             context.storage,
             context.blockchain,
-            Fork::Cancun,
+            fork,
         )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -337,10 +339,12 @@ impl RpcHandler for CreateAccessListRequest {
             context.storage.clone(),
             header.compute_block_hash(),
         );
+        let chain_config = context.storage.get_chain_config()?;
+        let fork = chain_config.get_fork(header.timestamp);
 
         // Run transaction and obtain access list
         let (gas_used, access_list, error) =
-            vm.create_access_list(&self.transaction, &header, Fork::Cancun)?;
+            vm.create_access_list(&self.transaction, &header, fork)?;
         let result = AccessListResult {
             access_list: access_list
                 .into_iter()

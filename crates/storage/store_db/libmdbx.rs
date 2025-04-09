@@ -867,6 +867,20 @@ impl StoreEngine for Store {
             .take(MAX_SNAPSHOT_READS);
         Ok(iter.collect::<Vec<_>>())
     }
+
+    fn get_latest_valid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+        self.read::<InvalidAncestors>(block.into())
+            .map(|o| o.map(|a| a.to()))
+    }
+
+    async fn set_latest_valid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.write::<InvalidAncestors>(bad_block.into(), latest_valid.into())
+            .await
+    }
 }
 
 impl Debug for Store {
@@ -1073,6 +1087,11 @@ table!(
     ( StorageHealPaths ) AccountHashRLP => TriePathsRLP
 );
 
+table!(
+    /// Stores invalid ancestors
+    ( InvalidAncestors ) BlockHashRLP => BlockHashRLP
+);
+
 // Storage values are stored as bytes instead of using their rlp encoding
 // As they are stored in a dupsort table, they need to have a fixed size, and encoding them doesn't preserve their size
 pub struct AccountStorageKeyBytes(pub [u8; 32]);
@@ -1174,6 +1193,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Database {
         table_info!(StateSnapShot),
         table_info!(StorageSnapShot),
         table_info!(StorageHealPaths),
+        table_info!(InvalidAncestors),
     ]
     .into_iter()
     .collect();

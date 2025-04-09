@@ -1081,6 +1081,23 @@ impl Store {
     ) -> Result<Vec<(H256, U256)>, StoreError> {
         self.engine.read_storage_snapshot(account_hash, start)
     }
+
+    pub fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_latest_valid_ancestor(block)
+    }
+
+    pub async fn set_latest_valid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .set_latest_valid_ancestor(bad_block, latest_valid)
+            .await
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
