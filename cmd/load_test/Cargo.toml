@@ -18,6 +18,3 @@ eyre = "0.6"
 keccak-hash.workspace = true
 tokio.workspace = true
 
-[[bin]]
-name = "load_test"
-path = "./src/main.rs"
