@@ -4,7 +4,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Block;
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{StoreWrapper, ToExecDB};
+use ethrex_vm::Evm;
 use std::path::Path;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
@@ -65,11 +65,9 @@ async fn setup() -> (ProgramInput, Block) {
         .unwrap()
         .unwrap();
 
-    let store = StoreWrapper {
-        store: store.clone(),
-        block_hash: block_to_prove.header.parent_hash,
-    };
-    let db = store.to_exec_db(block_to_prove).unwrap();
+    let db = Evm::to_execution_db(&store.clone(), block_to_prove)
+        .await
+        .unwrap();
 
     let input = ProgramInput {
         block: block_to_prove.clone(),
