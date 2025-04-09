@@ -18,7 +18,6 @@ use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
     array,
-    collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -90,14 +89,6 @@ pub struct Syncer {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
-    /// when processing an invalid payload. To provide this, we must track invalid chains.
-    ///
-    /// We only store the last known valid head upon encountering a bad block,
-    /// rather than tracking every subsequent invalid block.
-    ///
-    /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
-    pub invalid_ancestors: HashMap<BlockHash, BlockHash>,
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
@@ -115,7 +106,6 @@ impl Syncer {
             snap_enabled,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             cancel_token,
             blockchain,
@@ -130,7 +120,6 @@ impl Syncer {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
@@ -270,7 +259,7 @@ impl Syncer {
                 search_head = last_block_hash;
                 current_head = last_block_hash;
                 if sync_mode == SyncMode::Snap {
-                    store.set_header_download_checkpoint(current_head)?;
+                    store.set_header_download_checkpoint(current_head).await?;
                 }
             }
 
@@ -281,7 +270,7 @@ impl Syncer {
                     < MIN_FULL_BLOCKS as u64
                 {
                     // Too few blocks for a snap sync, switching to full sync
-                    store.clear_snap_state()?;
+                    store.clear_snap_state().await?;
                     sync_mode = SyncMode::Full;
                     self.snap_enabled.store(false, Ordering::Relaxed);
                 }
@@ -293,7 +282,9 @@ impl Syncer {
             // Store headers and save hashes for full block retrieval
             all_block_hashes.extend_from_slice(&block_hashes[..]);
             // This step is necessary for full sync because some opcodes depend on previous blocks during execution.
-            store.add_block_headers(block_hashes.clone(), block_headers.clone())?;
+            store
+                .add_block_headers(block_hashes.clone(), block_headers.clone())
+                .await?;
 
             if sync_mode == SyncMode::Full {
                 let last_block_hash = self
@@ -351,13 +342,13 @@ impl Syncer {
                         .get_block_by_hash(*hash)?
                         .ok_or(SyncError::CorruptDB)?;
                     let block_number = block.header.number;
-                    self.blockchain.add_block(&block)?;
-                    store.set_canonical_block(block_number, *hash)?;
-                    store.update_latest_block_number(block_number)?;
+                    self.blockchain.add_block(&block).await?;
+                    store.set_canonical_block(block_number, *hash).await?;
+                    store.update_latest_block_number(block_number).await?;
                 }
                 self.last_snap_pivot = pivot_header.number;
                 // Finished a sync cycle without aborting halfway, clear current checkpoint
-                store.clear_snap_state()?;
+                store.clear_snap_state().await?;
                 // Next sync will be full-sync
                 self.snap_enabled.store(false, Ordering::Relaxed);
             }
@@ -454,18 +445,15 @@ impl Syncer {
         // For more details, refer to the `get_block_hash` function in [`LevmDatabase`] and the [`revm::Database`].
         store
             .mark_chain_as_canonical(&blocks)
+            .await
             .map_err(SyncError::Store)?;
 
         // Executing blocks is a CPU heavy operation
         // Spawn a blocking task to not block the tokio runtime
-        let res: Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> = {
+        let res = {
             let blockchain = self.blockchain.clone();
-            tokio::task::spawn_blocking(move || {
-                Self::add_blocks(blockchain, &blocks, sync_head_found)
-            })
-            .await
-            .map_err(SyncError::JoinHandle)
-        }?;
+            Self::add_blocks(blockchain, blocks, sync_head_found).await
+        };
 
         if let Err((error, failure)) = res {
             warn!("Failed to add block during FullSync: {error}");
@@ -474,19 +462,24 @@ impl Syncer {
                 last_valid_hash,
             }) = failure
             {
-                self.invalid_ancestors
-                    .insert(failed_block_hash, last_valid_hash);
+                store
+                    .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
+                    .await?;
 
                 // TODO(#2127): Just marking the failing ancestor and the sync head is enough
                 // to fix the Missing Ancestors hive test, we want to look at a more robust
                 // solution in the future if needed.
-                self.invalid_ancestors.insert(sync_head, last_valid_hash);
+                store
+                    .set_latest_valid_ancestor(sync_head, last_valid_hash)
+                    .await?;
             }
 
             return Err(error.into());
         }
 
-        store.update_latest_block_number(last_block.header.number)?;
+        store
+            .update_latest_block_number(last_block.header.number)
+            .await?;
 
         let elapsed_secs: f64 = since.elapsed().as_millis() as f64 / 1000.0;
         let blocks_per_second = blocks_len as f64 / elapsed_secs;
@@ -508,16 +501,16 @@ impl Syncer {
         Ok(Some(last_block.hash()))
     }
 
-    fn add_blocks(
+    async fn add_blocks(
         blockchain: Arc<Blockchain>,
-        blocks: &[Block],
+        blocks: Vec<Block>,
         sync_head_found: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         if sync_head_found {
             let mut last_valid_hash = H256::default();
             for block in blocks {
-                blockchain.add_block(block).map_err(|e| {
+                blockchain.add_block(&block).await.map_err(|e| {
                     (
                         e,
                         Some(BatchBlockProcessingFailure {
@@ -530,7 +523,7 @@ impl Syncer {
             }
             Ok(())
         } else {
-            blockchain.add_blocks_in_batch(blocks)
+            blockchain.add_blocks_in_batch(blocks).await
         }
     }
 }
@@ -549,7 +542,7 @@ async fn store_block_bodies(
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
             // Add bodies to storage
             for (hash, body) in current_block_hashes.zip(block_bodies.into_iter()) {
-                store.add_block_body(hash, body)?;
+                store.add_block_body(hash, body).await?;
             }
 
             // Check if we need to ask for another batch
@@ -575,7 +568,7 @@ async fn store_receipts(
             debug!(" Received {} Receipts", receipts.len());
             // Track which blocks we have already fetched receipts for
             for (block_hash, receipts) in block_hashes.drain(0..receipts.len()).zip(receipts) {
-                store.add_receipts(block_hash, receipts)?;
+                store.add_receipts(block_hash, receipts).await?;
             }
             // Check if we need to ask for another batch
             if block_hashes.is_empty() {
@@ -654,7 +647,7 @@ impl Syncer {
             rebuild_start.elapsed().as_secs()
         );
         // Clear snapshot
-        store.clear_snapshot()?;
+        store.clear_snapshot().await?;
 
         // Perform Healing
         let state_heal_complete = heal_state_trie(

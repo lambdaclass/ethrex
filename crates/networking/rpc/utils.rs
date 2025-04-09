@@ -292,7 +292,7 @@ pub mod test_utils {
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
 
-    use crate::start_api;
+    use crate::rpc::start_api;
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
@@ -342,6 +342,7 @@ pub mod test_utils {
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
+            .await
             .expect("Failed to build test genesis");
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();

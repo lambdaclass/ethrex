@@ -7,6 +7,7 @@ on:
     branches: ["**"]
     paths-ignore:
       - "crates/vm/levm/**" # We run this in a separate workflow
+      - "crates/l2/**" # Behind a feature flag not used in this workflow
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
