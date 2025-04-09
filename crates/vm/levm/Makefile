@@ -93,21 +93,15 @@ BENCH_APPROVAL_ITERATIONS := 500
 
 define run_benchmark
 	@printf "%s\n" "revm_$(1)"
-	@target/release/benchmark revm $(1) 10 $($(3))
+	@target/release/benchmark revm $(1) 1 $($(3))
 	@printf "%s\n" "levm_$(1)"
-	@target/release/benchmark levm $(1) 10 $($(3))
+	@target/release/benchmark levm $(1) 1 $($(3))
 	hyperfine -w 5 -r 10 -N \
 		-n "revm_$(1)" "target/release/benchmark revm $(1) $($(2)) $($(3))" \
 		-n "levm_$(1)" "target/release/benchmark levm $(1) $($(2)) $($(3))"
 	@echo
 endef
 
-define levm_flame
-	# Generate flamegraph for levm
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-	--root --output ./levm_$(1).svg \
-	-p revm_comparison --bin benchmark -- levm $(1) $($(2)) $($(3))
-endef
 
 define run_benchmark_ci
 	@printf "%s\n" "revm_$(1)"
@@ -119,11 +113,6 @@ define run_benchmark_ci
 		-n "levm_$(1)" "target/release/benchmark levm $(1) $($(2)) $($(3))"
 	@echo
 endef
-
-
-levm-flame: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
-	$(MAKE) build-revm-comparison
-	$(call levm_flame,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
 
 compile-contracts:
 	cd ../../../ && \
