@@ -124,7 +124,7 @@ impl SyncManager {
                 // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start
                 if sync_head.is_zero() {
                     info!("Resuming sync after node restart, waiting for next FCU");
-                    sleep(Duration::new(5, 0)).await;
+                    sleep(Duration::from_secs(5)).await;
                     continue;
                 }
                 // Start the sync cycle
