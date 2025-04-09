@@ -309,12 +309,14 @@ async fn rebuild_storage_trie(
             break;
         }
     }
+    let heal_if_mismatch_start = Instant::now();
     if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
         warn!("Mismatched storage root for account {account_hash}");
         store
             .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
             .await?;
     }
+    let heal_if_mismatch_time = heal_if_mismatch_start.elapsed().as_millis();
     let full_time = full_time_start.elapsed().as_millis();
     let time_spent_reading = time_spent_reading / 1000;
     let time_spent_writing_trie = time_spent_writing_trie / 1000;
@@ -327,6 +329,7 @@ async fn rebuild_storage_trie(
         full_time,
         open_trie_time,
         keys_read,
+        heal_if_mismatch_time,
     }
     .show();
     Ok(())
@@ -408,6 +411,7 @@ struct StorageRebuildMetrics {
     full_time: u128,
     open_trie_time: u128,
     keys_read: usize,
+    heal_if_mismatch_time: u128,
 }
 
 impl StorageRebuildMetrics {
@@ -423,8 +427,8 @@ impl StorageRebuildMetrics {
         let read_percentage = self.time_spent_reading * 100 / self.full_time;
         let trie_write_percentage = self.time_spent_writing_trie * 100 / self.full_time;
         let trie_commit_percentage = self.time_spent_commiting_trie * 100 / self.full_time;
-        info!("\nRebuilt Storage in {}ms.\n Used {} cycles of {MAX_SNAPSHOT_READS} snapshot reads each.\n Read {} keys in total\n Stats:\n Time spent opening the trie {} ms\nAverage time per cycle: {average_time_per_cycle}ms\n Average time spent reading snapshot {average_read_time}ms\n Average time spent writing storage trie: {average_trie_write_time}ms\n Average time spent commiting storage trie {average_commit_trie_time}ms\n\n Percentage of time spent reading snapshot {read_percentage}%\n Percentage of time spent writing storage trie: {trie_write_percentage}%\n Percentage of time spent commiting storage trie {trie_commit_percentage}%\n",
-        self.full_time, self.cycles, self.keys_read, self.open_trie_time
+        info!("\nRebuilt Storage in {}ms.\n Used {} cycles of {MAX_SNAPSHOT_READS} snapshot reads each.\n Read {} keys in total\n Stats:\n Time spent opening the trie {} ms\n Time spent adding heal paths if mismatch {}ms \nAverage time per cycle: {average_time_per_cycle}ms\n Average time spent reading snapshot {average_read_time}ms\n Average time spent writing storage trie: {average_trie_write_time}ms\n Average time spent commiting storage trie {average_commit_trie_time}ms\n\n Percentage of time spent reading snapshot {read_percentage}%\n Percentage of time spent writing storage trie: {trie_write_percentage}%\n Percentage of time spent commiting storage trie {trie_commit_percentage}%\n",
+        self.full_time, self.cycles, self.keys_read, self.open_trie_time, self.heal_if_mismatch_time
     )
     }
 }
