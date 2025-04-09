@@ -12,10 +12,9 @@ use ethrex_levm::{
 use ethrex_vm::db::ExecutionDB;
 use revm::{
     db::CacheDB as RevmCacheDB,
-    primitives::{Address, TransactTo},
+    primitives::{alloy_primitives::U160, Address, TransactTo},
     Evm,
 };
-use revm_primitives::alloy_primitives::U160;
 use sha3::{Digest, Keccak256};
 use std::hint::black_box;
 use std::io::Read;

@@ -23,9 +23,6 @@ revm = { version = "19.0.0", features = [
     "optional_block_gas_limit",
 ], default-features = false }
 sha3 = "0.10.8"
-revm-primitives = { version = "14.0.0", features = [
-    "std",
-], default-features = false }
 
 [[bin]]
 name = "compile"
