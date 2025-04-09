@@ -11,7 +11,7 @@ use tracing::debug;
 
 use crate::peer_handler::PeerHandler;
 
-use super::{utils::run_queue, SyncError, BYTECODE_BATCH_SIZE};
+use super::{fetcher_queue::run_queue, SyncError, BYTECODE_BATCH_SIZE};
 
 /// Waits for incoming code hashes from the receiver channel endpoint, queues them, and fetches and stores their bytecodes in batches
 pub(crate) async fn bytecode_fetcher(
