@@ -172,11 +172,7 @@ impl ProverServer {
 {prefix}_LISTEN_PORT={}
 {prefix}_DEV_MODE={}
 ",
-            self.l1_address,
-            self.l1_private_key,
-            self.listen_ip,
-            self.listen_port,
-            self.dev_mode,
+            self.l1_address, self.l1_private_key, self.listen_ip, self.listen_port, self.dev_mode,
         )
     }
 }
