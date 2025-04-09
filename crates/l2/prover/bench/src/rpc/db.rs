@@ -357,16 +357,18 @@ impl LevmDatabase for RpcDB {
         {
             if self
                 .cache
-                .lock().unwrap()
+                .lock()
+                .unwrap()
                 .get(&address)
                 .is_some_and(|account| matches!(account, Account::Existing { .. }))
             {
                 return true;
             }
         }
-        if self.fetch_account_blocking(address, &[], false).is_ok_and(|account| {
-            matches!(account, Account::Existing { .. })
-        }) {
+        if self
+            .fetch_account_blocking(address, &[], false)
+            .is_ok_and(|account| matches!(account, Account::Existing { .. }))
+        {
             return true;
         }
         false
