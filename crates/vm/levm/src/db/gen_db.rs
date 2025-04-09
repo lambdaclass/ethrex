@@ -64,9 +64,6 @@ impl GeneralizedDatabase {
         }
     }
 
-    /// Gets mutable account, first checking the cache and then the database
-    /// (caching in the second case)
-    /// This isn't a method of VM because it allows us to use it during VM initialization.
     pub fn get_account_mut<'a>(
         &'a mut self,
         address: Address,
