@@ -9,6 +9,7 @@ use ethrex_common::{
     H256,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_trie::Nibbles;
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 #[cfg(feature = "redb")]
@@ -21,6 +22,7 @@ pub type AccountCodeHashRLP = Rlp<H256>;
 pub type AccountCodeRLP = Rlp<Bytes>;
 pub type AccountHashRLP = Rlp<H256>;
 pub type AccountStateRLP = Rlp<AccountState>;
+pub type TriePathsRLP = Rlp<Vec<Nibbles>>;
 
 // Block types
 pub type BlockHashRLP = Rlp<BlockHash>;

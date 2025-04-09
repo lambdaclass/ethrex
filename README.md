@@ -212,6 +212,9 @@ Node options:
 
           [default: ethrex]
 
+      --force
+          Delete the database without confirmation.
+
       --metrics.addr <ADDRESS>
           [default: 0.0.0.0]
 

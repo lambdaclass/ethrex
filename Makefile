@@ -167,7 +167,7 @@ load-test-erc20:
 	cargo run --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
-	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
+	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
 flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
 	sudo bash bench/scripts/flamegraph.sh
