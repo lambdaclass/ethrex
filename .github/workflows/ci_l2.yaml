@@ -16,6 +16,11 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        validium:
+          - false
+          - true
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -26,8 +31,15 @@ jobs:
       - name: Caching
         uses: Swatinem/rust-cache@v2
 
-      - name: Run L2 integration test
+      - name: Prepare configuration
         run: |
           cd crates/l2
           cp configs/sequencer_config_example.toml configs/sequencer_config.toml
+          if [ "${{ matrix.validium }}" = "true" ]; then
+            sed -i.bak 's/^validium = false$/validium = true/' configs/sequencer_config.toml && rm configs/sequencer_config.toml.bak
+          fi
+
+      - name: Run L2 integration test
+        run: |
+          cd crates/l2
           make ci_test
