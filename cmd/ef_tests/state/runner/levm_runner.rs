@@ -71,6 +71,11 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                 Err(EFTestRunnerError::Internal(reason)) => {
                     return Err(EFTestRunnerError::Internal(reason));
                 }
+                Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
+                    return Err(EFTestRunnerError::Internal(InternalError::Custom(
+                        "This case should not happen".to_owned(),
+                    )));
+                }
             }
         }
         ef_test_report.register_fork_result(*fork, ef_test_report_fork);
@@ -84,7 +89,35 @@ pub async fn run_ef_test_tx(
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     let mut db = utils::load_initial_state_levm(test).await;
-    let mut levm = prepare_vm_for_tx(vector, test, fork, &mut db)?;
+    let mut levm = match prepare_vm_for_tx(vector, test, fork, &mut db) {
+        Ok(levm) => levm,
+        Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
+            let post = test
+                .post
+                .forks
+                .get(fork)
+                .unwrap()
+                .iter()
+                .find(|post| {
+                    post.indexes.get("data").unwrap().as_usize() == vector.0
+                        && post.indexes.get("gas").unwrap().as_usize() == vector.1
+                        && post.indexes.get("value").unwrap().as_usize() == vector.2
+                })
+                .unwrap();
+            if post.expect_exception.as_ref().is_some_and(|exceptions| {
+                exceptions
+                    .iter()
+                    .any(|e| matches!(e, TransactionExpectedException::Type4TxContractCreation))
+            }) {
+                return Ok(());
+            }
+            return Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
+                "error in tx type 4 being a create type, not  found in expected exceptions"
+                    .to_string(),
+            ));
+        }
+        Err(e) => return Err(e),
+    };
     ensure_pre_state(&levm, test)?;
     let levm_execution_result = levm.execute();
     ensure_post_state(&levm_execution_result, vector, test, fork, &mut db).await?;
@@ -131,11 +164,7 @@ pub fn prepare_vm_for_tx<'a>(
         Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_tx.to {
                 TxKind::Call(to) => to,
-                TxKind::Create => {
-                    return Err(EFTestRunnerError::VMExecutionMismatch(
-                        "Unexpected tx's to".to_string(),
-                    ))
-                }
+                TxKind::Create => return Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType),
             },
             value: test_tx.value,
             data: test_tx.data.clone(),
