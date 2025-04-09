@@ -6,6 +6,7 @@ on:
     branches: ["**"]
     paths:
       - "crates/l2/**"
+      - "crates/vm/levm/**"
       - ".github/workflows/pr-main_l2.yaml"
 
 concurrency:
