@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744214307136,
+  "lastUpdate": 1744215903882,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2755,6 +2755,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181076178159,
             "range": "± 495012675",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "43799596+JulianVentura@users.noreply.github.com",
+            "name": "Julian Ventura",
+            "username": "JulianVentura"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0c1dd6dfc5132d187455614d37e8f8c3a14d222c",
+          "message": "fix(l1,l2): update test data genesis files with missing contracts (#2418)\n\n**Description**\n\nWe have some genesis files under `test_data` directory which are used on\nunit tests.\n\nThis PR:\n- Fixes the address of the EIP-2935 system contract on some of the\ngenesis files.\n- Adds the EIP-4788, EIP-7002, EIP-7251 and deposits contract to those\nsame genesis files\n\nThese contracts are not being used in the unit tests, so this addition\nis only for consistency.",
+          "timestamp": "2025-04-09T15:36:17Z",
+          "tree_id": "502dbafe3086181532b6d51b6de28b7284589b4d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0c1dd6dfc5132d187455614d37e8f8c3a14d222c"
+        },
+        "date": 1744215901370,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182144236573,
+            "range": "± 695850480",
             "unit": "ns/iter"
           }
         ]
