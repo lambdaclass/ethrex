@@ -22,19 +22,19 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
             continue;
         }
 
-        println!("Test: {}", test_key);
+        // println!("Test: {}", test_key);
         rt.block_on(run_ef_test(&test_key, &test));
     }
     Ok(())
 }
 
 datatest_stable::harness!(
-    // parse_and_execute,
-    // "vectors/prague/eip2537_bls_12_381_precompiles",
-    // r".*/.*\.json",
-    // parse_and_execute,
-    // "vectors/prague/eip2935_historical_block_hashes_from_state",
-    // r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip2537_bls_12_381_precompiles",
+    r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip2935_historical_block_hashes_from_state",
+    r".*/.*\.json",
     parse_and_execute,
     "vectors/prague/eip6110_deposits/deposits",
     r".*/.*\.json",
@@ -44,13 +44,13 @@ datatest_stable::harness!(
     parse_and_execute,
     "vectors/prague/eip7251_consolidations",
     r".*/.*\.json",
-    // parse_and_execute,
-    // "vectors/prague/eip7623_increase_calldata_cost",
-    // r".*/.*\.json",
-    // parse_and_execute,
-    // "vectors/prague/eip7685_general_purpose_el_requests",
-    // r".*/.*\.json",
-    // parse_and_execute,
-    // "vectors/prague/eip7702_set_code_tx",
-    // r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip7623_increase_calldata_cost",
+    r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip7685_general_purpose_el_requests",
+    r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip7702_set_code_tx",
+    r".*/.*\.json",
 );

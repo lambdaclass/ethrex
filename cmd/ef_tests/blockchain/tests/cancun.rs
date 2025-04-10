@@ -52,10 +52,7 @@ datatest_stable::harness!(
     parse_and_execute_all,
     "vectors/cancun/",
     r"eip4788_beacon_root/.*/.*\.json",
-    // TODO: Here we are still filtering some Prague and Cancun-Prague transition tests
-    // after fixing them, the testing function should be replaced in favour of
-    // `parse_and_execute_all`
-    parse_and_execute_until_cancun,
+    parse_and_execute_all,
     "vectors/cancun/",
     r"eip4844_blobs/.*/.*\.json",
     parse_and_execute_all,
