@@ -312,7 +312,7 @@ impl Command {
                 let mut new_trie = store
                     .state_trie(genesis_block_hash)?
                     .expect("Cannot open state trie");
-                let mut last_number = 0;
+                let mut current_block_number = 1;
                 let mut last_hash = genesis_block_hash;
 
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
@@ -332,28 +332,50 @@ impl Command {
                         .await
                         .expect("Error applying account updates");
 
+                    while current_block_number < state_diff.last_header.number {
+                        let new_block = BlockHeader {
+                            coinbase,
+                            number: current_block_number,
+                            parent_hash: last_hash,
+                            state_root: genesis_header.state_root,
+                            ..Default::default()
+                        };
+                        let new_block_hash = new_block.compute_block_hash();
+
+                        store.add_block_header(new_block_hash, new_block).await?;
+                        store
+                            .add_block_number(new_block_hash, current_block_number)
+                            .await?;
+                        store
+                            .set_canonical_block(current_block_number, new_block_hash)
+                            .await?;
+
+                        current_block_number += 1;
+                        last_hash = new_block_hash;
+                    }
                     let new_block = BlockHeader {
                         coinbase,
-                        number: last_number + 1,
                         parent_hash: last_hash,
                         state_root: new_trie.hash().expect("Error committing state"),
-                        ..state_diff.header
+                        ..state_diff.last_header
                     };
                     let new_block_hash = new_block.compute_block_hash();
 
                     store.add_block_header(new_block_hash, new_block).await?;
                     store
-                        .add_block_number(new_block_hash, last_number + 1)
+                        .add_block_number(new_block_hash, state_diff.last_header.number)
                         .await?;
                     store
-                        .set_canonical_block(last_number + 1, new_block_hash)
+                        .set_canonical_block(state_diff.last_header.number, new_block_hash)
                         .await?;
+                    current_block_number += 1;
 
-                    last_number += 1;
-                    last_hash = new_block_hash;
+                    // TODO: Ensure that the last state_root is the same as new_trie.hash().
                 }
 
-                store.update_latest_block_number(last_number).await?;
+                store
+                    .update_latest_block_number(current_block_number)
+                    .await?;
             }
         }
         Ok(())

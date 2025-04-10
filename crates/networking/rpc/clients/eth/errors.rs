@@ -34,6 +34,9 @@ pub enum EthClientError {
     GetCodeError(#[from] GetCodeError),
     #[error("eth_getTransactionByHash request error: {0}")]
     GetTransactionByHashError(#[from] GetTransactionByHashError),
+    #[cfg(feature = "l2")]
+    #[error("ethrex_getBatchNumberByBlock request error: {0}")]
+    GetWithdrawalProofError(#[from] GetWithdrawalProofError),
     #[error("Unreachable nonce")]
     UnrecheableNonce,
     #[error("Error: {0}")]
@@ -208,4 +211,17 @@ pub enum CalldataEncodeError {
     WrongArgumentLength(String),
     #[error("Internal Calldata encoding error. This is most likely a bug")]
     InternalError,
+}
+
+#[cfg(feature = "l2")]
+#[derive(Debug, thiserror::Error)]
+pub enum GetWithdrawalProofError {
+    #[error("{0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("{0}")]
+    SerdeJSONError(#[from] serde_json::Error),
+    #[error("{0}")]
+    RPCError(String),
+    #[error("{0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }

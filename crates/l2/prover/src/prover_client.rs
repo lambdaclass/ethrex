@@ -73,7 +73,7 @@ impl ProverClient {
 
         match response {
             ProofData::Response {
-                block_number,
+                batch_number: block_number,
                 input,
             } => match (block_number, input) {
                 (Some(block_number), Some(input)) => {
@@ -109,7 +109,9 @@ impl ProverClient {
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;
 
         match submit_ack {
-            ProofData::SubmitAck { block_number } => {
+            ProofData::SubmitAck {
+                batch_number: block_number,
+            } => {
                 info!("Received submit ack for block_number: {}", block_number);
                 Ok(())
             }
