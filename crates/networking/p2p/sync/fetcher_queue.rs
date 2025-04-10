@@ -46,7 +46,7 @@ where
 }
 
 /// Reads incoming requests from the receiver, adds them to the queue, and returns the requests' incoming status
-/// Will only wait out for incoming requests if the queue is currenlty empty
+/// Will only wait out for incoming requests if the queue is currently empty
 async fn read_incoming_requests<T>(receiver: &mut Receiver<Vec<T>>, queue: &mut Vec<T>) -> bool {
     if !receiver.is_empty() || queue.is_empty() {
         let mut msg_buffer = vec![];
