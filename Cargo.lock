@@ -2733,31 +2733,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ef_tests-state"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "clap 4.5.32",
- "clap_complete",
- "colored",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-levm",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-vm",
- "hex",
- "itertools 0.13.0",
- "keccak-hash",
- "revm 19.6.0",
- "serde",
- "serde_json",
- "spinoff",
- "thiserror 2.0.12",
- "tokio",
-]
-
-[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

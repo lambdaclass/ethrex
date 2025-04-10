@@ -18,7 +18,7 @@ use ethrex_common::{
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
-use ethrex_vm::{EvmError, ExecutionDB, StoreWrapper, ToExecDB};
+use ethrex_vm::{db::StoreWrapper, EvmError, ExecutionDB, ToExecDB};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr, time::Duration};

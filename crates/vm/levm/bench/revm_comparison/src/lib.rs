@@ -9,7 +9,7 @@ use ethrex_levm::{
     vm::{GeneralizedDatabase, VM},
     Environment,
 };
-use ethrex_vm::db::ExecutionDB;
+use ethrex_vm::ExecutionDB;
 use revm::{
     db::BenchmarkDB,
     primitives::{address, Address, Bytecode, TransactTo},

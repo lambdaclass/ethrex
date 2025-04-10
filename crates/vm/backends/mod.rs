@@ -2,10 +2,11 @@ pub mod levm;
 pub mod revm;
 
 use self::revm::db::evm_state;
+use crate::db::StoreWrapper;
+use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
 use crate::ExecutionDB;
-use crate::{db::StoreWrapper, errors::EvmError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
@@ -15,6 +16,7 @@ use ethrex_levm::db::CacheDB;
 use ethrex_levm::vm::GeneralizedDatabase;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
+use levm::db::Wrapper;
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
@@ -65,10 +67,10 @@ impl Evm {
             },
             EvmEngine::LEVM => Evm::LEVM {
                 db: GeneralizedDatabase::new(
-                    Arc::new(StoreWrapper {
+                    Arc::new(Wrapper(StoreWrapper {
                         store: store.clone(),
                         block_hash: parent_hash,
-                    }),
+                    })),
                     CacheDB::new(),
                 ),
             },

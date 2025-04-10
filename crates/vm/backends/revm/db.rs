@@ -14,7 +14,7 @@ use revm::{
     DatabaseRef,
 };
 
-use crate::db::{ExecutionDB, ToExecDB};
+use crate::execution_db::{ExecutionDB, ToExecDB};
 use crate::helpers::spec_id;
 use crate::{
     db::StoreWrapper,

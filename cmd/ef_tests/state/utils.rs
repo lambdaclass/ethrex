@@ -9,7 +9,7 @@ use ethrex_levm::{db::CacheDB, vm::GeneralizedDatabase};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     backends::revm::db::{evm_state, EvmState},
-    StoreWrapper,
+    StoreWrapper, Wrapper,
 };
 use spinoff::Spinner;
 
