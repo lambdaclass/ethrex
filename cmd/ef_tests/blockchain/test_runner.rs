@@ -20,7 +20,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::new(ethrex_vm::EvmEngine::LEVM, store.clone());
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
@@ -114,6 +114,7 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
 /// Tests that previously failed the validation stage shouldn't be executed with this function.
 fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
     let latest_block_number = db.get_latest_block_number().unwrap();
+    dbg!(&test.post_state);
     for (addr, account) in &test.post_state {
         let expected_account: CoreAccount = account.clone().into();
         // Check info
@@ -129,6 +130,7 @@ fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
         );
         // Check code
         let code_hash = expected_account.info.code_hash;
+        println!("Going to get code for code hash {code_hash}");
         let db_account_code = db
             .get_account_code(code_hash)
             .expect("Failed to read from DB")

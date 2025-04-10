@@ -143,6 +143,7 @@ impl Blockchain {
         // Async doesn't play well with `.and_then`
         let inner = || async {
             let res = self.execute_block(block).await?;
+            dbg!(&res);
             self.store_block(block, res).await
         };
 
