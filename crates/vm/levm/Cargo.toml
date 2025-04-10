@@ -8,9 +8,6 @@ lazy_static.workspace = true
 ethrex-common.workspace = true
 ethrex-rlp.workspace = true
 derive_more = { version = "1.0.0", features = ["full"] }
-revm-primitives = { version = "14.0.0", features = [
-  "std",
-], default-features = false }
 
 bytes.workspace = true
 keccak-hash.workspace = true
