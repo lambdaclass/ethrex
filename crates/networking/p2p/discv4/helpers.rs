@@ -1,10 +1,8 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use chrono::{Utc, TimeDelta};
 
 pub fn get_msg_expiration_from_seconds(seconds: u64) -> u64 {
-    (SystemTime::now() + Duration::from_secs(seconds))
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    let delta = TimeDelta::try_seconds(seconds.try_into().unwrap_or(i64::MAX));
+    (Utc::now() + delta.unwrap_or_default()).timestamp().try_into().unwrap_or(1 << 63)
 }
 
 pub fn is_msg_expired(expiration: u64) -> bool {
@@ -14,16 +12,9 @@ pub fn is_msg_expired(expiration: u64) -> bool {
 }
 
 pub fn elapsed_time_since(unix_timestamp: u64) -> u64 {
-    let time = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(unix_timestamp);
-    SystemTime::now()
-        .duration_since(time)
-        .unwrap_or_default()
-        .as_secs()
+    current_unix_time().saturating_sub(unix_timestamp)
 }
 
 pub fn current_unix_time() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    Utc::now().timestamp().try_into().unwrap_or(1 << 63)
 }
