@@ -282,7 +282,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
                         .expect("ON_CHAIN_PROPOSER env var not set"),
                 )
                 .unwrap(),
-                calldata::encode_calldata("lastVerifiedBatch", &[])?.into(),
+                calldata::encode_calldata("lastVerifiedBatch()", &[])?.into(),
                 Overrides::default(),
             )
             .await?
@@ -299,6 +299,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     let claim_tx = ethrex_l2_sdk::claim_withdraw(
         withdraw_value,
+        withdraw_tx,
         l1_rich_wallet_address,
         l1_rich_wallet_private_key(),
         &eth_client,

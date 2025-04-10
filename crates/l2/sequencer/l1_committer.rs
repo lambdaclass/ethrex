@@ -107,6 +107,12 @@ impl Committer {
         let (blobs_bundle, withdrawal_hashes, deposit_logs_hash, last_block_to_commit) =
             self.prepare_batch_from_block(first_block_to_commit)?;
 
+        // TODO: make it better
+        if first_block_to_commit > last_block_to_commit {
+            debug!("No new blocks to commit, skipping..");
+            return Ok(());
+        }
+
         let withdrawal_logs_merkle_root =
             self.get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
 
@@ -154,8 +160,12 @@ impl Committer {
                 .map_err(CommitterError::from)?
             else {
                 debug!("No new block to commit, skipping..");
+                current_block_number -= 1;
                 break;
             };
+
+            println!("Block to commit: {current_block_number}");
+            println!("Block body: {:?}", block_to_commit_body);
 
             let block_to_commit_header = self
                 .store
