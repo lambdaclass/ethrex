@@ -19,6 +19,14 @@ The only mandatory argument is the path to the rich account private keys file.
 
 ## Simple run
 
+Before starting, consider increasing the maximum amount of open files for the current shell with the following command:
+
+```bash
+ulimit -n 65536
+```
+
+On some machines, this fixes the `ERROR axum::serve::listener: accept error: Too many open files (os error 24)` and sometimes nonce related errors.
+
 To run a load test, first run the node using a command like the following in the root folder:
 
 ```bash

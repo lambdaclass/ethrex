@@ -175,7 +175,7 @@ enum TxBuilder {
 }
 
 impl TxBuilder {
-    // Returns the destination address, the calldata and the contract address.
+    // Returns value, the calldata and the destination (contract or eoa).
     fn build_tx(&self) -> (Option<U256>, Vec<u8>, H160) {
         let dst = H160::random();
         match self {
