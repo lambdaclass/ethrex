@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use crate::sync::seconds_to_readable;
 
 use super::{
-    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES,
+    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS,
     SHOW_PROGRESS_INTERVAL_DURATION, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
 };
 
@@ -176,7 +176,6 @@ async fn rebuild_state_trie_segment(
         for (hash, account) in batch.iter() {
             state_trie.insert(hash.0.to_vec(), account.encode_to_vec())?;
         }
-        root = state_trie.hash()?;
         // Return if we have no more snapshot accounts to process for this segemnt
         if unfilled_batch {
             let state_sync_complete = store
@@ -189,6 +188,7 @@ async fn rebuild_state_trie_segment(
             break;
         }
     }
+    root = state_trie.hash()?;
     Ok((root, start))
 }
 
@@ -263,9 +263,7 @@ async fn rebuild_storage_trie(
         for (key, val) in batch {
             storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         }
-        storage_trie.hash()?;
-
-        // Return if we have no more snapshot accounts to process for this segemnt
+        // Return if we have no more snapshot values to process for this storage
         if unfilled_batch {
             break;
         }
