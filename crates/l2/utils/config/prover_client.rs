@@ -1,10 +1,13 @@
+use crate::utils::parse::url_deserializer;
+use reqwest::Url;
 use serde::Deserialize;
 
 use super::errors::ConfigError;
 
 #[derive(Deserialize, Debug)]
 pub struct ProverClientConfig {
-    pub prover_server_endpoint: String,
+    #[serde(deserialize_with = "url_deserializer")]
+    pub prover_server_endpoint: Url,
     pub proving_time_ms: u64,
 }
 

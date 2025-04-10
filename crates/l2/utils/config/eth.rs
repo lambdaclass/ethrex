@@ -1,10 +1,13 @@
+use crate::utils::parse::url_deserializer;
+use reqwest::Url;
 use serde::Deserialize;
 
 use super::errors::ConfigError;
 
 #[derive(Deserialize, Debug)]
 pub struct EthConfig {
-    pub rpc_url: String,
+    #[serde(deserialize_with = "url_deserializer")]
+    pub rpc_url: Url,
 }
 
 impl EthConfig {
