@@ -1,6 +1,8 @@
 use std::{borrow::Borrow, collections::HashMap, panic::RefUnwindSafe, sync::Arc};
 
-use crate::rlp::{AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP};
+use crate::rlp::{
+    AccountHashRLP, AccountStateRLP, BlockRLP, Rlp, TransactionHashRLP, TriePathsRLP,
+};
 use crate::store::MAX_SNAPSHOT_READS;
 use crate::trie_db::{redb::RedBTrie, redb_multitable::RedBMultiTableTrieDB};
 use crate::{
@@ -45,6 +47,8 @@ pub const STORAGE_TRIE_NODES_TABLE: MultimapTableDefinition<([u8; 32], [u8; 33])
     MultimapTableDefinition::new("StorageTrieNodes");
 const CHAIN_DATA_TABLE: TableDefinition<ChainDataIndex, Vec<u8>> =
     TableDefinition::new("ChainData");
+const INVALID_ANCESOTRS_TABLE: TableDefinition<BlockHashRLP, BlockHashRLP> =
+    TableDefinition::new("InvalidAncestors");
 const PAYLOADS_TABLE: TableDefinition<BlockNumber, PayloadBundleRLP> =
     TableDefinition::new("Payloads");
 const PENDING_BLOCKS_TABLE: TableDefinition<BlockHashRLP, BlockRLP> =
@@ -59,6 +63,8 @@ const STATE_SNAPSHOT_TABLE: TableDefinition<AccountHashRLP, AccountStateRLP> =
     TableDefinition::new("StateSnapshot");
 const STORAGE_SNAPSHOT_TABLE: MultimapTableDefinition<AccountHashRLP, ([u8; 32], [u8; 32])> =
     MultimapTableDefinition::new("StorageSnapshotTable");
+const STORAGE_HEAL_PATHS_TABLE: TableDefinition<AccountHashRLP, TriePathsRLP> =
+    TableDefinition::new("StorageHealPaths");
 
 #[derive(Debug)]
 pub struct RedBStore {
@@ -861,21 +867,46 @@ impl StoreEngine for RedBStore {
 
     async fn set_storage_heal_paths(
         &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
+        paths: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.write(
-            SNAP_STATE_TABLE,
-            SnapStateIndex::StorageHealPaths,
-            accounts.encode_to_vec(),
-        )
-        .await
+        let key_values = paths
+            .into_iter()
+            .map(|(hash, paths)| {
+                (
+                    <H256 as Into<AccountHashRLP>>::into(hash),
+                    <Vec<Nibbles> as Into<TriePathsRLP>>::into(paths),
+                )
+            })
+            .collect();
+        self.write_batch(STORAGE_HEAL_PATHS_TABLE, key_values).await
     }
 
-    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        self.read(SNAP_STATE_TABLE, SnapStateIndex::StorageHealPaths)?
-            .map(|rlp| RLPDecode::decode(&rlp.value()))
-            .transpose()
-            .map_err(StoreError::RLPDecode)
+    async fn take_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
+        // Read values
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(STORAGE_HEAL_PATHS_TABLE)?;
+        let res: Vec<(H256, Vec<Nibbles>)> = table
+            .range(<H256 as Into<AccountHashRLP>>::into(Default::default())..)?
+            .map_while(|val| {
+                val.ok()
+                    .map(|(hash, paths)| (hash.value().to(), paths.value().to()))
+            })
+            .take(limit)
+            .collect();
+        txn.close()?;
+        // Delete read values
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(STORAGE_HEAL_PATHS_TABLE)?;
+            for (hash, _) in res.iter() {
+                table.remove(<H256 as Into<AccountHashRLP>>::into(*hash))?;
+            }
+        }
+        txn.commit()?;
+        Ok(res)
     }
 
     fn is_synced(&self) -> Result<bool, StoreError> {
@@ -1076,6 +1107,28 @@ impl StoreEngine for RedBStore {
             })
             .take(MAX_SNAPSHOT_READS)
             .collect())
+    }
+
+    fn get_latest_valid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+        Ok(self
+            .read(
+                INVALID_ANCESOTRS_TABLE,
+                <H256 as Into<BlockHashRLP>>::into(block),
+            )?
+            .map(|b| b.value().to()))
+    }
+
+    async fn set_latest_valid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.write(
+            INVALID_ANCESOTRS_TABLE,
+            <H256 as Into<BlockHashRLP>>::into(bad_block),
+            <H256 as Into<BlockHashRLP>>::into(latest_valid),
+        )
+        .await
     }
 }
 

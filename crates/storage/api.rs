@@ -273,15 +273,20 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError>;
 
-    /// Sets the storage trie paths in need of healing, grouped by hashed address
+    /// Sets storage trie paths in need of healing, grouped by hashed address
+    /// This will overwite previously stored paths for the received storages but will not remove other storage's paths
     async fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError>;
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
+    /// Gets paths from at most `limit` storage tries and removes them from the store
     #[allow(clippy::type_complexity)]
-    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError>;
+    async fn take_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError>;
 
     /// Sets the state trie paths in need of healing
     async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError>;
@@ -351,4 +356,19 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         start: H256,
         account_hash: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError>;
+
+    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
+    /// when processing an invalid payload. To provide this, we must track invalid chains.
+    ///
+    /// We only store the last known valid head upon encountering a bad block,
+    /// rather than tracking every subsequent invalid block.
+    async fn set_latest_valid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError>;
+
+    /// Returns the latest valid ancestor hash for a given invalid block hash.
+    /// Used to provide `latest_valid_hash` in the Engine API when processing invalid payloads.
+    fn get_latest_valid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError>;
 }

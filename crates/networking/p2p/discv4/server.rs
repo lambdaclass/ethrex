@@ -94,10 +94,7 @@ impl Discv4Server {
 
     async fn load_bootnodes(&self, bootnodes: Vec<Node>) {
         for node in bootnodes {
-            if let Err(e) = self
-                .try_add_peer_and_ping(node, self.ctx.table.lock().await)
-                .await
-            {
+            if let Err(e) = self.try_add_peer_and_ping(node).await {
                 debug!("Error while adding bootnode to table: {:?}", e);
             };
         }
@@ -151,15 +148,14 @@ impl Discv4Server {
                 };
 
                 let Some(peer) = peer else {
-                    self.try_add_peer_and_ping(node, self.ctx.table.lock().await)
-                        .await?;
+                    self.try_add_peer_and_ping(node).await?;
                     return Ok(());
                 };
 
                 // if peer was in the table and last ping was 12 hs ago
                 //  we need to re ping to re-validate the endpoint proof
                 if elapsed_time_since(peer.last_ping) / 3600 >= PROOF_EXPIRATION_IN_HS {
-                    self.ping(node, self.ctx.table.lock().await).await?;
+                    self.ping(node).await?;
                 }
                 if let Some(enr_seq) = msg.enr_seq {
                     if enr_seq > peer.record.seq && peer.is_proven {
@@ -326,9 +322,7 @@ impl Discv4Server {
 
                 debug!("Storing neighbors in our table!");
                 for node in nodes {
-                    let _ = self
-                        .try_add_peer_and_ping(*node, self.ctx.table.lock().await)
-                        .await;
+                    let _ = self.try_add_peer_and_ping(*node).await;
                 }
 
                 Ok(())
@@ -489,7 +483,8 @@ impl Discv4Server {
                 if peer.liveness == 0 {
                     let new_peer = table_lock.replace_peer(node_id);
                     if let Some(new_peer) = new_peer {
-                        let _ = self.ping(new_peer.node, table_lock).await;
+                        drop(table_lock);
+                        let _ = self.ping(new_peer.node).await;
                     }
                 }
             }
@@ -506,7 +501,7 @@ impl Discv4Server {
             previously_pinged_peers = HashSet::default();
             for peer in peers {
                 debug!("Pinging peer {:?} to re-validate!", peer.node.node_id);
-                let _ = self.ping(peer.node, self.ctx.table.lock().await).await;
+                let _ = self.ping(peer.node).await;
                 previously_pinged_peers.insert(peer.node.node_id);
                 let mut table = self.ctx.table.lock().await;
                 let peer = table.get_by_node_id_mut(peer.node.node_id);
@@ -524,28 +519,26 @@ impl Discv4Server {
     /// - If the node is **not found** in the table and there is enough space, it will be added,
     ///   and a ping message will be sent to verify connectivity.
     /// - If the node is **already present**, no action is taken.
-    async fn try_add_peer_and_ping<'a>(
-        &self,
-        node: Node,
-        mut table_lock: MutexGuard<'a, KademliaTable>,
-    ) -> Result<(), DiscoveryError> {
+    async fn try_add_peer_and_ping<'a>(&self, node: Node) -> Result<(), DiscoveryError> {
         // sanity check to make sure we are not storing ourselves
         // a case that may happen in a neighbor message for example
         if node.node_id == self.ctx.local_node.node_id {
             return Ok(());
         }
 
-        if let (Some(peer), true) = table_lock.insert_node(node) {
-            self.ping(peer.node, table_lock).await?;
+        // `ping` might take the lock, so we need to scope it here to
+        // avoid deadlocks
+        let (peer, found) = {
+            let mut table_lock = self.ctx.table.lock().await;
+            table_lock.insert_node(node)
+        };
+        if let (Some(peer), true) = (peer, found) {
+            self.ping(peer.node).await?;
         };
         Ok(())
     }
 
-    async fn ping<'a>(
-        &self,
-        node: Node,
-        mut table_lock: MutexGuard<'a, KademliaTable>,
-    ) -> Result<(), DiscoveryError> {
+    async fn ping<'a>(&self, node: Node) -> Result<(), DiscoveryError> {
         let mut buf = Vec::new();
         let expiration: u64 = get_msg_expiration_from_seconds(20);
         let from = Endpoint {
@@ -573,7 +566,11 @@ impl Discv4Server {
         }
 
         let hash = H256::from_slice(&buf[0..32]);
-        table_lock.update_peer_ping(node.node_id, Some(hash), current_unix_time());
+        self.ctx
+            .table
+            .lock()
+            .await
+            .update_peer_ping(node.node_id, Some(hash), current_unix_time());
 
         Ok(())
     }
@@ -729,7 +726,7 @@ pub(super) mod tests {
         server_b: &mut Discv4Server,
     ) -> Result<(), DiscoveryError> {
         server_a
-            .try_add_peer_and_ping(server_b.ctx.local_node, server_a.ctx.table.lock().await)
+            .try_add_peer_and_ping(server_b.ctx.local_node)
             .await?;
 
         // allow some time for the server to respond
@@ -865,9 +862,7 @@ pub(super) mod tests {
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated
         // and trigger a enr-request to server_b to update the record.
-        server_b
-            .ping(server_a.ctx.local_node, server_b.ctx.table.lock().await)
-            .await?;
+        server_b.ping(server_a.ctx.local_node).await?;
 
         // Wait for the update to propagate.
         sleep(Duration::from_millis(2500)).await;
