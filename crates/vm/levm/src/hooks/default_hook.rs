@@ -2,7 +2,7 @@ use crate::{
     account::Account,
     call_frame::CallFrame,
     constants::*,
-    db::cache::remove_account,
+    db::cache::{insert_account, remove_account},
     errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
@@ -338,7 +338,11 @@ impl Hook for DefaultHook {
                 decrease_account_balance(vm.db, receiver_address, initial_call_frame.msg_value)?;
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
-                remove_account(&mut vm.db.cache, &receiver_address);
+                if let Some(receiver_account) = vm.cache_backup.get(&receiver_address) {
+                    insert_account(&mut vm.db.cache, receiver_address, receiver_account.clone());
+                } else {
+                    remove_account(&mut vm.db.cache, &receiver_address);
+                }
             }
 
             increase_account_balance(vm.db, sender_address, initial_call_frame.msg_value)?;

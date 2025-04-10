@@ -85,6 +85,9 @@ impl REVM {
                 result.logs(),
             );
 
+            // dbg!(&tx.sender());
+            // dbg!(&tx.to());
+
             // println!(
             //     "Receipt of transaction (sender, nonce)=({},{}): {:?}",
             //     tx.sender(),
@@ -92,12 +95,21 @@ impl REVM {
             //     receipt
             // );
 
+            // let trans = REVM::stateless_get_state_transitions(state);
+            // dbg!(&trans);
+
             receipts.push(receipt);
         }
+
+        // let trans = REVM::stateless_get_state_transitions(state);
+        // dbg!(&trans);
 
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(state, withdrawals)?;
         }
+
+        // let trans = REVM::stateless_get_state_transitions(state);
+        // dbg!(&trans);
 
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
@@ -107,7 +119,12 @@ impl REVM {
             }
         }
 
+        // let trans = REVM::stateless_get_state_transitions(state);
+        // dbg!(&trans);
+
         let account_updates = Self::get_state_transitions(state);
+
+        // dbg!(&account_updates);
 
         Ok(BlockExecutionResult {
             receipts,

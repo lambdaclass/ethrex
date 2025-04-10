@@ -22,12 +22,6 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
             continue;
         }
 
-        if !test_key
-            .contains("tests/prague/eip6110_deposits/test_deposits.py::test_deposit[fork_Prague-blockchain_test-multiple_deposit_from_same_eoa_last_reverts]")
-        {
-            continue;
-        }
-
         println!("Test: {}", test_key);
         rt.block_on(run_ef_test(&test_key, &test));
     }
@@ -44,12 +38,12 @@ datatest_stable::harness!(
     parse_and_execute,
     "vectors/prague/eip6110_deposits/deposits",
     r".*/.*\.json",
-    // parse_and_execute,
-    // "vectors/prague/eip7002_el_triggerable_withdrawals",
-    // r".*/.*\.json",
-    // parse_and_execute,
-    // "vectors/prague/eip7251_consolidations",
-    // r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip7002_el_triggerable_withdrawals",
+    r".*/.*\.json",
+    parse_and_execute,
+    "vectors/prague/eip7251_consolidations",
+    r".*/.*\.json",
     // parse_and_execute,
     // "vectors/prague/eip7623_increase_calldata_cost",
     // r".*/.*\.json",

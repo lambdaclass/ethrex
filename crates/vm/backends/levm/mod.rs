@@ -80,6 +80,8 @@ impl LEVM {
                 report.logs.clone(),
             );
 
+            // dbg!(&db.cache);
+
             // println!(
             //     "Receipt of transaction (sender, nonce)=({},{}): {:?}",
             //     tx.sender(),
@@ -103,6 +105,8 @@ impl LEVM {
         }
 
         let account_updates = Self::get_state_transitions(db, fork)?;
+
+        // dbg!(&account_updates);
 
         Ok(BlockExecutionResult {
             receipts,
