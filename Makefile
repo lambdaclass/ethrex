@@ -166,6 +166,12 @@ load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in 
 load-test-erc20:
 	cargo run --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
 
+load-test-fibonacci:
+	cargo run --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
+
+load-test-io:
+	cargo run --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
+
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
