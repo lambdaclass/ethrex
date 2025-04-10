@@ -8,6 +8,7 @@ use tracing::{debug, info};
 
 pub mod block_producer;
 pub mod committer;
+pub mod deployer;
 pub mod eth;
 pub mod l1_watcher;
 pub mod prover_client;
