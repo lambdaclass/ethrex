@@ -484,7 +484,9 @@ impl<'a> VM<'a> {
         }
         let storage_slot = match cache::get_account(&self.db.cache, &address) {
             Some(account) => match account.storage.get(&key) {
-                Some(storage_slot) => storage_slot.clone(),
+                Some(storage_slot) => {
+                    storage_slot.clone()
+                },
                 None => {
                     let value = self.db.store.get_storage_slot(address, key)?;
                     StorageSlot {

@@ -67,7 +67,6 @@ async fn main() {
                 .await
                 .expect("failed to create rpc db");
 
-            println!("pre-executing to build execution db");
             let db = rpc_db
                 .to_exec_db(&block)
                 .expect("failed to build execution db");

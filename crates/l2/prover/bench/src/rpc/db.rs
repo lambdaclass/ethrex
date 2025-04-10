@@ -125,12 +125,66 @@ impl RpcDB {
         if from_child {
             let mut child_cache = self.child_cache.lock().unwrap();
             for (address, account) in &fetched {
-                child_cache.insert(*address, account.clone());
+                let acc_account_mut = child_cache.get_mut(address);
+                if let Some(acc_account) = acc_account_mut {
+                    match account {
+                        Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
+                            match acc_account {
+                                Account::Existing { account_state, storage: storage_acc, account_proof, storage_proofs: storage_proofs_acc, code } => {
+                                    storage_acc.extend(storage);
+                                    storage_proofs_acc.extend(storage_proofs.clone());
+                                },
+                                Account::NonExisting { account_proof, storage_proofs } => {
+                                    unreachable!()
+                                },
+                            }
+                        },
+                        Account::NonExisting { account_proof, storage_proofs } => {
+                            match acc_account {
+                                Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
+                                    unreachable!()
+                                },
+                                Account::NonExisting { account_proof, storage_proofs: storage_proofs_acc } => {
+                                    storage_proofs_acc.extend(storage_proofs.clone());
+                                },
+                            }
+                        },
+                    }   
+                } else {
+                    child_cache.insert(*address, account.clone());
+                }
             }
         } else {
             let mut cache = self.cache.lock().unwrap();
             for (address, account) in &fetched {
-                cache.insert(*address, account.clone());
+                let acc_account_mut = cache.get_mut(address);
+                if let Some(acc_account) = acc_account_mut {
+                    match account {
+                        Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
+                            match acc_account {
+                                Account::Existing { account_state, storage: storage_acc, account_proof, storage_proofs: storage_proofs_acc, code } => {
+                                    storage_acc.extend(storage);
+                                    storage_proofs_acc.extend(storage_proofs.clone());
+                                },
+                                Account::NonExisting { account_proof, storage_proofs } => {
+                                    unreachable!()
+                                },
+                            }
+                        },
+                        Account::NonExisting { account_proof, storage_proofs } => {
+                            match acc_account {
+                                Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
+                                    unreachable!()
+                                },
+                                Account::NonExisting { account_proof, storage_proofs: storage_proofs_acc } => {
+                                    storage_proofs_acc.extend(storage_proofs.clone());
+                                },
+                            }
+                        },
+                    }   
+                } else {
+                    cache.insert(*address, account.clone());
+                }
             }
         }
 
@@ -195,7 +249,9 @@ impl RpcDB {
                     account_proof,
                     storage_proofs,
                     code,
-                } => (*address, storage.keys().cloned().collect()),
+                } => {
+                    (*address, storage.keys().cloned().collect())
+                },
                 Account::NonExisting {
                     account_proof,
                     storage_proofs,
@@ -416,17 +472,11 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        let cache = self.cache.lock().unwrap();
-        let account = if let Some(account) = cache.get(&address).cloned() {
-            account
-        } else {
-            drop(cache);
-            self.fetch_accounts_blocking(&[(address, vec![])], false)
-                .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
-                .get(&address)
-                .unwrap()
-                .clone()
-        };
+        let account = self.fetch_accounts_blocking(&[(address, vec![key])], false)
+            .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
+            .get(&address)
+            .unwrap()
+            .clone();
         if let Account::Existing { storage, .. } = account {
             if let Some(value) = storage.get(&key) {
                 Ok(*value)
