@@ -359,13 +359,20 @@ impl Hook for DefaultHook {
                 .checked_div(quotient)
                 .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
         );
+
+        // Set gas_used to the total gas used subtracted by the gas refunded.
+        // This is the gas that was actually used by the transaction.
+        let actual_gas_used = consumed_gas
+            .checked_sub(refunded_gas)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
+        report.gas_used = actual_gas_used;
+
         // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
         report.gas_refunded = refunded_gas;
 
         if vm.env.config.fork >= Fork::Prague {
             let floor_gas_price = vm.get_floor_gas_price(initial_call_frame)?;
-            let execution_gas_used = consumed_gas.saturating_sub(refunded_gas);
-            if floor_gas_price > execution_gas_used {
+            if floor_gas_price > actual_gas_used {
                 consumed_gas = floor_gas_price;
                 refunded_gas = 0;
             }

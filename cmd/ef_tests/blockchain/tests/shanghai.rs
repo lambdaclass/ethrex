@@ -23,5 +23,5 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
 datatest_stable::harness!(
     parse_and_execute,
     "vectors/shanghai/",
-    r"eip4895_withdrawals/withdrawals/large_amount.json"
+    r"initcode/contract_creating_tx.json"
 );

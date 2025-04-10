@@ -68,9 +68,7 @@ impl LEVM {
             let report =
                 Self::execute_tx(tx, tx_sender, &block.header, db).map_err(EvmError::from)?;
 
-            // Currently, in LEVM, we don't substract refunded gas to used gas, but that can change in the future.
-            let gas_used = report.gas_used - report.gas_refunded;
-            cumulative_gas_used += gas_used;
+            cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result.clone(), TxResult::Success),
