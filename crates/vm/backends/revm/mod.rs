@@ -11,7 +11,7 @@ use crate::constants::{
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
-use db::EvmState;
+use db::{evm_state, EvmState};
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_storage::{error::StoreError, AccountUpdate};
@@ -68,6 +68,10 @@ impl REVM {
                 }
             }
         }
+
+        // let trans = REVM::stateless_get_state_transitions(state);
+        // dbg!(&trans);
+
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -80,6 +84,14 @@ impl REVM {
                 cumulative_gas_used,
                 result.logs(),
             );
+
+            // println!(
+            //     "Receipt of transaction (sender, nonce)=({},{}): {:?}",
+            //     tx.sender(),
+            //     tx.nonce(),
+            //     receipt
+            // );
+
             receipts.push(receipt);
         }
 
@@ -357,6 +369,106 @@ impl REVM {
                     account_updates.push(account_update)
                 }
                 account_updates
+            }
+        }
+    }
+
+    /// Gets the state_transitions == [AccountUpdate] from the [EvmState].
+    pub fn stateless_get_state_transitions(
+        initial_state: &mut EvmState,
+    ) -> Vec<ethrex_storage::AccountUpdate> {
+        match initial_state {
+            EvmState::Store(db) => {
+                // We make an exact copy of the database and use that so that we don't mutate our database.
+                let cache_backup = db.cache.clone();
+                let transition_state_backup = db.transition_state.clone();
+                let bundle_state_backup = db.bundle_state.clone();
+                let block_hashes_backup = db.block_hashes.clone();
+                let use_preloaded_bundle = db.use_preloaded_bundle;
+                let store_wrapper = db.database.clone();
+
+                let mut fake_db = revm::db::State::builder()
+                    .with_database(store_wrapper)
+                    .with_bundle_update()
+                    .without_state_clear()
+                    .build();
+
+                fake_db.cache = cache_backup;
+                fake_db.transition_state = transition_state_backup;
+                fake_db.bundle_state = bundle_state_backup;
+                fake_db.block_hashes = block_hashes_backup;
+                fake_db.use_preloaded_bundle = use_preloaded_bundle;
+                fake_db.block_hashes = fake_db.block_hashes.clone();
+
+                fake_db.merge_transitions(BundleRetention::PlainState);
+                let bundle = fake_db.take_bundle();
+
+                // Update accounts
+                let mut account_updates = Vec::new();
+                for (address, account) in bundle.state() {
+                    if account.status.is_not_modified() {
+                        continue;
+                    }
+                    let address = Address::from_slice(address.0.as_slice());
+                    // Remove account from DB if destroyed (Process DestroyedChanged as changed account)
+                    if matches!(
+                        account.status,
+                        AccountStatus::Destroyed | AccountStatus::DestroyedAgain
+                    ) {
+                        account_updates.push(AccountUpdate::removed(address));
+                        continue;
+                    }
+
+                    // If account is empty, do not add to the database
+                    if account
+                        .account_info()
+                        .is_some_and(|acc_info| acc_info.is_empty())
+                    {
+                        continue;
+                    }
+
+                    // Apply account changes to DB
+                    let mut account_update = AccountUpdate::new(address);
+                    // If the account was changed then both original and current info will be present in the bundle account
+                    if account.is_info_changed() {
+                        // Update account info in DB
+                        if let Some(new_acc_info) = account.account_info() {
+                            let code_hash = H256::from_slice(new_acc_info.code_hash.as_slice());
+                            let account_info = AccountInfo {
+                                code_hash,
+                                balance: U256::from_little_endian(
+                                    new_acc_info.balance.as_le_slice(),
+                                ),
+                                nonce: new_acc_info.nonce,
+                            };
+                            account_update.info = Some(account_info);
+                            if account.is_contract_changed() {
+                                // Update code in db
+                                if let Some(code) = new_acc_info.code {
+                                    account_update.code = Some(code.original_bytes().0);
+                                }
+                            }
+                        }
+                    }
+                    // Update account storage in DB
+                    for (key, slot) in account.storage.iter() {
+                        if slot.is_changed() {
+                            // TODO check if we need to remove the value from our db when value is zero
+                            // if slot.present_value().is_zero() {
+                            //     account_update.removed_keys.push(H256::from_uint(&U256::from_little_endian(key.as_le_slice())))
+                            // }
+                            account_update.added_storage.insert(
+                                H256::from_uint(&U256::from_little_endian(key.as_le_slice())),
+                                U256::from_little_endian(slot.present_value().as_le_slice()),
+                            );
+                        }
+                    }
+                    account_updates.push(account_update)
+                }
+                account_updates
+            }
+            EvmState::Execution(db) => {
+                unimplemented!("nope :)");
             }
         }
     }

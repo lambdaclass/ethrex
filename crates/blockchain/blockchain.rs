@@ -82,6 +82,8 @@ impl Blockchain {
         );
         let execution_result = vm.execute_block(block)?;
 
+        // dbg!(&execution_result);
+
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
@@ -143,7 +145,7 @@ impl Blockchain {
         // Async doesn't play well with `.and_then`
         let inner = || async {
             let res = self.execute_block(block).await?;
-            dbg!(&res);
+            // dbg!(&res);
             self.store_block(block, res).await
         };
 
