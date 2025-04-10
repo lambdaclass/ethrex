@@ -122,6 +122,7 @@ async fn connect_to_prover_server_wr(
     addr: &str,
     write: &ProofData,
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
+    debug!("Connecting with {addr}");
     let mut stream = TcpStream::connect(addr).await?;
     debug!("Connection established!");
 
@@ -130,6 +131,7 @@ async fn connect_to_prover_server_wr(
 
     let mut buffer = Vec::new();
     stream.read_to_end(&mut buffer).await?;
+    debug!("Got response {}", hex::encode(&buffer));
 
     let response: Result<ProofData, _> = serde_json::from_slice(&buffer);
     Ok(response?)

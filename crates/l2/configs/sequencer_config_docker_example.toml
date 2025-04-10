@@ -47,6 +47,6 @@ l1_address = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425"
 # Private key corresponding to the above address.
 l1_private_key = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
 # Set it to 0.0.0.0 to allow connections from other machines.
-listen_ip = "127.0.0.1"
+listen_ip = "0.0.0.0"
 listen_port = 3900
 dev_mode = true

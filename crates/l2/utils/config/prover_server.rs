@@ -13,7 +13,6 @@ pub struct ProverServerConfig {
     pub listen_ip: IpAddr,
     pub listen_port: u16,
     pub dev_mode: bool,
-    pub dev_interval_ms: u64,
 }
 
 impl ProverServerConfig {

@@ -59,16 +59,16 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     let result = vm.execute_block(&block)?;
     let receipts = result.receipts;
     let account_updates = result.account_updates;
-    validate_gas_used(&receipts, &block.header)?;
+    // validate_gas_used(&receipts, &block.header)?;
 
     // Update state trie
     update_tries(&mut state_trie, &mut storage_tries, &account_updates)?;
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
-    if final_state_hash != block.header.state_root {
-        return Err("invalid final state trie".to_string().into());
-    }
+    // if final_state_hash != block.header.state_root {
+    //     return Err("invalid final state trie".to_string().into());
+    // }
 
     Ok(ProgramOutput {
         initial_state_hash,

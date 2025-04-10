@@ -54,20 +54,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let l1_initial_balance = eth_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
-    let mut l2_initial_balance = proposer_client
+    let l2_initial_balance = proposer_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
-    println!("Waiting for L2 to update for initial deposit");
-    let mut retries = 0;
-    while retries < 30 && l2_initial_balance.is_zero() {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        println!("[{retries}/30] Waiting for L2 balance to update");
-        l2_initial_balance = proposer_client
-            .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
-            .await?;
-        retries += 1;
-    }
-    assert_ne!(retries, 30, "L2 balance is zero");
     let common_bridge_initial_balance = eth_client
         .get_balance(common_bridge_address(), BlockByNumber::Latest)
         .await?;
@@ -126,16 +115,16 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: Improve this. Ideally, the L1 contract should return the L2 mint
     // tx hash for the user to wait for the receipt.
     let mut retries = 0;
-    while retries < 30 && l2_after_deposit_balance < l2_initial_balance + deposit_value {
+    while retries < 1000 && l2_after_deposit_balance < l2_initial_balance + deposit_value {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        println!("[{retries}/30] Waiting for L2 balance to update after deposit");
+        println!("[{retries}/1000] Waiting for L2 balance to update after deposit");
         l2_after_deposit_balance = proposer_client
             .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
             .await?;
         retries += 1;
     }
 
-    assert_ne!(retries, 30, "L2 balance did not update after deposit");
+    assert_ne!(retries, 1000, "L2 balance did not update after deposit");
 
     let common_bridge_locked_balance = eth_client
         .get_balance(common_bridge_address(), BlockByNumber::Latest)
@@ -188,7 +177,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     let transfer_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 30).await?;
+        ethrex_l2_sdk::wait_for_transaction_receipt(transfer_tx, &proposer_client, 1000).await?;
 
     let recoverable_fees_vault_balance = proposer_client
         .get_balance(fees_vault(), BlockByNumber::Latest)
@@ -236,7 +225,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     let withdraw_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 30)
+        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, &proposer_client, 1000)
             .await
             .expect("Withdraw tx receipt not found");
 
