@@ -499,6 +499,7 @@ pub fn generic_system_contract_levm(
     let chain_config = db.store.get_chain_config();
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
     let system_account_backup = db.cache.get(&system_address).cloned();
+    let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
     let env = Environment {
         origin: system_address,
         gas_limit: 30_000_000,
@@ -532,8 +533,15 @@ pub fn generic_system_contract_levm(
     if let Some(system_account) = system_account_backup {
         db.cache.insert(system_address, system_account);
     } else {
-        // If the system account was not in the cache, we need to remove it from the DB
+        // If the system account was not in the cache, we need to remove it
         db.cache.remove(&system_address);
+    }
+
+    if let Some(coinbase_account) = coinbase_backup {
+        db.cache.insert(block_header.coinbase, coinbase_account);
+    } else {
+        // If the coinbase account was not in the cache, we need to remove it
+        db.cache.remove(&block_header.coinbase);
     }
 
     Ok(report)
