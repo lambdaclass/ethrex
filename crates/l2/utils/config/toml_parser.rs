@@ -13,17 +13,6 @@ use super::{
 };
 
 #[derive(Deserialize, Debug)]
-struct ProverServer {
-    l1_address: String,
-    l1_private_key: String,
-    listen_ip: String,
-    listen_port: u64,
-    dev_mode: bool,
-}
-
-impl ProverServer {}
-
-#[derive(Deserialize, Debug)]
 struct L2Config {
     deployer: DeployerConfig,
     eth: EthConfig,

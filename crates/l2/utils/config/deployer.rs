@@ -3,6 +3,8 @@ use ethrex_l2_sdk::secret_key_deserializer;
 use secp256k1::SecretKey;
 use serde::Deserialize;
 
+use super::errors::ConfigError;
+
 pub const DEPLOYER_PREFIX: &str = "DEPLOYER_";
 
 #[derive(Deserialize, Debug)]
@@ -19,6 +21,15 @@ pub struct DeployerConfig {
 }
 
 impl DeployerConfig {
+    pub fn from_env() -> Result<Self, ConfigError> {
+        envy::prefixed(DEPLOYER_PREFIX)
+            .from_env::<Self>()
+            .map_err(|e| ConfigError::ConfigDeserializationError {
+                err: e,
+                from: "DeployerConfig".to_string(),
+            })
+    }
+
     pub fn to_env(&self) -> String {
         format!(
             "
