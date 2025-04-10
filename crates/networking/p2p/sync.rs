@@ -1,4 +1,5 @@
 mod bytecode_fetcher;
+mod fetcher_queue;
 mod state_healing;
 mod state_sync;
 mod storage_fetcher;
