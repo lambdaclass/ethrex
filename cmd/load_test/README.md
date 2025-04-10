@@ -30,8 +30,17 @@ Genesis-l2-ci has many rich accounts and does not include the prague fork, which
 After the node is runing, still in the repo root folder, execute the script with `make`. For example:
 
 ```bash
-make load-test # Eth transfer load test
-make load-test-erc20 # ERC 20 transfer load test
+# Eth transfer load test
+make load-test
+
+# ERC 20 transfer load test
+make load-test-erc20
+
+# Tests a contract that executes fibonacci (high cpu)
+make load-test-fibonacci
+
+# Tests a contract that makes heavy access to storage slots
+make load-test-io
 ```
 
 You should see the ethrex client producing blocks and logs with the gas throughput.
