@@ -87,8 +87,10 @@ pub struct CallFrame {
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
-    pub previous_cache_state: HashMap<Address, Option<Account>>,
+    pub cache_backup: CacheBackup,
 }
+
+pub type CacheBackup = HashMap<Address, Option<Account>>;
 
 impl CallFrame {
     pub fn new_from_bytecode(bytecode: Bytes) -> Self {

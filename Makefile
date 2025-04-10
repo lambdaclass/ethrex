@@ -40,7 +40,7 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 42963f52f3cfc4eb9deb5248c8529ff97acc709c
+ETHEREUM_PACKAGE_REVISION := e73f52c34fd785700e9555aa41a78b0d5ca50173
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -170,7 +170,7 @@ load-test-io:
 	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --io
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
-	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
+	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
 flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
 	sudo bash bench/scripts/flamegraph.sh

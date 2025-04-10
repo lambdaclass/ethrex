@@ -4,7 +4,7 @@ use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_common::U256;
 
-use crate::call_frame::CallFrame;
+use crate::call_frame::CacheBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::vm::Substate;
@@ -62,7 +62,7 @@ impl GeneralizedDatabase {
     pub fn get_account_mut<'a>(
         &'a mut self,
         address: Address,
-        call_frame: Option<&mut CallFrame>,
+        cache_backup: Option<&mut CacheBackup>,
     ) -> Result<&'a mut Account, VMError> {
         if !cache::is_account_cached(&self.cache, &address) {
             let account_info = self.store.get_account_info(address)?;
@@ -76,9 +76,8 @@ impl GeneralizedDatabase {
         let original_account = cache::get_account_mut(&mut self.cache, &address)
             .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
 
-        if let Some(call_frame) = call_frame {
-            call_frame
-                .previous_cache_state
+        if let Some(cache_backup) = cache_backup {
+            cache_backup
                 .entry(address)
                 .or_insert_with(|| Some(original_account.clone()));
         };
@@ -90,9 +89,9 @@ impl GeneralizedDatabase {
         &mut self,
         address: Address,
         increase: U256,
-        call_frame: Option<&mut CallFrame>,
+        cache_backup: Option<&mut CacheBackup>,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address, call_frame)?;
+        let account = self.get_account_mut(address, cache_backup)?;
         account.info.balance = account
             .info
             .balance
@@ -105,9 +104,9 @@ impl GeneralizedDatabase {
         &mut self,
         address: Address,
         decrease: U256,
-        call_frame: Option<&mut CallFrame>,
+        cache_backup: Option<&mut CacheBackup>,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address, call_frame)?;
+        let account = self.get_account_mut(address, cache_backup)?;
         account.info.balance = account
             .info
             .balance
@@ -138,34 +137,61 @@ impl GeneralizedDatabase {
         &mut self,
         address: Address,
         new_bytecode: Bytes,
-        call_frame: Option<&mut CallFrame>,
+        cache_backup: Option<&mut CacheBackup>,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address, call_frame)?;
+        let account = self.get_account_mut(address, cache_backup)?;
         account.info.bytecode = new_bytecode;
         Ok(())
     }
 
-    /// Inserts account to cache backing up the previus state of it in the callframe (if it wasn't already backed up)
+    // =================== Nonce related functions ======================
+    pub fn increment_account_nonce(
+        &mut self,
+        address: Address,
+        call_frame: Option<&mut CacheBackup>,
+    ) -> Result<u64, VMError> {
+        let account = self.get_account_mut(address, call_frame)?;
+        account.info.nonce = account
+            .info
+            .nonce
+            .checked_add(1)
+            .ok_or(VMError::NonceOverflow)?;
+        Ok(account.info.nonce)
+    }
+
+    pub fn decrement_account_nonce(
+        &mut self,
+        address: Address,
+        call_frame: Option<&mut CacheBackup>,
+    ) -> Result<(), VMError> {
+        let account = self.get_account_mut(address, call_frame)?;
+        account.info.nonce = account
+            .info
+            .nonce
+            .checked_sub(1)
+            .ok_or(VMError::NonceUnderflow)?;
+        Ok(())
+    }
+
+    /// Inserts account to cache backing up the previus state of it in the CacheBackup (if it wasn't already backed up)
     pub fn insert_account(
         &mut self,
         address: Address,
         account: Account,
-        call_frame: &mut CallFrame,
+        cache_backup: &mut CacheBackup,
     ) {
         let previous_account = cache::insert_account(&mut self.cache, address, account);
 
-        call_frame
-            .previous_cache_state
+        cache_backup
             .entry(address)
             .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
     }
 
-    /// Removes account from cache backing up the previus state of it in the callframe (if it wasn't already backed up)
-    pub fn remove_account(&mut self, address: Address, call_frame: &mut CallFrame) {
+    /// Removes account from cache backing up the previus state of it in the CacheBackup (if it wasn't already backed up)
+    pub fn remove_account(&mut self, address: Address, cache_backup: &mut CacheBackup) {
         let previous_account = cache::remove_account(&mut self.cache, &address);
 
-        call_frame
-            .previous_cache_state
+        cache_backup
             .entry(address)
             .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
     }

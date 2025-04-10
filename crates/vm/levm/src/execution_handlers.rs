@@ -208,7 +208,7 @@ impl<'a> VM<'a> {
                     self.db.update_account_bytecode(
                         new_address,
                         contract_code,
-                        Some(current_call_frame),
+                        Some(&mut current_call_frame.cache_backup),
                     )?;
                 }
                 Err(error) => {
