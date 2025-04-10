@@ -54,6 +54,10 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::Syncing);
     };
 
+    if store.state_trie(head_hash)?.is_none() {
+        return Err(InvalidForkChoice::Syncing);
+    }
+
     let latest = store.get_latest_block_number()?;
 
     // If the head block is an already present head ancestor, skip the update.

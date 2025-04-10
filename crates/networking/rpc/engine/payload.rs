@@ -685,7 +685,8 @@ async fn try_execute_payload(
             ))?;
 
     match context.blockchain.add_block(block).await {
-        Err(ChainError::ParentNotFound) => {
+        // If the parent state is not found, it means it is currently in a syncing state
+        Err(ChainError::ParentNotFound) | Err(ChainError::ParentStateNotFound) => {
             // Start sync
             context
                 .storage
@@ -696,15 +697,6 @@ async fn try_execute_payload(
             context.syncer.start_sync();
 
             Ok(PayloadStatus::syncing())
-        }
-        // Under the current implementation this is not possible: we always calculate the state
-        // transition of any new payload as long as the parent is present. If we received the
-        // parent payload but it was stashed, then new payload would stash this one too, with a
-        // ParentNotFoundError.
-        Err(ChainError::ParentStateNotFound) => {
-            let e = "Failed to obtain parent state";
-            error!("{e} for block {block_hash}");
-            Err(RpcErr::Internal(e.to_string()))
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!("Error executing block: {error}");
