@@ -346,41 +346,44 @@ impl Hook for DefaultHook {
         }
 
         // 2. Return unused gas + gas refunds to the sender.
-        let max_gas = vm.env.gas_limit;
-        let mut consumed_gas = report.gas_used;
+
+        // a. Calculate refunded gas
+        let gas_used_without_refunds = report.gas_used;
+
         // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        let quotient = if vm.env.config.fork < Fork::London {
+        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+        let refund_quotient = if vm.env.config.fork < Fork::London {
             MAX_REFUND_QUOTIENT_PRE_LONDON
         } else {
             MAX_REFUND_QUOTIENT
         };
-        let mut refunded_gas = report.gas_refunded.min(
-            consumed_gas
-                .checked_div(quotient)
+        let refunded_gas = report.gas_refunded.min(
+            gas_used_without_refunds
+                .checked_div(refund_quotient)
                 .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
         );
 
-        // Set gas_used to the total gas used subtracted by the gas refunded.
-        // This is the gas that was actually used by the transaction.
-        let actual_gas_used = consumed_gas
+        // b. Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
+        let exec_gas_consumed = gas_used_without_refunds
             .checked_sub(refunded_gas)
             .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
-        report.gas_used = actual_gas_used;
 
-        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+        let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
+            let minimum_gas_consumed = vm.get_min_gas_used(initial_call_frame)?;
+            exec_gas_consumed.max(minimum_gas_consumed)
+        } else {
+            exec_gas_consumed
+        };
+
+        // c. Update gas used and refunded in the Execution Report.
+        report.gas_used = actual_gas_used;
         report.gas_refunded = refunded_gas;
 
-        if vm.env.config.fork >= Fork::Prague {
-            let floor_gas_price = vm.get_floor_gas_price(initial_call_frame)?;
-            if floor_gas_price > actual_gas_used {
-                consumed_gas = floor_gas_price;
-                refunded_gas = 0;
-            }
-        }
-
-        let gas_to_return = max_gas
-            .checked_sub(consumed_gas)
-            .and_then(|gas| gas.checked_add(refunded_gas))
+        // d. Finally, return unspent gas to the sender.
+        let gas_to_return = vm
+            .env
+            .gas_limit
+            .checked_sub(actual_gas_used)
             .ok_or(VMError::Internal(InternalError::UndefinedState(0)))?;
 
         let wei_return_amount = vm
@@ -394,16 +397,12 @@ impl Hook for DefaultHook {
         // 3. Pay coinbase fee
         let coinbase_address = vm.env.coinbase;
 
-        let gas_to_pay_coinbase = consumed_gas
-            .checked_sub(refunded_gas)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
-
         let priority_fee_per_gas = vm
             .env
             .gas_price
             .checked_sub(vm.env.base_fee_per_gas)
             .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
-        let coinbase_fee = U256::from(gas_to_pay_coinbase)
+        let coinbase_fee = U256::from(actual_gas_used)
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
@@ -411,7 +410,7 @@ impl Hook for DefaultHook {
             increase_account_balance(vm.db, coinbase_address, coinbase_fee)?;
         };
 
-        // 4. Destruct addresses in vm.estruct set.
+        // 4. Destruct addresses in vm.selfdestruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {

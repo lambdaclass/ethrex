@@ -20,8 +20,4 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-datatest_stable::harness!(
-    parse_and_execute,
-    "vectors/shanghai/",
-    r"initcode/contract_creating_tx.json"
-);
+datatest_stable::harness!(parse_and_execute, "vectors/shanghai/", r".*/.*/.*\.json");
