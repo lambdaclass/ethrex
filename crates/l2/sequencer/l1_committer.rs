@@ -39,7 +39,7 @@ pub struct Committer {
     l2_store: StoreL2,
     l1_address: Address,
     l1_private_key: SecretKey,
-    interval_ms: u64,
+    commit_time_ms: u64,
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
 }
@@ -78,7 +78,7 @@ impl Committer {
             l2_store,
             l1_address: committer_config.l1_address,
             l1_private_key: committer_config.l1_private_key,
-            interval_ms: committer_config.interval_ms,
+            commit_time_ms: committer_config.commit_time_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
         }
@@ -90,7 +90,7 @@ impl Committer {
                 error!("L1 Committer Error: {}", err);
             }
 
-            sleep_random(self.interval_ms).await;
+            sleep_random(self.commit_time_ms).await;
         }
     }
 

@@ -6,6 +6,7 @@ members = [
   "cmd/ethrex_l2",
   "cmd/hive_report",
   "cmd/loc",
+  "cmd/load_test",
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
