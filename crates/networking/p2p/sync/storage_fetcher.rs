@@ -9,6 +9,7 @@
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
+use ethrex_trie::Nibbles;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::{debug, error};
 
@@ -38,7 +39,6 @@ pub(crate) async fn storage_fetcher(
     store: Store,
     state_root: H256,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(), SyncError> {
     // Spawn large storage fetcher
     let (large_storage_sender, large_storage_receiver) =
@@ -49,7 +49,6 @@ pub(crate) async fn storage_fetcher(
         store.clone(),
         state_root,
         storage_trie_rebuilder_sender.clone(),
-        storage_healer_sender.clone(),
     ));
     // Pending list of storages to fetch
     let mut pending_storage: Vec<(H256, H256)> = vec![];
@@ -64,7 +63,7 @@ pub(crate) async fn storage_fetcher(
         &mut pending_storage,
         &fetch_batch,
         peers,
-        store,
+        store.clone(),
         STORAGE_BATCH_SIZE,
     )
     .await?;
@@ -73,8 +72,13 @@ pub(crate) async fn storage_fetcher(
         pending_storage.len()
     );
     if !pending_storage.is_empty() {
-        storage_healer_sender
-            .send(pending_storage.into_iter().map(|(hash, _)| hash).collect())
+        store
+            .set_storage_heal_paths(
+                pending_storage
+                    .into_iter()
+                    .map(|(hash, _)| (hash, vec![Nibbles::default()]))
+                    .collect(),
+            )
             .await?;
     }
     // Signal large storage fetcher
@@ -153,7 +157,6 @@ async fn large_storage_fetcher(
     store: Store,
     state_root: H256,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(), SyncError> {
     // Pending list of storages to fetch
     // (account_hash, storage_root, last_key)
@@ -176,7 +179,7 @@ async fn large_storage_fetcher(
         &mut pending_storage,
         &fetch_batch,
         peers,
-        store,
+        store.clone(),
         1,
     )
     .await?;
@@ -187,15 +190,15 @@ async fn large_storage_fetcher(
     if !pending_storage.is_empty() {
         // Send incomplete storages to the rebuilder and healer
         // As these are large storages we should rebuild the partial tries instead of delegating them fully to the healer
-        let account_hashes: Vec<H256> = pending_storage
-            .into_iter()
-            .map(|req| req.account_hash)
-            .collect();
-        let account_hashes_and_roots: Vec<(H256, H256)> = account_hashes
+        let heal_paths = pending_storage
             .iter()
-            .map(|hash| (*hash, REBUILDER_INCOMPLETE_STORAGE_ROOT))
+            .map(|req| (req.account_hash, vec![Nibbles::default()]))
             .collect();
-        storage_healer_sender.send(account_hashes).await?;
+        let account_hashes_and_roots: Vec<(H256, H256)> = pending_storage
+            .iter()
+            .map(|req| (req.account_hash, REBUILDER_INCOMPLETE_STORAGE_ROOT))
+            .collect();
+        store.set_storage_heal_paths(heal_paths).await?;
         storage_trie_rebuilder_sender
             .send(account_hashes_and_roots)
             .await?;

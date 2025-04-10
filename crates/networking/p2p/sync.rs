@@ -19,7 +19,6 @@ use state_healing::heal_state_trie;
 use state_sync::state_sync;
 use std::{
     array,
-    collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -27,10 +26,7 @@ use std::{
 };
 use storage_healing::storage_healer;
 use tokio::{
-    sync::{
-        mpsc::{self, error::SendError},
-        Mutex,
-    },
+    sync::{mpsc::error::SendError, Mutex},
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
@@ -91,14 +87,6 @@ pub struct Syncer {
     /// Syncing beyond this pivot should re-enable snap-sync (as we will not have that state stored)
     /// TODO: Reorgs
     last_snap_pivot: u64,
-    /// The `forkchoice_update` and `new_payload` methods require the `latest_valid_hash`
-    /// when processing an invalid payload. To provide this, we must track invalid chains.
-    ///
-    /// We only store the last known valid head upon encountering a bad block,
-    /// rather than tracking every subsequent invalid block.
-    ///
-    /// This map stores the bad block hash with and latest valid block hash of the chain corresponding to the bad block
-    pub invalid_ancestors: HashMap<BlockHash, BlockHash>,
     trie_rebuilder: Option<TrieRebuilder>,
     // Used for cancelling long-living tasks upon shutdown
     cancel_token: CancellationToken,
@@ -116,7 +104,6 @@ impl Syncer {
             snap_enabled,
             peers: PeerHandler::new(peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             cancel_token,
             blockchain,
@@ -131,7 +118,6 @@ impl Syncer {
             snap_enabled: Arc::new(AtomicBool::new(false)),
             peers: PeerHandler::new(dummy_peer_table),
             last_snap_pivot: 0,
-            invalid_ancestors: HashMap::new(),
             trie_rebuilder: None,
             // This won't be used
             cancel_token: CancellationToken::new(),
@@ -474,13 +460,16 @@ impl Syncer {
                 last_valid_hash,
             }) = failure
             {
-                self.invalid_ancestors
-                    .insert(failed_block_hash, last_valid_hash);
+                store
+                    .set_latest_valid_ancestor(failed_block_hash, last_valid_hash)
+                    .await?;
 
                 // TODO(#2127): Just marking the failing ancestor and the sync head is enough
                 // to fix the Missing Ancestors hive test, we want to look at a more robust
                 // solution in the future if needed.
-                self.invalid_ancestors.insert(sync_head, last_valid_hash);
+                store
+                    .set_latest_valid_ancestor(sync_head, last_valid_hash)
+                    .await?;
             }
 
             return Err(error.into());
@@ -608,13 +597,13 @@ impl Syncer {
             ));
         };
         // Spawn storage healer earlier so we can start healing stale storages
-        let (storage_healer_sender, storage_healer_receiver) =
-            mpsc::channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
+        // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
+        let storage_healer_cancell_token = self.cancel_token.child_token();
         let storage_healer_handler = tokio::spawn(storage_healer(
             state_root,
-            storage_healer_receiver,
             self.peers.clone(),
             store.clone(),
+            storage_healer_cancell_token.clone(),
         ));
         // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
@@ -637,12 +626,11 @@ impl Syncer {
                     .unwrap()
                     .storage_rebuilder_sender
                     .clone(),
-                storage_healer_sender.clone(),
             )
             .await?;
             if stale_pivot {
                 warn!("Stale Pivot, aborting state sync");
-                storage_healer_sender.send(vec![]).await?;
+                storage_healer_cancell_token.cancel();
                 storage_healer_handler.await??;
                 return Ok(false);
             }
@@ -659,15 +647,10 @@ impl Syncer {
         store.clear_snapshot().await?;
 
         // Perform Healing
-        let state_heal_complete = heal_state_trie(
-            state_root,
-            store.clone(),
-            self.peers.clone(),
-            storage_healer_sender.clone(),
-        )
-        .await?;
-        // Send empty batch to signal that no more batches are incoming
-        storage_healer_sender.send(vec![]).await?;
+        let state_heal_complete =
+            heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
+        // Wait for storage healer to end
+        storage_healer_cancell_token.cancel();
         let storage_heal_complete = storage_healer_handler.await??;
         if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");

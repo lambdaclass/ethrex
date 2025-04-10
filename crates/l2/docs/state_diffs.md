@@ -1,6 +1,6 @@
 # State diffs
 
-This architecture was inspired by MatterLabs' ZKsync pubdata architecture (see [here](https://github.com/matter-labs/zksync-era/blob/main/docs/specs/data_availability/pubdata.md)).
+This architecture was inspired by MatterLabs' ZKsync pubdata architecture (see [here](https://github.com/matter-labs/zksync-era/blob/main/docs/src/specs/data_availability/pubdata.md)).
 
 To provide data availability for our network, we need to publish enough information on every commit transaction to be able to reconstruct the entire state of the L2 from the beginning by querying the L1.
 

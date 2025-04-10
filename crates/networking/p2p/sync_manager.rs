@@ -6,9 +6,12 @@ use std::sync::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::{error::StoreError, Store};
-use tokio::sync::Mutex;
+use tokio::{
+    sync::Mutex,
+    time::{sleep, Duration},
+};
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     kademlia::KademliaTable,
@@ -46,12 +49,21 @@ impl SyncManager {
             cancel_token,
             blockchain,
         )));
-        Self {
+        let sync_manager = Self {
             snap_enabled,
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
-            store,
+            store: store.clone(),
+        };
+        // If the node was in the middle of a sync and then re-started we must resume syncing
+        // Otherwise we will incorreclty assume the node is already synced and work on invalid state
+        if store
+            .get_header_download_checkpoint()
+            .is_ok_and(|res| res.is_some())
+        {
+            sync_manager.start_sync();
         }
+        sync_manager
     }
 
     /// Creates a dummy SyncManager for tests where syncing is not needed
@@ -109,6 +121,12 @@ impl SyncManager {
                     };
                     *sync_head
                 };
+                // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start
+                if sync_head.is_zero() {
+                    info!("Resuming sync after node restart, waiting for next FCU");
+                    sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
                 // Start the sync cycle
                 syncer
                     .start_sync(current_head, sync_head, store.clone())
@@ -133,23 +151,5 @@ impl SyncManager {
         } else {
             SyncMode::Full
         }
-    }
-
-    /// TODO: Very dirty method that should be removed asap once we move invalid ancestors to the store
-    /// Returns a copy of the invalid ancestors if the syncer is not busy
-    pub fn invalid_ancestors(&self) -> Option<std::collections::HashMap<H256, H256>> {
-        self.syncer
-            .try_lock()
-            .map(|syncer| syncer.invalid_ancestors.clone())
-            .ok()
-    }
-
-    /// TODO: Very dirty method that should be removed asap once we move invalid ancestors to the store
-    /// Adds a key value pair to invalid ancestors if the syncer is not busy
-    pub fn add_invalid_ancestor(&self, k: H256, v: H256) -> bool {
-        self.syncer
-            .try_lock()
-            .map(|mut syncer| syncer.invalid_ancestors.insert(k, v))
-            .is_ok()
     }
 }

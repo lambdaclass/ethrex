@@ -34,13 +34,13 @@ network_params:
 
 additional_services:
   - dora
-  - el_forkmon
-  - tx_spammer
+  - forkmon
+  - tx_fuzz
 
-tx_spammer_params:
-  # A list of optional extra params that will be passed to the TX Spammer container for modifying its behaviour
-  tx_spammer_extra_args: ["--txcount=3", "--accounts=80"]
-  # Some tested seeds: 0x5a8e7b08fef94497, 0x6619e189b8a8b911, 0x52a0d7198393262e, use it as an extra argument for the tx_spammer, i.e: "--seed=0x5a8e7b08fef94497"
+tx_fuzz_params:
+  # A list of optional extra params that will be passed to the TX Fuzz container for modifying its behaviour
+  tx_fuzz_extra_args: ["--txcount=3", "--accounts=80"]
+  # Some tested seeds: 0x5a8e7b08fef94497, 0x6619e189b8a8b911, 0x52a0d7198393262e, use it as an extra argument for the tx_fuzz, i.e: "--seed=0x5a8e7b08fef94497"
 
 blockscout_params:
   image: "blockscout/blockscout:latest"

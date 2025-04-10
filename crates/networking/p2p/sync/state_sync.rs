@@ -41,7 +41,6 @@ pub(crate) async fn state_sync(
     peers: PeerHandler,
     key_checkpoints: Option<[H256; STATE_TRIE_SEGMENTS]>,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<bool, SyncError> {
     // Spawn tasks to fetch each state trie segment
     let mut state_trie_tasks = tokio::task::JoinSet::new();
@@ -58,7 +57,6 @@ pub(crate) async fn state_sync(
             key_checkpoints.map(|chs| chs[i]),
             state_sync_progress.clone(),
             storage_trie_rebuilder_sender.clone(),
-            storage_healer_sender.clone(),
         ));
     }
     show_progress_handle.await?;
@@ -91,7 +89,6 @@ async fn state_sync_segment(
     checkpoint: Option<H256>,
     state_sync_progress: StateSyncProgress,
     storage_trie_rebuilder_sender: Sender<Vec<(H256, H256)>>,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<(usize, bool, H256), SyncError> {
     // Resume download from checkpoint if available or start from an empty trie
     let mut start_account_hash = checkpoint.unwrap_or(STATE_TRIE_SEGMENTS_START[segment_number]);
@@ -107,6 +104,7 @@ async fn state_sync_segment(
         tokio::task::spawn(StateSyncProgress::end_segment(
             state_sync_progress.clone(),
             segment_number,
+            start_account_hash,
         ));
         return Ok((segment_number, false, start_account_hash));
     }
@@ -124,7 +122,6 @@ async fn state_sync_segment(
         store.clone(),
         state_root,
         storage_trie_rebuilder_sender.clone(),
-        storage_healer_sender.clone(),
     ));
     info!("Starting/Resuming state trie download of segment number {segment_number} from key {start_account_hash}");
     // Fetch Account Ranges
@@ -201,6 +198,7 @@ async fn state_sync_segment(
     tokio::task::spawn(StateSyncProgress::end_segment(
         state_sync_progress.clone(),
         segment_number,
+        start_account_hash,
     ));
     // Send empty batch to signal that no more batches are incoming
     storage_sender.send(vec![]).await?;
@@ -245,8 +243,10 @@ impl StateSyncProgress {
     async fn update_key(progress: StateSyncProgress, segment_number: usize, current_key: H256) {
         progress.data.lock().await.current_keys[segment_number] = current_key
     }
-    async fn end_segment(progress: StateSyncProgress, segment_number: usize) {
-        progress.data.lock().await.ended[segment_number] = true
+    async fn end_segment(progress: StateSyncProgress, segment_number: usize, last_key: H256) {
+        let mut data = progress.data.lock().await;
+        data.ended[segment_number] = true;
+        data.current_keys[segment_number] = last_key;
     }
 
     // Returns true if the state sync ended
@@ -254,34 +254,35 @@ impl StateSyncProgress {
         // Copy the current data so we don't read while it is being written
         let data = self.data.lock().await.clone();
         // Calculate the total amount of accounts synced
-        let mut synced_accounts = U256::zero();
+        let mut synced_accounts = U512::zero();
         // Calculate the total amount of accounts synced this cycle
-        let mut synced_accounts_this_cycle = U256::one();
+        let mut synced_accounts_this_cycle = U512::one();
         for i in 0..STATE_TRIE_SEGMENTS {
-            let segment_synced_accounts = data.current_keys[i]
-                .into_uint()
-                .checked_sub(STATE_TRIE_SEGMENTS_START[i].into_uint())
-                .unwrap_or_default();
-            let segment_completion_rate = (U512::from(segment_synced_accounts + 1) * 100)
-                / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
+            let segment_synced_accounts = U512::from(
+                data.current_keys[i]
+                    .into_uint()
+                    .saturating_sub(STATE_TRIE_SEGMENTS_START[i].into_uint()),
+            );
+            let segment_completion_rate =
+                ((segment_synced_accounts + 1) * 100) / U512::from(U256::MAX / STATE_TRIE_SEGMENTS);
             debug!("Segment {i} completion rate: {segment_completion_rate}%");
             synced_accounts += segment_synced_accounts;
             synced_accounts_this_cycle += data.current_keys[i]
                 .into_uint()
-                .checked_sub(data.initial_keys[i].into_uint())
-                .unwrap_or_default();
+                .saturating_sub(data.initial_keys[i].into_uint())
+                .into();
         }
         // Calculate current progress percentage
-        let completion_rate: U512 = (U512::from(synced_accounts) * 100) / U512::from(U256::MAX);
+        let completion_rate: U512 = (synced_accounts * 100) / U512::from(U256::MAX);
         // Make a simple time to finish estimation based on current progress
         // The estimation relies on account hashes being (close to) evenly distributed
         let remaining_accounts =
-            (U512::from(U256::MAX) / 100) * (U512::from(100) - completion_rate);
+            (U512::from(U256::MAX) / 100) * (U512::from(100).saturating_sub(completion_rate));
         // Time to finish = Time since start / Accounts synced this cycle * Remaining accounts
         let time_to_finish_secs =
             U512::from(Instant::now().duration_since(data.cycle_start).as_secs())
                 * remaining_accounts
-                / U512::from(synced_accounts_this_cycle);
+                / synced_accounts_this_cycle;
         info!(
             "Downloading state trie, completion rate: {}%, estimated time to finish: {}",
             completion_rate,
