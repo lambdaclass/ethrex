@@ -247,31 +247,63 @@ async fn rebuild_storage_trie(
     expected_root: H256,
     store: Store,
 ) -> Result<(), SyncError> {
+    info!("Rebuilding Storage Trie!");
+    let open_trie_start = Instant::now();
+    let full_time_start = Instant::now();
     let mut start = H256::zero();
     let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
+    let open_trie_time = open_trie_start.elapsed().as_millis();
+    let mut cycles = 0;
+    let mut keys_read = 0;
+    let mut time_spent_reading = 0;
+    let mut time_spent_writing_trie = 0;
+    let mut time_spent_commiting_trie = 0;
     loop {
+        cycles += 1;
+        let read_start = Instant::now();
         let batch = store.read_storage_snapshot(account_hash, start)?;
+        keys_read += batch.len();
+        time_spent_reading += read_start.elapsed().as_micros();
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
         // Update start
         if let Some(last) = batch.last() {
             start = next_hash(last.0);
         }
         // Process batch
-        // Launch storage rebuild tasks for all non-empty storages
+        let write_start = Instant::now();
         for (key, val) in batch {
             storage_trie.insert(key.0.to_vec(), val.encode_to_vec())?;
         }
+        time_spent_writing_trie += write_start.elapsed().as_micros();
+        let commit_start = Instant::now();
         storage_trie.hash()?;
-
-        // Return if we have no more snapshot accounts to process for this segemnt
+        time_spent_commiting_trie += commit_start.elapsed().as_micros();
+        // Return if we have no more snapshot values to process for this storage
         if unfilled_batch {
             break;
         }
     }
+    let heal_if_mismatch_start = Instant::now();
     if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
         warn!("Mismatched storage root for account {account_hash}, expected: {expected_root}, got: {}", storage_trie.hash()?);
         store.set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])?;
     }
+    let heal_if_mismatch_time = heal_if_mismatch_start.elapsed().as_millis();
+    let full_time = full_time_start.elapsed().as_millis();
+    let time_spent_reading = time_spent_reading / 1000;
+    let time_spent_writing_trie = time_spent_writing_trie / 1000;
+    let time_spent_commiting_trie = time_spent_commiting_trie / 1000;
+    StorageRebuildMetrics {
+        cycles,
+        time_spent_reading,
+        time_spent_writing_trie,
+        time_spent_commiting_trie,
+        full_time,
+        open_trie_time,
+        keys_read,
+        heal_if_mismatch_time,
+    }
+    .show();
     Ok(())
 }
 
@@ -308,4 +340,35 @@ async fn show_trie_rebuild_progress(
         completion_rate,
         seconds_to_readable(time_to_finish)
     );
+}
+
+
+struct StorageRebuildMetrics {
+    cycles: usize,
+    time_spent_reading: u128,
+    time_spent_writing_trie: u128,
+    time_spent_commiting_trie: u128,
+    full_time: u128,
+    open_trie_time: u128,
+    keys_read: usize,
+    heal_if_mismatch_time: u128,
+}
+
+impl StorageRebuildMetrics {
+    fn show(&self) {
+        if self.cycles == 0 || self.full_time == 0 {
+            info!("NoOp Rebuild");
+            return;
+        }
+        let average_time_per_cycle = self.full_time / self.cycles as u128;
+        let average_read_time = self.time_spent_reading / self.cycles as u128;
+        let average_trie_write_time = self.time_spent_writing_trie / self.cycles as u128;
+        let average_commit_trie_time = self.time_spent_commiting_trie / self.cycles as u128;
+        let read_percentage = self.time_spent_reading * 100 / self.full_time;
+        let trie_write_percentage = self.time_spent_writing_trie * 100 / self.full_time;
+        let trie_commit_percentage = self.time_spent_commiting_trie * 100 / self.full_time;
+        info!("\nRebuilt Storage in {}ms.\n Used {} cycles of {MAX_SNAPSHOT_READS} snapshot reads each.\n Read {} keys in total\n Stats:\n Time spent opening the trie {} ms\n Time spent adding heal paths if mismatch {}ms \nAverage time per cycle: {average_time_per_cycle}ms\n Average time spent reading snapshot {average_read_time}ms\n Average time spent writing storage trie: {average_trie_write_time}ms\n Average time spent commiting storage trie {average_commit_trie_time}ms\n\n Percentage of time spent reading snapshot {read_percentage}%\n Percentage of time spent writing storage trie: {trie_write_percentage}%\n Percentage of time spent commiting storage trie {trie_commit_percentage}%\n",
+        self.full_time, self.cycles, self.keys_read, self.open_trie_time, self.heal_if_mismatch_time
+    )
+    }
 }

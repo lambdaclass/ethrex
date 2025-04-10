@@ -14,6 +14,7 @@ use ethrex_rlp::constants::RLP_NULL;
 use node_hash::NodeHash;
 use sha3::{Digest, Keccak256};
 use std::collections::HashSet;
+use std::time::Instant;
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
