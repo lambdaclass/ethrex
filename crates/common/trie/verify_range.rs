@@ -64,7 +64,7 @@ pub fn verify_range_i(
         for (key, value) in keys.iter().zip(values.iter()) {
             trie.insert(key.0.to_vec(), value.clone())?;
         }
-        let hash = trie.hash_no_commit();
+        let hash = trie.hash()?;
         if hash != root {
             return Err(TrieError::Verify(format!(
                 "invalid proof, expected root hash {}, got  {}",
@@ -127,7 +127,7 @@ pub fn verify_range_i(
     // Check for elements to the right of the range before we wipe the sate
     let has_right_element = has_right_element(root, last_key.as_bytes(), &trie.state)?;
     // Check that the hash is the one we expected (aka the trie was properly reconstructed from the edge proofs and the range)
-    let hash = trie.hash_no_commit();
+    let hash = trie.hash()?;
     if hash != root {
         return Err(TrieError::Verify(format!(
             "invalid proof, expected root hash {}, got  {}",

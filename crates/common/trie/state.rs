@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::time::Instant;
 
 use crate::error::TrieError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -57,17 +56,10 @@ impl TrieState {
 
     // Writes a node and its children into the DB
     fn commit_node(&mut self, node_hash: &NodeHash) -> Result<(), TrieError> {
-        let start = Instant::now();
         let mut to_commit = vec![];
         self.commit_node_tail_recursive(node_hash, &mut to_commit)?;
-        let gather_nodes = start.elapsed().as_millis();
-        let node_count = to_commit.len();
-        let db_write_start = Instant::now();
-        self.db.put_batch(to_commit)?;
-        let db_write = db_write_start.elapsed().as_millis();
-        let full = start.elapsed().as_millis();
-        //tracing::info!("Comitted {node_count} nodes to DB in {full} ms. Spent {gather_nodes} ms gathering them & {db_write} ms writing them to DB");
 
+        self.db.put_batch(to_commit)?;
         Ok(())
     }
 
