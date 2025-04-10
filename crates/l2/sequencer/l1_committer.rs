@@ -20,6 +20,7 @@ use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_storage_l2::StoreL2;
 use ethrex_vm::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
@@ -35,6 +36,7 @@ pub struct Committer {
     eth_client: EthClient,
     on_chain_proposer_address: Address,
     store: Store,
+    l2_store: StoreL2,
     l1_address: Address,
     l1_private_key: SecretKey,
     interval_ms: u64,
@@ -44,13 +46,19 @@ pub struct Committer {
 
 pub async fn start_l1_committer(
     store: Store,
+    l2_store: StoreL2,
     execution_cache: Arc<ExecutionCache>,
 ) -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
 
-    let mut committer =
-        Committer::new_from_config(&committer_config, eth_config, store, execution_cache);
+    let mut committer = Committer::new_from_config(
+        &committer_config,
+        eth_config,
+        store,
+        l2_store,
+        execution_cache,
+    );
     committer.run().await;
     Ok(())
 }
@@ -60,12 +68,14 @@ impl Committer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
+        l2_store: StoreL2,
         execution_cache: Arc<ExecutionCache>,
     ) -> Self {
         Self {
             eth_client: EthClient::new(&eth_config.rpc_url),
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
+            l2_store,
             l1_address: committer_config.l1_address,
             l1_private_key: committer_config.l1_private_key,
             interval_ms: committer_config.interval_ms,
@@ -97,11 +107,6 @@ impl Committer {
         let (blobs_bundle, withdrawal_logs_merkle_root, deposit_logs_hash, last_block_to_commit) =
             self.prepare_batch_from_block(first_block_to_commit)?;
 
-        // dbg!(&&blobs_bundle);
-        dbg!(&withdrawal_logs_merkle_root);
-        dbg!(&deposit_logs_hash);
-        dbg!(&last_block_to_commit);
-
         match self
             .send_commitment(
                 batch_to_commit,
@@ -117,6 +122,7 @@ impl Committer {
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}. first_block: {first_block_to_commit}, last_block {last_block_to_commit}.",
                 );
+                self.store_batch(batch_to_commit, first_block_to_commit, last_block_to_commit).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
@@ -234,6 +240,20 @@ impl Committer {
             deposit_logs_hash,
             current_block_number,
         ))
+    }
+
+    async fn store_batch(
+        &self,
+        batch_number: u64,
+        first_block_number: u64,
+        last_block_number: u64,
+    ) -> Result<(), CommitterError> {
+        for block_number in first_block_number..=last_block_number {
+            self.l2_store
+                .store_batch_number_for_block(block_number, batch_number)
+                .await?;
+        }
+        Ok(())
     }
 
     fn get_block_withdrawals(

@@ -92,7 +92,7 @@ pub enum CommitterError {
     #[error("Committer failed to  {0}")]
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
     #[error("Committer failed retrieve block from storage: {0}")]
-    FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    StoreError(#[from] StoreError),
     #[error("Committer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]

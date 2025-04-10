@@ -298,6 +298,8 @@ pub mod test_utils {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     #[cfg(feature = "l2")]
+    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
+    #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
 
     pub const TEST_GENESIS: &str = include_str!("../../../test_data/genesis-l1.json");
@@ -355,6 +357,9 @@ pub mod test_utils {
         let valid_delegation_addresses = Vec::new();
         #[cfg(feature = "l2")]
         let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
+        #[cfg(feature = "l2")]
+        let l2_store =
+            StoreL2::new("", EngineTypeL2::InMemory).expect("Failed to create in-memory storage");
         start_api(
             http_addr,
             authrpc_addr,
@@ -374,6 +379,8 @@ pub mod test_utils {
             valid_delegation_addresses,
             #[cfg(feature = "l2")]
             sponsor_pk,
+            #[cfg(feature = "l2")]
+            l2_store,
         )
         .await;
     }

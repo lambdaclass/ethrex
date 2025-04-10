@@ -14,6 +14,8 @@ use tracing::info;
 
 #[cfg(any(feature = "l2", feature = "based"))]
 use ethrex::l2::L2Options;
+#[cfg(feature = "l2")]
+use ethrex_storage_l2::StoreL2;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -55,6 +57,8 @@ async fn main() -> eyre::Result<()> {
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
+        #[cfg(feature = "l2")]
+        StoreL2::default(),
     );
 
     init_metrics(&opts, tracker.clone());

@@ -1,4 +1,5 @@
 use crate::authentication::authenticate;
+#[cfg(feature = "based")]
 use crate::clients::{EngineClient, EthClient};
 use crate::engine::{
     exchange_transition_config::ExchangeTransitionConfigV1Req,
@@ -67,9 +68,10 @@ use tracing::info;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "l2")] {
-        use crate::l2::transaction::SponsoredTx;
+        use crate::l2::{transaction::SponsoredTx, batch::BatchByBlock};
         use ethrex_common::Address;
         use secp256k1::SecretKey;
+        use ethrex_storage_l2::{StoreL2};
     }
 }
 
@@ -102,6 +104,8 @@ pub struct RpcApiContext {
     pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
     pub sponsor_pk: SecretKey,
+    #[cfg(feature = "l2")]
+    pub l2_store: StoreL2,
 }
 
 pub trait RpcHandler: Sized {
@@ -150,6 +154,7 @@ pub async fn start_api(
     #[cfg(feature = "based")] gateway_pubkey: Public,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
+    #[cfg(feature = "l2")] l2_store: StoreL2,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -172,6 +177,8 @@ pub async fn start_api(
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
         sponsor_pk,
+        #[cfg(feature = "l2")]
+        l2_store,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -467,6 +474,7 @@ pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
+        "ethrex_getBatchByBlock" => BatchByBlock::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
         }
@@ -512,6 +520,8 @@ mod tests {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     #[cfg(feature = "l2")]
+    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
+    #[cfg(feature = "l2")]
     use secp256k1::rand;
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
@@ -550,6 +560,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store: StoreL2::new("temp.db", EngineTypeL2::InMemory)
+                .expect("Failed to create test DB"),
         };
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
@@ -649,6 +662,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store: StoreL2::new("temp.db", EngineTypeL2::InMemory)
+                .expect("Failed to create test DB"),
         };
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
@@ -693,6 +709,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store: StoreL2::new("temp.db", EngineTypeL2::InMemory)
+                .expect("Failed to create test DB"),
         };
         let result = map_http_requests(&request, context).await;
         let response =
@@ -771,6 +790,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            l2_store: StoreL2::new("temp.db", EngineTypeL2::InMemory)
+                .expect("Failed to create test DB"),
         };
         // Process request
         let result = map_http_requests(&request, context).await;
