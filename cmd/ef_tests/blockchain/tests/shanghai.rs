@@ -1,23 +1,33 @@
+use ef_tests_blockchain::test_runner::parse_and_execute;
+use ethrex_vm::EvmEngine;
 use std::path::Path;
 
-use ef_tests_blockchain::{
-    network::Network,
-    test_runner::{parse_test_file, run_ef_test},
-};
-
-fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let tests = parse_test_file(path);
-
-    for (test_key, test) in tests {
-        if test.network < Network::Merge {
-            // Discard this test
-            continue;
-        }
-
-        rt.block_on(run_ef_test(&test_key, &test));
-    }
+fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
+    parse_and_execute(path, EvmEngine::REVM);
     Ok(())
 }
 
-datatest_stable::harness!(parse_and_execute, "vectors/shanghai/", r".*/.*/.*\.json");
+fn parse_and_execute_with_levm(path: &Path) -> datatest_stable::Result<()> {
+    parse_and_execute(path, EvmEngine::LEVM);
+    Ok(())
+}
+
+datatest_stable::harness!(
+    // REVM execution
+    parse_and_execute_with_revm,
+    "vectors/shanghai/",
+    r".*/.*/.*\.json",
+    // LEVM execution
+    parse_and_execute_with_levm,
+    "vectors/shanghai/",
+    r"eip3651_warm_coinbase/.*/.*\.json",
+    parse_and_execute_with_levm,
+    "vectors/shanghai/",
+    r"eip3855_push0/.*/.*\.json",
+    // parse_and_execute_with_levm,
+    // "vectors/shanghai/",
+    // r"eip3860_initcode/.*/.*\.json",
+    // parse_and_execute_with_levm,
+    // "vectors/shanghai/",
+    // r"eip4895_withdrawals/.*/.*\.json",
+);

@@ -1,14 +1,46 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::types::{BlockWithRLP, TestUnit};
+use crate::{
+    network::Network,
+    types::{BlockWithRLP, TestUnit},
+};
 use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
 use ethrex_common::types::{
     Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::EvmEngine;
 
-pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
+pub fn parse_and_execute(path: &Path, evm: EvmEngine) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let tests = parse_test_file(path);
+
+    for (test_key, test) in tests {
+        if test.network < Network::Merge {
+            // Discard this test
+            continue;
+        }
+
+        rt.block_on(run_ef_test(&test_key, &test, evm));
+    }
+}
+
+pub fn parse_and_execute_with_filter(path: &Path, evm: EvmEngine, skipped_tests: &[&str]) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let tests = parse_test_file(path);
+
+    for (test_key, test) in tests {
+        if test.network < Network::Merge || skipped_tests.contains(&test_key.as_str()) {
+            // Discard this test
+            continue;
+        }
+
+        rt.block_on(run_ef_test(&test_key, &test, evm));
+    }
+}
+
+pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
     let decoded_block = CoreBlock::decode(&genesis_rlp).unwrap();
@@ -20,7 +52,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::new(evm, store.clone());
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
