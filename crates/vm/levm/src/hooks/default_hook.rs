@@ -257,6 +257,8 @@ impl Hook for DefaultHook {
             // only supports an Address which must be non-empty.
             // If a type 3 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
             // it won't reach this point.
+            // For more information, please check the following thread:
+            // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
             if vm.is_create() {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxContractCreation,
@@ -278,6 +280,8 @@ impl Hook for DefaultHook {
             // only supports an Address which must be non-empty.
             // If a type 4 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
             // it won't reach this point.
+            // For more information, please check the following thread:
+            // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
             if vm.is_create() {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type4TxContractCreation,

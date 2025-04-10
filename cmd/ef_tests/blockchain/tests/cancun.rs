@@ -4,7 +4,6 @@ use ef_tests_blockchain::{
 };
 use std::path::Path;
 
-#[allow(dead_code)]
 fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_test_file(path);

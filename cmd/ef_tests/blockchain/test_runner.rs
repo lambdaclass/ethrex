@@ -65,7 +65,7 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         // have the "to" field set to null (create).
         // This test expects an exception to be thrown AFTER the Block RLP decoding, when the
         // transaction is validated. This would imply allowing the "to" field of the
-        // EIP-7702 transaction to be null and validating it on the `prepare_execution` hook.
+        // EIP-7702 transaction to be null and validating it on the `prepare_execution` LEVM hook.
         //
         // Instead, this approach is taken, which allows for the exception to be thrown on
         // RLPDecoding, so the data type EIP7702Transaction correctly describes the requirement of
@@ -76,7 +76,7 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         //
         // There is another test which validates the same exact thing, but for an EIP-4844 tx.
         // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
-        // catched.
+        // caught.
         "TransactionException.TYPE_4_TX_CONTRACT_CREATION",
     ];
 

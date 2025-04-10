@@ -10,7 +10,6 @@ const SKIPPED_TEST: [&str; 1] = [
     "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_non_empty_storage[fork_Prague-blockchain_test-zero_nonce]",
 ];
 
-#[allow(dead_code)]
 fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_test_file(path);
