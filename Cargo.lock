@@ -3356,6 +3356,7 @@ dependencies = [
  "async-trait",
  "ethereum-types",
  "ethrex-common",
+ "ethrex-rlp",
  "ethrex-storage",
  "libmdbx",
  "redb",

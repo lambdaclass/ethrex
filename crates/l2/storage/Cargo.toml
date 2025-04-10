@@ -7,9 +7,10 @@ edition.workspace = true
 [dependencies]
 ethrex-common.workspace = true
 ethrex-storage.workspace = true
+ethrex-rlp.workspace = true
+ethereum-types.workspace = true
 
 async-trait.workspace = true
-ethereum-types.workspace = true
 anyhow = "1.0.86"
 tracing.workspace = true
 libmdbx = { workspace = true, optional = true }

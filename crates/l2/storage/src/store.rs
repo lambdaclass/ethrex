@@ -6,7 +6,7 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStoreL2;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStoreL2;
-use ethrex_common::types::BlockNumber;
+use ethrex_common::{types::BlockNumber, H256};
 use ethrex_storage::error::StoreError;
 use tracing::info;
 
@@ -66,6 +66,25 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine
             .store_batch_number_for_block(block_number, batch_number)
+            .await
+    }
+
+    pub async fn get_withdrawal_hashes_for_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<H256>>, StoreError> {
+        self.engine
+            .get_withdrawal_hashes_for_batch(batch_number)
+            .await
+    }
+
+    pub async fn store_withdrawal_hashes_for_batch(
+        &self,
+        batch_number: u64,
+        withdrawal_hashes: Vec<H256>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_withdrawal_hashes_for_batch(batch_number, withdrawal_hashes)
             .await
     }
 }

@@ -68,7 +68,7 @@ use tracing::info;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "l2")] {
-        use crate::l2::{transaction::SponsoredTx, batch::BatchByBlock};
+        use crate::l2::{transaction::SponsoredTx};
         use ethrex_common::Address;
         use secp256k1::SecretKey;
         use ethrex_storage_l2::{StoreL2};
@@ -472,9 +472,11 @@ pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 
 #[cfg(feature = "l2")]
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    use crate::l2::withdrawal::GetWithdrawalProof;
+
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
-        "ethrex_getBatchByBlock" => BatchByBlock::call(req, context).await,
+        "ethrex_getWithdrawalProof" => GetWithdrawalProof::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
         }

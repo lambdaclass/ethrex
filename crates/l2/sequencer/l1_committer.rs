@@ -104,8 +104,11 @@ impl Committer {
                 .await?;
         let first_block_to_commit = last_committed_block_number + 1;
 
-        let (blobs_bundle, withdrawal_logs_merkle_root, deposit_logs_hash, last_block_to_commit) =
+        let (blobs_bundle, withdrawal_hashes, deposit_logs_hash, last_block_to_commit) =
             self.prepare_batch_from_block(first_block_to_commit)?;
+
+        let withdrawal_logs_merkle_root =
+            self.get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
 
         match self
             .send_commitment(
@@ -122,7 +125,7 @@ impl Committer {
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}. first_block: {first_block_to_commit}, last_block {last_block_to_commit}.",
                 );
-                self.store_batch(batch_to_commit, first_block_to_commit, last_block_to_commit).await?;
+                self.store_batch(batch_to_commit, first_block_to_commit, last_block_to_commit, withdrawal_hashes).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
@@ -134,7 +137,7 @@ impl Committer {
     fn prepare_batch_from_block(
         &self,
         from_block: BlockNumber,
-    ) -> Result<(BlobsBundle, H256, H256, BlockNumber), CommitterError> {
+    ) -> Result<(BlobsBundle, Vec<H256>, H256, BlockNumber), CommitterError> {
         let mut current_block_number = from_block;
         let mut blobs_bundle = BlobsBundle::default();
 
@@ -218,12 +221,16 @@ impl Committer {
                         withdrawal_hashes.push(hash);
                     }
 
+                    info!("Current deposit hashes: {:?}", deposit_logs_hashes);
+
                     deposit_logs_hashes.extend(
                         deposits
                             .iter()
                             .filter_map(|tx| tx.get_deposit_hash())
                             .collect::<Vec<H256>>(),
                     );
+                    info!("Deposit hashes after extending: {:?}", deposit_logs_hashes);
+
                     current_block_number += 1;
                 }
                 Err(e) => {
@@ -232,11 +239,11 @@ impl Committer {
                 }
             }
         }
-        let withdrawal_logs_merkle_root = self.get_withdrawals_merkle_root(withdrawal_hashes)?;
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
+        info!("Deposit logs hash: {deposit_logs_hash:#x}");
         Ok((
             blobs_bundle,
-            withdrawal_logs_merkle_root,
+            withdrawal_hashes,
             deposit_logs_hash,
             current_block_number,
         ))
@@ -247,12 +254,16 @@ impl Committer {
         batch_number: u64,
         first_block_number: u64,
         last_block_number: u64,
+        withdrawal_hashes: Vec<H256>,
     ) -> Result<(), CommitterError> {
         for block_number in first_block_number..=last_block_number {
             self.l2_store
                 .store_batch_number_for_block(block_number, batch_number)
                 .await?;
         }
+        self.l2_store
+            .store_withdrawal_hashes_for_batch(batch_number, withdrawal_hashes)
+            .await?;
         Ok(())
     }
 

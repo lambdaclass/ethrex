@@ -2,12 +2,11 @@ use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::{GenericTransaction, Transaction, TxKind};
-use ethrex_rpc::clients::eth::{
-    errors::{EthClientError, GetTransactionReceiptError},
-    eth_sender::Overrides,
-    EthClient,
-};
 use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
+use ethrex_rpc::{
+    clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient},
+    l2::withdrawal::WithdrawalProof,
+};
 use itertools::Itertools;
 use keccak_hash::keccak;
 use merkle_tree::merkle_proof;
@@ -161,44 +160,27 @@ pub async fn withdraw(
 }
 
 pub async fn claim_withdraw(
-    l2_withdrawal_tx_hash: H256,
     amount: U256,
     from: Address,
     from_pk: SecretKey,
-    proposer_client: &EthClient,
     eth_client: &EthClient,
+    withdrawal_proof: &WithdrawalProof,
 ) -> Result<H256, EthClientError> {
     println!("Claiming {amount} from bridge to {from:#x}");
 
     const CLAIM_WITHDRAWAL_SIGNATURE: &str =
         "claimWithdrawal(bytes32,uint256,uint256,uint256,bytes32[])";
 
-    let (withdrawal_l2_block_number, claimed_amount) = match proposer_client
-        .get_transaction_by_hash(l2_withdrawal_tx_hash)
-        .await?
-    {
-        Some(l2_withdrawal_tx) => (l2_withdrawal_tx.block_number, l2_withdrawal_tx.value),
-        None => {
-            println!("Withdrawal transaction not found in L2");
-            return Err(EthClientError::GetTransactionReceiptError(
-                GetTransactionReceiptError::RPCError(
-                    "Withdrawal transaction not found in L2".to_owned(),
-                ),
-            ));
-        }
-    };
-
-    let (index, proof) = get_withdraw_merkle_proof(proposer_client, l2_withdrawal_tx_hash).await?;
-
     let calldata_values = vec![
         Value::Uint(U256::from_big_endian(
-            l2_withdrawal_tx_hash.as_fixed_bytes(),
+            withdrawal_proof.withdrawal_hash.as_fixed_bytes(),
         )),
-        Value::Uint(claimed_amount),
-        Value::Uint(withdrawal_l2_block_number),
-        Value::Uint(U256::from(index)),
+        Value::Uint(amount),
+        Value::Uint(withdrawal_proof.batch_number.into()),
+        Value::Uint(U256::from(withdrawal_proof.index)),
         Value::Array(
-            proof
+            withdrawal_proof
+                .merkle_proof
                 .iter()
                 .map(|hash| Value::FixedBytes(hash.as_fixed_bytes().to_vec().into()))
                 .collect(),

@@ -4,14 +4,14 @@ use std::{
     sync::Arc,
 };
 
-use ethrex_common::types::BlockNumber;
+use ethrex_common::{types::BlockNumber, H256};
 use ethrex_storage::error::StoreError;
 use libmdbx::{
     orm::{Database, Table},
     table, table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions,
 };
 
-use crate::api::StoreEngineL2;
+use crate::{api::StoreEngineL2, rlp::WithdrawalHashesRLP};
 
 pub struct Store {
     db: Arc<Database>,
@@ -57,7 +57,12 @@ const DB_PAGE_SIZE: usize = 4096;
 /// Initializes a new database with the provided path. If the path is `None`, the database
 /// will be temporary.
 pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
-    let tables = [table_info!(BatchesByBlockNumber)].into_iter().collect();
+    let tables = [
+        table_info!(BatchesByBlockNumber),
+        table_info!(WithdrawalHashesByBatch),
+    ]
+    .into_iter()
+    .collect();
     let path = path.map(|p| p.as_ref().to_path_buf());
     let options = DatabaseOptions {
         page_size: Some(PageSize::Set(DB_PAGE_SIZE)),
@@ -94,9 +99,33 @@ impl StoreEngineL2 for Store {
         self.write::<BatchesByBlockNumber>(block_number, batch_number)
             .await
     }
+
+    async fn get_withdrawal_hashes_for_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<H256>>, StoreError> {
+        Ok(self
+            .read::<WithdrawalHashesByBatch>(batch_number)
+            .await?
+            .map(|w| w.to()))
+    }
+
+    async fn store_withdrawal_hashes_for_batch(
+        &self,
+        batch_number: u64,
+        withdrawals: Vec<H256>,
+    ) -> Result<(), StoreError> {
+        self.write::<WithdrawalHashesByBatch>(batch_number, withdrawals.into())
+            .await
+    }
 }
 
 table!(
     /// Batch number by block number
     ( BatchesByBlockNumber ) BlockNumber => u64
+);
+
+table!(
+    /// Withdrawals by batch number
+    ( WithdrawalHashesByBatch ) u64 => WithdrawalHashesRLP
 );

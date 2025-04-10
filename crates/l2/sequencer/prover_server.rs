@@ -596,11 +596,10 @@ impl ProverServer {
                 debug!("No new blocks to prove");
                 continue;
             }
-
             info!("Last committed: {last_committed_batch} - Last verified: {last_verified_batch}");
 
             let calldata_values = vec![
-                // blockNumber
+                // batchNumber
                 Value::Uint(U256::from(last_verified_batch + 1)),
                 // risc0BlockProof
                 Value::Bytes(vec![].into()),
@@ -661,7 +660,10 @@ impl ProverServer {
                 .send_tx_bump_gas_exponential_backoff(&mut tx, &self.verifier_private_key)
                 .await?;
 
-            info!("Sent proof for batch {last_verified_batch}, with transaction hash {verify_tx_hash:#x}");
+            info!(
+                "Sent proof for batch {}, with transaction hash {verify_tx_hash:#x}",
+                last_verified_batch + 1
+            );
 
             info!(
                 "Mocked verify transaction sent for batch {}",

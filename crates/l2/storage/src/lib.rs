@@ -1,4 +1,5 @@
 mod api;
+mod rlp;
 mod store;
 mod store_db;
 

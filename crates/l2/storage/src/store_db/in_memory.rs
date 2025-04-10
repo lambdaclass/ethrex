@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use ethrex_common::types::BlockNumber;
+use ethrex_common::{types::BlockNumber, H256};
 use ethrex_storage::error::StoreError;
 
 use crate::api::StoreEngineL2;
@@ -16,6 +16,8 @@ pub struct Store(Arc<Mutex<StoreInner>>);
 struct StoreInner {
     /// Map of block number to batch number
     batches_by_block: HashMap<BlockNumber, u64>,
+    /// Map of batch number to withdrawals
+    withdrawal_hashes_by_batch: HashMap<u64, Vec<H256>>,
 }
 
 impl Store {
@@ -46,6 +48,28 @@ impl StoreEngineL2 for Store {
         self.inner()?
             .batches_by_block
             .insert(block_number, batch_number);
+        Ok(())
+    }
+
+    async fn get_withdrawal_hashes_for_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<H256>>, StoreError> {
+        Ok(self
+            .inner()?
+            .withdrawal_hashes_by_batch
+            .get(&batch_number)
+            .cloned())
+    }
+
+    async fn store_withdrawal_hashes_for_batch(
+        &self,
+        batch_number: u64,
+        withdrawals: Vec<H256>,
+    ) -> Result<(), StoreError> {
+        self.inner()?
+            .withdrawal_hashes_by_batch
+            .insert(batch_number, withdrawals);
         Ok(())
     }
 }

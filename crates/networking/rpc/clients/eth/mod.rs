@@ -1,3 +1,5 @@
+#[cfg(feature = "l2")]
+use crate::l2::withdrawal::WithdrawalProof;
 use std::{collections::HashMap, fmt};
 
 use crate::{
@@ -1036,6 +1038,59 @@ impl EthClient {
         }
         receipt.ok_or(EthClientError::Custom(
             "Transaction receipt is None".to_owned(),
+        ))
+    }
+
+    #[cfg(feature = "l2")]
+    pub async fn get_withdrawal_proof(
+        &self,
+        transaction_hash: H256,
+    ) -> Result<Option<WithdrawalProof>, EthClientError> {
+        use errors::GetWithdrawalProofError;
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "ethrex_getWithdrawalProof".to_string(),
+            params: Some(vec![json!(format!("{:#x}", transaction_hash))]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetWithdrawalProofError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetWithdrawalProofError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    #[cfg(feature = "l2")]
+    pub async fn wait_for_withdrawal_proof(
+        &self,
+        transaction_hash: H256,
+        max_retries: u64,
+    ) -> Result<WithdrawalProof, EthClientError> {
+        let mut withdrawal_proof = self.get_withdrawal_proof(transaction_hash).await?;
+        let mut r#try = 1;
+        while withdrawal_proof.is_none() {
+            println!(
+                "[{try}/{max_retries}] Retrying to get withdrawal proof for tx {transaction_hash:#x}"
+            );
+
+            if max_retries == r#try {
+                return Err(EthClientError::Custom(format!(
+                    "Withdrawal proof for tx {transaction_hash:#x} not found after {max_retries} retries"
+                )));
+            }
+            r#try += 1;
+
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            withdrawal_proof = self.get_withdrawal_proof(transaction_hash).await?;
+        }
+        withdrawal_proof.ok_or(EthClientError::Custom(
+            "Withdrawal proof is None".to_owned(),
         ))
     }
 }
