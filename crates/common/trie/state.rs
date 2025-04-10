@@ -66,7 +66,7 @@ impl TrieState {
         self.db.put_batch(to_commit)?;
         let db_write = db_write_start.elapsed().as_millis();
         let full = start.elapsed().as_millis();
-        tracing::info!("Comitted {node_count} nodes to DB in {full} ms. Spent {gather_nodes} ms gathering them & {db_write} ms writing them to DB");
+        //tracing::info!("Comitted {node_count} nodes to DB in {full} ms. Spent {gather_nodes} ms gathering them & {db_write} ms writing them to DB");
 
         Ok(())
     }
