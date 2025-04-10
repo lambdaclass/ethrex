@@ -29,6 +29,8 @@ use super::{
 /// This will tell the rebuilder to skip storage root validations for this trie
 /// The storage should be queued for rebuilding by the sender
 pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
+// Max storages to rebuild in parallel
+const MAX_PARALLEL_REBUILDS: usize = 15;
 
 /// Represents the permanently ongoing background trie rebuild process
 /// This process will be started whenever a state sync is initiated and will be
@@ -219,7 +221,7 @@ async fn rebuild_storage_trie_in_background(
 
         // Spawn tasks to rebuild current storages
         let mut rebuild_tasks = JoinSet::new();
-        for _ in 0..MAX_PARALLEL_FETCHES {
+        for _ in 0..MAX_PARALLEL_REBUILDS {
             if pending_storages.is_empty() {
                 break;
             }
