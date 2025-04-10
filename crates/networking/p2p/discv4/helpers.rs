@@ -1,7 +1,7 @@
 use chrono::{Utc, TimeDelta};
 
-pub fn get_msg_expiration_from_seconds(seconds: u64) -> u64 {
-    let delta = TimeDelta::try_seconds(seconds.try_into().unwrap_or(i64::MAX));
+pub fn get_msg_expiration_from_seconds(seconds: u32) -> u64 {
+    let delta = TimeDelta::try_seconds(seconds.into());
     (Utc::now() + delta.unwrap_or_default()).timestamp().try_into().unwrap_or(1 << 63)
 }
 
