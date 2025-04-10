@@ -55,7 +55,8 @@ async fn main() -> eyre::Result<()> {
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
-    ).await;
+    )
+    .await;
 
     init_metrics(&opts, tracker.clone());
 

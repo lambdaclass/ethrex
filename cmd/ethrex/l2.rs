@@ -126,7 +126,8 @@ impl Command {
                     blockchain.clone(),
                     cancel_token.clone(),
                     tracker.clone(),
-                ).await;
+                )
+                .await;
 
                 // TODO: Add a --metrics flag to enable metrics.
                 init_metrics(&opts.node_opts, tracker.clone());

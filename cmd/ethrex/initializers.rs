@@ -119,7 +119,8 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-    ).await;
+    )
+    .await;
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
