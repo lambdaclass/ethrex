@@ -197,9 +197,8 @@ impl TxBuilder {
                 (None, fibo_calldata, *contract_address)
             }
             TxBuilder::IOHeavy(contract_address) => {
-                let io_heavy_calldata = calldata::encode_calldata("incrementNumbers()", &[])
-                    .unwrap()
-                    .into();
+                let io_heavy_calldata =
+                    calldata::encode_calldata("incrementNumbers()", &[]).unwrap();
                 (None, io_heavy_calldata, *contract_address)
             }
         }
@@ -330,8 +329,8 @@ async fn main() {
             println!("IO Heavy load test starting");
             println!("Deploying IO Heavy contract...");
             let contract_address = deploy_io_heavy(client.clone(), deployer)
-            .await
-            .expect("Failed to deploy IO Heavy contract");
+                .await
+                .expect("Failed to deploy IO Heavy contract");
             TxBuilder::IOHeavy(contract_address)
         }
     };
