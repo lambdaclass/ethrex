@@ -94,7 +94,7 @@ pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn init_rpc_api(
+pub async fn init_rpc_api(
     opts: &Options,
     #[cfg(feature = "l2")] l2_opts: &L2Options,
     signer: &SigningKey,
@@ -119,7 +119,7 @@ pub fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-    );
+    ).await;
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),

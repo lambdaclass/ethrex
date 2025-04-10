@@ -35,7 +35,7 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
-    pub fn new(
+    pub async fn new(
         peer_table: Arc<Mutex<KademliaTable>>,
         sync_mode: SyncMode,
         cancel_token: CancellationToken,
@@ -59,9 +59,10 @@ impl SyncManager {
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
         if store
             .get_header_download_checkpoint()
+            .await
             .is_ok_and(|res| res.is_some())
         {
-            sync_manager.start_sync();
+            sync_manager.start_sync().await;
         }
         sync_manager
     }
