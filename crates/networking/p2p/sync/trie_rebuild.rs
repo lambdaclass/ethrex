@@ -21,8 +21,8 @@ use tracing::{info, warn};
 use crate::sync::seconds_to_readable;
 
 use super::{
-    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS,
-    SHOW_PROGRESS_INTERVAL_DURATION, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
+    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, SHOW_PROGRESS_INTERVAL_DURATION,
+    STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
 };
 
 /// The storage root used to indicate that the storage to be rebuilt is not complete
