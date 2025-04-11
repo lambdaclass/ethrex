@@ -264,12 +264,10 @@ where
         let tx = self.db.tx_mut().unwrap();
         let mut cursor = tx.cursor_dup_write::<T>().unwrap();
 
-        // Position at main key first
         cursor
             .seek_exact(self.fixed_key.lock().unwrap().as_ref().unwrap().clone())
             .unwrap();
 
-        // Append subkey+value under main key
         cursor.append_dup(subkey.clone(), value).unwrap();
 
         tx.commit().unwrap();
@@ -301,6 +299,7 @@ use std::fmt::{self, Error, Formatter};
 
 tables! {
     table AccountTrie<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
+    table Receipts<Key = Vec<u8>, Value = Vec<u8>, SubKey = u64>;
     table StorageTrie<Key = Vec<u8>, Value = Vec<u8>>;
     table PayloadsTable <Key = u64, Value = Vec<u8>>;
 }
@@ -666,7 +665,24 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        // todo!()
+        let tx = self.env.tx_mut().unwrap();
+        let mut cursor = tx.cursor_dup_write::<Receipts>().unwrap();
+
+        let main_key = block_hash.as_bytes().to_vec();
+
+        cursor.seek_exact(main_key.clone()).unwrap();
+
+        for (index, receipt) in receipts.into_iter().enumerate() {
+            let subkey = (index as u64).to_be_bytes().to_vec();
+
+            let receipt_rlp = receipt.encode_to_vec();
+
+            let value = [&subkey[..], &receipt_rlp[..]].concat();
+
+            cursor.append_dup(main_key.clone(), value).unwrap();
+        }
+
+        tx.commit().unwrap();
         Ok(())
     }
 
