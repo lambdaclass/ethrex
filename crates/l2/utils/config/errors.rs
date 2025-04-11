@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{sequencer::errors::BlockProducerError, utils::config::ConfigMode};
 use ethrex_rpc::clients::{auth, eth};
 
@@ -21,6 +23,18 @@ pub enum ConfigError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum TomlParserError {
+    #[error(
+        "Could not read file {0}
+        Have you tried copying the provided example?"
+    )]
+    FailedToReadFile(PathBuf),
+
+    #[error(
+        "Could not parse file {0}
+        Check the provided example to see if you have all the required fields"
+    )]
+    DeserializationError(PathBuf),
+
     #[error(
         "Could not find crates/l2/configs/{0}
 Have you tried copying the provided example? Try:

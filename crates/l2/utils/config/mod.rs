@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use errors::ConfigError;
+use errors::{ConfigError, TomlParserError};
 use serde::de::DeserializeOwned;
 use tracing::{debug, info};
 
@@ -33,6 +33,17 @@ pub trait L2Config {
         envy::prefixed(Self::PREFIX)
             .from_env::<Self>()
             .map_err(ConfigError::ConfigDeserializationError)
+    }
+
+    fn parse_toml(path: &PathBuf) -> Result<Self, ConfigError>
+    where
+        Self: Sized + DeserializeOwned,
+    {
+        let content = std::fs::read_to_string(path)
+            .map_err(|_| TomlParserError::FailedToReadFile(path.clone()))?;
+        toml::from_str(&content)
+            .map_err(|_| TomlParserError::DeserializationError(path.clone()))
+            .map_err(ConfigError::from)
     }
 
     fn write_env(&self, path: &PathBuf) -> Result<(), ConfigError> {
