@@ -11,7 +11,7 @@ use crate::constants::{
 use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
-use db::{evm_state, EvmState};
+use db::EvmState;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_storage::{error::StoreError, AccountUpdate};
