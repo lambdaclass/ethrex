@@ -1,7 +1,7 @@
 #[cfg(feature = "libmdbx")]
 pub mod libmdbx;
 #[cfg(feature = "libmdbx")]
-pub mod libmdbx_fixed_key;
+pub mod libmdbx_dupsort;
 #[cfg(feature = "redb")]
 pub mod redb;
 #[cfg(feature = "redb")]
