@@ -1,10 +1,10 @@
 use crate::{
     account::{Account, StorageSlot},
-    call_frame::CallFrame,
+    call_frame::{CacheBackup, CallFrame},
     constants::*,
     db::{
         cache::{self},
-        CacheDB, Database,
+        gen_db::GeneralizedDatabase,
     },
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
@@ -46,7 +46,6 @@ pub struct Substate {
 ///   - Gas Refunds
 ///   - Transient Storage
 pub struct StateBackup {
-    cache: CacheDB,
     substate: Substate,
     refunded_gas: u64,
     transient_storage: TransientStorage,
@@ -54,13 +53,11 @@ pub struct StateBackup {
 
 impl StateBackup {
     pub fn new(
-        cache: CacheDB,
         substate: Substate,
         refunded_gas: u64,
         transient_storage: TransientStorage,
     ) -> StateBackup {
         StateBackup {
-            cache,
             substate,
             refunded_gas,
             transient_storage,
@@ -174,18 +171,6 @@ pub struct VM<'a> {
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
-    pub cache_backup: CacheDB, // Backup of the cache before executing the transaction
-}
-
-pub struct GeneralizedDatabase {
-    pub store: Arc<dyn Database>,
-    pub cache: CacheDB,
-}
-
-impl GeneralizedDatabase {
-    pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
-        Self { store, cache }
-    }
 }
 
 impl<'a> VM<'a> {
@@ -267,8 +252,6 @@ impl<'a> VM<'a> {
                     false,
                 );
 
-                let cache_backup = db.cache.clone();
-
                 Ok(Self {
                     call_frames: vec![initial_call_frame],
                     env,
@@ -278,11 +261,10 @@ impl<'a> VM<'a> {
                     access_list,
                     authorization_list,
                     hooks,
-                    cache_backup,
                 })
             }
             TxKind::Create => {
-                let sender_nonce = get_account(db, env.origin)?.info.nonce;
+                let sender_nonce = db.get_account(env.origin)?.info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -309,8 +291,6 @@ impl<'a> VM<'a> {
                     created_accounts: HashSet::from([new_contract_address]),
                 };
 
-                let cache_backup = db.cache.clone();
-
                 Ok(Self {
                     call_frames: vec![initial_call_frame],
                     env,
@@ -320,7 +300,6 @@ impl<'a> VM<'a> {
                     access_list,
                     authorization_list,
                     hooks,
-                    cache_backup,
                 })
             }
         }
@@ -332,7 +311,6 @@ impl<'a> VM<'a> {
     ) -> Result<ExecutionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let backup = StateBackup::new(
-            self.db.cache.clone(),
             self.accrued_substate.clone(),
             self.env.refunded_gas,
             self.env.transient_storage.clone(),
@@ -360,8 +338,8 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn restore_state(&mut self, backup: StateBackup) {
-        self.db.cache = backup.cache;
+    pub fn restore_state(&mut self, backup: StateBackup, cache_backup: &mut CacheBackup) {
+        self.restore_cache_state(cache_backup);
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
@@ -411,8 +389,6 @@ impl<'a> VM<'a> {
 
     /// Main function for executing an external transaction
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        self.cache_backup = self.db.cache.clone();
-
         let mut initial_call_frame = self
             .call_frames
             .pop()
@@ -420,15 +396,20 @@ impl<'a> VM<'a> {
 
         if let Err(e) = self.prepare_execution(&mut initial_call_frame) {
             // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
-            self.db.cache = self.cache_backup.clone();
+            self.restore_cache_state(&initial_call_frame.cache_backup);
             return Err(e);
         }
+
+        // Here we clear the cache backup because if prepare_execution succeeded we don't want to
+        // revert the changes it made, like incrementing the sender's nonce by 1.
+        // Even if the transaction reverts we want to apply these kind of changes!
+        initial_call_frame.cache_backup = HashMap::new();
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(self.db, new_contract_address)?;
+            let new_account = self.db.get_account(new_contract_address)?;
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -438,7 +419,7 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
             if new_account.has_code_or_nonce() {
-                return self.handle_create_non_empty_account(&initial_call_frame);
+                return self.handle_create_non_empty_account(&mut initial_call_frame);
             }
 
             // https://eips.ethereum.org/EIPS/eip-161
@@ -452,7 +433,7 @@ impl<'a> VM<'a> {
 
         let mut report = self.run_execution(&mut initial_call_frame)?;
 
-        self.finalize_execution(&initial_call_frame, &mut report)?;
+        self.finalize_execution(&mut initial_call_frame, &mut report)?;
 
         Ok(report)
     }
@@ -471,6 +452,7 @@ impl<'a> VM<'a> {
         &mut self,
         address: Address,
         key: H256,
+        call_frame: &mut CallFrame,
     ) -> Result<(StorageSlot, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let mut storage_slot_was_cold = false;
@@ -504,7 +486,9 @@ impl<'a> VM<'a> {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = get_account_mut_vm(self.db, address)?;
+        let account = self
+            .db
+            .get_account_mut(address, Some(&mut call_frame.cache_backup))?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -515,8 +499,11 @@ impl<'a> VM<'a> {
         address: Address,
         key: H256,
         new_value: U256,
+        call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(self.db, address)?;
+        let account = self
+            .db
+            .get_account_mut(address, Some(&mut call_frame.cache_backup))?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)
@@ -531,7 +518,7 @@ impl<'a> VM<'a> {
 
     fn handle_create_non_empty_account(
         &mut self,
-        initial_call_frame: &CallFrame,
+        initial_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         let mut report = ExecutionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
@@ -559,7 +546,7 @@ impl<'a> VM<'a> {
 
     fn finalize_execution(
         &mut self,
-        initial_call_frame: &CallFrame,
+        initial_call_frame: &mut CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
         // NOTE: ATTOW the default hook is created in VM::new(), so
@@ -570,5 +557,18 @@ impl<'a> VM<'a> {
         }
 
         Ok(())
+    }
+
+    /// Restores the cache state to the state before changes made during a callframe.
+    fn restore_cache_state(&mut self, backup: &CacheBackup) {
+        for (address, account_opt) in backup {
+            if let Some(account) = account_opt {
+                // restore the account to the state before the call
+                cache::insert_account(&mut self.db.cache, *address, account.clone());
+            } else {
+                // remove from cache if it wasn't there before
+                cache::remove_account(&mut self.db.cache, address);
+            }
+        }
     }
 }
