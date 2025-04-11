@@ -1,6 +1,7 @@
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
+#![allow(clippy::as_conversions)]
 
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::get_address_from_secret_key;
