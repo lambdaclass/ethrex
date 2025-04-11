@@ -27,6 +27,7 @@ path = "./lib.rs"
 default = ["c-kzg", "blst"]
 blst = ["ethrex-vm/blst"]
 c-kzg = ["ethrex-blockchain/c-kzg"]
+levm = []
 
 [[test]]
 name = "cancun"

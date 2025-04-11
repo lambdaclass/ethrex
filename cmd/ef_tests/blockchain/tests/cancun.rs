@@ -1,22 +1,46 @@
-use ef_tests_blockchain::{
-    network::Network,
-    test_runner::{parse_test_file, run_ef_test},
-};
+use ef_tests_blockchain::test_runner::parse_and_execute;
+use ethrex_vm::EvmEngine;
 use std::path::Path;
 
-fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let tests = parse_test_file(path);
-
-    for (test_key, test) in tests {
-        if test.network < Network::Merge {
-            // These tests fall into the not supported forks. This produces false positives
-            continue;
-        }
-        rt.block_on(run_ef_test(&test_key, &test));
-    }
-
+#[allow(dead_code)]
+fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
+    parse_and_execute(path, EvmEngine::REVM);
     Ok(())
 }
 
-datatest_stable::harness!(parse_and_execute, "vectors/cancun/", r".*/.*\.json",);
+#[allow(dead_code)]
+fn parse_and_execute_with_levm(path: &Path) -> datatest_stable::Result<()> {
+    parse_and_execute(path, EvmEngine::LEVM);
+    Ok(())
+}
+
+// REVM execution
+#[cfg(not(feature = "levm"))]
+datatest_stable::harness!(
+    parse_and_execute_with_revm,
+    "vectors/cancun/",
+    r".*/.*\.json",
+);
+
+// LEVM execution
+#[cfg(feature = "levm")]
+datatest_stable::harness!(
+    parse_and_execute_with_levm,
+    "vectors/cancun/",
+    r"eip1153_tstore/.*/.*\.json",
+    // parse_and_execute_with_levm,
+    // "vectors/cancun/",
+    // r"eip4788_beacon_root/.*/.*\.json",
+    // parse_and_execute_with_levm,
+    // "vectors/cancun/",
+    // r"eip4844_blobs/.*/.*\.json",
+    parse_and_execute_with_levm,
+    "vectors/cancun/",
+    r"eip5656_mcopy/.*/.*\.json",
+    parse_and_execute_with_levm,
+    "vectors/cancun/",
+    r"eip6780_selfdestruct/.*/.*\.json",
+    parse_and_execute_with_levm,
+    "vectors/cancun/",
+    r"eip7516_blobgasfee/.*/.*\.json",
+);
