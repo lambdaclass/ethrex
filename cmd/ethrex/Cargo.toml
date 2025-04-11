@@ -34,6 +34,8 @@ tokio-util.workspace = true
 redb = { workspace = true, optional = true }
 lazy_static.workspace = true
 secp256k1 = { workspace = true, optional = true }
+keccak-hash.workspace = true
+reqwest.workspace = true
 
 cfg-if = "1.0.0"
 
@@ -52,10 +54,10 @@ path = "./lib.rs"
 default = ["libmdbx", "c-kzg", "blst"]
 dev = ["dep:ethrex-dev"]
 c-kzg = [
-    "ethrex-vm/c-kzg",
-    "ethrex-common/c-kzg",
-    "ethrex-blockchain/c-kzg",
-    "ethrex-p2p/c-kzg",
+  "ethrex-vm/c-kzg",
+  "ethrex-common/c-kzg",
+  "ethrex-blockchain/c-kzg",
+  "ethrex-p2p/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics"]
 libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-l2/libmdbx"]

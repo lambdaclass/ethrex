@@ -6,10 +6,7 @@ use crate::{
     utils::*,
     vm::VM,
 };
-use ethrex_common::{
-    types::{Fork, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
-    U256,
-};
+use ethrex_common::{types::Fork, U256};
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
@@ -209,17 +206,6 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
-    fn get_blob_gasprice(&mut self) -> Result<U256, VMError> {
-        fake_exponential(
-            MIN_BASE_FEE_PER_BLOB_GAS.into(),
-            // Use unwrap because env should have a Some value in excess_blob_gas attribute
-            self.env.block_excess_blob_gas.ok_or(VMError::Internal(
-                InternalError::ExcessBlobGasShouldNotBeNone,
-            ))?,
-            BLOB_BASE_FEE_UPDATE_FRACTION.into(),
-        )
-    }
-
     // BLOBBASEFEE operation
     pub fn op_blobbasefee(
         &mut self,
@@ -231,46 +217,11 @@ impl<'a> VM<'a> {
         }
         current_call_frame.increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
-        let blob_base_fee = self.get_blob_gasprice()?;
+        let blob_base_fee =
+            get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?;
 
         current_call_frame.stack.push(blob_base_fee)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
-}
-
-// Fuction inspired in EIP 4844 helpers. Link: https://eips.ethereum.org/EIPS/eip-4844#helpers
-fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
-    let mut i = U256::one();
-    let mut output = U256::zero();
-    let mut numerator_accum = factor.checked_mul(denominator).ok_or(VMError::Internal(
-        InternalError::ArithmeticOperationOverflow,
-    ))?;
-    while numerator_accum > U256::zero() {
-        output = output
-            .checked_add(numerator_accum)
-            .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?;
-        let mult_numerator = numerator_accum
-            .checked_mul(numerator)
-            .ok_or(VMError::Internal(
-                InternalError::ArithmeticOperationOverflow,
-            ))?;
-        let mult_denominator = denominator.checked_mul(i).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
-        numerator_accum =
-            (mult_numerator)
-                .checked_div(mult_denominator)
-                .ok_or(VMError::Internal(
-                    InternalError::ArithmeticOperationDividedByZero,
-                ))?; // Neither denominator or i can be zero
-        i = i.checked_add(U256::one()).ok_or(VMError::Internal(
-            InternalError::ArithmeticOperationOverflow,
-        ))?;
-    }
-    output.checked_div(denominator).ok_or(VMError::Internal(
-        InternalError::ArithmeticOperationDividedByZero,
-    )) // Denominator is a const
 }

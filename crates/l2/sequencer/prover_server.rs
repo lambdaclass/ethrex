@@ -1,5 +1,4 @@
 use crate::sequencer::errors::ProverServerError;
-use crate::sequencer::utils::sleep_random;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -57,7 +56,6 @@ struct ProverServer {
     on_chain_proposer_address: Address,
     l1_address: Address,
     l1_private_key: SecretKey,
-    dev_interval_ms: u64,
     needed_proof_types: Vec<ProverType>,
 }
 
@@ -147,27 +145,30 @@ impl ProverServer {
         .await?;
 
         let mut needed_proof_types = vec![];
-
-        for (key, addr) in verifier_contracts {
-            if addr == DEV_MODE_ADDRESS {
-                continue;
-            } else {
-                match key.as_str() {
-                    R0VERIFIER => {
-                        info!("RISC0 proof needed");
-                        needed_proof_types.push(ProverType::RISC0);
+        if !config.dev_mode {
+            for (key, addr) in verifier_contracts {
+                if addr == DEV_MODE_ADDRESS {
+                    continue;
+                } else {
+                    match key.as_str() {
+                        "R0VERIFIER()" => {
+                            info!("RISC0 proof needed");
+                            needed_proof_types.push(ProverType::RISC0);
+                        }
+                        "SP1VERIFIER()" => {
+                            info!("SP1 proof needed");
+                            needed_proof_types.push(ProverType::SP1);
+                        }
+                        "PICOVERIFIER()" => {
+                            info!("PICO proof needed");
+                            needed_proof_types.push(ProverType::Pico);
+                        }
+                        _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
                     }
-                    SP1VERIFIER => {
-                        info!("SP1 proof needed");
-                        needed_proof_types.push(ProverType::SP1);
-                    }
-                    PICOVERIFIER => {
-                        info!("PICO proof needed");
-                        needed_proof_types.push(ProverType::Pico);
-                    }
-                    _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
                 }
             }
+        } else {
+            needed_proof_types.push(ProverType::Exec);
         }
 
         Ok(Self {
@@ -179,18 +180,12 @@ impl ProverServer {
             l1_address: config.l1_address,
             l1_private_key: config.l1_private_key,
             needed_proof_types,
-
-            dev_interval_ms: config.dev_interval_ms,
         })
     }
 
     pub async fn run(&mut self, server_config: &ProverServerConfig) {
         loop {
-            let result = if server_config.dev_mode {
-                self.main_logic_dev().await
-            } else {
-                self.clone().main_logic().await
-            };
+            let result = self.clone().main_logic().await;
 
             match result {
                 Ok(()) => {
@@ -360,29 +355,27 @@ impl ProverServer {
                     return Ok(());
                 }
 
-                // The ProverType::Exec doesn't generate a real proof, we don't need to save it.
-                if calldata.prover_type != ProverType::Exec {
-                    // Check if we have the proof for that ProverType
-                    let has_proof = match block_number_has_state_file(
-                        StateFileType::Proof(calldata.prover_type),
-                        block_number,
-                    ) {
-                        Ok(has_proof) => has_proof,
-                        Err(e) => {
-                            let error = format!("{e}");
-                            if !error.contains("No such file or directory") {
-                                return Err(e.into());
-                            }
-                            false
+                // Check if we have the proof for that ProverType
+                let has_proof = match block_number_has_state_file(
+                    StateFileType::Proof(calldata.prover_type),
+                    block_number,
+                ) {
+                    Ok(has_proof) => has_proof,
+                    Err(e) => {
+                        let error = format!("{e}");
+                        if !error.contains("No such file or directory") {
+                            return Err(e.into());
                         }
-                    };
-                    // If we don't have it, insert it.
-                    if !has_proof {
-                        write_state(block_number, &StateType::Proof(calldata))?;
+                        false
                     }
+                };
+                // If we don't have it, insert it.
+                if !has_proof {
+                    write_state(block_number, &StateType::Proof(calldata))?;
                 }
 
                 // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
+                self.handle_proof_submission(block_number).await?;
             }
             Err(e) => {
                 warn!("Failed to parse request: {e}");
