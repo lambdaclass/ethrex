@@ -399,7 +399,10 @@ impl<'a> VM<'a> {
             self.restore_cache_state(&initial_call_frame.cache_backup);
             return Err(e);
         }
-        // clear callframe backup because prepare_execution succeeded
+
+        // Here we clear the cache backup because if prepare_execution succeeded we don't want to
+        // revert the changes it made, like incrementing the sender's nonce by 1.
+        // Even if the transaction reverts we want to apply these kind of changes!
         initial_call_frame.cache_backup = HashMap::new();
 
         // In CREATE type transactions:
