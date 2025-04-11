@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744395133774,
+  "lastUpdate": 1744398745719,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2845,6 +2845,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181852194743,
             "range": "± 1130607773",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "03e95cb482bd8766ad1717d27717a471fe6949ad",
+          "message": "docs(levm): add docs for database and cache (#2412)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Explain `GeneralizedDatabase`, `Database` trait and `CacheDB`\nhopefully in a simple way\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-11T18:13:07Z",
+          "tree_id": "d26498d66653e50871aa2d3ab8eee4f8466c39f5",
+          "url": "https://github.com/lambdaclass/ethrex/commit/03e95cb482bd8766ad1717d27717a471fe6949ad"
+        },
+        "date": 1744398742055,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183085377267,
+            "range": "± 686088626",
             "unit": "ns/iter"
           }
         ]
