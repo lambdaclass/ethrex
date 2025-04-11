@@ -262,7 +262,7 @@ pub fn remove_db(datadir: &str, force: bool) {
     if path.exists() {
         if force {
             std::fs::remove_dir_all(path).expect("Failed to remove data directory");
-            println!("Database removed successfully.");
+            info!("Database removed successfully.");
         } else {
             print!("Are you sure you want to remove the database? (y/n): ");
             io::stdout().flush().unwrap();
