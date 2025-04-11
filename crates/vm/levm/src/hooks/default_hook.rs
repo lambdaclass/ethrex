@@ -341,40 +341,29 @@ impl Hook for DefaultHook {
     ) -> Result<(), VMError> {
         // POST-EXECUTION Changes
         let sender_address = initial_call_frame.msg_sender;
-        let receiver_address = initial_call_frame.to;
+        let to_address = initial_call_frame.to;
 
-        // 1. Undo value transfer if the transaction has reverted
-        if let TxResult::Revert(_) = report.result {
-            let existing_account = vm.db.get_account(receiver_address)?; //TO Account
+        // 1. Undo value transfer if a transaction that's not Type 4 has reverted.
+        let to_account = vm.db.get_account(to_address)?;
+        if !report.is_success() {
+            if !has_delegation(&to_account.info)? {
+                // If it's a create type transaction and it reverted the address wasn't updated
+                if !vm.is_create() {
+                    vm.db.decrease_account_balance(
+                        to_address,
+                        initial_call_frame.msg_value,
+                        None,
+                    )?;
+                }
 
-            if has_delegation(&existing_account.info)? {
-                // This is the case where the "to" address and the
-                // "signer" address are the same. We are setting the code
-                // and sending some balance to the "to"/"signer"
-                // address.
-                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
-
-                // If transaction execution results in failure (any
-                // exceptional condition or code reverting), setting
-                // delegation designations is not rolled back.
-                vm.db.decrease_account_balance(
-                    receiver_address,
+                vm.db.increase_account_balance(
+                    sender_address,
                     initial_call_frame.msg_value,
                     None,
                 )?;
-            } else {
-                // If the receiver of the transaction was in the cache before the transaction we restore it's state,
-                // but if it wasn't then we remove the account from cache like nothing happened.
-                if let Some(receiver_account) = vm.cache_backup.get(&receiver_address) {
-                    insert_account(&mut vm.db.cache, receiver_address, receiver_account.clone());
-                } else {
-                    remove_account(&mut vm.db.cache, &receiver_address);
-                }
             }
-
-            vm.db
-                .increase_account_balance(sender_address, initial_call_frame.msg_value, None)?;
         }
+        //TODO: See what the appropriate behavior is for EIP 7702... And remove field acc from vm..
 
         // 2. Return unused gas + gas refunds to the sender.
 

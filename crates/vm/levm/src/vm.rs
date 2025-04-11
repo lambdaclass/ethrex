@@ -3,7 +3,7 @@ use crate::{
     call_frame::{CacheBackup, CallFrame},
     constants::*,
     db::{
-        cache::{self},
+        cache::{self, get_account},
         gen_db::GeneralizedDatabase,
     },
     environment::Environment,
@@ -171,6 +171,7 @@ pub struct VM<'a> {
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
+    pub account: Option<Account>,
 }
 
 impl<'a> VM<'a> {
@@ -226,6 +227,8 @@ impl<'a> VM<'a> {
 
         match to {
             TxKind::Call(address_to) => {
+                let acc = get_account(&db.cache, &address_to).cloned();
+
                 default_touched_accounts.insert(address_to);
 
                 let mut substate = Substate {
@@ -261,6 +264,7 @@ impl<'a> VM<'a> {
                     access_list,
                     authorization_list,
                     hooks,
+                    account: acc,
                 })
             }
             TxKind::Create => {
@@ -300,6 +304,7 @@ impl<'a> VM<'a> {
                     access_list,
                     authorization_list,
                     hooks,
+                    account: None,
                 })
             }
         }
@@ -402,34 +407,37 @@ impl<'a> VM<'a> {
         }
 
         // Here we clear the cache backup because if prepare_execution succeeded we don't want to
-        // revert the changes it made, like incrementing the sender's nonce by 1.
+        // revert the changes it made.
         // Even if the transaction reverts we want to apply these kind of changes!
+        // These are: Incrementing sender nonce, transferring value to a delegate account, decreasing sender account balance
         initial_call_frame.cache_backup = HashMap::new();
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = self.db.get_account(new_contract_address)?;
-
-            let value = initial_call_frame.msg_value;
-            let balance = new_account
-                .info
-                .balance
-                .checked_add(value)
-                .ok_or(InternalError::ArithmeticOperationOverflow)?;
+            let new_account = self.db.get_account_mut(
+                new_contract_address,
+                Some(&mut initial_call_frame.cache_backup),
+            )?;
 
             if new_account.has_code_or_nonce() {
                 return self.handle_create_non_empty_account(&mut initial_call_frame);
             }
 
+            self.db.increase_account_balance(
+                new_contract_address,
+                initial_call_frame.msg_value,
+                Some(&mut initial_call_frame.cache_backup),
+            )?;
+
             // https://eips.ethereum.org/EIPS/eip-161
-            let created_contract = if self.env.config.fork < Fork::SpuriousDragon {
-                Account::new(balance, Bytes::new(), 0, HashMap::new())
-            } else {
-                Account::new(balance, Bytes::new(), 1, HashMap::new())
+            if self.env.config.fork >= Fork::SpuriousDragon {
+                self.db.increment_account_nonce(
+                    new_contract_address,
+                    Some(&mut initial_call_frame.cache_backup),
+                )?;
             };
-            cache::insert_account(&mut self.db.cache, new_contract_address, created_contract);
         }
 
         let mut report = self.run_execution(&mut initial_call_frame)?;

@@ -148,9 +148,9 @@ impl GeneralizedDatabase {
     pub fn increment_account_nonce(
         &mut self,
         address: Address,
-        call_frame: Option<&mut CacheBackup>,
+        cache_backup: Option<&mut CacheBackup>,
     ) -> Result<u64, VMError> {
-        let account = self.get_account_mut(address, call_frame)?;
+        let account = self.get_account_mut(address, cache_backup)?;
         account.info.nonce = account
             .info
             .nonce
@@ -162,9 +162,9 @@ impl GeneralizedDatabase {
     pub fn decrement_account_nonce(
         &mut self,
         address: Address,
-        call_frame: Option<&mut CacheBackup>,
+        cache_backup: Option<&mut CacheBackup>,
     ) -> Result<(), VMError> {
-        let account = self.get_account_mut(address, call_frame)?;
+        let account = self.get_account_mut(address, cache_backup)?;
         account.info.nonce = account
             .info
             .nonce
