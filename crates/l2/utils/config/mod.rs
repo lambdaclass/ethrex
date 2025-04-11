@@ -19,7 +19,6 @@ pub mod prover_server;
 pub mod sequencer;
 
 pub mod errors;
-pub mod toml_parser;
 
 pub trait L2Config {
     const PREFIX: &str;

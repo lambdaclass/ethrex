@@ -3,9 +3,9 @@ use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_common::U256;
 use ethrex_l2::utils::config::errors;
+use ethrex_l2::utils::config::sequencer::SequencerConfig;
 use ethrex_l2::utils::config::{
-    read_env_as_lines_by_config, read_env_file_by_config, toml_parser::parse_configs,
-    write_env_file_by_config, ConfigMode,
+    read_env_as_lines_by_config, read_env_file_by_config, write_env_file_by_config, ConfigMode,
 };
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
@@ -85,7 +85,7 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
-    if let Err(e) = parse_configs(ConfigMode::Sequencer) {
+    if let Err(e) = SequencerConfig::toml_to_env() {
         eprintln!("{e}");
         return Err(e.into());
     }
