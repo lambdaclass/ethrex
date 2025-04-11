@@ -3,9 +3,7 @@ use ethrex_l2_sdk::secret_key_deserializer;
 use secp256k1::SecretKey;
 use serde::Deserialize;
 
-use super::errors::ConfigError;
-
-pub const DEPLOYER_PREFIX: &str = "DEPLOYER_";
+use super::L2Config;
 
 #[derive(Deserialize, Debug)]
 pub struct DeployerConfig {
@@ -20,27 +18,20 @@ pub struct DeployerConfig {
     salt_is_zero: bool,
 }
 
-impl DeployerConfig {
-    pub fn from_env() -> Result<Self, ConfigError> {
-        envy::prefixed(DEPLOYER_PREFIX)
-            .from_env::<Self>()
-            .map_err(|e| ConfigError::ConfigDeserializationError {
-                err: e,
-                from: "DeployerConfig".to_string(),
-            })
-    }
+impl L2Config for DeployerConfig {
+    const PREFIX: &str = "DEPLOYER_";
 
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         format!(
             "
-{DEPLOYER_PREFIX}L1_ADDRESS=0x{:#x}
-{DEPLOYER_PREFIX}L1_PRIVATE_KEY=0x{}
-{DEPLOYER_PREFIX}RISC0_CONTRACT_VERIFIER=0x{:#x}
-{DEPLOYER_PREFIX}SP1_CONTRACT_VERIFIER=0x{:#x}
-{DEPLOYER_PREFIX}PICO_CONTRACT_VERIFIER=0x{:#x}
-{DEPLOYER_PREFIX}SP1_DEPLOY_VERIFIER={}
-{DEPLOYER_PREFIX}PICO_DEPLOY_VERIFIER={}
-{DEPLOYER_PREFIX}SALT_IS_ZERO={}
+{prefix}L1_ADDRESS=0x{:#x}
+{prefix}L1_PRIVATE_KEY=0x{}
+{prefix}RISC0_CONTRACT_VERIFIER=0x{:#x}
+{prefix}SP1_CONTRACT_VERIFIER=0x{:#x}
+{prefix}PICO_CONTRACT_VERIFIER=0x{:#x}
+{prefix}SP1_DEPLOY_VERIFIER={}
+{prefix}PICO_DEPLOY_VERIFIER={}
+{prefix}SALT_IS_ZERO={}
 ",
             self.l1_address,
             self.l1_private_key.display_secret(),
@@ -49,7 +40,8 @@ impl DeployerConfig {
             self.pico_contract_verifier,
             self.sp1_deploy_verifier,
             self.pico_deploy_verifier,
-            self.salt_is_zero
+            self.salt_is_zero,
+            prefix = Self::PREFIX
         )
     }
 }

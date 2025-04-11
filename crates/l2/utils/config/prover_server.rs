@@ -1,11 +1,9 @@
-use super::errors::ConfigError;
+use super::L2Config;
 use ethereum_types::Address;
 use ethrex_l2_sdk::secret_key_deserializer;
 use secp256k1::SecretKey;
 use serde::Deserialize;
 use std::net::IpAddr;
-
-pub const PROVER_SERVER_PREFIX: &str = "PROVER_SERVER_";
 
 #[derive(Clone, Deserialize, Debug)]
 pub struct ProverServerConfig {
@@ -17,18 +15,10 @@ pub struct ProverServerConfig {
     pub dev_mode: bool,
 }
 
-impl ProverServerConfig {
-    pub fn from_env() -> Result<Self, ConfigError> {
-        envy::prefixed(PROVER_SERVER_PREFIX)
-            .from_env::<Self>()
-            .map_err(|e| ConfigError::ConfigDeserializationError {
-                err: e,
-                from: "ProverServerConfig".to_string(),
-            })
-    }
+impl L2Config for ProverServerConfig {
+    const PREFIX: &str = "PROVER_SERVER_";
 
-    pub fn to_env(&self) -> String {
-        let prefix = "PROVER_SERVER";
+    fn to_env(&self) -> String {
         format!(
             "
 {prefix}_L1_ADDRESS=0x{:#x}
@@ -42,6 +32,7 @@ impl ProverServerConfig {
             self.listen_ip,
             self.listen_port,
             self.dev_mode,
+            prefix = Self::PREFIX
         )
     }
 }

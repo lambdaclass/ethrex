@@ -3,7 +3,7 @@ use crate::{
         errors::CommitterError,
         state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
+    utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig, L2Config},
 };
 
 use ethrex_common::{

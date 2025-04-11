@@ -1,4 +1,5 @@
 use crate::sequencer::errors::ProverServerError;
+use crate::utils::config::L2Config;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,

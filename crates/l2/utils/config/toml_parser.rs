@@ -3,17 +3,15 @@ use crate::utils::config::{
     ConfigMode,
 };
 use serde::Deserialize;
-use std::fs::OpenOptions;
-use std::io::Write;
 
 use super::{
     block_producer::BlockProducerConfig, committer::CommitterConfig, deployer::DeployerConfig,
     eth::EthConfig, l1_watcher::L1WatcherConfig, prover_client::ProverClientConfig,
-    prover_server::ProverServerConfig,
+    prover_server::ProverServerConfig, L2Config,
 };
 
 #[derive(Deserialize, Debug)]
-struct L2Config {
+pub struct SequencerConfig {
     deployer: DeployerConfig,
     eth: EthConfig,
     watcher: L1WatcherConfig,
@@ -22,7 +20,9 @@ struct L2Config {
     prover_server: ProverServerConfig,
 }
 
-impl L2Config {
+impl L2Config for SequencerConfig {
+    const PREFIX: &str = "";
+
     fn to_env(&self) -> String {
         let mut env_representation = String::new();
 
@@ -34,24 +34,6 @@ impl L2Config {
         env_representation.push_str(&self.prover_server.to_env());
 
         env_representation
-    }
-
-    fn write_env(&self) -> Result<(), TomlParserError> {
-        let path = ConfigMode::Sequencer.get_env_path_or_default();
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&path)
-            .map_err(|e| {
-                TomlParserError::EnvWriteError(format!(
-                    "Failed to open file {}: {e}",
-                    path.to_str().unwrap_or("`Invalid path`")
-                ))
-            })?;
-
-        file.write_all(&self.to_env().into_bytes())
-            .map_err(|e| TomlParserError::EnvWriteError(e.to_string()))
     }
 }
 
@@ -68,7 +50,7 @@ fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError>
     })?;
     match mode {
         ConfigMode::Sequencer => {
-            let config: L2Config = toml::from_str(&file).map_err(|err| {
+            let config: SequencerConfig = toml::from_str(&file).map_err(|err| {
                 TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
             })?;
             config.write_env()?;

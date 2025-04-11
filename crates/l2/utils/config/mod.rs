@@ -1,9 +1,12 @@
 use std::{
     fmt::{Debug, Display},
+    fs::OpenOptions,
     io::{BufRead, Write},
     path::{Path, PathBuf},
 };
 
+use errors::ConfigError;
+use serde::de::DeserializeOwned;
 use tracing::{debug, info};
 
 pub mod block_producer;
@@ -16,6 +19,34 @@ pub mod prover_server;
 
 pub mod errors;
 pub mod toml_parser;
+
+pub trait L2Config {
+    const PREFIX: &str;
+
+    fn to_env(&self) -> String;
+
+    fn from_env() -> Result<Self, ConfigError>
+    where
+        Self: Sized + DeserializeOwned,
+    {
+        envy::prefixed(Self::PREFIX)
+            .from_env::<Self>()
+            .map_err(ConfigError::ConfigDeserializationError)
+    }
+
+    fn write_env(&self) -> Result<(), ConfigError> {
+        let path = ConfigMode::Sequencer.get_env_path_or_default();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .map_err(ConfigError::EnvFileError)?;
+
+        file.write_all(&self.to_env().into_bytes())
+            .map_err(ConfigError::EnvFileError)
+    }
+}
 
 #[derive(Clone, Copy)]
 pub enum ConfigMode {

@@ -1,9 +1,7 @@
 use ethereum_types::Address;
 use serde::Deserialize;
 
-use super::errors::ConfigError;
-
-pub const BLOCK_PRODUCER_PREFIX: &str = "PROPOSER_";
+use super::L2Config;
 
 #[derive(Deserialize, Debug)]
 pub struct BlockProducerConfig {
@@ -11,23 +9,18 @@ pub struct BlockProducerConfig {
     pub coinbase_address: Address,
 }
 
-impl BlockProducerConfig {
-    pub fn from_env() -> Result<Self, ConfigError> {
-        envy::prefixed(BLOCK_PRODUCER_PREFIX)
-            .from_env::<Self>()
-            .map_err(|e| ConfigError::ConfigDeserializationError {
-                err: e,
-                from: "BlockProducerConfig".to_string(),
-            })
-    }
+impl L2Config for BlockProducerConfig {
+    const PREFIX: &str = "PROPOSER_";
 
-    pub fn to_env(&self) -> String {
+    fn to_env(&self) -> String {
         format!(
             "
-{BLOCK_PRODUCER_PREFIX}BLOCK_TIME_MS={}
-{BLOCK_PRODUCER_PREFIX}COINBASE_ADDRESS={}
+{prefix}BLOCK_TIME_MS={}
+{prefix}COINBASE_ADDRESS={}
 ",
-            self.block_time_ms, self.coinbase_address,
+            self.block_time_ms,
+            self.coinbase_address,
+            prefix = Self::PREFIX,
         )
     }
 }

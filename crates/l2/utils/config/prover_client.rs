@@ -22,10 +22,7 @@ impl ProverClientConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         envy::prefixed(PROVER_CLIENT_PREFIX)
             .from_env::<Self>()
-            .map_err(|e| ConfigError::ConfigDeserializationError {
-                err: e,
-                from: "ProverClientConfig".to_string(),
-            })
+            .map_err(ConfigError::ConfigDeserializationError)
     }
 
     pub fn to_env(&self) -> String {

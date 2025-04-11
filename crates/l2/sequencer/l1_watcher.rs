@@ -1,7 +1,7 @@
 use crate::{
     sequencer::errors::L1WatcherError,
     utils::{
-        config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
+        config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig, L2Config},
         parse::hash_to_address,
     },
 };

@@ -15,7 +15,7 @@ use keccak_hash::H256;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
-use crate::utils::config::{block_producer::BlockProducerConfig, errors::ConfigError};
+use crate::utils::config::{block_producer::BlockProducerConfig, errors::ConfigError, L2Config};
 
 use super::{errors::BlockProducerError, execution_cache::ExecutionCache};
 
