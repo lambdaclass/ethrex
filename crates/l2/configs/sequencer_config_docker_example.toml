@@ -39,6 +39,8 @@ on_chain_proposer_address = "0x52178cfc3db571f60016d43adf47d61c2009fa72"
 commit_time_ms = 5000
 # 1 Gwei
 arbitrary_base_blob_gas_price = 1000000000
+# If set to true, initializes the committer in validium mode
+validium = false
 
 [prover_server]
 # Address of a funded account that the sequencer will use to send verify txs to the L1.
