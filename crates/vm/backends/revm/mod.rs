@@ -68,6 +68,7 @@ impl REVM {
                 }
             }
         }
+
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -80,6 +81,7 @@ impl REVM {
                 cumulative_gas_used,
                 result.logs(),
             );
+
             receipts.push(receipt);
         }
 
