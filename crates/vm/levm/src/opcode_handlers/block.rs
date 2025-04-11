@@ -6,10 +6,7 @@ use crate::{
     utils::*,
     vm::VM,
 };
-use ethrex_common::{
-    types::{Fork, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS},
-    U256,
-};
+use ethrex_common::{types::Fork, U256};
 
 // Block Information (11)
 // Opcodes: BLOCKHASH, COINBASE, TIMESTAMP, NUMBER, PREVRANDAO, GASLIMIT, CHAINID, SELFBALANCE, BASEFEE, BLOBHASH, BLOBBASEFEE
