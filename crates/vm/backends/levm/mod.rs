@@ -1,11 +1,13 @@
-pub(crate) mod db;
+pub mod db;
 
+use super::revm::db::get_potential_child_nodes;
 use super::BlockExecutionResult;
+use crate::backends::levm::db::DatabaseLogger;
 use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult};
+use crate::{EvmError, ExecutionDB, ExecutionDBError, ExecutionResult, StoreWrapper};
 use bytes::Bytes;
 use ethrex_common::{
     types::{
@@ -21,9 +23,11 @@ use ethrex_levm::{
     Account, AccountInfo as LevmAccountInfo, Environment,
 };
 use ethrex_storage::error::StoreError;
-use ethrex_storage::AccountUpdate;
+use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
+use ethrex_trie::{NodeRLP, TrieError};
 use std::cmp::min;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
@@ -381,6 +385,211 @@ impl LEVM {
         let report = vm.stateless_execute()?;
 
         Ok((report.into(), access_list))
+    }
+
+    pub async fn to_execution_db(
+        block: &Block,
+        store: &Store,
+    ) -> Result<ExecutionDB, ExecutionDBError> {
+        let parent_hash = block.header.parent_hash;
+        let chain_config = store.get_chain_config()?;
+
+        let logger = Arc::new(DatabaseLogger::new(Arc::new(StoreWrapper {
+            store: store.clone(),
+            block_hash: block.header.parent_hash,
+        })));
+        let logger_ref = Arc::clone(&logger);
+        let mut db = GeneralizedDatabase::new(logger, CacheDB::new());
+
+        // pre-execute and get all state changes
+        let execution_updates = Self::execute_block(block, &mut db)
+            .map_err(Box::new)?
+            .account_updates;
+
+        // index read and touched account addresses and storage keys
+        let account_accessed = logger_ref
+            .accounts_accessed
+            .lock()
+            .map_err(|_| {
+                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+            })?
+            .clone();
+        let index: Vec<_> = account_accessed
+            .iter()
+            .map(|address| {
+                // Search for the storage keys read
+                let storage_keys = logger_ref
+                    .storage_accessed
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter_map(
+                        |((addr, key), _)| {
+                            if *addr == *address {
+                                Some(key)
+                            } else {
+                                None
+                            }
+                        },
+                    )
+                    .map(|key| H256::from_slice(&key.to_fixed_bytes()))
+                    .collect::<Vec<_>>();
+                (address, storage_keys)
+            })
+            .collect();
+
+        // fetch all read/written values from store
+        let cache_accounts = account_accessed.iter().filter_map(|address| {
+            // filter new accounts (accounts that didn't exist before) assuming our store is
+            // correct (based on the success of the pre-execution).
+            if let Ok(Some(info)) = db.store.get_account_info_by_hash(parent_hash, *address) {
+                Some((address, info))
+            } else {
+                None
+            }
+        });
+        let accounts = cache_accounts
+            .clone()
+            .map(|(address, _)| {
+                // return error if account is missing
+                let account = match db.store.get_account_info_by_hash(parent_hash, *address) {
+                    Ok(Some(some)) => Ok(some),
+                    Err(err) => Err(ExecutionDBError::Database(err)),
+                    Ok(None) => unreachable!(), // we are filtering out accounts that are not present
+                                                // in the store
+                };
+                Ok((*address, account?))
+            })
+            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+        let code = execution_updates
+            .clone()
+            .iter()
+            .map(|update| {
+                // return error if code is missing
+                let hash = update.info.clone().unwrap_or_default().code_hash;
+                Ok((
+                    hash,
+                    db.store
+                        .get_account_code(hash)?
+                        .ok_or(ExecutionDBError::NewMissingCode(hash))?,
+                ))
+            })
+            .collect::<Result<_, ExecutionDBError>>()?;
+        let storage = execution_updates
+            .iter()
+            .map(|update| {
+                // return error if storage is missing
+                Ok((
+                    update.address,
+                    update
+                        .added_storage
+                        .keys()
+                        .map(|key| {
+                            let key = H256::from(key.to_fixed_bytes());
+                            let value = store
+                                .get_storage_at_hash(
+                                    block.header.compute_block_hash(),
+                                    update.address,
+                                    key,
+                                )
+                                .map_err(ExecutionDBError::Store)?
+                                .ok_or(ExecutionDBError::NewMissingStorage(update.address, key))?;
+                            Ok((key, value))
+                        })
+                        .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?,
+                ))
+            })
+            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+        let block_hashes = logger_ref
+            .block_hashes_accessed
+            .lock()
+            .map_err(|_| {
+                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+            })?
+            .clone()
+            .into_iter()
+            .map(|(num, hash)| (num, H256::from(hash.0)))
+            .collect();
+
+        let new_store = store.clone();
+        new_store
+            .apply_account_updates(block.hash(), &execution_updates)
+            .await?;
+
+        // get account proofs
+        let state_trie = new_store
+            .state_trie(block.hash())?
+            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
+        let parent_state_trie = store
+            .state_trie(parent_hash)?
+            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
+        let hashed_addresses: Vec<_> = index
+            .clone()
+            .into_iter()
+            .map(|(address, _)| hash_address(address))
+            .collect();
+        let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
+        let final_state_proofs: Vec<_> = hashed_addresses
+            .iter()
+            .map(|hashed_address| Ok((hashed_address, state_trie.get_proof(hashed_address)?)))
+            .collect::<Result<_, TrieError>>()?;
+        let potential_account_child_nodes = final_state_proofs
+            .iter()
+            .filter_map(|(hashed_address, proof)| get_potential_child_nodes(proof, hashed_address))
+            .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
+            .collect();
+        let state_proofs = (
+            initial_state_proofs.0,
+            [initial_state_proofs.1, potential_account_child_nodes].concat(),
+        );
+
+        // get storage proofs
+        let mut storage_proofs = HashMap::new();
+        let mut final_storage_proofs = HashMap::new();
+        for (address, storage_keys) in index {
+            let Some(parent_storage_trie) = store.storage_trie(parent_hash, *address)? else {
+                // the storage of this account was empty or the account is newly created, either
+                // way the storage trie was initially empty so there aren't any proofs to add.
+                continue;
+            };
+            let storage_trie = new_store.storage_trie(block.hash(), *address)?.ok_or(
+                ExecutionDBError::NewMissingStorageTrie(block.hash(), *address),
+            )?;
+            let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
+
+            let initial_proofs = parent_storage_trie.get_proofs(&paths)?;
+            let final_proofs: Vec<(_, Vec<_>)> = storage_keys
+                .iter()
+                .map(|key| {
+                    let hashed_key = hash_key(key);
+                    let proof = storage_trie.get_proof(&hashed_key)?;
+                    Ok((hashed_key, proof))
+                })
+                .collect::<Result<_, TrieError>>()?;
+
+            let potential_child_nodes: Vec<NodeRLP> = final_proofs
+                .iter()
+                .filter_map(|(hashed_key, proof)| get_potential_child_nodes(proof, hashed_key))
+                .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
+                .collect();
+            let proofs = (
+                initial_proofs.0,
+                [initial_proofs.1, potential_child_nodes].concat(),
+            );
+
+            storage_proofs.insert(*address, proofs);
+            final_storage_proofs.insert(address, final_proofs);
+        }
+
+        Ok(ExecutionDB {
+            accounts,
+            code,
+            storage,
+            block_hashes,
+            chain_config,
+            state_proofs,
+            storage_proofs,
+        })
     }
 }
 

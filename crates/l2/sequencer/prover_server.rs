@@ -17,7 +17,7 @@ use ethrex_common::{
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
-use ethrex_vm::{EvmError, ExecutionDB, StoreWrapper, ToExecDB};
+use ethrex_vm::{Evm, EvmError, ExecutionDB};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr, time::Duration};
@@ -408,7 +408,7 @@ impl ProverServer {
             debug!("Block: {block_number} has been submitted.");
             response
         } else {
-            let input = self.create_prover_input(block_number)?;
+            let input = self.create_prover_input(block_number).await?;
             let response = ProofData::response(Some(block_number), Some(input));
             info!("Sent Response for block_number: {block_number}");
             response
@@ -439,7 +439,10 @@ impl ProverServer {
         Ok(())
     }
 
-    fn create_prover_input(&self, block_number: u64) -> Result<ProverInputData, ProverServerError> {
+    async fn create_prover_input(
+        &self,
+        block_number: u64,
+    ) -> Result<ProverInputData, ProverServerError> {
         let header = self
             .store
             .get_block_header(block_number)?
@@ -452,11 +455,9 @@ impl ProverServer {
         let block = Block::new(header, body);
 
         let parent_hash = block.header.parent_hash;
-        let store = StoreWrapper {
-            store: self.store.clone(),
-            block_hash: parent_hash,
-        };
-        let db = store.to_exec_db(&block).map_err(EvmError::ExecutionDB)?;
+        let db = Evm::to_execution_db(&self.store.clone(), &block)
+            .await
+            .map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store
