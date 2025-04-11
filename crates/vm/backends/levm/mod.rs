@@ -48,7 +48,6 @@ impl LEVM {
         let chain_config = db.store.get_chain_config();
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
-        // dbg!(&fork);
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -61,9 +60,6 @@ impl LEVM {
                 }
             }
         }
-
-        // let trans = LEVM::stateless_get_state_transitions(db, fork)?;
-        // dbg!(&trans);
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
@@ -79,15 +75,6 @@ impl LEVM {
                 cumulative_gas_used,
                 report.logs.clone(),
             );
-
-            // dbg!(&db.cache);
-
-            // println!(
-            //     "Receipt of transaction (sender, nonce)=({},{}): {:?}",
-            //     tx.sender(),
-            //     tx.nonce(),
-            //     receipt
-            // );
 
             receipts.push(receipt);
         }
@@ -105,8 +92,6 @@ impl LEVM {
         }
 
         let account_updates = Self::get_state_transitions(db, fork)?;
-
-        // dbg!(&account_updates);
 
         Ok(BlockExecutionResult {
             receipts,
@@ -185,89 +170,6 @@ impl LEVM {
         vm.execute()
             .map(|value| value.into())
             .map_err(VMError::into)
-    }
-
-    pub fn stateless_get_state_transitions(
-        db: &mut GeneralizedDatabase,
-        fork: Fork,
-    ) -> Result<Vec<AccountUpdate>, EvmError> {
-        let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.cache.clone().into_iter() {
-            let initial_state_account = db.store.get_account_info(address)?;
-            let account_existed = db.store.account_exists(address);
-
-            let mut acc_info_updated = false;
-            let mut storage_updated = false;
-
-            // 1. Account Info has been updated if balance, nonce or bytecode changed.
-            if initial_state_account.balance != new_state_account.info.balance {
-                acc_info_updated = true;
-            }
-
-            if initial_state_account.nonce != new_state_account.info.nonce {
-                acc_info_updated = true;
-            }
-
-            let new_state_code_hash = code_hash(&new_state_account.info.bytecode);
-            if initial_state_account.bytecode_hash() != new_state_code_hash {
-                acc_info_updated = true;
-            }
-
-            // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage = HashMap::new();
-            for (key, storage_slot) in &new_state_account.storage {
-                let storage_before_block = db.store.get_storage_slot(address, *key)?;
-                if storage_slot.current_value != storage_before_block {
-                    added_storage.insert(*key, storage_slot.current_value);
-                    storage_updated = true;
-                }
-            }
-
-            let (info, code) = if acc_info_updated {
-                (
-                    Some(AccountInfo {
-                        code_hash: new_state_code_hash,
-                        balance: new_state_account.info.balance,
-                        nonce: new_state_account.info.nonce,
-                    }),
-                    Some(new_state_account.info.bytecode.clone()),
-                )
-            } else {
-                (None, None)
-            };
-
-            let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
-
-            // https://eips.ethereum.org/EIPS/eip-161
-            if fork >= Fork::SpuriousDragon {
-                // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
-                if !account_existed && new_state_account.is_empty() {
-                    continue;
-                }
-
-                // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-                // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
-                if new_state_account.is_empty() {
-                    removed = true;
-                }
-            }
-
-            if !removed && !acc_info_updated && !storage_updated {
-                // Account hasn't been updated
-                continue;
-            }
-
-            let account_update = AccountUpdate {
-                address,
-                removed,
-                info,
-                code,
-                added_storage,
-            };
-
-            account_updates.push(account_update);
-        }
-        Ok(account_updates)
     }
 
     pub fn get_state_transitions(

@@ -17,12 +17,11 @@ fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     let tests = parse_test_file(path);
 
     for (test_key, test) in tests {
-        if test.network < Network::Merge || SKIPPED_TEST.contains(&test_key.as_ref()) {
+        if test.network < Network::Merge || SKIPPED_TEST.contains(&test_key.as_str()) {
             // Discard this test
             continue;
         }
 
-        // println!("Test: {}", test_key);
         rt.block_on(run_ef_test(&test_key, &test));
     }
     Ok(())
