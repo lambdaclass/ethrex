@@ -252,6 +252,12 @@ impl Hook for DefaultHook {
             }
 
             // (15) TYPE_3_TX_CONTRACT_CREATION
+            // NOTE: This will never happen, since the EIP-4844 tx (type 3) does not have a TxKind field
+            // only supports an Address which must be non-empty.
+            // If a type 3 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
+            // it won't reach this point.
+            // For more information, please check the following thread:
+            // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
             if vm.is_create() {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxContractCreation,
@@ -269,6 +275,12 @@ impl Hook for DefaultHook {
 
             // (17) TYPE_4_TX_CONTRACT_CREATION
             // From the EIP docs: a null destination is not valid.
+            // NOTE: This will never happen, since the EIP-7702 tx (type 4) does not have a TxKind field
+            // only supports an Address which must be non-empty.
+            // If a type 4 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
+            // it won't reach this point.
+            // For more information, please check the following thread:
+            // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
             if vm.is_create() {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type4TxContractCreation,

@@ -4,33 +4,7 @@ use ef_tests_blockchain::{
 };
 use std::path::Path;
 
-// NOTE: There are many tests which are failing due to the usage of Prague fork.
-// These tests are distributed in almost all json test files.
-// The `parse_and_execute_until_cancun` function will filter those tests after parsing them
-// this will mark said tests as passed, so they will become a false positive.
-// The idea is to move those tests to be executed with the `parse_and_execute_all` function once
-// Prague development starts.
-// This modification should be made on the harness down below, matching the regex with the desired
-// test or set of tests
-
-fn parse_and_execute_until_cancun(path: &Path) -> datatest_stable::Result<()> {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let tests = parse_test_file(path);
-
-    for (test_key, test) in tests {
-        if test.network < Network::Merge || test.network >= Network::CancunToPragueAtTime15k {
-            // These tests fall into the not developed or not-yet-developed forks, so we filter
-            // them. This produces false positives
-            continue;
-        }
-        rt.block_on(run_ef_test(&test_key, &test));
-    }
-
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn parse_and_execute_all(path: &Path) -> datatest_stable::Result<()> {
+fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_test_file(path);
 
@@ -45,23 +19,4 @@ fn parse_and_execute_all(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-datatest_stable::harness!(
-    parse_and_execute_all,
-    "vectors/cancun/",
-    r"eip1153_tstore/.*/.*\.json",
-    parse_and_execute_all,
-    "vectors/cancun/",
-    r"eip4788_beacon_root/.*/.*\.json",
-    parse_and_execute_all,
-    "vectors/cancun/",
-    r"eip4844_blobs/.*/.*\.json",
-    parse_and_execute_all,
-    "vectors/cancun/",
-    r"eip5656_mcopy/.*/.*\.json",
-    parse_and_execute_all,
-    "vectors/cancun/",
-    r"eip6780_selfdestruct/.*/.*\.json",
-    parse_and_execute_all,
-    "vectors/cancun/",
-    r"eip7516_blobgasfee/.*/.*\.json",
-);
+datatest_stable::harness!(parse_and_execute, "vectors/cancun/", r".*/.*\.json",);
