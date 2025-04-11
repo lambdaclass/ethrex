@@ -8,6 +8,7 @@ const SKIPPED_TEST: [&str; 1] = [
     "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_non_empty_storage[fork_Prague-blockchain_test-zero_nonce]",
 ];
 
+#[allow(dead_code)]
 fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
     // TODO: We may replace this function in favor of `parse_and_execute` once we no longer need to
     // filter more tests
@@ -15,17 +16,23 @@ fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn parse_and_execute_with_levm(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, EvmEngine::LEVM);
     Ok(())
 }
 
+// REVM execution
+#[cfg(not(feature = "levm"))]
 datatest_stable::harness!(
-    // REVM execution
     parse_and_execute_with_revm,
     "vectors/prague/",
     r".*/.*\.json",
-    // LEVM execution
+);
+
+// LEVM execution
+#[cfg(feature = "levm")]
+datatest_stable::harness!(
     // parse_and_execute_with_levm,
     // "vectors/prague/",
     // r"eip2537_bls_12_381_precompiles/.*/.*\.json",

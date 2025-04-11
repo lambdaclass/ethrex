@@ -2,22 +2,29 @@ use ef_tests_blockchain::test_runner::parse_and_execute;
 use ethrex_vm::EvmEngine;
 use std::path::Path;
 
+#[allow(dead_code)]
 fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, EvmEngine::REVM);
     Ok(())
 }
 
+#[allow(dead_code)]
 fn parse_and_execute_with_levm(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, EvmEngine::LEVM);
     Ok(())
 }
 
+// REVM execution
+#[cfg(not(feature = "levm"))]
 datatest_stable::harness!(
-    // REVM execution
     parse_and_execute_with_revm,
     "vectors/cancun/",
     r".*/.*\.json",
-    // LEVM execution
+);
+
+// LEVM execution
+#[cfg(feature = "levm")]
+datatest_stable::harness!(
     parse_and_execute_with_levm,
     "vectors/cancun/",
     r"eip1153_tstore/.*/.*\.json",
