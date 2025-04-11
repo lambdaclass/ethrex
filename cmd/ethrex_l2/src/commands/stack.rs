@@ -314,6 +314,7 @@ impl Command {
                     .expect("Cannot open state trie");
                 let mut current_block_number = 1;
                 let mut last_hash = genesis_block_hash;
+                let mut last_state_root = genesis_header.state_root;
 
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
                 for file in files.into_iter().sorted_by_key(|f| f.file_name()) {
@@ -337,7 +338,7 @@ impl Command {
                             coinbase,
                             number: current_block_number,
                             parent_hash: last_hash,
-                            state_root: genesis_header.state_root,
+                            state_root: last_state_root,
                             ..Default::default()
                         };
                         let new_block_hash = new_block.compute_block_hash();
@@ -349,6 +350,10 @@ impl Command {
                         store
                             .set_canonical_block(current_block_number, new_block_hash)
                             .await?;
+                        println!(
+                            "Storing block {} With state_root {}",
+                            current_block_number, last_state_root
+                        );
 
                         current_block_number += 1;
                         last_hash = new_block_hash;
@@ -359,6 +364,9 @@ impl Command {
                         state_root: new_trie.hash().expect("Error committing state"),
                         ..state_diff.last_header
                     };
+
+                    assert!(state_diff.last_header.state_root == new_block.state_root);
+
                     let new_block_hash = new_block.compute_block_hash();
 
                     store.add_block_header(new_block_hash, new_block).await?;
@@ -368,9 +376,13 @@ impl Command {
                     store
                         .set_canonical_block(state_diff.last_header.number, new_block_hash)
                         .await?;
+                    println!(
+                        "Stores last header of blob. Block {}. State root {}",
+                        current_block_number, state_diff.last_header.state_root
+                    );
                     current_block_number += 1;
-
-                    // TODO: Ensure that the last state_root is the same as new_trie.hash().
+                    last_hash = new_block_hash;
+                    last_state_root = state_diff.last_header.state_root;
                 }
 
                 store
