@@ -16,6 +16,7 @@ pub mod eth;
 pub mod l1_watcher;
 pub mod prover_client;
 pub mod prover_server;
+pub mod sequencer;
 
 pub mod errors;
 pub mod toml_parser;
@@ -34,8 +35,7 @@ pub trait L2Config {
             .map_err(ConfigError::ConfigDeserializationError)
     }
 
-    fn write_env(&self) -> Result<(), ConfigError> {
-        let path = ConfigMode::Sequencer.get_env_path_or_default();
+    fn write_env(&self, path: &PathBuf) -> Result<(), ConfigError> {
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
