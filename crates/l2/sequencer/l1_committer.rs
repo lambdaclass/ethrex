@@ -164,9 +164,6 @@ impl Committer {
                 break;
             };
 
-            println!("Block to commit: {current_block_number}");
-            println!("Block body: {:?}", block_to_commit_body);
-
             let block_to_commit_header = self
                 .store
                 .get_block_header(current_block_number)
@@ -231,15 +228,12 @@ impl Committer {
                         withdrawal_hashes.push(hash);
                     }
 
-                    info!("Current deposit hashes: {:?}", deposit_logs_hashes);
-
                     deposit_logs_hashes.extend(
                         deposits
                             .iter()
                             .filter_map(|tx| tx.get_deposit_hash())
                             .collect::<Vec<H256>>(),
                     );
-                    info!("Deposit hashes after extending: {:?}", deposit_logs_hashes);
 
                     current_block_number += 1;
                 }
@@ -250,7 +244,6 @@ impl Committer {
             }
         }
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
-        info!("Deposit logs hash: {deposit_logs_hash:#x}");
         Ok((
             blobs_bundle,
             withdrawal_hashes,

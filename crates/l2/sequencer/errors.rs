@@ -75,7 +75,7 @@ pub enum BlockProducerError {
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
     #[error("Block Producer failed because of a store error: {0}")]
     StoreError(#[from] StoreError),
-    #[error("Block Producer failed retrieve block from storaga, data is None.")]
+    #[error("Block Producer failed retrieve block from storage, data is None.")]
     StorageDataIsNone,
     #[error("Block Producer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
