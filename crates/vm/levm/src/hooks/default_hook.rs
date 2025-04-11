@@ -349,7 +349,8 @@ impl Hook for DefaultHook {
                 // delegation designations is not rolled back.
                 decrease_account_balance(vm.db, receiver_address, initial_call_frame.msg_value)?;
             } else {
-                // We remove the receiver account from the cache, like nothing changed in it's state.
+                // If the receiver of the transaction was in the cache before the transaction we restore it's state,
+                // but if it wasn't then we remove the account from cache like nothing happened.
                 if let Some(receiver_account) = vm.cache_backup.get(&receiver_address) {
                     insert_account(&mut vm.db.cache, receiver_address, receiver_account.clone());
                 } else {
