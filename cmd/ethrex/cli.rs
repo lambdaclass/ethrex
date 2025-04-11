@@ -307,11 +307,32 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-    blockchain.import_blocks(&blocks).await;
+
+    let size = blocks.len();
+
+    for block in &blocks {
+        let hash = block.hash();
+
+        info!(
+            "Adding block {} with hash {:#x}.",
+            block.header.number, hash
+        );
+
+        if let Err(error) = blockchain.add_block(block).await {
+            warn!(
+                "Failed to add block {} with hash {:#x}: {}.",
+                block.header.number, hash, error
+            );
+            return;
+        }
+    }
+
     if let Some(last_block) = blocks.last() {
         let hash = last_block.hash();
-        apply_fork_choice(&store, hash, hash, hash)
-            .await
-            .expect("Failed to apply fork choice");
+        if let Err(error) = apply_fork_choice(&store, hash, hash, hash).await {
+            warn!("Failed to apply fork choice: {}", error);
+        }
     }
+
+    info!("Added {size} blocks to blockchain");
 }

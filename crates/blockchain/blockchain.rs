@@ -295,45 +295,6 @@ impl Blockchain {
         Ok(())
     }
 
-    pub async fn import_blocks(&self, blocks: &[Block]) {
-        let size = blocks.len();
-        for block in blocks {
-            let hash = block.hash();
-            info!(
-                "Adding block {} with hash {:#x}.",
-                block.header.number, hash
-            );
-            if let Err(error) = self.add_block(block).await {
-                warn!(
-                    "Failed to add block {} with hash {:#x}: {}.",
-                    block.header.number, hash, error
-                );
-            }
-            if self
-                .storage
-                .update_latest_block_number(block.header.number)
-                .await
-                .is_err()
-            {
-                error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
-                break;
-            };
-            if self
-                .storage
-                .set_canonical_block(block.header.number, hash)
-                .await
-                .is_err()
-            {
-                error!(
-                    "Fatal: added block {} but could not set it as canonical -- aborting block import",
-                    block.header.number
-                );
-                break;
-            };
-        }
-        info!("Added {size} blocks to blockchain");
-    }
-
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
     #[cfg(feature = "c-kzg")]
     pub fn add_blob_transaction_to_pool(
