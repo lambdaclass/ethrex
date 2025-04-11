@@ -95,12 +95,12 @@ impl DatabaseRef for ExecutionDB {
 
     /// Get storage value of address at index.
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
-        self.storage
+        Ok(self
+            .storage
             .get(&CoreAddress::from(address.0.as_ref()))
-            .ok_or(ExecutionDBError::AccountNotFound(address))?
-            .get(&CoreH256::from(index.to_be_bytes()))
+            .and_then(|account_storage| account_storage.get(&CoreH256::from(index.to_be_bytes())))
             .map(|v| RevmU256::from_limbs(v.0))
-            .ok_or(ExecutionDBError::StorageValueNotFound(address, index))
+            .unwrap_or_else(|| RevmU256::ZERO))
     }
 
     /// Get block hash by block number.
