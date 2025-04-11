@@ -1,8 +1,13 @@
+use std::{fs::OpenOptions, io::Write};
+
 use crate::utils::parse::url_deserializer;
 use reqwest::Url;
 use serde::Deserialize;
 
-use super::errors::ConfigError;
+use super::{
+    errors::{ConfigError, TomlParserError},
+    ConfigMode,
+};
 
 pub const PROVER_CLIENT_PREFIX: &str = "PROVER_CLIENT_";
 
@@ -31,5 +36,23 @@ impl ProverClientConfig {
 ",
             self.prover_server_endpoint, self.proving_time_ms
         )
+    }
+
+    pub fn write_env(&self) -> Result<(), TomlParserError> {
+        let path = ConfigMode::ProverClient.get_env_path_or_default();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .map_err(|e| {
+                TomlParserError::EnvWriteError(format!(
+                    "Failed to open file {}: {e}",
+                    path.to_str().unwrap_or("`Invalid path`")
+                ))
+            })?;
+
+        file.write_all(&self.to_env().into_bytes())
+            .map_err(|e| TomlParserError::EnvWriteError(e.to_string()))
     }
 }

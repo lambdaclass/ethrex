@@ -35,35 +35,24 @@ impl L2Config {
 
         env_representation
     }
-}
 
-fn write_to_env(config: String, mode: ConfigMode) -> Result<(), TomlParserError> {
-    let env_file_path = mode.get_env_path_or_default();
-    let env_file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(env_file_path);
-    match env_file {
-        Ok(mut file) => {
-            file.write_all(&config.into_bytes()).map_err(|_| {
+    fn write_env(&self) -> Result<(), TomlParserError> {
+        let path = ConfigMode::Sequencer.get_env_path_or_default();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .map_err(|e| {
                 TomlParserError::EnvWriteError(format!(
-                    "Couldn't write file in {}, line: {}",
-                    file!(),
-                    line!()
+                    "Failed to open file {}: {e}",
+                    path.to_str().unwrap_or("`Invalid path`")
                 ))
             })?;
-        }
-        Err(err) => {
-            return Err(TomlParserError::EnvWriteError(format!(
-                "Error: {}. Couldn't write file in {}, line: {}",
-                err,
-                file!(),
-                line!()
-            )));
-        }
-    };
-    Ok(())
+
+        file.write_all(&self.to_env().into_bytes())
+            .map_err(|e| TomlParserError::EnvWriteError(e.to_string()))
+    }
 }
 
 fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError> {
@@ -82,13 +71,13 @@ fn read_config(config_path: String, mode: ConfigMode) -> Result<(), ConfigError>
             let config: L2Config = toml::from_str(&file).map_err(|err| {
                 TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
             })?;
-            write_to_env(config.to_env(), mode)?;
+            config.write_env()?;
         }
         ConfigMode::ProverClient => {
             let config: ProverClientConfig = toml::from_str(&file).map_err(|err| {
                 TomlParserError::TomlFormat(format!("{err}: {}", toml_file_name.clone()), mode)
             })?;
-            write_to_env(config.to_env(), mode)?;
+            config.write_env()?;
         }
     }
 
