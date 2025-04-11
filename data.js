@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744398745719,
+  "lastUpdate": 1744403804665,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2875,6 +2875,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183085377267,
             "range": "± 686088626",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d842767031dfb99d4fe315e6a6528fe464ac9417",
+          "message": "fix(levm): try fix blockchain tests (#2436)\n\n**Motivation**\n- Fix most blockchain EF Tests with LEVM.\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nEvery change made here fixes some tests:\n- our gas_used is now like REVM's, no more subtracting gas_used -\nrefunded outside the vm to get gas used.\n- there was a little issue with the system_address when we made a\ngeneric contract call, we were deleting it from cache when in fact we\nshould only delete it if it didn't exist before.\n- I also implemented a backup for the coinbase account to restore it's\nstate when making a generic contract call so that it doesn't change.\n- We had differences in `get_state_transitions` with REVM that did not\nimpact the state but reducing these differences solved some tests. It\nwas simply that we were saying that an EOF had code: None, while with\nREVM we say code: Some(b“”). The error was kind of silly and I could\nhave fixed it outside the `get_state_transitions` but that was the quick\nfix. However, it is always good to return the same as the other\nimplementation because it enables us to debug better!\n- I fixed gas consumption issue in Prague transactions, we had it wrong\nin LEVM. I find it strange that the STF EFTests do not test this. I\nrefactored the whole gas consumption in LEVM's `finalize_execution()`\nbecause it was kinda messy.\n- Fix account removal in LEVM: we were removing the receiver account\nfrom the cache when reverting a transaction. This made sense when we\nused the cache just for executing one transaction because we didn't want\nto modify the receiver, but in any other scenario it was a mistake!\n- Fix blob base fee calculation in opcode `blobbasefee`. We were\ncalculating it in Pectra with Cancun values.\n\nResult: all tests pass except one prague 7702 test and one stack\noverflow test.",
+          "timestamp": "2025-04-11T19:45:04Z",
+          "tree_id": "d7ebb4c66b90ab18785fba31da9ef171f9298d08",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d842767031dfb99d4fe315e6a6528fe464ac9417"
+        },
+        "date": 1744403801527,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182322649564,
+            "range": "± 756927307",
             "unit": "ns/iter"
           }
         ]
