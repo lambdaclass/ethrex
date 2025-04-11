@@ -339,7 +339,7 @@ impl<'a> VM<'a> {
     }
 
     pub fn restore_state(&mut self, backup: StateBackup, cache_backup: &mut CacheBackup) {
-        self.restore_cache_state(&cache_backup);
+        self.restore_cache_state(cache_backup);
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
