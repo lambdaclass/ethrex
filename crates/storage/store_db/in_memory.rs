@@ -325,16 +325,18 @@ impl StoreEngine for Store {
     }
 
     fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
-        let mut store = self.inner();
-        let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
-        Trie::open(db, storage_root)
+        todo!()
+        // let mut store = self.inner();
+        // let trie_backend = store.storage_trie_nodes.entry(hashed_address).or_default();
+        // let db = Box::new(InMemoryTrieDB::new(trie_backend.clone()));
+        // Trie::open(db, storage_root)
     }
 
     fn open_state_trie(&self, state_root: H256) -> Trie {
-        let trie_backend = self.inner().state_trie_nodes.clone();
-        let db = Box::new(InMemoryTrieDB::new(trie_backend));
-        Trie::open(db, state_root)
+        todo!()
+        // let trie_backend = self.inner().state_trie_nodes.clone();
+        // let db = Box::new(InMemoryTrieDB::new(trie_backend));
+        // Trie::open(db, state_root)
     }
 
     fn get_block_body_by_hash(

@@ -1,13 +1,15 @@
 use ethrex_trie::InMemoryTrieDB;
+use reth_db::table::DupSort;
 use reth_provider::providers::StaticFileProvider;
 use std::cell::{Cell, LazyCell, OnceCell};
 use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::Arc;
 // Storage implementation using reth's fork of libmdbx
 // to compare against our own.
 use reth_provider::{DatabaseProvider, StaticFileAccess};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex};
 
 use crate::api::StoreEngine;
 use crate::error::StoreError;
@@ -55,14 +57,23 @@ use reth_provider::BlockWriter;
 use reth_storage_api::DBProvider;
 use std::collections::HashMap;
 
-#[derive(Debug)]
 pub struct MDBXFork {
     env: DatabaseEnv,
+    account_trie: Arc<MDBXTrieDupsort<AccountTrie>>,
+    storage_trie: Arc<MDBXTrieDB<StorageTrie>>,
+}
+
+impl std::fmt::Debug for MDBXFork {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        todo!()
+    }
 }
 
 pub static SYNC_STATUS: AtomicBool = AtomicBool::new(false);
 pub static LATEST_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
 pub static EARLIEST_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
+pub static FINALIZED_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
+pub static SAFE_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
 lazy_static::lazy_static! {
     pub static ref CHAIN_CONFIG: Arc<Mutex<Option<ChainConfig>>> = Default::default() ;
     pub static ref STORAGE_TRIE: InMemoryTrieDB = Default::default();
@@ -74,7 +85,25 @@ impl MDBXFork {
         let client_version = Default::default();
         let db_args = DatabaseArguments::new(client_version);
         let env = init_db(path, db_args).expect("Failed to initialize MDBX Fork");
-        Ok(Self { env })
+        let env_account_trie = DatabaseEnv::open(
+            Path::new("/tmp/account_trie"),
+            reth_db::DatabaseEnvKind::RW,
+            Default::default(),
+        )
+        .unwrap();
+        let env_storage_trie = DatabaseEnv::open(
+            Path::new("/tmp/storage_trie"),
+            reth_db::DatabaseEnvKind::RW,
+            Default::default(),
+        )
+        .unwrap();
+        let account_trie = Arc::new(MDBXTrieDupsort::new(env_account_trie));
+        let storage_trie = Arc::new(MDBXTrieDB::new(env_storage_trie));
+        Ok(Self {
+            env,
+            account_trie,
+            storage_trie,
+        })
     }
 }
 
@@ -141,22 +170,139 @@ fn reth_header_to_ethrex_header(header: Header) -> BlockHeader {
 }
 
 use reth_db_api::table::Table as RethTable;
-use reth_libmdbx::Environment;
+use reth_libmdbx::{DatabaseFlags, Environment};
 
 pub struct MDBXTrieDB<T: RethTable> {
     db: DatabaseEnv,
     phantom: PhantomData<T>,
 }
+
 impl<T> MDBXTrieDB<T>
 where
     T: RethTable,
 {
     pub fn new(db: DatabaseEnv) -> Self {
+        let tx = db.begin_rw_txn().unwrap();
+        tx.create_db(Some(T::NAME), DatabaseFlags::default())
+            .unwrap();
+        tx.commit().unwrap();
         Self {
             db,
             phantom: PhantomData,
         }
     }
+}
+
+impl<T> TrieDB for MDBXTrieDB<T>
+where
+    T: RethTable<Key = Vec<u8>, Value = Vec<u8>>,
+{
+    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+        let tx = self.db.tx().unwrap();
+        Ok(tx.get::<T>(key).unwrap())
+    }
+
+    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
+        let tx = self.db.tx_mut().unwrap();
+        tx.put::<T>(key, value).unwrap();
+        tx.commit().unwrap();
+        Ok(())
+    }
+
+    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+        let txn = self.db.tx_mut().unwrap();
+        for (k, v) in key_values {
+            txn.put::<T>(k, v).unwrap();
+        }
+        txn.commit().unwrap();
+        Ok(())
+    }
+}
+
+pub struct MDBXTrieDupsort<T: DupSort> {
+    db: DatabaseEnv,
+    phantom: PhantomData<T>,
+    pub fixed_key: Arc<Mutex<Option<Vec<u8>>>>,
+}
+
+impl<T> MDBXTrieDupsort<T>
+where
+    T: DupSort,
+{
+    pub fn new(db: DatabaseEnv) -> Self {
+        let tx = db.begin_rw_txn().unwrap();
+        tx.create_db(Some(T::NAME), DatabaseFlags::DUP_SORT)
+            .unwrap();
+        tx.commit().unwrap();
+        Self {
+            fixed_key: Default::default(),
+            db,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> TrieDB for MDBXTrieDupsort<T>
+where
+    T: DupSort<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>,
+{
+    fn get(&self, subkey: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+        let tx = self.db.tx().unwrap();
+        let mut cursor = tx.cursor_dup_read::<T>().unwrap();
+
+        let value = cursor
+            .seek_by_key_subkey(
+                self.fixed_key.lock().unwrap().as_ref().unwrap().clone(),
+                subkey,
+            )
+            .unwrap();
+
+        Ok(value)
+    }
+
+    fn put(&self, subkey: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
+        let tx = self.db.tx_mut().unwrap();
+        let mut cursor = tx.cursor_dup_write::<T>().unwrap();
+
+        // Position at main key first
+        cursor
+            .seek_exact(self.fixed_key.lock().unwrap().as_ref().unwrap().clone())
+            .unwrap();
+
+        // Append subkey+value under main key
+        cursor.append_dup(subkey.clone(), value).unwrap();
+
+        tx.commit().unwrap();
+        Ok(())
+    }
+
+    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+        let tx = self.db.tx_mut().unwrap();
+        let mut cursor = tx.cursor_dup_write::<T>().unwrap();
+
+        // Position at main key once
+        cursor
+            .seek_exact(self.fixed_key.lock().unwrap().as_ref().unwrap().clone())
+            .unwrap();
+
+        for (subkey, value) in key_values {
+            // Append each subkey+value pair
+            cursor.append_dup(subkey.clone(), value).unwrap();
+        }
+
+        tx.commit().unwrap();
+        Ok(())
+    }
+}
+
+use reth_db::TableType;
+use reth_db::TableViewer;
+use std::fmt::{self, Error, Formatter};
+
+tables! {
+    table AccountTrie<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
+    table StorageTrie<Key = Vec<u8>, Value = Vec<u8>>;
+    table PayloadsTable <Key = u64, Value = Vec<u8>>;
 }
 
 impl StoreEngine for MDBXFork {
@@ -174,6 +320,7 @@ impl StoreEngine for MDBXFork {
             .unwrap();
         tx.put::<tables::Headers>(block_number, ethrex_header_to_ret_header(block_header))
             .unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
@@ -193,6 +340,8 @@ impl StoreEngine for MDBXFork {
             tx.put::<tables::Headers>(block_number, ethrex_header_to_ret_header(header))
                 .unwrap();
         }
+
+        tx.commit().unwrap();
         Ok(())
     }
 
@@ -389,7 +538,8 @@ impl StoreEngine for MDBXFork {
     }
 
     fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+        FINALIZED_BLOCK_NUMBER.swap(block_number, std::sync::atomic::Ordering::Acquire);
+        Ok(())
     }
 
     fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -397,7 +547,8 @@ impl StoreEngine for MDBXFork {
     }
 
     fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+        FINALIZED_BLOCK_NUMBER.swap(block_number, std::sync::atomic::Ordering::Acquire);
+        Ok(())
     }
 
     fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -424,13 +575,12 @@ impl StoreEngine for MDBXFork {
     }
 
     fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
-        let db = Box::new(STORAGE_TRIE.clone());
-        Trie::open(db, storage_root)
+        *(self.account_trie.fixed_key.lock().unwrap()) = Some(hashed_address.0.as_slice().to_vec());
+        Trie::open(self.account_trie.clone(), storage_root)
     }
 
     fn open_state_trie(&self, state_root: H256) -> Trie {
-        let db = Box::new(STATE_TRIE.clone());
-        Trie::open(db, state_root)
+        Trie::open(self.storage_trie.clone(), state_root)
     }
 
     fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
@@ -444,7 +594,16 @@ impl StoreEngine for MDBXFork {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let bytes = tx.get::<tables::CanonicalHeaders>(number).unwrap();
+
+        match bytes {
+            Some(bytes) => {
+                let hash = BlockHash::from_slice(bytes.as_slice());
+                Ok(Some(hash))
+            }
+            None => Ok(None),
+        }
     }
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
@@ -452,7 +611,12 @@ impl StoreEngine for MDBXFork {
     }
 
     fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let res = tx.get::<PayloadsTable>(payload_id).unwrap();
+        match res {
+            Some(encoded) => Ok(Some(PayloadBundle::decode(&encoded[..]).unwrap())),
+            None => Ok(None),
+        }
     }
 
     fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {

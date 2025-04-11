@@ -322,7 +322,6 @@ impl Blockchain {
         }
         if let Some(last_block) = blocks.last() {
             let hash = last_block.hash();
-            dbg!(&hash);
             match self.evm_engine {
                 EvmEngine::LEVM => {
                     // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
