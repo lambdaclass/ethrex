@@ -18,7 +18,7 @@ pub struct ExtensionNode {
 
 impl ExtensionNode {
     /// Creates a new extension node given its child hash and prefix
-    pub(crate) fn new(prefix: Nibbles, child: NodeHash) -> Self {
+    pub(crate) const fn new(prefix: Nibbles, child: NodeHash) -> Self {
         Self { prefix, child }
     }
 
@@ -60,8 +60,7 @@ impl ExtensionNode {
             let child_node = state
                 .get_node(self.child)?
                 .ok_or(TrieError::InconsistentTree)?;
-            let new_child_node =
-                child_node.insert(state, path.offset(match_index), value.clone())?;
+            let new_child_node = child_node.insert(state, path.offset(match_index), value)?;
             self.child = new_child_node.insert_self(state)?;
             Ok(self.into())
         } else if match_index == 0 {

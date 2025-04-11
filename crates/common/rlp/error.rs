@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 // TODO: improve errors
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum RLPDecodeError {
     #[error("InvalidLength")]
     InvalidLength,
