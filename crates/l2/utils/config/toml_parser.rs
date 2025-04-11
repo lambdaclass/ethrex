@@ -8,8 +8,8 @@ use std::io::Write;
 
 #[derive(Deserialize, Debug)]
 struct Deployer {
-    address: String,
-    private_key: String,
+    l1_address: String,
+    l1_private_key: String,
     risc0_contract_verifier: String,
     sp1_contract_verifier: String,
     pico_contract_verifier: String,
@@ -22,8 +22,8 @@ impl Deployer {
     fn to_env(&self) -> String {
         let prefix = "DEPLOYER";
         format!(
-            "{prefix}_ADDRESS={}
-{prefix}_PRIVATE_KEY={}
+            "{prefix}_L1_ADDRESS={}
+{prefix}_L1_PRIVATE_KEY={}
 {prefix}_RISC0_CONTRACT_VERIFIER={}
 {prefix}_SP1_CONTRACT_VERIFIER={}
 {prefix}_PICO_CONTRACT_VERIFIER={}
@@ -31,8 +31,8 @@ impl Deployer {
 {prefix}_PICO_DEPLOY_VERIFIER={}
 {prefix}_SALT_IS_ZERO={}
 ",
-            self.address,
-            self.private_key,
+            self.l1_address,
+            self.l1_private_key,
             self.risc0_contract_verifier,
             self.sp1_contract_verifier,
             self.pico_contract_verifier,
@@ -110,7 +110,7 @@ struct Committer {
     on_chain_proposer_address: String,
     l1_address: String,
     l1_private_key: String,
-    interval_ms: u64,
+    commit_time_ms: u64,
     arbitrary_base_blob_gas_price: u64,
 }
 
@@ -122,13 +122,13 @@ impl Committer {
 {prefix}_ON_CHAIN_PROPOSER_ADDRESS={}
 {prefix}_L1_ADDRESS={}
 {prefix}_L1_PRIVATE_KEY={}
-{prefix}_INTERVAL_MS={}
+{prefix}_COMMIT_TIME_MS={}
 {prefix}_ARBITRARY_BASE_BLOB_GAS_PRICE={}
 ",
             self.on_chain_proposer_address,
             self.l1_address,
             self.l1_private_key,
-            self.interval_ms,
+            self.commit_time_ms,
             self.arbitrary_base_blob_gas_price,
         )
     }
@@ -137,8 +137,6 @@ impl Committer {
 #[derive(Deserialize, Debug)]
 struct ProverClient {
     prover_server_endpoint: String,
-    sp1_prover: String,
-    risc0_dev_mode: u64,
     proving_time_ms: u64,
 }
 
@@ -148,22 +146,19 @@ impl ProverClient {
         format!(
             "{prefix}_PROVER_SERVER_ENDPOINT={}
 {prefix}_PROVING_TIME_MS={}
-RISC0_DEV_MODE={}
-SP1_PROVER={}
 ",
-            self.prover_server_endpoint, self.proving_time_ms, self.risc0_dev_mode, self.sp1_prover
+            self.prover_server_endpoint, self.proving_time_ms
         )
     }
 }
 
 #[derive(Deserialize, Debug)]
 struct ProverServer {
+    l1_address: String,
+    l1_private_key: String,
     listen_ip: String,
     listen_port: u64,
-    verifier_address: String,
-    verifier_private_key: String,
     dev_mode: bool,
-    dev_interval_ms: u64,
 }
 
 impl ProverServer {
@@ -171,19 +166,13 @@ impl ProverServer {
         let prefix = "PROVER_SERVER";
         format!(
             "
+{prefix}_L1_ADDRESS={}
+{prefix}_L1_PRIVATE_KEY={}
 {prefix}_LISTEN_IP={}
 {prefix}_LISTEN_PORT={}
-{prefix}_VERIFIER_ADDRESS={}
-{prefix}_VERIFIER_PRIVATE_KEY={}
 {prefix}_DEV_MODE={}
-{prefix}_DEV_INTERVAL_MS={}
 ",
-            self.listen_ip,
-            self.listen_port,
-            self.verifier_address,
-            self.verifier_private_key,
-            self.dev_mode,
-            self.dev_interval_ms
+            self.l1_address, self.l1_private_key, self.listen_ip, self.listen_port, self.dev_mode,
         )
     }
 }
