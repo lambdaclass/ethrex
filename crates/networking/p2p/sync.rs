@@ -198,6 +198,7 @@ impl Syncer {
                 warn!("Sync failed to find target block header, aborting");
                 return Ok(());
             };
+            block_headers.reverse();
 
             let first_block_header = match block_headers.first() {
                 Some(header) => header.clone(),
