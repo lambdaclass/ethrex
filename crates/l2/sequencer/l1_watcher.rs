@@ -20,11 +20,11 @@ use tracing::{debug, error, info, warn};
 use super::utils::sleep_random;
 
 pub async fn start_l1_watcher(
+    watcher_config: &L1WatcherConfig,
+    eth_config: &EthConfig,
     store: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    let watcher_config = L1WatcherConfig::from_env()?;
     let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config).await?;
     l1_watcher.run(&store, &blockchain).await;
     Ok(())
@@ -42,8 +42,8 @@ pub struct L1Watcher {
 
 impl L1Watcher {
     pub async fn new_from_config(
-        watcher_config: L1WatcherConfig,
-        eth_config: EthConfig,
+        watcher_config: &L1WatcherConfig,
+        eth_config: &EthConfig,
     ) -> Result<Self, EthClientError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let l2_client = EthClient::new("http://localhost:1729");

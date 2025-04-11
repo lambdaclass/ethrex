@@ -2,7 +2,7 @@ use crate::{
     sequencer::errors::MetricsGathererError,
     utils::config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        l1_watcher::L1WatcherConfig,
+        l1_watcher::L1WatcherConfig, sequencer::SequencerConfig,
     },
 };
 use ethereum_types::Address;
@@ -12,14 +12,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
 
-pub async fn start_metrics_gatherer() -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    // Just for the CommonBridge address
-    let watcher_config = L1WatcherConfig::from_env()?;
-    // Just for the OnChainProposer Address
-    let committer_config = CommitterConfig::from_env()?;
+pub async fn start_metrics_gatherer(config: &SequencerConfig) -> Result<(), ConfigError> {
     let mut metrics_gatherer =
-        MetricsGatherer::new_from_config(watcher_config, committer_config, eth_config).await?;
+        MetricsGatherer::new_from_config(&config.watcher, &config.committer, &config.eth).await?;
     metrics_gatherer.run().await;
     Ok(())
 }
@@ -33,9 +28,9 @@ pub struct MetricsGatherer {
 
 impl MetricsGatherer {
     pub async fn new_from_config(
-        watcher_config: L1WatcherConfig,
-        committer_config: CommitterConfig,
-        eth_config: EthConfig,
+        watcher_config: &L1WatcherConfig,
+        committer_config: &CommitterConfig,
+        eth_config: &EthConfig,
     ) -> Result<Self, EthClientError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         //let l2_client = EthClient::new("http://localhost:1729");

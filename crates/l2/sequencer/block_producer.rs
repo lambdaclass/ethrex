@@ -25,28 +25,24 @@ pub struct BlockProducer {
 }
 
 pub async fn start_block_producer(
+    config: &BlockProducerConfig,
     store: Store,
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
 ) -> Result<(), ConfigError> {
-    let proposer_config = BlockProducerConfig::from_env()?;
-    let proposer = BlockProducer::new_from_config(proposer_config).map_err(ConfigError::from)?;
+    let block_producer = BlockProducer::new_from_config(config).map_err(ConfigError::from)?;
 
-    proposer
+    block_producer
         .run(store.clone(), blockchain, execution_cache)
         .await;
     Ok(())
 }
 
 impl BlockProducer {
-    pub fn new_from_config(config: BlockProducerConfig) -> Result<Self, BlockProducerError> {
-        let BlockProducerConfig {
-            block_time_ms,
-            coinbase_address,
-        } = config;
+    pub fn new_from_config(config: &BlockProducerConfig) -> Result<Self, BlockProducerError> {
         Ok(Self {
-            block_time_ms,
-            coinbase_address,
+            block_time_ms: config.block_time_ms,
+            coinbase_address: config.coinbase_address,
         })
     }
 
@@ -84,13 +80,13 @@ impl BlockProducer {
         let head_hash = head_header.compute_block_hash();
         let head_beacon_block_root = H256::zero();
 
-        // The proposer leverages the execution payload framework used for the engine API,
+        // The block producer leverages the execution payload framework used for the engine API,
         // but avoids calling the API methods and unnecesary re-execution.
 
         info!("Producing block");
         debug!("Head block hash: {head_hash:#x}");
 
-        // Proposer creates a new payload
+        // Block producer creates a new payload
         let args = BuildPayloadArgs {
             parent: head_hash,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),

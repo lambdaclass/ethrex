@@ -35,4 +35,12 @@ impl ProverClientConfig {
             Self::parse_toml(&ConfigMode::ProverClient.get_config_file_path(&configs_path))?;
         config.write_env(&ConfigMode::ProverClient.get_env_path_or_default())
     }
+
+    pub fn load() -> Result<Self, ConfigError> {
+        let configs_path = std::env::var("CONFIGS_PATH")
+            .map_err(|_| ConfigError::EnvNotFound("CONFIGS_PATH".to_string()))?;
+        Self::from_env().or(Self::parse_toml(
+            &ConfigMode::ProverClient.get_config_file_path(&configs_path),
+        ))
+    }
 }

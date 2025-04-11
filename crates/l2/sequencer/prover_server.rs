@@ -1,4 +1,5 @@
 use crate::sequencer::errors::ProverServerError;
+use crate::utils::config::sequencer::SequencerConfig;
 use crate::utils::config::L2Config;
 use crate::utils::{
     config::{
@@ -117,22 +118,22 @@ impl ProofData {
     }
 }
 
-pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
-    let server_config = ProverServerConfig::from_env()?;
-    let eth_config = EthConfig::from_env()?;
-    let proposer_config = CommitterConfig::from_env()?;
+pub async fn start_prover_server(
+    config: &SequencerConfig,
+    store: Store,
+) -> Result<(), ConfigError> {
     let mut prover_server =
-        ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
+        ProverServer::new_from_config(&config.prover_server, &config.committer, &config.eth, store)
             .await?;
-    prover_server.run(&server_config).await;
+    prover_server.run(&config.prover_server).await;
     Ok(())
 }
 
 impl ProverServer {
     pub async fn new_from_config(
-        config: ProverServerConfig,
+        config: &ProverServerConfig,
         committer_config: &CommitterConfig,
-        eth_config: EthConfig,
+        eth_config: &EthConfig,
         store: Store,
     ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);

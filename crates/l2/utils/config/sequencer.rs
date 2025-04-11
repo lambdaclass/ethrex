@@ -8,12 +8,12 @@ use super::{
 
 #[derive(Deserialize, Debug)]
 pub struct SequencerConfig {
-    deployer: DeployerConfig,
-    eth: EthConfig,
-    watcher: L1WatcherConfig,
-    proposer: BlockProducerConfig,
-    committer: CommitterConfig,
-    prover_server: ProverServerConfig,
+    pub deployer: DeployerConfig,
+    pub eth: EthConfig,
+    pub watcher: L1WatcherConfig,
+    pub block_producer: BlockProducerConfig,
+    pub committer: CommitterConfig,
+    pub prover_server: ProverServerConfig,
 }
 
 impl L2Config for SequencerConfig {
@@ -25,7 +25,7 @@ impl L2Config for SequencerConfig {
         env_representation.push_str(&self.deployer.to_env());
         env_representation.push_str(&self.eth.to_env());
         env_representation.push_str(&self.watcher.to_env());
-        env_representation.push_str(&self.proposer.to_env());
+        env_representation.push_str(&self.block_producer.to_env());
         env_representation.push_str(&self.committer.to_env());
         env_representation.push_str(&self.prover_server.to_env());
 
@@ -39,5 +39,13 @@ impl SequencerConfig {
             .map_err(|_| ConfigError::EnvNotFound("CONFIGS_PATH".to_string()))?;
         let config = Self::parse_toml(&ConfigMode::Sequencer.get_config_file_path(&configs_path))?;
         config.write_env(&ConfigMode::Sequencer.get_env_path_or_default())
+    }
+
+    pub fn load() -> Result<Self, ConfigError> {
+        let configs_path = std::env::var("CONFIGS_PATH")
+            .map_err(|_| ConfigError::EnvNotFound("CONFIGS_PATH".to_string()))?;
+        Self::from_env().or(Self::parse_toml(
+            &ConfigMode::Sequencer.get_config_file_path(&configs_path),
+        ))
     }
 }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::utils::config::{read_env_file_by_config, ConfigMode};
+use crate::utils::config::sequencer::SequencerConfig;
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
@@ -24,30 +24,38 @@ pub mod utils;
 pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>) {
     info!("Starting Proposer");
 
-    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
-        error!("Failed to read .env file: {e}");
-        return;
-    }
+    let config = match SequencerConfig::load() {
+        Ok(config) => config,
+        Err(err) => {
+            error!("{err}");
+            return;
+        }
+    };
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
     let mut task_set = JoinSet::new();
     task_set.spawn(l1_watcher::start_l1_watcher(
+        &config.watcher,
+        &config.eth,
         store.clone(),
         blockchain.clone(),
     ));
     task_set.spawn(l1_committer::start_l1_committer(
+        &config.committer,
+        &config.eth,
         store.clone(),
         execution_cache.clone(),
     ));
-    task_set.spawn(prover_server::start_prover_server(store.clone()));
+    task_set.spawn(prover_server::start_prover_server(&config, store.clone()));
     task_set.spawn(start_block_producer(
+        &config.block_producer,
         store.clone(),
         blockchain,
         execution_cache,
     ));
     #[cfg(feature = "metrics")]
-    task_set.spawn(metrics::start_metrics_gatherer());
+    task_set.spawn(metrics::start_metrics_gatherer(&config));
 
     while let Some(res) = task_set.join_next().await {
         match res {
