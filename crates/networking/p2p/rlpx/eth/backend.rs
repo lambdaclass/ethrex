@@ -5,7 +5,7 @@ use crate::rlpx::error::RLPxError;
 
 use super::status::StatusMessage;
 
-pub fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RLPxError> {
+pub async fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RLPxError> {
     let chain_config = storage.get_chain_config()?;
     let total_difficulty = U256::from(chain_config.terminal_total_difficulty.unwrap_or_default());
     let network_id = chain_config.chain_id;
@@ -14,7 +14,7 @@ pub fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RL
     let genesis_header = storage
         .get_block_header(0)?
         .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
-    let block_number = storage.get_latest_block_number()?;
+    let block_number = storage.get_latest_block_number().await?;
     let block_header = storage
         .get_block_header(block_number)?
         .ok_or(RLPxError::NotFound(format!("Block {block_number}")))?;
@@ -37,7 +37,7 @@ pub fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessage, RL
     })
 }
 
-pub fn validate_status(
+pub async fn validate_status(
     msg_data: StatusMessage,
     storage: &Store,
     eth_version: u32,
@@ -49,7 +49,7 @@ pub fn validate_status(
         .get_block_header(0)?
         .ok_or(RLPxError::NotFound("Genesis Block".to_string()))?;
     let genesis_hash = genesis_header.compute_block_hash();
-    let latest_block_number = storage.get_latest_block_number()?;
+    let latest_block_number = storage.get_latest_block_number().await?;
     let latest_block_header = storage
         .get_block_header(latest_block_number)?
         .ok_or(RLPxError::NotFound(format!("Block {latest_block_number}")))?;
@@ -134,7 +134,7 @@ mod tests {
             genesis: genesis_hash,
             fork_id,
         };
-        let result = validate_status(message, &storage, eth_version);
+        let result = validate_status(message, &storage, eth_version).await;
         assert!(result.is_ok());
     }
 }
