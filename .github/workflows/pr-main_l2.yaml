@@ -47,6 +47,11 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        validium:
+          - false
+          - true
     needs: [docker-bake]
     steps:
       - name: Checkout sources
@@ -87,12 +92,18 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
-      - name: Run test
+      - name: Prepare configuration
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           cp configs/sequencer_config_docker_example.toml configs/sequencer_config.toml
+          if [ "${{ matrix.validium }}" = "true" ]; then
+            sed -i.bak 's/^validium = false$/validium = true/' configs/sequencer_config.toml && rm configs/sequencer_config.toml.bak
+          fi
 
+      - name: Run test
+        run: |
+          cd crates/l2
           make integration-test
 
   state-diff-test:
