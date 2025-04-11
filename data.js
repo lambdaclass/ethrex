@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744215943426,
+  "lastUpdate": 1744395133774,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2815,6 +2815,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181422253000,
             "range": "± 735467064",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ebffcf9a2f6f1f837e22f1acf7b0dee841b6caa7",
+          "message": "fix(core): fix criterion benchmark (#2439)\n\n**Motivation**\n\nOn #2419 the criterion benchmark was broken printing extra lines, which\ncauses the parser to fai.\n\n**Description**\n\nReplaces `println!()` with `info!()` on the non-user-interactive path.",
+          "timestamp": "2025-04-11T16:30:14Z",
+          "tree_id": "b5cf755daa37c8f847c6ec6530fa05b31505007b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ebffcf9a2f6f1f837e22f1acf7b0dee841b6caa7"
+        },
+        "date": 1744395130383,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181852194743,
+            "range": "± 1130607773",
             "unit": "ns/iter"
           }
         ]
