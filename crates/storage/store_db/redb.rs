@@ -203,7 +203,32 @@ impl RedBStore {
     }
 
     // Helper method to read from a redb table
-    fn read<'k, 'a, K, V>(
+    async fn read<'k, 'a, K, V>(
+        &self,
+        table: TableDefinition<'a, K, V>,
+        key: K::SelfType<'k>,
+    ) -> Result<Option<AccessGuard<'static, V>>, StoreError>
+    where
+        K: Key + Send + 'static,
+        V: Value + Send,
+        K::SelfType<'k>: Send,
+        'a: 'static,
+        'k: 'static,
+    {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(table)?;
+            let result = table.get(key)?;
+
+            Ok(result)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    // Helper method to read from a redb table
+    fn read_sync<'k, 'a, K, V>(
         &self,
         table: TableDefinition<'a, K, V>,
         key: impl Borrow<K::SelfType<'k>>,
@@ -223,15 +248,18 @@ impl RedBStore {
     async fn read_bulk<'k, 'a, K, V>(
         &self,
         table: TableDefinition<'a, K, V>,
-        keys: Vec<impl Borrow<K::SelfType<'k>>>,
+        keys: Vec<K::SelfType<'k>>,
     ) -> Result<Vec<AccessGuard<'static, V>>, StoreError>
     where
-        K: Key + 'static,
-        V: Value,
+        K: Key + Send + 'static,
+        V: Value + Send,
+        K::SelfType<'k>: Send,
+        'a: 'static,
+        'k: 'static,
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            let read_txn = self.db.begin_read()?;
+            let read_txn = db.begin_read()?;
             let table = read_txn.open_table(table)?;
             let mut result = Vec::new();
             for key in keys {
@@ -241,6 +269,8 @@ impl RedBStore {
             }
             Ok(result)
         })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
     // Helper method to delete from a redb table
@@ -265,7 +295,7 @@ impl RedBStore {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         Ok(self
-            .read(CANONICAL_BLOCK_HASHES_TABLE, number)?
+            .read_sync(CANONICAL_BLOCK_HASHES_TABLE, number)?
             .map(|a| a.value().to()))
     }
 }
@@ -309,7 +339,7 @@ impl StoreEngine for RedBStore {
     ) -> Result<Option<BlockHeader>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
             Ok(self
-                .read(HEADERS_TABLE, <H256 as Into<BlockHashRLP>>::into(hash))?
+                .read_sync(HEADERS_TABLE, <H256 as Into<BlockHashRLP>>::into(hash))?
                 .map(|b| b.value().to()))
         } else {
             Ok(None)
@@ -411,7 +441,9 @@ impl StoreEngine for RedBStore {
         to: BlockNumber,
     ) -> Result<Vec<BlockBody>, StoreError> {
         let numbers = (from..=to).collect();
-        let hashes = self.read_bulk(CANONICAL_BLOCK_HASHES_TABLE, numbers).await?;
+        let hashes = self
+            .read_bulk(CANONICAL_BLOCK_HASHES_TABLE, numbers)
+            .await?;
         let hashes: Vec<BlockHashRLP> = hashes.into_iter().map(|v| v.value()).collect();
         let blocks = self.read_bulk(BLOCK_BODIES_TABLE, hashes).await?;
         Ok(blocks.into_iter().map(|b| b.value().to()).collect())
@@ -421,7 +453,10 @@ impl StoreEngine for RedBStore {
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
-        let hashes = hashes.into_iter().map(<H256 as Into<BlockHashRLP>>::into).collect();
+        let hashes = hashes
+            .into_iter()
+            .map(<H256 as Into<BlockHashRLP>>::into)
+            .collect();
         let blocks = self.read_bulk(BLOCK_BODIES_TABLE, hashes).await?;
         Ok(blocks.into_iter().map(|b| b.value().to()).collect())
     }
@@ -434,7 +469,8 @@ impl StoreEngine for RedBStore {
             .read(
                 BLOCK_BODIES_TABLE,
                 <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )?
+            )
+            .await?
             .map(|b| b.value().to()))
     }
 
@@ -443,7 +479,7 @@ impl StoreEngine for RedBStore {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
         Ok(self
-            .read(
+            .read_sync(
                 HEADERS_TABLE,
                 <H256 as Into<BlockHashRLP>>::into(block_hash),
             )?
@@ -464,7 +500,8 @@ impl StoreEngine for RedBStore {
             .read(
                 PENDING_BLOCKS_TABLE,
                 <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )?
+            )
+            .await?
             .map(|b| b.value().to()))
     }
 
@@ -489,7 +526,8 @@ impl StoreEngine for RedBStore {
             .read(
                 BLOCK_NUMBERS_TABLE,
                 <H256 as Into<BlockHashRLP>>::into(block_hash),
-            )?
+            )
+            .await?
             .map(|b| b.value()))
     }
 
@@ -579,7 +617,8 @@ impl StoreEngine for RedBStore {
                 .read(
                     RECEIPTS_TABLE,
                     <(H256, u64) as Into<TupleRLP<BlockHash, Index>>>::into((hash, index)),
-                )?
+                )
+                .await?
                 .map(|b| b.value().to()))
         } else {
             Ok(None)
@@ -604,7 +643,7 @@ impl StoreEngine for RedBStore {
         code_hash: ethrex_common::H256,
     ) -> Result<Option<bytes::Bytes>, StoreError> {
         Ok(self
-            .read(
+            .read_sync(
                 ACCOUNT_CODES_TABLE,
                 <H256 as Into<AccountCodeHashRLP>>::into(code_hash),
             )?
@@ -616,6 +655,7 @@ impl StoreEngine for RedBStore {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read(CANONICAL_BLOCK_HASHES_TABLE, block_number)
+            .await
             .map(|o| o.map(|hash_rlp| hash_rlp.value().to()))
     }
 
@@ -631,7 +671,7 @@ impl StoreEngine for RedBStore {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        match self.read(CHAIN_DATA_TABLE, ChainDataIndex::ChainConfig)? {
+        match self.read_sync(CHAIN_DATA_TABLE, ChainDataIndex::ChainConfig)? {
             None => Err(StoreError::Custom("Chain config not found".to_string())),
             Some(bytes) => {
                 let json = String::from_utf8(bytes.value()).map_err(|_| StoreError::DecodeError)?;
@@ -655,7 +695,10 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read(CHAIN_DATA_TABLE, ChainDataIndex::EarliestBlockNumber)? {
+        match self
+            .read(CHAIN_DATA_TABLE, ChainDataIndex::EarliestBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(&rlp.value())
                 .map(Some)
@@ -676,7 +719,10 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read(CHAIN_DATA_TABLE, ChainDataIndex::FinalizedBlockNumber)? {
+        match self
+            .read(CHAIN_DATA_TABLE, ChainDataIndex::FinalizedBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(&rlp.value())
                 .map(Some)
@@ -694,7 +740,10 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read(CHAIN_DATA_TABLE, ChainDataIndex::SafeBlockNumber)? {
+        match self
+            .read(CHAIN_DATA_TABLE, ChainDataIndex::SafeBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(&rlp.value())
                 .map(Some)
@@ -715,7 +764,10 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read(CHAIN_DATA_TABLE, ChainDataIndex::LatestBlockNumber)? {
+        match self
+            .read(CHAIN_DATA_TABLE, ChainDataIndex::LatestBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(&rlp.value())
                 .map(Some)
@@ -736,7 +788,10 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read(CHAIN_DATA_TABLE, ChainDataIndex::PendingBlockNumber)? {
+        match self
+            .read(CHAIN_DATA_TABLE, ChainDataIndex::PendingBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(&rlp.value())
                 .map(Some)
@@ -786,7 +841,8 @@ impl StoreEngine for RedBStore {
 
     async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         Ok(self
-            .read(PAYLOADS_TABLE, payload_id)?
+            .read(PAYLOADS_TABLE, payload_id)
+            .await?
             .map(|b| b.value().to()))
     }
 
@@ -890,7 +946,8 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        self.read(SNAP_STATE_TABLE, SnapStateIndex::HeaderDownloadCheckpoint)?
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::HeaderDownloadCheckpoint)
+            .await?
             .map(|rlp| RLPDecode::decode(&rlp.value()))
             .transpose()
             .map_err(StoreError::RLPDecode)
@@ -906,7 +963,8 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_state_trie_key_checkpoint(&self) -> Result<Option<[H256; 2]>, StoreError> {
-        self.read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieKeyCheckpoint)?
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieKeyCheckpoint)
+            .await?
             .map(|rlp| {
                 <Vec<H256>>::decode(&rlp.value())?
                     .try_into()
@@ -961,7 +1019,10 @@ impl StoreEngine for RedBStore {
     }
 
     async fn is_synced(&self) -> Result<bool, StoreError> {
-        match self.read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)? {
+        match self
+            .read(CHAIN_DATA_TABLE, ChainDataIndex::IsSynced)
+            .await?
+        {
             None => Err(StoreError::Custom("Sync status not found".to_string())),
             Some(ref rlp) => RLPDecode::decode(&rlp.value()).map_err(|_| StoreError::DecodeError),
         }
@@ -986,7 +1047,8 @@ impl StoreEngine for RedBStore {
     }
 
     async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
-        self.read(SNAP_STATE_TABLE, SnapStateIndex::StateHealPaths)?
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StateHealPaths)
+            .await?
             .map(|rlp| RLPDecode::decode(&rlp.value()))
             .transpose()
             .map_err(StoreError::RLPDecode)
@@ -1080,7 +1142,8 @@ impl StoreEngine for RedBStore {
         &self,
     ) -> Result<Option<(H256, [H256; crate::STATE_TRIE_SEGMENTS])>, StoreError> {
         let Some((root, checkpoints)) = self
-            .read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieRebuildCheckpoint)?
+            .read(SNAP_STATE_TABLE, SnapStateIndex::StateTrieRebuildCheckpoint)
+            .await?
             .map(|ref rlp| <(H256, Vec<H256>)>::decode(&rlp.value()))
             .transpose()?
         else {
@@ -1109,7 +1172,8 @@ impl StoreEngine for RedBStore {
     async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        self.read(SNAP_STATE_TABLE, SnapStateIndex::StorageTrieRebuildPending)?
+        self.read(SNAP_STATE_TABLE, SnapStateIndex::StorageTrieRebuildPending)
+            .await?
             .map(|p| RLPDecode::decode(&p.value()))
             .transpose()
             .map_err(StoreError::RLPDecode)
@@ -1170,7 +1234,8 @@ impl StoreEngine for RedBStore {
             .read(
                 INVALID_ANCESOTRS_TABLE,
                 <H256 as Into<BlockHashRLP>>::into(block),
-            )?
+            )
+            .await?
             .map(|b| b.value().to()))
     }
 

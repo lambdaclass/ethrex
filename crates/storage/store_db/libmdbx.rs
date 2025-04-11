@@ -655,10 +655,7 @@ impl StoreEngine for Store {
         self.write_batch::<Receipts>(key_values).await
     }
 
-    fn get_receipts_for_block(
-        &self,
-        block_hash: &BlockHash,
-    ) -> Result<Vec<Receipt>, StoreError> {
+    fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let mut receipts = vec![];
         let mut receipt_index = 0;
         let mut key = (*block_hash, 0).into();
@@ -929,10 +926,7 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    fn read_account_snapshot(
-        &self,
-        start: H256,
-    ) -> Result<Vec<(H256, AccountState)>, StoreError> {
+    fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         let cursor = txn
             .cursor::<StateSnapShot>()
