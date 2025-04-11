@@ -2,7 +2,8 @@ use serde::Deserialize;
 
 use super::{
     block_producer::BlockProducerConfig, committer::CommitterConfig, deployer::DeployerConfig,
-    eth::EthConfig, l1_watcher::L1WatcherConfig, prover_server::ProverServerConfig, L2Config,
+    errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig,
+    prover_server::ProverServerConfig, ConfigMode, L2Config,
 };
 
 #[derive(Deserialize, Debug)]
@@ -29,5 +30,14 @@ impl L2Config for SequencerConfig {
         env_representation.push_str(&self.prover_server.to_env());
 
         env_representation
+    }
+}
+
+impl SequencerConfig {
+    pub fn toml_to_env() -> Result<(), ConfigError> {
+        let configs_path = std::env::var("CONFIGS_PATH")
+            .map_err(|_| ConfigError::EnvNotFound("CONFIGS_PATH".to_string()))?;
+        let config = Self::parse_toml(&ConfigMode::Sequencer.get_config_file_path(&configs_path))?;
+        config.write_env(&ConfigMode::Sequencer.get_env_path_or_default())
     }
 }

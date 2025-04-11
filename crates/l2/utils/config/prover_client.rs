@@ -2,7 +2,7 @@ use crate::utils::parse::url_deserializer;
 use reqwest::Url;
 use serde::Deserialize;
 
-use super::L2Config;
+use super::{errors::ConfigError, ConfigMode, L2Config};
 
 #[derive(Deserialize, Debug)]
 pub struct ProverClientConfig {
@@ -24,5 +24,15 @@ impl L2Config for ProverClientConfig {
             self.proving_time_ms,
             prefix = Self::PREFIX
         )
+    }
+}
+
+impl ProverClientConfig {
+    pub fn toml_to_env() -> Result<(), ConfigError> {
+        let configs_path = std::env::var("CONFIGS_PATH")
+            .map_err(|_| ConfigError::EnvNotFound("CONFIGS_PATH".to_string()))?;
+        let config =
+            Self::parse_toml(&ConfigMode::ProverClient.get_config_file_path(&configs_path))?;
+        config.write_env(&ConfigMode::ProverClient.get_env_path_or_default())
     }
 }

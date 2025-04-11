@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
+use ethrex_rpc::clients::eth;
+
 use crate::{sequencer::errors::BlockProducerError, utils::config::ConfigMode};
-use ethrex_rpc::clients::{auth, eth};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -11,12 +12,12 @@ pub enum ConfigError {
     EnvFileError(#[from] std::io::Error),
     #[error("Error building Proposer from config: {0}")]
     BuildBlockProducerFromConfigError(#[from] BlockProducerError),
-    #[error("Error building Proposer Engine from config: {0}")]
-    BuildProposerEngineServerFromConfigError(#[from] auth::errors::ConfigError),
     #[error("Error building Prover server from config: {0}")]
     BuildProverServerFromConfigError(#[from] eth::errors::EthClientError),
     #[error("Error parsing the .toml configuration files: {0}")]
     TomlParserError(#[from] TomlParserError),
+    #[error("Env var not found: {0}")]
+    EnvNotFound(String),
     #[error("{0}")]
     Custom(String),
 }
