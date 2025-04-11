@@ -3,27 +3,25 @@ use std::{marker::PhantomData, sync::Arc};
 use super::utils::node_hash_to_fixed_size;
 use ethrex_trie::error::TrieError;
 use ethrex_trie::TrieDB;
-use libmdbx::orm::{Database, DupSort, Encodable};
+use libmdbx::orm::{Database, Table};
 
-/// Libmdbx implementation for the TrieDB trait for a dupsort table with a fixed primary key.
-/// For a dupsort table (A, B)[A] -> C, this trie will have a fixed A and just work on B -> C
-/// A will be a fixed-size encoded key set by the user (of generic type SK), B will be a fixed-size encoded NodeHash and C will be an encoded Node
-pub struct LibmdbxDupsortTrieDB<T, SK>
+/// Libmdbx implementation for the TrieDB trait for a table with a fixed primary key.
+/// For a table (A, B) -> C, this trie will have a fixed A and just work on B -> C
+/// A will be a fixed-size encoded key set by the user (of type [u8;32]), B will be a fixed-size encoded NodeHash and C will be an encoded Node
+pub struct LibmdbxFixedKeyTrieDB<T>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
-    SK: Clone + Encodable,
+    T: Table<Key = ([u8; 32], [u8; 33]), Value = Vec<u8>>,
 {
     db: Arc<Database>,
-    fixed_key: SK,
+    fixed_key: [u8; 32],
     phantom: PhantomData<T>,
 }
 
-impl<T, SK> LibmdbxDupsortTrieDB<T, SK>
+impl<T> LibmdbxFixedKeyTrieDB<T>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
-    SK: Clone + Encodable,
+    T: Table<Key = ([u8; 32], [u8; 33]), Value = Vec<u8>>,
 {
-    pub fn new(db: Arc<Database>, fixed_key: T::SeekKey) -> Self {
+    pub fn new(db: Arc<Database>, fixed_key: [u8; 32]) -> Self {
         Self {
             db,
             fixed_key,
@@ -32,35 +30,28 @@ where
     }
 }
 
-impl<T, SK> TrieDB for LibmdbxDupsortTrieDB<T, SK>
+impl<T> TrieDB for LibmdbxFixedKeyTrieDB<T>
 where
-    T: DupSort<Key = (SK, [u8; 33]), SeekKey = SK, Value = Vec<u8>>,
-    SK: Clone + Encodable,
+    T: Table<Key = ([u8; 32], [u8; 33]), Value = Vec<u8>>,
 {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
         let txn = self.db.begin_read().map_err(TrieError::DbError)?;
-        txn.get::<T>((self.fixed_key.clone(), node_hash_to_fixed_size(key)))
+        txn.get::<T>((self.fixed_key, node_hash_to_fixed_size(key)))
             .map_err(TrieError::DbError)
     }
 
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
-        txn.upsert::<T>(
-            (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
-            value,
-        )
-        .map_err(TrieError::DbError)?;
+        txn.upsert::<T>((self.fixed_key, node_hash_to_fixed_size(key)), value)
+            .map_err(TrieError::DbError)?;
         txn.commit().map_err(TrieError::DbError)
     }
 
     fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
-            txn.upsert::<T>(
-                (self.fixed_key.clone(), node_hash_to_fixed_size(key)),
-                value,
-            )
-            .map_err(TrieError::DbError)?;
+            txn.upsert::<T>((self.fixed_key, node_hash_to_fixed_size(key)), value)
+                .map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
     }
@@ -71,17 +62,17 @@ mod test {
     use crate::trie_db::test_utils::libmdbx::new_db;
 
     use super::*;
-    use libmdbx::{dupsort, table};
+    use libmdbx::table;
 
-    dupsort!(
+    table!(
         /// (Key + NodeHash) to Node table
-        ( Nodes )  ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
+        ( Nodes )  ([u8;32], [u8;33]) => Vec<u8>
     );
 
     #[test]
     fn simple_addition() {
         let inner_db = new_db::<Nodes>();
-        let db = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [5; 32]);
+        let db = LibmdbxFixedKeyTrieDB::<Nodes>::new(inner_db, [5; 32]);
         assert_eq!(db.get("hello".into()).unwrap(), None);
         db.put("hello".into(), "value".into()).unwrap();
         assert_eq!(db.get("hello".into()).unwrap(), Some("value".into()));
@@ -90,8 +81,8 @@ mod test {
     #[test]
     fn different_keys() {
         let inner_db = new_db::<Nodes>();
-        let db_a = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db.clone(), [5; 32]);
-        let db_b = LibmdbxDupsortTrieDB::<Nodes, [u8; 32]>::new(inner_db, [7; 32]);
+        let db_a = LibmdbxFixedKeyTrieDB::<Nodes>::new(inner_db.clone(), [5; 32]);
+        let db_b = LibmdbxFixedKeyTrieDB::<Nodes>::new(inner_db, [7; 32]);
         db_a.put("hello".into(), "hello!".into()).unwrap();
         db_b.put("hello".into(), "go away!".into()).unwrap();
         assert_eq!(db_a.get("hello".into()).unwrap(), Some("hello!".into()));
