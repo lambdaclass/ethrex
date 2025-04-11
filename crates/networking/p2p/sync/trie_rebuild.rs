@@ -21,15 +21,16 @@ use tracing::{info, warn};
 use crate::sync::seconds_to_readable;
 
 use super::{
-    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS,
-    SHOW_PROGRESS_INTERVAL_DURATION, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
+    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, SHOW_PROGRESS_INTERVAL_DURATION,
+    STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
 };
 
 /// The storage root used to indicate that the storage to be rebuilt is not complete
 /// This will tell the rebuilder to skip storage root validations for this trie
 /// The storage should be queued for rebuilding by the sender
 pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
-// Max storages to rebuild in parallel
+
+/// Max storages to rebuild in parallel
 const MAX_PARALLEL_REBUILDS: usize = 15;
 
 /// Represents the permanently ongoing background trie rebuild process
