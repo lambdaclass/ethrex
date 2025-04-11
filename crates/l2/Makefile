@@ -149,6 +149,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--http.port ${L2_PORT} \
 	--http.addr 0.0.0.0 \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
+	--evm levm \
 	--datadir ${ethrex_L2_DEV_LIBMDBX}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers

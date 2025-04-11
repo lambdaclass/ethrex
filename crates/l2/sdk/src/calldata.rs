@@ -34,7 +34,8 @@ fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEnc
         .split_once('(')
         .ok_or(CalldataEncodeError::ParseError(signature.to_owned()))?;
     let params: Vec<String> = params
-        .trim_end_matches(')')
+        .rsplit_once(')')
+        .map_or(params, |(left, _)| left)
         .split(',')
         .map(|x| x.trim().split_once(' ').unzip().0.unwrap_or(x).to_string())
         .collect();
@@ -306,4 +307,14 @@ fn calldata_test() {
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
         ]
     );
+}
+
+#[test]
+fn raw_function_selector() {
+    let raw_function_signature = "deposit((address,address,uint256,bytes))";
+
+    let (name, params) = parse_signature(raw_function_signature).unwrap();
+    let selector = compute_function_selector(&name, &params).unwrap();
+
+    assert_eq!(selector, H32::from(&[0x02, 0xe8, 0x6b, 0xbe]));
 }

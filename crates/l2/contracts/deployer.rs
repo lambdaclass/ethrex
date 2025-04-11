@@ -755,8 +755,26 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
                 DeployError::DecodingError("Error while parsing private key".to_string())
             })?;
         let address = get_address_from_secret_key(&secret_key)?;
-        let values = vec![Value::Address(address)];
-        let calldata = encode_calldata("deposit(address)", &values)?;
+        let values = vec![
+            Value::Address(address),
+            Value::Address(address),
+            Value::Uint(U256::from(21000 * 5)),
+            Value::Bytes(Bytes::from_static(b"")),
+        ];
+
+        // FIXME: This should be changed once https://github.com/lambdaclass/ethrex/issues/2384 is addressed
+        let calldata = encode_calldata("deposit((address,address,uint256,bytes))", &values)?;
+        let mut data = vec![];
+        data.extend_from_slice(calldata.get(..4).ok_or(DeployError::DecodingError(
+            "Invalid function selector".to_string(),
+        ))?);
+        data.extend_from_slice(&U256::from(32).to_big_endian());
+        data.extend_from_slice(
+            calldata
+                .get(4..)
+                .ok_or(DeployError::DecodingError("Invalid calldata".to_string()))?,
+        );
+
         let Some(_) = genesis.alloc.get(&address) else {
             println!(
                 "Skipping deposit for address {:?} as it is not in the genesis file",
@@ -786,7 +804,7 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
         };
 
         let build = eth_client
-            .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides)
+            .build_eip1559_transaction(bridge, address, Bytes::from(data), overrides)
             .await?;
 
         match eth_client
