@@ -24,4 +24,4 @@ clean-vectors: ## 🗑️  Clean test vectors
 	rm -f $(SPECTEST_ARTIFACT)
 
 test: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests
-	cargo test
+	cargo test --release
