@@ -1,7 +1,7 @@
-use bytes::Bytes;
-use ethrex_common::types::{code_hash, AccountInfo};
+use ethrex_common::types::AccountInfo;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
+use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::db::{ExecutionDB, StoreWrapper};
@@ -91,7 +91,7 @@ impl LevmDatabase for ExecutionDB {
             return Ok(ethrex_levm::AccountInfo::default());
         };
 
-        let acc_code = if acc_info.code_hash != code_hash(&Bytes::new()) {
+        let acc_code = if acc_info.code_hash != EMPTY_CODE_HASH {
             self.code
                 .get(&acc_info.code_hash)
                 .ok_or(DatabaseError::Custom(format!(
