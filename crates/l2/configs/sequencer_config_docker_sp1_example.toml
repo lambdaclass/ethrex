@@ -26,27 +26,24 @@ max_block_step = 5000
 l2_proposer_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
 
 [proposer]
-block_time_ms = 5000
+block_time_ms = 120000
 coinbase_address = "0x0007a881CD95B1484fca47615B64803dad620C8d"
 
 [committer]
-# Address of a funded account that the sequencer will use to send commit txs to the L1.
-l1_address = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b"
-# Private key corresponding to the above address.
-l1_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
 on_chain_proposer_address = "0x52178cfc3db571f60016d43adf47d61c2009fa72"
-# How often does the sequencer commit new blocks to the L1.
-commit_time_ms = 5000
+l1_address = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b"
+l1_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
+interval_ms = 5000
 # 1 Gwei
 arbitrary_base_blob_gas_price = 1000000000
 
 [prover_server]
-# Address of a funded account that the sequencer will use to send verify txs to the L1.
-# Has to be a different account than comitter.l1_address.
-l1_address = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425"
-# Private key corresponding to the above address.
-l1_private_key = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
-# Set it to 0.0.0.0 to allow connections from other machines.
-listen_ip = "127.0.0.1"
+# set it to 0.0.0.0 to allow connections from other machines
+listen_ip = "0.0.0.0"
 listen_port = 3900
-dev_mode = true
+# Not the same account as the [committer] l1 Account
+# The proposer is in charge of blob commitments.
+# The prover_server is in charge of verifying the zkProofs.
+verifier_address = "0xE25583099BA105D9ec0A67f5Ae86D90e50036425"
+verifier_private_key = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d"
+dev_mode = false

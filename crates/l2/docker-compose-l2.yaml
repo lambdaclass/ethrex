@@ -29,7 +29,6 @@ services:
       - PRIVATE_KEYS_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
     depends_on:
       - ethrex
-    command: --deposit_rich
     restart: on-failure:3
 
   ethrex_l2:
@@ -43,7 +42,7 @@ services:
       # RPC
       - 127.0.0.1:1729:1729
       # Proposer
-      - 3900:3900
+      - 127.0.0.1:3900:3900
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
       - ENV_FILE=/.env

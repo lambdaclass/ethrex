@@ -167,31 +167,31 @@ fn setup() -> Result<SetupResult, DeployError> {
 
     let eth_client = EthClient::new(&read_env_var("ETH_RPC_URL")?);
 
-    let deployer_address = parse_env_var("DEPLOYER_ADDRESS")?;
+    let deployer_address = parse_env_var("DEPLOYER_L1_ADDRESS")?;
     let deployer_private_key = SecretKey::from_slice(
         H256::from_str(
-            read_env_var("DEPLOYER_PRIVATE_KEY")?
+            read_env_var("DEPLOYER_L1_PRIVATE_KEY")?
                 .strip_prefix("0x")
                 .ok_or(DeployError::ParseError(
-                    "Malformed DEPLOYER PRIVATE KEY (strip_prefix(\"0x\"))".to_owned(),
+                    "Malformed DEPLOYER_L1_PRIVATE_KEY (strip_prefix(\"0x\"))".to_owned(),
                 ))?,
         )
         .map_err(|err| {
             DeployError::ParseError(format!(
-                "Malformed DEPLOYER PRIVATE KEY (H256::from_str): {err}"
+                "Malformed DEPLOYER_L1_PRIVATE_KEY (H256::from_str): {err}"
             ))
         })?
         .as_bytes(),
     )
     .map_err(|err| {
         DeployError::ParseError(format!(
-            "Malformed DEPLOYER_PRIVATE_KEY (SecretKey::parse): {err}"
+            "Malformed DEPLOYER_L1_PRIVATE_KEY (SecretKey::parse): {err}"
         ))
     })?;
 
     let committer_address = parse_env_var("COMMITTER_L1_ADDRESS")?;
 
-    let verifier_address = parse_env_var("PROVER_SERVER_VERIFIER_ADDRESS")?;
+    let verifier_address = parse_env_var("PROVER_SERVER_L1_ADDRESS")?;
 
     let contracts_path = Path::new(
         std::env::var("DEPLOYER_CONTRACTS_PATH")
