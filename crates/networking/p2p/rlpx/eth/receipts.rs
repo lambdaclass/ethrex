@@ -19,13 +19,13 @@ pub(crate) struct GetReceipts {
 }
 
 impl GetReceipts {
-    pub const CODE: u8 = 0x1F;
     pub fn new(id: u64, block_hashes: Vec<BlockHash>) -> Self {
         Self { block_hashes, id }
     }
 }
 
 impl RLPxMessage for GetReceipts {
+    const CODE: u8 = 0x1F;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -58,13 +58,14 @@ pub(crate) struct Receipts {
 }
 
 impl Receipts {
-    pub const CODE: u8 = 0x20;
     pub fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self {
         Self { receipts, id }
     }
 }
 
 impl RLPxMessage for Receipts {
+    const CODE: u8 = 0x20;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)

@@ -22,11 +22,8 @@ pub(crate) struct StatusMessage {
     pub(crate) fork_id: ForkId,
 }
 
-impl StatusMessage {
-    pub const CODE: u8 = 0x10;
-}
-
 impl RLPxMessage for StatusMessage {
+    const CODE: u8 = 0x10;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)

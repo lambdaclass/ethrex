@@ -17,6 +17,8 @@ use super::snap::{
 use ethrex_rlp::encode::RLPEncode;
 
 pub trait RLPxMessage: Sized {
+    const CODE: u8;
+
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError>;
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError>;
