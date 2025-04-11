@@ -1,6 +1,7 @@
 name: Block Import Benchmark
 
 on:
+  workflow_call:
   push:
     branches: [main]
 
