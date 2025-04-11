@@ -1,5 +1,4 @@
 use crate::sequencer::errors::ProverServerError;
-use crate::sequencer::utils::sleep_random;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -57,7 +56,6 @@ struct ProverServer {
     on_chain_proposer_address: Address,
     l1_address: Address,
     l1_private_key: SecretKey,
-    dev_interval_ms: u64,
     needed_proof_types: Vec<ProverType>,
 }
 
@@ -147,27 +145,30 @@ impl ProverServer {
         .await?;
 
         let mut needed_proof_types = vec![];
-
-        for (key, addr) in verifier_contracts {
-            if addr == DEV_MODE_ADDRESS {
-                continue;
-            } else {
-                match key.as_str() {
-                    R0VERIFIER => {
-                        info!("RISC0 proof needed");
-                        needed_proof_types.push(ProverType::RISC0);
+        if !config.dev_mode {
+            for (key, addr) in verifier_contracts {
+                if addr == DEV_MODE_ADDRESS {
+                    continue;
+                } else {
+                    match key.as_str() {
+                        "R0VERIFIER()" => {
+                            info!("RISC0 proof needed");
+                            needed_proof_types.push(ProverType::RISC0);
+                        }
+                        "SP1VERIFIER()" => {
+                            info!("SP1 proof needed");
+                            needed_proof_types.push(ProverType::SP1);
+                        }
+                        "PICOVERIFIER()" => {
+                            info!("PICO proof needed");
+                            needed_proof_types.push(ProverType::Pico);
+                        }
+                        _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
                     }
-                    SP1VERIFIER => {
-                        info!("SP1 proof needed");
-                        needed_proof_types.push(ProverType::SP1);
-                    }
-                    PICOVERIFIER => {
-                        info!("PICO proof needed");
-                        needed_proof_types.push(ProverType::Pico);
-                    }
-                    _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
                 }
             }
+        } else {
+            needed_proof_types.push(ProverType::Exec);
         }
 
         Ok(Self {
@@ -179,18 +180,12 @@ impl ProverServer {
             l1_address: config.l1_address,
             l1_private_key: config.l1_private_key,
             needed_proof_types,
-
-            dev_interval_ms: config.dev_interval_ms,
         })
     }
 
     pub async fn run(&mut self, server_config: &ProverServerConfig) {
         loop {
-            let result = if server_config.dev_mode {
-                self.main_logic_dev().await
-            } else {
-                self.clone().main_logic().await
-            };
+            let result = self.clone().main_logic().await;
 
             match result {
                 Ok(()) => {
@@ -360,29 +355,27 @@ impl ProverServer {
                     return Ok(());
                 }
 
-                // The ProverType::Exec doesn't generate a real proof, we don't need to save it.
-                if calldata.prover_type != ProverType::Exec {
-                    // Check if we have the proof for that ProverType
-                    let has_proof = match block_number_has_state_file(
-                        StateFileType::Proof(calldata.prover_type),
-                        block_number,
-                    ) {
-                        Ok(has_proof) => has_proof,
-                        Err(e) => {
-                            let error = format!("{e}");
-                            if !error.contains("No such file or directory") {
-                                return Err(e.into());
-                            }
-                            false
+                // Check if we have the proof for that ProverType
+                let has_proof = match block_number_has_state_file(
+                    StateFileType::Proof(calldata.prover_type),
+                    block_number,
+                ) {
+                    Ok(has_proof) => has_proof,
+                    Err(e) => {
+                        let error = format!("{e}");
+                        if !error.contains("No such file or directory") {
+                            return Err(e.into());
                         }
-                    };
-                    // If we don't have it, insert it.
-                    if !has_proof {
-                        write_state(block_number, &StateType::Proof(calldata))?;
+                        false
                     }
+                };
+                // If we don't have it, insert it.
+                if !has_proof {
+                    write_state(block_number, &StateType::Proof(calldata))?;
                 }
 
                 // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
+                self.handle_proof_submission(block_number).await?;
             }
             Err(e) => {
                 warn!("Failed to parse request: {e}");
@@ -576,99 +569,5 @@ impl ProverServer {
         info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
 
         Ok(verify_tx_hash)
-    }
-
-    pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
-        loop {
-            let last_committed_block = EthClient::get_last_committed_block(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
-
-            let last_verified_block = EthClient::get_last_verified_block(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
-
-            if last_committed_block == last_verified_block {
-                debug!("No new blocks to prove");
-                continue;
-            }
-
-            info!("Last committed: {last_committed_block} - Last verified: {last_verified_block}");
-
-            let calldata_values = vec![
-                // blockNumber
-                Value::Uint(U256::from(last_verified_block + 1)),
-                // risc0BlockProof
-                Value::Bytes(vec![].into()),
-                // risc0ImageId
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // risco0JournalDigest
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // sp1ProgramVKey
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // sp1PublicValues
-                Value::Bytes(vec![].into()),
-                // sp1Bytes
-                Value::Bytes(vec![].into()),
-                // picoRiscvVkey
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // picoPublicValues
-                Value::Bytes(vec![].into()),
-                // picoProof
-                Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
-            ];
-
-            let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
-
-            let gas_price = self
-                .eth_client
-                .get_gas_price_with_extra(20)
-                .await?
-                .try_into()
-                .map_err(|_| {
-                    ProverServerError::InternalError(
-                        "Failed to convert gas_price to a u64".to_owned(),
-                    )
-                })?;
-
-            let verify_tx = self
-                .eth_client
-                .build_eip1559_transaction(
-                    self.on_chain_proposer_address,
-                    self.l1_address,
-                    calldata.into(),
-                    Overrides {
-                        max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-
-            info!("Sending verify transaction.");
-
-            let mut tx = WrappedTransaction::EIP1559(verify_tx);
-            self.eth_client
-                .set_gas_for_wrapped_tx(&mut tx, self.l1_address)
-                .await?;
-
-            let verify_tx_hash = self
-                .eth_client
-                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
-                .await?;
-
-            info!("Sent proof for block {last_verified_block}, with transaction hash {verify_tx_hash:#x}");
-
-            info!(
-                "Mocked verify transaction sent for block {}",
-                last_verified_block + 1
-            );
-
-            sleep_random(self.dev_interval_ms).await;
-        }
     }
 }

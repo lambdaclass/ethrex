@@ -137,8 +137,6 @@ impl Committer {
 #[derive(Deserialize, Debug)]
 struct ProverClient {
     prover_server_endpoint: String,
-    sp1_prover: String,
-    risc0_dev_mode: u64,
     proving_time_ms: u64,
 }
 
@@ -148,10 +146,8 @@ impl ProverClient {
         format!(
             "{prefix}_PROVER_SERVER_ENDPOINT={}
 {prefix}_PROVING_TIME_MS={}
-RISC0_DEV_MODE={}
-SP1_PROVER={}
 ",
-            self.prover_server_endpoint, self.proving_time_ms, self.risc0_dev_mode, self.sp1_prover
+            self.prover_server_endpoint, self.proving_time_ms
         )
     }
 }
@@ -163,7 +159,6 @@ struct ProverServer {
     listen_ip: String,
     listen_port: u64,
     dev_mode: bool,
-    dev_interval_ms: u64,
 }
 
 impl ProverServer {
@@ -176,14 +171,8 @@ impl ProverServer {
 {prefix}_LISTEN_IP={}
 {prefix}_LISTEN_PORT={}
 {prefix}_DEV_MODE={}
-{prefix}_DEV_INTERVAL_MS={}
 ",
-            self.l1_address,
-            self.l1_private_key,
-            self.listen_ip,
-            self.listen_port,
-            self.dev_mode,
-            self.dev_interval_ms
+            self.l1_address, self.l1_private_key, self.listen_ip, self.listen_port, self.dev_mode,
         )
     }
 }
