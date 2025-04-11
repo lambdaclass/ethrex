@@ -447,11 +447,8 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         }
         let latest_block_number = context.storage.get_latest_block_number().await?;
         let last = latest_block_number.min(self.start + self.count - 1);
-        let mut bodies = Vec::new();
-        for block_num in self.start..=last {
-            bodies.push(context.storage.get_block_body(block_num).await?)
-        }
-        build_payload_body_response(bodies)
+        let bodies = context.storage.get_block_bodies(self.start, last).await?;
+        build_payload_body_response(bodies.into_iter().map(Some).collect())
     }
 }
 

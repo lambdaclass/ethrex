@@ -89,6 +89,25 @@ impl Store {
     }
 
     // Helper method to read from a libmdbx table
+    async fn read_bulk<T: Table>(&self, keys: Vec<T::Key>) -> Result<Vec<T::Value>, StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut res = Vec::new();
+            let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
+            for key in keys {
+                let val = txn.get::<T>(key).map_err(StoreError::LibmdbxError)?;
+                match val {
+                    Some(val) => res.push(val),
+                    None => Err(StoreError::ReadError)?,
+                }
+            }
+            Ok(res)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    // Helper method to read from a libmdbx table
     fn read_sync<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         txn.get::<T>(key).map_err(StoreError::LibmdbxError)
@@ -205,6 +224,26 @@ impl StoreEngine for Store {
         } else {
             Ok(None)
         }
+    }
+
+    async fn get_block_bodies(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        let numbers = (from..=to).collect();
+        let hashes = self.read_bulk::<CanonicalBlockHashes>(numbers).await?;
+        let blocks = self.read_bulk::<Bodies>(hashes).await?;
+        Ok(blocks.into_iter().map(|b| b.to()).collect())
+    }
+
+    async fn get_block_bodies_by_hash(
+        &self,
+        hashes: Vec<BlockHash>,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        let hashes = hashes.into_iter().map(|h| h.into()).collect();
+        let blocks = self.read_bulk::<Bodies>(hashes).await?;
+        Ok(blocks.into_iter().map(|b| b.to()).collect())
     }
 
     async fn get_block_body_by_hash(

@@ -219,6 +219,27 @@ impl RedBStore {
         Ok(result)
     }
 
+    // Helper method to read in bulk from a redb table
+    fn read_bulk<'k, 'a, K, V>(
+        &self,
+        table: TableDefinition<'a, K, V>,
+        keys: Vec<impl Borrow<K::SelfType<'k>>>,
+    ) -> Result<Vec<AccessGuard<'static, V>>, StoreError>
+    where
+        K: Key + 'static,
+        V: Value,
+    {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(table)?;
+        let mut result = Vec::new();
+        for key in keys {
+            if let Some(val) = table.get(key)? {
+                result.push(val);
+            }
+        }
+        Ok(result)
+    }
+
     // Helper method to delete from a redb table
     fn delete<'k, 'v, 'a, K, V>(
         &self,
@@ -379,6 +400,27 @@ impl StoreEngine for RedBStore {
         } else {
             Ok(None)
         }
+    }
+
+    async fn get_block_bodies(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        let numbers = (from..=to).collect();
+        let hashes = self.read_bulk(CANONICAL_BLOCK_HASHES_TABLE, numbers)?;
+        let hashes: Vec<BlockHashRLP> = hashes.into_iter().map(|v| v.value()).collect();
+        let blocks = self.read_bulk(BLOCK_BODIES_TABLE, hashes)?;
+        Ok(blocks.into_iter().map(|b| b.value().to()).collect())
+    }
+
+    async fn get_block_bodies_by_hash(
+        &self,
+        hashes: Vec<BlockHash>,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        let hashes = hashes.into_iter().map(<H256 as Into<BlockHashRLP>>::into).collect();
+        let blocks = self.read_bulk(BLOCK_BODIES_TABLE, hashes)?;
+        Ok(blocks.into_iter().map(|b| b.value().to()).collect())
     }
 
     async fn get_block_body_by_hash(

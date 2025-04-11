@@ -53,6 +53,19 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError>;
 
+    /// Obtain canonical block bodies in from..=to
+    async fn get_block_bodies(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<BlockBody>, StoreError>;
+
+    /// Obtain block bodies from a list of hashes
+    async fn get_block_bodies_by_hash(
+        &self,
+        hashes: Vec<BlockHash>,
+    ) -> Result<Vec<BlockBody>, StoreError>;
+
     /// Obtain any block body using the hash
     async fn get_block_body_by_hash(
         &self,

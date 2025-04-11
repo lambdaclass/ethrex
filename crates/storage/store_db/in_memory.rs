@@ -106,6 +106,37 @@ impl StoreEngine for Store {
         }
     }
 
+    async fn get_block_bodies(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        let store = self.inner();
+        let mut res = Vec::new();
+        for block_number in from..=to {
+            if let Some(hash) = store.canonical_hashes.get(&block_number) {
+                if let Some(block) = store.bodies.get(hash).cloned() {
+                    res.push(block);
+                }
+            }
+        }
+        Ok(res)
+    }
+
+    async fn get_block_bodies_by_hash(
+        &self,
+        hashes: Vec<BlockHash>,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        let store = self.inner();
+        let mut res = Vec::new();
+        for hash in hashes {
+            if let Some(block) = store.bodies.get(&hash).cloned() {
+                res.push(block);
+            }
+        }
+        Ok(res)
+    }
+
     async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         self.inner()
             .pending_blocks

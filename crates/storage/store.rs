@@ -194,6 +194,21 @@ impl Store {
         self.engine.get_block_body(block_number).await
     }
 
+    pub async fn get_block_bodies(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        self.engine.get_block_bodies(from, to).await
+    }
+
+    pub async fn get_block_bodies_by_hash(
+        &self,
+        hashes: Vec<BlockHash>,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        self.engine.get_block_bodies_by_hash(hashes).await
+    }
+
     pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         info!(
             "Adding block to pending: {}",
