@@ -533,23 +533,21 @@ fn validate_ancestors(
     block: &Block,
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
-    // Obtain the invalid ancestors from the syncer
-    let Some(invalid_ancestors) = context.syncer.invalid_ancestors() else {
-        return Err(RpcErr::Internal("Internal error".into()));
-    };
-
     // Check if the block has already been invalidated
-    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.hash()) {
+    if let Some(latest_valid_hash) = context.storage.get_latest_valid_ancestor(block.hash())? {
         return Ok(Some(PayloadStatus::invalid_with(
-            *latest_valid_hash,
+            latest_valid_hash,
             "Header has been previously invalidated.".into(),
         )));
     }
 
     // Check if the parent block has already been invalidated
-    if let Some(latest_valid_hash) = invalid_ancestors.get(&block.header.parent_hash) {
+    if let Some(latest_valid_hash) = context
+        .storage
+        .get_latest_valid_ancestor(block.header.parent_hash)?
+    {
         return Ok(Some(PayloadStatus::invalid_with(
-            *latest_valid_hash,
+            latest_valid_hash,
             "Parent header has been previously invalidated.".into(),
         )));
     }
@@ -691,16 +689,6 @@ async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<Paylo
                 "Missing latest canonical block".to_owned(),
             ))?;
 
-    // adds a bad block as a bad ancestor so we can catch it on fork_choice as well
-    let add_block_to_invalid_ancestor = || {
-        if !context
-            .syncer
-            .add_invalid_ancestor(block_hash, latest_valid_hash)
-        {
-            error!("Failed to mark invalid ancestor")
-        }
-    };
-
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
         // Under the current implementation this is not possible: we always calculate the state
@@ -713,8 +701,11 @@ async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<Paylo
             Err(RpcErr::Internal(e.to_string()))
         }
         Err(ChainError::InvalidBlock(error)) => {
-            warn!("Error adding block: {error}");
-            add_block_to_invalid_ancestor();
+            warn!("Error executing block: {error}");
+            context
+                .storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -722,7 +713,10 @@ async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<Paylo
         }
         Err(ChainError::EvmError(error)) => {
             warn!("Error executing block: {error}");
-            add_block_to_invalid_ancestor();
+            context
+                .storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
