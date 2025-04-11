@@ -7,7 +7,7 @@ use crate::rlp::{
 };
 use crate::store::{MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use crate::trie_db::libmdbx::LibmdbxTrieDB;
-use crate::trie_db::libmdbx_dupsort::LibmdbxDupsortTrieDB;
+use crate::trie_db::libmdbx_fixed_key::LibmdbxFixedKeyTrieDB;
 use crate::utils::{ChainDataIndex, SnapStateIndex};
 use anyhow::Result;
 use bytes::Bytes;
@@ -407,7 +407,7 @@ impl StoreEngine for Store {
     }
 
     fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
-        let db = Box::new(LibmdbxDupsortTrieDB::<StorageTriesNodes, [u8; 32]>::new(
+        let db = Box::new(LibmdbxFixedKeyTrieDB::<StorageTriesNodes>::new(
             self.db.clone(),
             hashed_address.0,
         ));
@@ -1030,10 +1030,10 @@ dupsort!(
     ( Receipts ) TupleRLP<BlockHash, Index>[Index] => IndexedChunk<Receipt>
 );
 
-dupsort!(
+table!(
     /// Table containing all storage trie's nodes
     /// Each node is stored by hashed account address and node hash in order to keep different storage trie's nodes separate
-    ( StorageTriesNodes ) ([u8;32], [u8;33])[[u8;32]] => Vec<u8>
+    ( StorageTriesNodes ) ([u8;32], [u8;33]) => Vec<u8>
 );
 
 dupsort!(
