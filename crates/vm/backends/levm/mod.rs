@@ -69,9 +69,7 @@ impl LEVM {
             let report =
                 Self::execute_tx(tx, tx_sender, &block.header, db).map_err(EvmError::from)?;
 
-            // Currently, in LEVM, we don't substract refunded gas to used gas, but that can change in the future.
-            let gas_used = report.gas_used - report.gas_refunded;
-            cumulative_gas_used += gas_used;
+            cumulative_gas_used += report.gas_used;
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result.clone(), TxResult::Success),
@@ -197,12 +195,9 @@ impl LEVM {
             }
 
             let new_state_code_hash = code_hash(&new_state_account.info.bytecode);
-            let code = if initial_state_account.bytecode_hash() != new_state_code_hash {
+            if initial_state_account.bytecode_hash() != new_state_code_hash {
                 acc_info_updated = true;
-                Some(new_state_account.info.bytecode.clone())
-            } else {
-                None
-            };
+            }
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
@@ -214,14 +209,17 @@ impl LEVM {
                 }
             }
 
-            let info = if acc_info_updated {
-                Some(AccountInfo {
-                    code_hash: new_state_code_hash,
-                    balance: new_state_account.info.balance,
-                    nonce: new_state_account.info.nonce,
-                })
+            let (info, code) = if acc_info_updated {
+                (
+                    Some(AccountInfo {
+                        code_hash: new_state_code_hash,
+                        balance: new_state_account.info.balance,
+                        nonce: new_state_account.info.nonce,
+                    }),
+                    Some(new_state_account.info.bytecode.clone()),
+                )
             } else {
-                None
+                (None, None)
             };
 
             let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
@@ -407,6 +405,8 @@ pub fn generic_system_contract_levm(
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config();
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    let system_account_backup = db.cache.get(&system_address).cloned();
+    let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
     let env = Environment {
         origin: system_address,
         gas_limit: 30_000_000,
@@ -436,7 +436,20 @@ pub fn generic_system_contract_levm(
     .map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
-    db.cache.remove(&system_address);
+
+    if let Some(system_account) = system_account_backup {
+        db.cache.insert(system_address, system_account);
+    } else {
+        // If the system account was not in the cache, we need to remove it
+        db.cache.remove(&system_address);
+    }
+
+    if let Some(coinbase_account) = coinbase_backup {
+        db.cache.insert(block_header.coinbase, coinbase_account);
+    } else {
+        // If the coinbase account was not in the cache, we need to remove it
+        db.cache.remove(&block_header.coinbase);
+    }
 
     Ok(report)
 }

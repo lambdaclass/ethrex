@@ -349,7 +349,8 @@ impl<'a> VM<'a> {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    pub fn get_floor_gas_price(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
+    /// Calculates the minimum gas to be consumed in the transaction.
+    pub fn get_min_gas_used(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create() {
             &initial_call_frame.bytecode
@@ -366,16 +367,16 @@ impl<'a> VM<'a> {
             .checked_div(STANDARD_TOKEN_COST)
             .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
-        // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-        let mut floor_gas_price: u64 = tokens_in_calldata
+        // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+        let mut min_gas_used: u64 = tokens_in_calldata
             .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
             .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-        floor_gas_price = floor_gas_price
+        min_gas_used = min_gas_used
             .checked_add(TX_BASE_COST)
             .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-        Ok(floor_gas_price)
+        Ok(min_gas_used)
     }
 
     /// Executes without making changes to the cache.
