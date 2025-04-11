@@ -277,23 +277,66 @@ impl RpcDB {
         let initial_account_proofs = initial_accounts
             .iter()
             .map(|(_, account)| account.get_account_proof());
-        let final_account_proofs = final_accounts
-            .iter()
-            .map(|(address, account)| (address, account.get_account_proof()));
-
         let initial_storage_proofs = initial_accounts
             .iter()
             .map(|(address, account)| (address, account.get_storage_proofs()));
         let final_storage_proofs = final_accounts
             .iter()
-            .map(|(address, account)| (address, account.get_storage_proofs()));
+            .filter_map(|update| {
+                if update.removed {
+                    Some(update.address)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let removed_storage: HashMap<_, _> = execution_updates
+            .iter()
+            .filter_map(|update| {
+                let removed_keys: Vec<_> = update
+                    .added_storage
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        if *value == U256::zero() {
+                            Some(key)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !removed_keys.is_empty() {
+                    Some((update.address, removed_keys))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let final_removed_account_proofs = final_accounts
+            .iter()
+            .map(|(address, account)| (address, account.get_account_proof()))
+            .filter(|(address, _)| removed_accounts.contains(address));
+        let final_removed_storage_proofs = final_accounts
+            .iter()
+            .map(|(address, account)| (address, account.get_storage_proofs()))
+            .filter_map(|(address, proofs)| {
+                removed_storage.get(address).map(|removed_keys| {
+                    (
+                        address,
+                        proofs
+                            .iter()
+                            .filter(|(key, _)| removed_keys.contains(key))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            });
 
         // get potential child nodes of deleted nodes after execution
-        let potential_account_child_nodes = final_account_proofs
+        let potential_account_child_nodes = final_removed_account_proofs
             .filter_map(|(address, proof)| get_potential_child_nodes(proof, &hash_address(address)))
             .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()));
 
-        let potential_storage_child_nodes: HashMap<_, _> = final_storage_proofs
+        let potential_storage_child_nodes: HashMap<_, _> = final_removed_storage_proofs
             .map(|(address, proofs)| {
                 let nodes: Vec<_> = proofs
                     .iter()
@@ -535,14 +578,6 @@ fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Nod
     if trie.get(key).unwrap().is_none() {
         let final_node = Node::decode_raw(proof.last().unwrap()).unwrap();
         match final_node {
-            Node::Extension(mut node) => {
-                let mut variants = Vec::with_capacity(node.prefix.len());
-                while {
-                    variants.push(Node::from(node.clone()));
-                    node.prefix.next().is_some()
-                } {}
-                Some(variants)
-            }
             Node::Leaf(mut node) => {
                 let mut variants = Vec::with_capacity(node.partial.len());
                 while {
