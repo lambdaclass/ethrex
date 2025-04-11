@@ -483,7 +483,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             Message::GetReceipts(GetReceipts { id, block_hashes }) if peer_supports_eth => {
                 let mut receipts = Vec::new();
                 for hash in block_hashes.iter() {
-                    receipts.push(self.storage.get_receipts_for_block(hash).await?);
+                    receipts.push(self.storage.get_receipts_for_block(hash)?);
                 }
                 let response = Receipts { id, receipts };
                 self.send(Message::Receipts(response)).await?;

@@ -896,11 +896,11 @@ impl Store {
         self.engine.update_payload(payload_id, payload).await
     }
 
-    pub async fn get_receipts_for_block(
+    pub fn get_receipts_for_block(
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
-        self.engine.get_receipts_for_block(block_hash).await
+        self.engine.get_receipts_for_block(block_hash)
     }
 
     /// Creates a new state trie with an empty state root, for testing purposes only
@@ -1088,11 +1088,11 @@ impl Store {
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    pub async fn read_account_snapshot(
+    pub fn read_account_snapshot(
         &self,
         start: H256,
     ) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        self.engine.read_account_snapshot(start).await
+        self.engine.read_account_snapshot(start)
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key

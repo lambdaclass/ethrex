@@ -270,7 +270,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
         payload: PayloadBundle,
     ) -> Result<(), StoreError>;
 
-    async fn get_receipts_for_block(
+    fn get_receipts_for_block(
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError>;
@@ -372,7 +372,7 @@ pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
     async fn clear_snapshot(&self) -> Result<(), StoreError>;
 
     /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
-    async fn read_account_snapshot(
+    fn read_account_snapshot(
         &self,
         start: H256,
     ) -> Result<Vec<(H256, AccountState)>, StoreError>;

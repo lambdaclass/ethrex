@@ -163,7 +163,7 @@ async fn rebuild_state_trie_segment(
         if cancel_token.is_cancelled() {
             break;
         }
-        let mut batch = store.read_account_snapshot(start).await?;
+        let mut batch = store.read_account_snapshot(start)?;
         // Remove out of bounds elements
         batch.retain(|(hash, _)| *hash <= STATE_TRIE_SEGMENTS_END[segment_number]);
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;

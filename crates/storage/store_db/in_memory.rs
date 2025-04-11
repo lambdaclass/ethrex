@@ -432,7 +432,7 @@ impl StoreEngine for Store {
         Ok(self.inner().payloads.get(&payload_id).cloned())
     }
 
-    async fn get_receipts_for_block(
+    fn get_receipts_for_block(
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
@@ -637,7 +637,7 @@ impl StoreEngine for Store {
         Ok(())
     }
 
-    async fn read_account_snapshot(
+    fn read_account_snapshot(
         &self,
         start: H256,
     ) -> Result<Vec<(H256, ethrex_common::types::AccountState)>, StoreError> {

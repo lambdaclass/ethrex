@@ -655,7 +655,7 @@ impl StoreEngine for Store {
         self.write_batch::<Receipts>(key_values).await
     }
 
-    async fn get_receipts_for_block(
+    fn get_receipts_for_block(
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
@@ -929,7 +929,7 @@ impl StoreEngine for Store {
         .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
     }
 
-    async fn read_account_snapshot(
+    fn read_account_snapshot(
         &self,
         start: H256,
     ) -> Result<Vec<(H256, AccountState)>, StoreError> {
