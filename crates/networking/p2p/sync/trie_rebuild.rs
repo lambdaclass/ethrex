@@ -8,7 +8,7 @@
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
-use ethrex_trie::EMPTY_TRIE_HASH;
+use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
 use std::array;
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
@@ -138,7 +138,7 @@ async fn rebuild_state_trie_in_backgound(
         }
         // Update DB checkpoint
         let checkpoint = (root, rebuild_status.clone().map(|st| st.current));
-        store.set_state_trie_rebuild_checkpoint(checkpoint)?;
+        store.set_state_trie_rebuild_checkpoint(checkpoint).await?;
         // Move on to the next segment
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
@@ -235,7 +235,9 @@ async fn rebuild_storage_trie_in_background(
             res?;
         }
     }
-    store.set_storage_trie_rebuild_pending(pending_storages)?;
+    store
+        .set_storage_trie_rebuild_pending(pending_storages)
+        .await?;
     Ok(())
 }
 
@@ -270,6 +272,9 @@ async fn rebuild_storage_trie(
     }
     if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
         warn!("Mismatched storage root for account {account_hash}");
+        store
+            .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
+            .await?;
     }
     Ok(())
 }
@@ -298,7 +303,7 @@ async fn show_trie_rebuild_progress(
     let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100))
         / U512::from(U256::max_value());
     // Time to finish = Time since start / Accounts processed this cycle * Remaining accounts
-    let remaining_accounts = U256::MAX - accounts_processed;
+    let remaining_accounts = U256::MAX.saturating_sub(accounts_processed);
     let time_to_finish = (U512::from(start_time.elapsed().as_secs())
         * U512::from(remaining_accounts))
         / (U512::from(accounts_processed_this_cycle));

@@ -8,14 +8,14 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 
-pub fn run_ef_test(test_key: &str, test: &TestUnit) {
+pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
     let decoded_block = CoreBlock::decode(&genesis_rlp).unwrap();
     let genesis_block_header = CoreBlockHeader::from(test.genesis_block_header.clone());
     assert_eq!(decoded_block.header, genesis_block_header);
 
-    let store = build_store_for_test(test);
+    let store = build_store_for_test(test).await;
 
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
@@ -33,7 +33,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block(block);
+        let chain_result = blockchain.add_block(block).await;
         match chain_result {
             Err(error) => {
                 assert!(
@@ -50,7 +50,7 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
                     test_key,
                     block_fixture.expect_exception.clone().unwrap()
                 );
-                apply_fork_choice(&store, hash, hash, hash).unwrap();
+                apply_fork_choice(&store, hash, hash, hash).await.unwrap();
             }
         }
     }
@@ -59,10 +59,34 @@ pub fn run_ef_test(test_key: &str, test: &TestUnit) {
 
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
-    let expects_rlp_exception = block_fixture
-        .expect_exception
-        .as_ref()
-        .map_or(false, |s| s.starts_with("BlockException.RLP_"));
+    let decoding_exception_cases = [
+        "BlockException.RLP_",
+        // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
+        // have the "to" field set to null (create).
+        // This test expects an exception to be thrown AFTER the Block RLP decoding, when the
+        // transaction is validated. This would imply allowing the "to" field of the
+        // EIP-7702 transaction to be null and validating it on the `prepare_execution` LEVM hook.
+        //
+        // Instead, this approach is taken, which allows for the exception to be thrown on
+        // RLPDecoding, so the data type EIP7702Transaction correctly describes the requirement of
+        // "to" field to be an Address
+        // For more information, please read:
+        // - https://eips.ethereum.org/EIPS/eip-7702
+        // - https://github.com/lambdaclass/ethrex/pull/2425
+        //
+        // There is another test which validates the same exact thing, but for an EIP-4844 tx.
+        // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
+        // caught.
+        "TransactionException.TYPE_4_TX_CONTRACT_CREATION",
+    ];
+
+    let expects_rlp_exception = decoding_exception_cases.iter().any(|&case| {
+        block_fixture
+            .expect_exception
+            .as_ref()
+            .map_or(false, |s| s.starts_with(case))
+    });
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
@@ -82,12 +106,13 @@ pub fn parse_test_file(path: &Path) -> HashMap<String, TestUnit> {
 }
 
 /// Creats a new in-memory store and adds the genesis state
-pub fn build_store_for_test(test: &TestUnit) -> Store {
+pub async fn build_store_for_test(test: &TestUnit) -> Store {
     let store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
     let genesis = test.get_genesis();
     store
         .add_initial_state(genesis)
+        .await
         .expect("Failed to add genesis state");
     store
 }

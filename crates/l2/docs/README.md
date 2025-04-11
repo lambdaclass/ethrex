@@ -6,10 +6,13 @@ For a high level overview of the L2:
 
 For more detailed documentation on each part of the system:
 
+- [Sequencer](./sequencer.md)
 - [Contracts](./contracts.md)
 - [Execution program](./program.md)
 - [Proposer](./proposer.md)
 - [Prover](./prover.md)
+- [State Diffs](./state_diffs.md)
+- [Withdrawals](./withdrawals.md)
 
 ## Quick HandsOn
 

@@ -2,11 +2,11 @@ name: L1
 on:
   push:
     branches: ["main"]
-  merge_group:
   pull_request:
     branches: ["**"]
     paths-ignore:
       - "crates/vm/levm/**" # We run this in a separate workflow
+      - "crates/l2/**" # Behind a feature flag not used in this workflow
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -132,7 +132,7 @@ jobs:
         uses: ethpandaops/kurtosis-assertoor-github-action@v1
         with:
           enclave_name: ${{ matrix.enclave_name }}
-          kurtosis_version: "1.4.2"
+          kurtosis_version: "1.6.0"
           ethereum_package_url: "github.com/lambdaclass/ethereum-package"
           ethereum_package_branch: "ethrex-integration-pectra"
           ethereum_package_args: ${{ matrix.ethereum_package_args }}

@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub trait TrieDB {
+pub trait TrieDB: Send + Sync {
     fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError>;
     fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError>;
     // fn put_batch(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError>;
@@ -19,6 +19,11 @@ pub struct InMemoryTrieDB {
 impl InMemoryTrieDB {
     pub fn new(map: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>) -> Self {
         Self { inner: map }
+    }
+    pub fn new_empty() -> Self {
+        Self {
+            inner: Default::default(),
+        }
     }
 }
 

@@ -65,8 +65,6 @@ ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
 L1_AUTH_PORT=8551
-# Used in the .env file. Ensure the same port is used for `ENGINE_API_RPC_URL`.
-L2_AUTH_PORT=8552
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
@@ -106,7 +104,7 @@ down-local-l1: ## 🛑 Shuts down the L1 Lambda ethrex Client
 restart-local-l1: down-local-l1 rm-db-l1 init-local-l1 ## 🔄 Restarts the L1 Lambda ethrex Client
 
 rm-db-l1: ## 🛑 Removes the DB used by the L1
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX}
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_LIBMDBX} --force
 
 # Contracts
 clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
@@ -150,7 +148,6 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr 0.0.0.0 \
-	--authrpc.port ${L2_AUTH_PORT} \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--datadir ${ethrex_L2_DEV_LIBMDBX}
 
@@ -165,13 +162,20 @@ down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
 
 restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Client
 
-init-prover: ## 🚀 Initializes the Prover
-	@if [ -z "$$T" ]; then \
-		echo "Error: ProverType (T) is missing."; \
+init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
+	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
+	PROVER_CLIENT_CONFIG_FILE=${ethrex_L2_PROVER_CLIENT_CONFIG_FILE} \
+	PROVER_ENV_FILE=${PROVER_ENV_FILE} \
+	../../target/release/ethrex_prover
+
+build-prover: ../../target/release/ethrex_prover
+
+../../target/release/ethrex_prover:
+	@if [ -z "$$PROVER" ]; then \
+		echo "Error: ProverType (PROVER) is missing. Running in exec mode."; \
 		echo "Please provide it as an argument:"; \
-		echo "make init-prover T=<prover_type: (risc0, sp1, pico, exec)> <G=true>."; \
+		echo "make init-prover PROVER=<prover_type: (risc0, sp1, pico)> <G=true>"; \
 		echo "The prover can also be run with GPU (G)"; \
-		exit 1; \
 	fi; \
 
 	@if [ -z "$$G" ]; then \
@@ -183,41 +187,36 @@ init-prover: ## 🚀 Initializes the Prover
 	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
 	PROVER_CLIENT_CONFIG_FILE=${ethrex_L2_PROVER_CLIENT_CONFIG_FILE} \
 	PROVER_ENV_FILE=${PROVER_ENV_FILE} \
-	cargo run --release --features "$$T$$GPU,l2" \
-	--manifest-path ./prover/Cargo.toml \
-	--bin ethrex_prover -- $$T
+	RUSTFLAGS='-C target-cpu=native' \
+	cargo build --release --features "$$PROVER$$GPU,l2" \
+	--manifest-path ./prover/Cargo.toml  \
+	--bin ethrex_prover
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX}
-
-# Testing
-# cargo test l2 will match tests that has l2 in the function.
-# Tests are at `crates/l2/tests/tests.rs`
-# https://doc.rust-lang.org/book/ch11-02-running-tests.html#filtering-to-run-multiple-tests
-ci_test: ## 🚧 Runs the L2's integration test, used by the github's CI
-	@echo "\n\033[0;33mWARNING: \033[0m Running the tests inside docker takes \033[1mA LOT\033[0m of time. If possible (especially when running the tests locally), consider running the tests with the 'make test' directive\n"
-
-	# We create an empty .env file simply because if the file
-	# does not exists, the container fails to write to it.
-	touch .env
-	# Integration tests
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up -d --build
-	cargo test l2 --release -- --nocapture --test-threads=1
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-
-	# State reconstruction tests
-	rm -rf $$PWD/store
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
-	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
-	cargo b --manifest-path ../../Cargo.toml --release
-	make init-l2-no-metrics ethrex_L2_DEV_LIBMDBX=$$PWD/store 2>&1 >/dev/null &
-	cargo test state_reconstruct --release
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2 -- l2 removedb --datadir ${ethrex_L2_DEV_LIBMDBX} --force
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
+integration-test: rm-db-l2 rm-db-l1
+	# We create an empty .env file simply because if the file
+	# does not exists, the container fails to write to it.
+	touch .env
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
+	killall ethrex_prover
+
+# State reconstruction tests
+state-diff-test:
+	touch .env
+	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
+	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
+	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
+	cargo b --manifest-path ../../Cargo.toml --release
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
+	cargo test state_reconstruct --release
 
 # Purge L2's state
 UNAME_S:=$(shell uname -s)

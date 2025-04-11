@@ -36,7 +36,6 @@ pub(crate) async fn heal_state_trie(
     state_root: H256,
     store: Store,
     peers: PeerHandler,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<bool, SyncError> {
     let mut paths = store.get_state_heal_paths()?.unwrap_or_default();
     // Spawn a bytecode fetcher for this block
@@ -59,7 +58,6 @@ pub(crate) async fn heal_state_trie(
                 batch,
                 peers.clone(),
                 store.clone(),
-                storage_healer_sender.clone(),
                 bytecode_sender.clone(),
             ));
             // End loop if we have no more paths to fetch
@@ -82,7 +80,7 @@ pub(crate) async fn heal_state_trie(
     // Save paths for the next cycle
     if !paths.is_empty() {
         debug!("Caching {} paths for the next cycle", paths.len());
-        store.set_state_heal_paths(paths.clone())?;
+        store.set_state_heal_paths(paths.clone()).await?;
     }
     // Send empty batch to signal that no more batches are incoming
     bytecode_sender.send(vec![]).await?;
@@ -98,7 +96,6 @@ async fn heal_state_batch(
     mut batch: Vec<Nibbles>,
     peers: PeerHandler,
     store: Store,
-    storage_sender: Sender<Vec<H256>>,
     bytecode_sender: Sender<Vec<H256>>,
 ) -> Result<(Vec<Nibbles>, bool), SyncError> {
     if let Some(nodes) = peers
@@ -112,39 +109,46 @@ async fn heal_state_batch(
         // - Add its children to the queue (if we don't have them already)
         // - If it is a leaf, request its bytecode & storage
         // - If it is a leaf, add its path & value to the trie
-        for node in nodes {
-            // We cannot keep the trie state open
+        {
             let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH);
-            let path = batch.remove(0);
-            batch.extend(node_missing_children(&node, &path, trie.state())?);
-            if let Node::Leaf(node) = &node {
-                // Fetch bytecode & storage
-                let account = AccountState::decode(&node.value)?;
-                // By now we should have the full path = account hash
-                let path = &path.concat(node.partial.clone()).to_bytes();
-                if path.len() != 32 {
-                    // Something went wrong
-                    return Err(SyncError::CorruptPath);
-                }
-                let account_hash = H256::from_slice(path);
-                if account.storage_root != *EMPTY_TRIE_HASH
-                    && !store.contains_storage_node(account_hash, account.storage_root)?
-                {
-                    hashed_addresses.push(account_hash);
-                }
-                if account.code_hash != *EMPTY_KECCACK_HASH
-                    && store.get_account_code(account.code_hash)?.is_none()
-                {
-                    code_hashes.push(account.code_hash);
+            for node in nodes.iter() {
+                let path = batch.remove(0);
+                batch.extend(node_missing_children(node, &path, trie.state())?);
+                if let Node::Leaf(node) = &node {
+                    // Fetch bytecode & storage
+                    let account = AccountState::decode(&node.value)?;
+                    // By now we should have the full path = account hash
+                    let path = &path.concat(node.partial.clone()).to_bytes();
+                    if path.len() != 32 {
+                        // Something went wrong
+                        return Err(SyncError::CorruptPath);
+                    }
+                    let account_hash = H256::from_slice(path);
+                    if account.storage_root != *EMPTY_TRIE_HASH
+                        && !store.contains_storage_node(account_hash, account.storage_root)?
+                    {
+                        hashed_addresses.push(account_hash);
+                    }
+                    if account.code_hash != *EMPTY_KECCACK_HASH
+                        && store.get_account_code(account.code_hash)?.is_none()
+                    {
+                        code_hashes.push(account.code_hash);
+                    }
                 }
             }
-            // Add node to trie
-            let hash = node.compute_hash();
-            trie.state_mut().write_node(node, hash)?;
+            // Write nodes to trie
+            trie.state_mut().write_node_batch(&nodes)?;
         }
         // Send storage & bytecode requests
         if !hashed_addresses.is_empty() {
-            storage_sender.send(hashed_addresses).await?;
+            store
+                .set_storage_heal_paths(
+                    hashed_addresses
+                        .into_iter()
+                        .map(|hash| (hash, vec![Nibbles::default()]))
+                        .collect(),
+                )
+                .await?;
         }
         if !code_hashes.is_empty() {
             bytecode_sender.send(code_hashes).await?;

@@ -1,4 +1,3 @@
-#[cfg(feature = "exec")]
 pub mod exec;
 
 #[cfg(feature = "pico")]

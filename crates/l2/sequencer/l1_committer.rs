@@ -21,7 +21,7 @@ use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
-use ethrex_vm::backends::Evm;
+use ethrex_vm::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use std::{collections::HashMap, str::FromStr, sync::Arc};
@@ -37,7 +37,7 @@ pub struct Committer {
     store: Store,
     l1_address: Address,
     l1_private_key: SecretKey,
-    interval_ms: u64,
+    commit_time_ms: u64,
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
     validium: bool,
@@ -69,7 +69,7 @@ impl Committer {
             store,
             l1_address: committer_config.l1_address,
             l1_private_key: committer_config.l1_private_key,
-            interval_ms: committer_config.interval_ms,
+            commit_time_ms: committer_config.commit_time_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
@@ -82,7 +82,7 @@ impl Committer {
                 error!("L1 Committer Error: {}", err);
             }
 
-            sleep_random(self.interval_ms).await;
+            sleep_random(self.commit_time_ms).await;
         }
     }
 

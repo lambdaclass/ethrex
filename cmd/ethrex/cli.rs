@@ -1,5 +1,6 @@
 use std::{
     fs::{metadata, read_dir},
+    io::{self, Write},
     path::Path,
 };
 
@@ -23,7 +24,7 @@ pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
 #[derive(ClapParser)]
 #[command(name="ethrex", author = "Lambdaclass", version=VERSION_STRING, about, about = "ethrex Execution client")]
 pub struct CLI {
-    #[clap(flatten)]
+    #[command(flatten)]
     pub opts: Options,
     #[command(subcommand)]
     pub command: Option<Subcommand>,
@@ -35,7 +36,7 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and mekong.",
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and hoodi.",
         help_heading = "Node options"
     )]
     pub network: Option<String>,
@@ -51,6 +52,14 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub datadir: String,
+    #[arg(
+        long = "force", 
+        help = "Force remove the database",
+        long_help = "Delete the database without confirmation.",
+        action = clap::ArgAction::SetTrue,
+        help_heading = "Node options"
+    )]
+    pub force: bool,
     #[arg(long = "syncmode", default_value = "full", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"full\" as default value.", help_heading = "P2P options")]
     pub syncmode: SyncMode,
     #[arg(
@@ -182,6 +191,7 @@ impl Default for Options {
             metrics_port: Default::default(),
             dev: Default::default(),
             evm: Default::default(),
+            force: false,
         }
     }
 }
@@ -189,38 +199,41 @@ impl Default for Options {
 #[allow(clippy::large_enum_variant)]
 #[derive(ClapSubcommand)]
 pub enum Subcommand {
-    #[clap(name = "removedb", about = "Remove the database")]
+    #[command(name = "removedb", about = "Remove the database")]
     RemoveDB {
-        #[clap(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
+        #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = DEFAULT_DATADIR, required = false)]
         datadir: String,
+        #[clap(long = "force", help = "Force remove the database without confirmation", action = clap::ArgAction::SetTrue)]
+        force: bool,
     },
-    #[clap(name = "import", about = "Import blocks to the database")]
+    #[command(name = "import", about = "Import blocks to the database")]
     Import {
-        #[clap(
+        #[arg(
             required = true,
             value_name = "FILE_PATH/FOLDER",
             help = "Path to a RLP chain file or a folder containing files with individual Blocks"
         )]
         path: String,
-        #[clap(long = "removedb", action = ArgAction::SetTrue)]
+        #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
     #[cfg(any(feature = "l2", feature = "based"))]
-    #[clap(subcommand)]
+    #[command(subcommand)]
     L2(l2::Command),
 }
 
 impl Subcommand {
     pub async fn run(self, opts: &Options) -> eyre::Result<()> {
         match self {
-            Subcommand::RemoveDB { datadir } => {
-                remove_db(&datadir);
+            Subcommand::RemoveDB { datadir, force } => {
+                remove_db(&datadir, force);
             }
             Subcommand::Import { path, removedb } => {
                 if removedb {
                     Box::pin(async {
                         Self::RemoveDB {
                             datadir: opts.datadir.clone(),
+                            force: opts.force,
                         }
                         .run(opts)
                         .await
@@ -233,7 +246,7 @@ impl Subcommand {
                     .as_ref()
                     .expect("--network is required and it was not provided");
 
-                import_blocks(&path, &opts.datadir, network, opts.evm);
+                import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
             #[cfg(any(feature = "l2", feature = "based"))]
             Subcommand::L2(command) => command.run().await?,
@@ -242,23 +255,37 @@ impl Subcommand {
     }
 }
 
-pub fn remove_db(datadir: &str) {
+pub fn remove_db(datadir: &str, force: bool) {
     let data_dir = set_datadir(datadir);
-
     let path = Path::new(&data_dir);
 
     if path.exists() {
-        std::fs::remove_dir_all(path).expect("Failed to remove data directory");
-        info!("Successfully removed database at {data_dir}");
+        if force {
+            std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+            println!("Database removed successfully.");
+        } else {
+            print!("Are you sure you want to remove the database? (y/n): ");
+            io::stdout().flush().unwrap();
+
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).unwrap();
+
+            if input.trim().eq_ignore_ascii_case("y") {
+                std::fs::remove_dir_all(path).expect("Failed to remove data directory");
+                println!("Database removed successfully.");
+            } else {
+                println!("Operation canceled.");
+            }
+        }
     } else {
-        warn!("Data directory does not exist: {data_dir}");
+        warn!("Data directory does not exist: {}", data_dir);
     }
 }
 
-pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
+pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
     let data_dir = set_datadir(data_dir);
 
-    let store = init_store(&data_dir, network);
+    let store = init_store(&data_dir, network).await;
 
     let blockchain = init_blockchain(evm, store);
 
@@ -279,5 +306,5 @@ pub fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) 
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-    blockchain.import_blocks(&blocks);
+    blockchain.import_blocks(&blocks).await;
 }
