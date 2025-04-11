@@ -1,6 +1,6 @@
 use crate::{
     account::{Account, StorageSlot},
-    call_frame::CallFrame,
+    call_frame::{CacheBackup, CallFrame},
     constants::*,
     db::{
         cache::{self},
@@ -338,8 +338,8 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn restore_state(&mut self, backup: StateBackup, call_frame: &mut CallFrame) {
-        self.restore_cache_state(call_frame);
+    pub fn restore_state(&mut self, backup: StateBackup, cache_backup: &mut CacheBackup) {
+        self.restore_cache_state(&cache_backup);
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
@@ -396,7 +396,7 @@ impl<'a> VM<'a> {
 
         if let Err(e) = self.prepare_execution(&mut initial_call_frame) {
             // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
-            self.restore_cache_state(&initial_call_frame);
+            self.restore_cache_state(&initial_call_frame.cache_backup);
             return Err(e);
         }
         // clear callframe backup because prepare_execution succeeded
@@ -557,8 +557,8 @@ impl<'a> VM<'a> {
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
-    fn restore_cache_state(&mut self, call_frame: &CallFrame) {
-        for (address, account_opt) in &call_frame.cache_backup {
+    fn restore_cache_state(&mut self, backup: &CacheBackup) {
+        for (address, account_opt) in backup {
             if let Some(account) = account_opt {
                 // restore the account to the state before the call
                 cache::insert_account(&mut self.db.cache, *address, account.clone());

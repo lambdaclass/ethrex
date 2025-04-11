@@ -38,7 +38,7 @@ impl<'a> VM<'a> {
 
                 self.call_frames.push(current_call_frame.clone());
 
-                self.restore_state(backup, current_call_frame);
+                self.restore_state(backup, &mut current_call_frame.cache_backup);
 
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
@@ -214,7 +214,7 @@ impl<'a> VM<'a> {
                 Err(error) => {
                     // Revert if error
                     current_call_frame.gas_used = current_call_frame.gas_limit;
-                    self.restore_state(backup, current_call_frame);
+                    self.restore_state(backup, &mut current_call_frame.cache_backup);
 
                     return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
@@ -256,7 +256,7 @@ impl<'a> VM<'a> {
             current_call_frame.gas_used = current_call_frame.gas_used.saturating_add(left_gas);
         }
 
-        self.restore_state(backup, current_call_frame);
+        self.restore_state(backup, &mut current_call_frame.cache_backup);
 
         Ok(ExecutionReport {
             result: TxResult::Revert(error),
