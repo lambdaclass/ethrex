@@ -53,6 +53,7 @@ pub(crate) struct HelloMessage {
 }
 
 impl HelloMessage {
+    pub const CODE: u8 = 0x00;
     pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey) -> Self {
         Self {
             capabilities,
@@ -183,6 +184,7 @@ pub(crate) struct DisconnectMessage {
 }
 
 impl DisconnectMessage {
+    pub const CODE: u8 = 0x01;
     pub fn new(reason: Option<DisconnectReason>) -> Self {
         Self { reason }
     }
@@ -238,6 +240,7 @@ impl RLPxMessage for DisconnectMessage {
 pub(crate) struct PingMessage {}
 
 impl PingMessage {
+    pub const CODE: u8 = 0x02;
     pub fn new() -> Self {
         Self {}
     }
@@ -268,6 +271,7 @@ impl RLPxMessage for PingMessage {
 pub(crate) struct PongMessage {}
 
 impl PongMessage {
+    pub const CODE: u8 = 0x03;
     pub fn new() -> Self {
         Self {}
     }

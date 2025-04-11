@@ -19,6 +19,7 @@ pub(crate) struct GetReceipts {
 }
 
 impl GetReceipts {
+    pub const CODE: u8 = 0x1F;
     pub fn new(id: u64, block_hashes: Vec<BlockHash>) -> Self {
         Self { block_hashes, id }
     }
@@ -57,6 +58,7 @@ pub(crate) struct Receipts {
 }
 
 impl Receipts {
+    pub const CODE: u8 = 0x20;
     pub fn new(id: u64, receipts: Vec<Vec<Receipt>>) -> Self {
         Self { receipts, id }
     }

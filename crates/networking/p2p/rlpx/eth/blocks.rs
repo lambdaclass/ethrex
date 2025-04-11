@@ -75,6 +75,7 @@ pub struct GetBlockHeaders {
 pub const BLOCK_HEADER_LIMIT: u64 = 1024;
 
 impl GetBlockHeaders {
+    pub const CODE: u8 = 0x13;
     pub fn new(id: u64, startblock: HashOrNumber, limit: u64, skip: u64, reverse: bool) -> Self {
         Self {
             id,
@@ -174,6 +175,7 @@ pub struct BlockHeaders {
 }
 
 impl BlockHeaders {
+    pub const CODE: u8 = 0x14;
     pub fn new(id: u64, block_headers: Vec<BlockHeader>) -> Self {
         Self { block_headers, id }
     }
@@ -218,6 +220,7 @@ pub struct GetBlockBodies {
 pub const BLOCK_BODY_LIMIT: usize = 1024;
 
 impl GetBlockBodies {
+    pub const CODE: u8 = 0x15;
     pub fn new(id: u64, block_hashes: Vec<BlockHash>) -> Self {
         Self { block_hashes, id }
     }
@@ -279,6 +282,7 @@ pub struct BlockBodies {
 }
 
 impl BlockBodies {
+    pub const CODE: u8 = 0x16;
     pub fn new(id: u64, block_bodies: Vec<BlockBody>) -> Self {
         Self { block_bodies, id }
     }

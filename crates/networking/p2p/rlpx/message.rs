@@ -51,12 +51,39 @@ pub(crate) enum Message {
 }
 
 impl Message {
-    pub fn decode(msg_id: u8, msg_data: &[u8]) -> Result<Message, RLPDecodeError> {
+    pub const fn code(&self) -> u8 {
+        match self {
+            Message::Hello(_) => HelloMessage::CODE,
+            Message::Disconnect(_) => DisconnectMessage::CODE,
+            Message::Ping(_) => PingMessage::CODE,
+            Message::Pong(_) => PongMessage::CODE,
+            Message::Status(_) => StatusMessage::CODE,
+            Message::GetBlockHeaders(_) => GetBlockHeaders::CODE,
+            Message::BlockHeaders(_) => BlockHeaders::CODE,
+            Message::Transactions(_) => Transactions::CODE,
+            Message::GetBlockBodies(_) => GetBlockBodies::CODE,
+            Message::BlockBodies(_) => BlockBodies::CODE,
+            Message::GetReceipts(_) => GetReceipts::CODE,
+            Message::Receipts(_) => Receipts::CODE,
+            Message::NewPooledTransactionHashes(_) => NewPooledTransactionHashes::CODE,
+            Message::GetPooledTransactions(_) => GetPooledTransactions::CODE,
+            Message::PooledTransactions(_) => PooledTransactions::CODE,
+            Message::GetAccountRange(_) => GetAccountRange::CODE,
+            Message::AccountRange(_) => AccountRange::CODE,
+            Message::GetStorageRanges(_) => GetStorageRanges::CODE,
+            Message::StorageRanges(_) => StorageRanges::CODE,
+            Message::GetByteCodes(_) => GetByteCodes::CODE,
+            Message::ByteCodes(_) => ByteCodes::CODE,
+            Message::GetTrieNodes(_) => GetTrieNodes::CODE,
+            Message::TrieNodes(_) => TrieNodes::CODE,
+        }
+    }
+    pub fn decode(msg_id: u8, data: &[u8]) -> Result<Message, RLPDecodeError> {
         match msg_id {
-            0x00 => Ok(Message::Hello(HelloMessage::decode(msg_data)?)),
-            0x01 => Ok(Message::Disconnect(DisconnectMessage::decode(msg_data)?)),
-            0x02 => Ok(Message::Ping(PingMessage::decode(msg_data)?)),
-            0x03 => Ok(Message::Pong(PongMessage::decode(msg_data)?)),
+            HelloMessage::CODE => Ok(Message::Hello(HelloMessage::decode(data)?)),
+            DisconnectMessage::CODE => Ok(Message::Disconnect(DisconnectMessage::decode(data)?)),
+            PingMessage::CODE => Ok(Message::Ping(PingMessage::decode(data)?)),
+            PongMessage::CODE => Ok(Message::Pong(PongMessage::decode(data)?)),
             // Subprotocols like 'eth' use offsets to identify
             // themselves, the eth capability starts
             // at 0x10 (16), the status message
@@ -67,131 +94,63 @@ impl Message {
             // References:
             // - https://ethereum.stackexchange.com/questions/37051/ethereum-network-messaging
             // - https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-            0x10 => Ok(Message::Status(StatusMessage::decode(msg_data)?)),
-            0x12 => Ok(Message::Transactions(Transactions::decode(msg_data)?)),
-            0x13 => Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(msg_data)?)),
-            0x14 => Ok(Message::BlockHeaders(BlockHeaders::decode(msg_data)?)),
-            0x15 => Ok(Message::GetBlockBodies(GetBlockBodies::decode(msg_data)?)),
-            0x16 => Ok(Message::BlockBodies(BlockBodies::decode(msg_data)?)),
-            0x18 => Ok(Message::NewPooledTransactionHashes(
-                NewPooledTransactionHashes::decode(msg_data)?,
+            StatusMessage::CODE => Ok(Message::Status(StatusMessage::decode(data)?)),
+            Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
+            GetBlockHeaders::CODE => Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?)),
+            BlockHeaders::CODE => Ok(Message::BlockHeaders(BlockHeaders::decode(data)?)),
+            GetBlockBodies::CODE => Ok(Message::GetBlockBodies(GetBlockBodies::decode(data)?)),
+            BlockBodies::CODE => Ok(Message::BlockBodies(BlockBodies::decode(data)?)),
+            NewPooledTransactionHashes::CODE => Ok(Message::NewPooledTransactionHashes(
+                NewPooledTransactionHashes::decode(data)?,
             )),
-            0x19 => Ok(Message::GetPooledTransactions(
-                GetPooledTransactions::decode(msg_data)?,
+            GetPooledTransactions::CODE => Ok(Message::GetPooledTransactions(
+                GetPooledTransactions::decode(data)?,
             )),
-            0x1a => Ok(Message::PooledTransactions(PooledTransactions::decode(
-                msg_data,
-            )?)),
-            0x1F => Ok(Message::GetReceipts(GetReceipts::decode(msg_data)?)),
-            0x20 => Ok(Message::Receipts(Receipts::decode(msg_data)?)),
-            0x21 => Ok(Message::GetAccountRange(GetAccountRange::decode(msg_data)?)),
-            0x22 => Ok(Message::AccountRange(AccountRange::decode(msg_data)?)),
-            0x23 => Ok(Message::GetStorageRanges(GetStorageRanges::decode(
-                msg_data,
-            )?)),
-            0x24 => Ok(Message::StorageRanges(StorageRanges::decode(msg_data)?)),
-            0x25 => Ok(Message::GetByteCodes(GetByteCodes::decode(msg_data)?)),
-            0x26 => Ok(Message::ByteCodes(ByteCodes::decode(msg_data)?)),
-            0x27 => Ok(Message::GetTrieNodes(GetTrieNodes::decode(msg_data)?)),
-            0x28 => Ok(Message::TrieNodes(TrieNodes::decode(msg_data)?)),
+            PooledTransactions::CODE => Ok(Message::PooledTransactions(
+                PooledTransactions::decode(data)?,
+            )),
+            GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
+            Receipts::CODE => Ok(Message::Receipts(Receipts::decode(data)?)),
+            GetAccountRange::CODE => Ok(Message::GetAccountRange(GetAccountRange::decode(data)?)),
+            AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
+            GetStorageRanges::CODE => {
+                Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
+            }
+            StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
+            GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
+            ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
+            GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
+            TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
             _ => Err(RLPDecodeError::MalformedData),
         }
     }
 
     pub fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        self.code().encode(buf);
         match self {
-            Message::Hello(msg) => {
-                0x00_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::Disconnect(msg) => {
-                0x01_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::Ping(msg) => {
-                0x02_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::Pong(msg) => {
-                0x03_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::Status(msg) => {
-                0x10_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::Transactions(msg) => {
-                0x12_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::GetBlockHeaders(msg) => {
-                0x13_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::BlockHeaders(msg) => {
-                0x14_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::GetBlockBodies(msg) => {
-                0x15_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::BlockBodies(msg) => {
-                0x16_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::NewPooledTransactionHashes(msg) => {
-                0x18_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::GetPooledTransactions(msg) => {
-                0x19_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::PooledTransactions(msg) => {
-                0x1a_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::GetReceipts(msg) => {
-                0x1F_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::Receipts(msg) => {
-                0x20_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::GetAccountRange(msg) => {
-                0x21_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::AccountRange(msg) => {
-                0x22_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::GetStorageRanges(msg) => {
-                0x23_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::StorageRanges(msg) => {
-                0x24_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::GetByteCodes(msg) => {
-                0x25_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::ByteCodes(msg) => {
-                0x26_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::GetTrieNodes(msg) => {
-                0x27_u8.encode(buf);
-                msg.encode(buf)
-            }
-            Message::TrieNodes(msg) => {
-                0x28_u8.encode(buf);
-                msg.encode(buf)
-            }
+            Message::Hello(msg) => msg.encode(buf),
+            Message::Disconnect(msg) => msg.encode(buf),
+            Message::Ping(msg) => msg.encode(buf),
+            Message::Pong(msg) => msg.encode(buf),
+            Message::Status(msg) => msg.encode(buf),
+            Message::Transactions(msg) => msg.encode(buf),
+            Message::GetBlockHeaders(msg) => msg.encode(buf),
+            Message::BlockHeaders(msg) => msg.encode(buf),
+            Message::GetBlockBodies(msg) => msg.encode(buf),
+            Message::BlockBodies(msg) => msg.encode(buf),
+            Message::NewPooledTransactionHashes(msg) => msg.encode(buf),
+            Message::GetPooledTransactions(msg) => msg.encode(buf),
+            Message::PooledTransactions(msg) => msg.encode(buf),
+            Message::GetReceipts(msg) => msg.encode(buf),
+            Message::Receipts(msg) => msg.encode(buf),
+            Message::GetAccountRange(msg) => msg.encode(buf),
+            Message::AccountRange(msg) => msg.encode(buf),
+            Message::GetStorageRanges(msg) => msg.encode(buf),
+            Message::StorageRanges(msg) => msg.encode(buf),
+            Message::GetByteCodes(msg) => msg.encode(buf),
+            Message::ByteCodes(msg) => msg.encode(buf),
+            Message::GetTrieNodes(msg) => msg.encode(buf),
+            Message::TrieNodes(msg) => msg.encode(buf),
         }
     }
 }

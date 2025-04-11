@@ -27,6 +27,7 @@ pub(crate) struct Transactions {
 }
 
 impl Transactions {
+    pub const CODE: u8 = 0x12;
     pub fn new(transactions: Vec<Transaction>) -> Self {
         Self { transactions }
     }
@@ -72,6 +73,7 @@ pub(crate) struct NewPooledTransactionHashes {
 }
 
 impl NewPooledTransactionHashes {
+    pub const CODE: u8 = 0x18;
     pub fn new(
         transactions: Vec<Transaction>,
         blockchain: &Blockchain,
@@ -168,6 +170,7 @@ pub(crate) struct GetPooledTransactions {
 }
 
 impl GetPooledTransactions {
+    pub const CODE: u8 = 0x19;
     pub fn new(id: u64, transaction_hashes: Vec<H256>) -> Self {
         Self {
             transaction_hashes,
@@ -263,6 +266,7 @@ pub(crate) struct PooledTransactions {
 }
 
 impl PooledTransactions {
+    pub const CODE: u8 = 0x1A;
     pub fn new(id: u64, pooled_transactions: Vec<P2PTransaction>) -> Self {
         Self {
             pooled_transactions,

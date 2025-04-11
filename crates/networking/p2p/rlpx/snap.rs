@@ -26,12 +26,20 @@ pub(crate) struct GetAccountRange {
     pub response_bytes: u64,
 }
 
+impl GetAccountRange {
+    pub const CODE: u8 = 0x21;
+}
+
 #[derive(Debug)]
 pub(crate) struct AccountRange {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     pub id: u64,
     pub accounts: Vec<AccountRangeUnit>,
     pub proof: Vec<Bytes>,
+}
+
+impl AccountRange {
+    pub const CODE: u8 = 0x22;
 }
 
 #[derive(Debug)]
@@ -44,11 +52,19 @@ pub(crate) struct GetStorageRanges {
     pub response_bytes: u64,
 }
 
+impl GetStorageRanges {
+    pub const CODE: u8 = 0x23;
+}
+
 #[derive(Debug)]
 pub(crate) struct StorageRanges {
     pub id: u64,
     pub slots: Vec<Vec<StorageSlot>>,
     pub proof: Vec<Bytes>,
+}
+
+impl StorageRanges {
+    pub const CODE: u8 = 0x24;
 }
 
 #[derive(Debug)]
@@ -58,10 +74,18 @@ pub(crate) struct GetByteCodes {
     pub bytes: u64,
 }
 
+impl GetByteCodes {
+    pub const CODE: u8 = 0x25;
+}
+
 #[derive(Debug)]
 pub(crate) struct ByteCodes {
     pub id: u64,
     pub codes: Vec<Bytes>,
+}
+
+impl ByteCodes {
+    pub const CODE: u8 = 0x26;
 }
 
 #[derive(Debug)]
@@ -74,10 +98,18 @@ pub(crate) struct GetTrieNodes {
     pub bytes: u64,
 }
 
+impl GetTrieNodes {
+    pub const CODE: u8 = 0x27;
+}
+
 #[derive(Debug)]
 pub(crate) struct TrieNodes {
     pub id: u64,
     pub nodes: Vec<Bytes>,
+}
+
+impl TrieNodes {
+    pub const CODE: u8 = 0x28;
 }
 
 impl RLPxMessage for GetAccountRange {
