@@ -2,8 +2,7 @@ use crate::{
     account::Account,
     call_frame::CallFrame,
     constants::*,
-    db::cache::{insert_account, remove_account},
-    errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
+    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
@@ -339,31 +338,22 @@ impl Hook for DefaultHook {
         initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
-        // POST-EXECUTION Changes
         let sender_address = initial_call_frame.msg_sender;
-        let to_address = initial_call_frame.to;
 
-        // 1. Undo value transfer if a transaction that's not Type 4 has reverted.
-        let to_account = vm.db.get_account(to_address)?;
+        // 1. Undo value transfer if Tx reverted
         if !report.is_success() {
-            if !has_delegation(&to_account.info)? {
-                // If it's a create type transaction and it reverted the address wasn't updated
-                if !vm.is_create() {
-                    vm.db.decrease_account_balance(
-                        to_address,
-                        initial_call_frame.msg_value,
-                        None,
-                    )?;
-                }
-
-                vm.db.increase_account_balance(
-                    sender_address,
+            //TODO: Tests pass but I don't know if this is appropriate behavior for Type 4 Transactions.
+            if !vm.is_create() {
+                vm.db.decrease_account_balance(
+                    initial_call_frame.to,
                     initial_call_frame.msg_value,
                     None,
                 )?;
             }
+
+            vm.db
+                .increase_account_balance(sender_address, initial_call_frame.msg_value, None)?;
         }
-        //TODO: See what the appropriate behavior is for EIP 7702... And remove field acc from vm..
 
         // 2. Return unused gas + gas refunds to the sender.
 
