@@ -342,7 +342,6 @@ impl Hook for DefaultHook {
 
         // 1. Undo value transfer if Tx reverted
         if !report.is_success() {
-            //TODO: Tests pass but I don't know if this is appropriate behavior for Type 4 Transactions.
             if !vm.is_create() {
                 vm.db.decrease_account_balance(
                     initial_call_frame.to,
