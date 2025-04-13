@@ -2,11 +2,11 @@ use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::{GenericTransaction, Transaction, TxKind};
+use ethrex_rpc::clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient};
+#[cfg(feature = "l2")]
+use ethrex_rpc::l2::withdrawal::WithdrawalProof;
 use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
-use ethrex_rpc::{
-    clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient},
-    l2::withdrawal::WithdrawalProof,
-};
+
 use itertools::Itertools;
 use keccak_hash::keccak;
 use merkle_tree::merkle_proof;
@@ -159,6 +159,7 @@ pub async fn withdraw(
         .await
 }
 
+#[cfg(feature = "l2")]
 pub async fn claim_withdraw(
     amount: U256,
     tx_hash: H256,

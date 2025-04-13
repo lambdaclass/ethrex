@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
-ethrex-rpc = { workspace = true, features = ["l2"] }
+ethrex-rpc.workspace = true
 ethereum-types.workspace = true
 tokio.workspace = true
 hex.workspace = true
@@ -33,3 +33,6 @@ indexing_slicing = "deny"
 as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
+
+[features]
+l2 = ["ethrex-rpc/l2"]

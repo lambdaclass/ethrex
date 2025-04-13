@@ -26,7 +26,7 @@ pub mod test_utils {
     #[cfg(feature = "l2")]
     use ethrex_storage_l2::{EngineTypeL2, StoreL2};
     use hex_literal::hex;
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     use secp256k1::SecretKey;
     use std::{str::FromStr, sync::Arc};
 
