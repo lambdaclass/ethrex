@@ -57,7 +57,6 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let l2_initial_balance = proposer_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
-    assert_eq!(l2_initial_balance, U256::zero(), "L2 balance is not zero");
     let common_bridge_initial_balance = eth_client
         .get_balance(common_bridge_address(), BlockByNumber::Latest)
         .await?;

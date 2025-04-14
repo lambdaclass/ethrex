@@ -2,9 +2,11 @@ name: Prover
 on:
   push:
     branches: ["main"]
-  merge_group:
   pull_request:
     branches: ["**"]
+    paths:
+      - "crates/l2/**"
+      - "crates/vm/levm/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

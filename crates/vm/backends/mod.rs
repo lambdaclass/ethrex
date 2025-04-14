@@ -6,6 +6,7 @@ use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
 use crate::{db::StoreWrapper, errors::EvmError};
 use crate::{ExecutionDB, ExecutionDBError};
+use derive_more::derive::Debug;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
@@ -93,27 +94,6 @@ impl Evm {
     }
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
-        match self {
-            Evm::REVM { state } => {
-                let mut state = evm_state(
-                    state
-                        .database()
-                        .ok_or(EvmError::Custom(
-                            "Failed to fetch database from EVM State".to_owned(),
-                        ))?
-                        .clone(),
-                    block.header.parent_hash,
-                );
-                REVM::execute_block(block, &mut state)
-            }
-            Evm::LEVM { db } => LEVM::execute_block(block, db),
-        }
-    }
-
-    pub fn execute_block_without_clearing_state(
-        &mut self,
-        block: &Block,
-    ) -> Result<BlockExecutionResult, EvmError> {
         match self {
             Evm::REVM { state } => REVM::execute_block(block, state),
             Evm::LEVM { db } => LEVM::execute_block(block, db),
@@ -302,7 +282,7 @@ impl Evm {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
