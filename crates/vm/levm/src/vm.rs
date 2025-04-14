@@ -1,11 +1,8 @@
 use crate::{
-    account::{Account, StorageSlot},
+    account::StorageSlot,
     call_frame::{CacheBackup, CallFrame},
     constants::*,
-    db::{
-        cache::{self, get_account},
-        gen_db::GeneralizedDatabase,
-    },
+    db::{cache, gen_db::GeneralizedDatabase},
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
@@ -171,7 +168,6 @@ pub struct VM<'a> {
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
-    pub account: Option<Account>,
 }
 
 impl<'a> VM<'a> {
@@ -227,8 +223,6 @@ impl<'a> VM<'a> {
 
         match to {
             TxKind::Call(address_to) => {
-                let acc = get_account(&db.cache, &address_to).cloned();
-
                 default_touched_accounts.insert(address_to);
 
                 let mut substate = Substate {
@@ -264,7 +258,6 @@ impl<'a> VM<'a> {
                     access_list,
                     authorization_list,
                     hooks,
-                    account: acc,
                 })
             }
             TxKind::Create => {
@@ -304,7 +297,6 @@ impl<'a> VM<'a> {
                     access_list,
                     authorization_list,
                     hooks,
-                    account: None,
                 })
             }
         }
