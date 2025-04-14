@@ -5,14 +5,14 @@
 //! For each storage received, the process will first queue their root nodes and then queue all the missing children from each node fetched in the same way as state healing
 //! Even if the pivot becomes stale, the healer will remain active and listening until a termination signal (an empty batch) is received
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::{peer_handler::PeerHandler, sync::node_missing_children};
 
@@ -31,11 +31,10 @@ pub(crate) async fn storage_healer(
     peers: PeerHandler,
     store: Store,
     cancel_token: CancellationToken,
+    state_healing_ended: Arc<AtomicBool>,
 ) -> Result<bool, SyncError> {
     // List of paths in need of healing, grouped by hashed address
     let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
-    // The pivot may become stale while the fetcher is active, we will still keep the process
-    // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut last_update = Instant::now();
     while !(stale || cancel_token.is_cancelled()) {
@@ -52,6 +51,10 @@ pub(crate) async fn storage_healer(
                     .await?
                     .into_iter(),
             );
+        }
+        // If we have no more pending paths even after reading from the store, and state healing has finished, cut the loop
+        if pending_paths.is_empty() && state_healing_ended.load(Ordering::Relaxed) {
+            break;
         }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process
