@@ -105,6 +105,12 @@ impl MDBXFork {
         tx.create_db(Some("ChainData"), DatabaseFlags::default())
             .unwrap();
 
+        tx.create_db(Some("SnapState"), DatabaseFlags::default())
+            .unwrap();
+
+        tx.create_db(Some("Payloads"), DatabaseFlags::default())
+            .unwrap();
+
         tx.commit().unwrap();
 
         let env_account_trie = DatabaseEnv::open(
@@ -332,6 +338,8 @@ tables! {
     table BlockNumbers<Key = Vec<u8>, Value = u64>;
     table PendingBlocks<Key = Vec<u8>, Value = Vec<u8>>;
     table ChainData<Key = u8, Value = Vec<u8>>;
+    table SnapState<Key = u8, Value = Vec<u8>>;
+    table Payloads<Key = u64, Value = Vec<u8>>;
 }
 
 impl StoreEngine for MDBXFork {
@@ -651,7 +659,11 @@ impl StoreEngine for MDBXFork {
     }
 
     fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        todo!()
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<Payloads>(payload_id, PayloadBundle::from_block(block).encode_to_vec())
+            .unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
@@ -683,7 +695,18 @@ impl StoreEngine for MDBXFork {
     }
 
     fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let body = tx.get::<Bodies>(block_hash.encode_to_vec()).unwrap();
+        let header = tx.get::<Headers>(block_hash.encode_to_vec()).unwrap();
+        match (body, header) {
+            (Some(body), Some(header)) => {
+                let body: BlockBody = RLPDecode::decode(body.as_ref()).unwrap();
+                let header: BlockHeader = RLPDecode::decode(header.as_ref()).unwrap();
+                let block = Block::new(header, body);
+                Ok(Some(block))
+            }
+            _ => Ok(None),
+        }
     }
 
     fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
@@ -750,11 +773,21 @@ impl StoreEngine for MDBXFork {
     }
 
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        todo!()
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<SnapState>(
+            SnapStateIndex::HeaderDownloadCheckpoint as u8,
+            block_hash.encode_to_vec(),
+        )
+        .unwrap();
+        Ok(())
     }
 
     fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        Ok(tx
+            .get::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint as u8)
+            .unwrap()
+            .map(|h| BlockHash::decode(h.as_ref()).unwrap()))
     }
 
     fn set_state_trie_key_checkpoint(

@@ -603,7 +603,7 @@ pub fn is_canonical(
     block_number: BlockNumber,
     block_hash: BlockHash,
 ) -> Result<bool, StoreError> {
-    match dbg!(store.get_canonical_block_hash(block_number)?) {
+    match store.get_canonical_block_hash(block_number)? {
         Some(hash) if hash == block_hash => Ok(true),
         _ => Ok(false),
     }
