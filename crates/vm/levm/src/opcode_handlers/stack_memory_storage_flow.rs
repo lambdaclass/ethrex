@@ -150,8 +150,11 @@ impl<'a> VM<'a> {
 
         let storage_slot_key = H256::from(storage_slot_key.to_big_endian());
 
-        let (storage_slot, storage_slot_was_cold) =
-            self.access_storage_slot(address, storage_slot_key, current_call_frame)?;
+        let (storage_slot, storage_slot_was_cold) = self.access_storage_slot(
+            address,
+            storage_slot_key,
+            &mut current_call_frame.cache_backup,
+        )?;
 
         current_call_frame.increase_consumed_gas(gas_cost::sload(
             storage_slot_was_cold,
@@ -187,8 +190,11 @@ impl<'a> VM<'a> {
         // Convert key from U256 to H256
         let key = H256::from(storage_slot_key.to_big_endian());
 
-        let (storage_slot, storage_slot_was_cold) =
-            self.access_storage_slot(current_call_frame.to, key, current_call_frame)?;
+        let (storage_slot, storage_slot_was_cold) = self.access_storage_slot(
+            current_call_frame.to,
+            key,
+            &mut current_call_frame.cache_backup,
+        )?;
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
@@ -260,7 +266,7 @@ impl<'a> VM<'a> {
             current_call_frame.to,
             key,
             new_storage_slot_value,
-            current_call_frame,
+            &mut current_call_frame.cache_backup,
         )?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
