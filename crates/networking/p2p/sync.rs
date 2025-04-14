@@ -224,7 +224,7 @@ impl Syncer {
                 .map(|header| header.compute_block_hash())
                 .collect::<Vec<_>>();
 
-            debug!(
+            info!(
                 "Received {} block headers| First Number: {} Last Number: {}",
                 block_headers.len(),
                 first_block_header.number,
@@ -250,7 +250,7 @@ impl Syncer {
             // Update current fetch head if needed
             let last_block_hash = last_block_header.compute_block_hash();
             if !sync_head_found {
-                debug!(
+                info!(
                     "Syncing head not found, updated current_head {:?}",
                     last_block_hash
                 );
@@ -384,7 +384,7 @@ impl Syncer {
 
         let since = Instant::now();
         loop {
-            debug!("Requesting Block Bodies");
+            info!("Requesting Block Bodies");
             let Some(block_bodies) = self
                 .peers
                 .request_block_bodies(current_block_hashes_chunk.clone())
@@ -399,7 +399,7 @@ impl Syncer {
                 .first()
                 .map_or(H256::default(), |a| *a);
 
-            debug!(
+            info!(
                 "Received {} Block Bodies, starting from block hash {:?}",
                 block_bodies_len, first_block_hash
             );
@@ -424,7 +424,7 @@ impl Syncer {
         }
 
         let blocks_len = blocks.len();
-        debug!(
+        info!(
             "Starting to execute and validate {} blocks in batch",
             blocks_len
         );
@@ -502,10 +502,11 @@ impl Syncer {
     async fn add_blocks(
         blockchain: Arc<Blockchain>,
         blocks: Vec<Block>,
-        sync_head_found: bool,
+        _sync_head_found: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
-        if sync_head_found {
+        // DEBUG: Here we are forcing the blocks to be added sequentially
+        if true {
             let mut last_valid_hash = H256::default();
             for block in blocks {
                 blockchain.add_block(&block).await.map_err(|e| {
