@@ -16,7 +16,7 @@ env:
 jobs:
   test:
     name: Integration Test
-    runs-on: ubuntu-latest
+    runs-on: gpu
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
