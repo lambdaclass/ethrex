@@ -137,6 +137,7 @@ impl Blockchain {
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
+        info!("Adding block: {:?}", block.header.compute_block_hash());
         let since = Instant::now();
         // Easiest way to operate on the result of `execute_block` without
         // having to add too much control flow or return early
@@ -153,6 +154,13 @@ impl Blockchain {
             let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
             //info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
+        }
+
+        if result.is_ok() {
+            info!(
+                "Successfully added block: {:?}",
+                block.header.compute_block_hash()
+            );
         }
         result
     }
