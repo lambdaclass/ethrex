@@ -104,11 +104,10 @@ impl Committer {
                 .await?;
         let first_block_to_commit = last_committed_block_number + 1;
 
-        let (blobs_bundle, withdrawal_hashes, deposit_logs_hash, last_block_to_commit) =
-            self.prepare_batch_from_block(first_block_to_commit)?;
+        let (blobs_bundle, withdrawal_hashes, deposit_logs_hash, last_block_of_batch) =
+            self.prepare_batch_from_block(last_committed_block_number)?;
 
-        // TODO: make it better
-        if first_block_to_commit > last_block_to_commit {
+        if last_committed_block_number == last_block_of_batch {
             debug!("No new blocks to commit, skipping..");
             return Ok(());
         }
@@ -120,7 +119,7 @@ impl Committer {
             .send_commitment(
                 batch_to_commit,
                 first_block_to_commit,
-                last_block_to_commit,
+                last_block_of_batch,
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
@@ -129,22 +128,22 @@ impl Committer {
         {
             Ok(commit_tx_hash) => {
                 info!(
-                    "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}. first_block: {first_block_to_commit}, last_block {last_block_to_commit}.",
+                    "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}. first_block: {first_block_to_commit}, last_block {last_block_of_batch}.",
                 );
-                self.store_batch(batch_to_commit, first_block_to_commit, last_block_to_commit, withdrawal_hashes).await?;
+                self.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
-                "Failed to send commitment for batch {batch_to_commit}. first_block: {first_block_to_commit} last_block: {last_block_to_commit}: {error}"
+                "Failed to send commitment for batch {batch_to_commit}. first_block: {first_block_to_commit} last_block: {last_block_of_batch}: {error}"
             ))),
         }
     }
 
     fn prepare_batch_from_block(
         &self,
-        from_block: BlockNumber,
+        mut last_commited_block_number: BlockNumber,
     ) -> Result<(BlobsBundle, Vec<H256>, H256, BlockNumber), CommitterError> {
-        let mut current_block_number = from_block;
+        let first_block_of_batch = last_commited_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
         let mut acc_withdrawals = vec![];
@@ -156,17 +155,16 @@ impl Committer {
         loop {
             let Some(block_to_commit_body) = self
                 .store
-                .get_block_body(current_block_number)
+                .get_block_body(last_commited_block_number + 1)
                 .map_err(CommitterError::from)?
             else {
                 debug!("No new block to commit, skipping..");
-                current_block_number -= 1;
                 break;
             };
 
             let block_to_commit_header = self
                 .store
-                .get_block_header(current_block_number)
+                .get_block_header(last_commited_block_number + 1)
                 .map_err(CommitterError::from)?
                 .ok_or(CommitterError::FailedToGetInformationFromStorage(
                     "Failed to get_block_header() after get_block_body()".to_owned(),
@@ -176,7 +174,7 @@ impl Committer {
             for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
                 let receipt = self
                     .store
-                    .get_receipt(current_block_number, index.try_into()?)?
+                    .get_receipt(last_commited_block_number + 1, index.try_into()?)?
                     .ok_or(CommitterError::InternalError(
                         "Transactions in a block should have a receipt".to_owned(),
                     ))?;
@@ -192,7 +190,7 @@ impl Committer {
                 Some(account_updates) => account_updates,
                 None => {
                     warn!(
-                            "Could not find execution cache result for block {current_block_number}, falling back to re-execution"
+                            "Could not find execution cache result for block {}, falling back to re-execution", last_commited_block_number + 1
                         );
                     Evm::default(self.store.clone(), block_to_commit.header.parent_hash)
                         .execute_block(&block_to_commit)
@@ -211,7 +209,7 @@ impl Committer {
             }
 
             let state_diff = self.prepare_state_diff(
-                from_block,
+                first_block_of_batch,
                 block_to_commit_header,
                 self.store.clone(),
                 &acc_withdrawals,
@@ -235,7 +233,7 @@ impl Committer {
                             .collect::<Vec<H256>>(),
                     );
 
-                    current_block_number += 1;
+                    last_commited_block_number += 1;
                 }
                 Err(e) => {
                     error!("Failed to generate blobs bundle: {e}");
@@ -248,7 +246,7 @@ impl Committer {
             blobs_bundle,
             withdrawal_hashes,
             deposit_logs_hash,
-            current_block_number,
+            last_commited_block_number,
         ))
     }
 
@@ -261,11 +259,11 @@ impl Committer {
     ) -> Result<(), CommitterError> {
         for block_number in first_block_number..=last_block_number {
             self.l2_store
-                .store_batch_number_for_block(block_number, batch_number)
+                .store_batch_number_by_block(block_number, batch_number)
                 .await?;
         }
         self.l2_store
-            .store_withdrawal_hashes_for_batch(batch_number, withdrawal_hashes)
+            .store_withdrawal_hashes_by_batch(batch_number, withdrawal_hashes)
             .await?;
         Ok(())
     }

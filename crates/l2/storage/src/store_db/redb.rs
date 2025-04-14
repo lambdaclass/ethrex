@@ -91,7 +91,7 @@ pub fn init_db() -> Result<Database, StoreError> {
 
 #[async_trait::async_trait]
 impl StoreEngineL2 for RedBStoreL2 {
-    async fn get_batch_number_for_block(
+    async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
@@ -101,7 +101,7 @@ impl StoreEngineL2 for RedBStoreL2 {
             .map(|b| b.value()))
     }
 
-    async fn store_batch_number_for_block(
+    async fn store_batch_number_by_block(
         &self,
         block_number: BlockNumber,
         batch_number: u64,
@@ -110,7 +110,7 @@ impl StoreEngineL2 for RedBStoreL2 {
             .await
     }
 
-    async fn get_withdrawal_hashes_for_batch(
+    async fn get_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError> {
@@ -120,7 +120,7 @@ impl StoreEngineL2 for RedBStoreL2 {
             .map(|w| w.value().to()))
     }
 
-    async fn store_withdrawal_hashes_for_batch(
+    async fn store_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
         withdrawals: Vec<H256>,

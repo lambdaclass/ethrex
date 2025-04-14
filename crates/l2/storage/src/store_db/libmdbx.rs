@@ -84,14 +84,14 @@ impl Debug for Store {
 
 #[async_trait::async_trait]
 impl StoreEngineL2 for Store {
-    async fn get_batch_number_for_block(
+    async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
         self.read::<BatchesByBlockNumber>(block_number).await
     }
 
-    async fn store_batch_number_for_block(
+    async fn store_batch_number_by_block(
         &self,
         block_number: BlockNumber,
         batch_number: u64,
@@ -100,7 +100,7 @@ impl StoreEngineL2 for Store {
             .await
     }
 
-    async fn get_withdrawal_hashes_for_batch(
+    async fn get_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError> {
@@ -110,7 +110,7 @@ impl StoreEngineL2 for Store {
             .map(|w| w.to()))
     }
 
-    async fn store_withdrawal_hashes_for_batch(
+    async fn store_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
         withdrawals: Vec<H256>,

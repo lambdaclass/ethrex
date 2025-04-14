@@ -256,10 +256,9 @@ mod tests {
         eth::{
             filter::PollableFilter,
             logs::{AddressFilter, LogsFilter, TopicFilter},
-            test_utils::default_context_with_storage,
         },
         rpc::{map_http_requests, FILTER_DURATION},
-        utils::test_utils::{self, start_test_api},
+        utils::test_utils::{self, default_context_with_storage, start_test_api},
     };
     use crate::{types::block_identifier::BlockIdentifier, utils::RpcRequest};
     use ethrex_common::types::Genesis;

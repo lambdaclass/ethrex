@@ -62,7 +62,7 @@ impl RpcHandler for GetWithdrawalProof {
         // Gets the batch number for the block
         let batch_number = match context
             .l2_store
-            .get_batch_number_for_block(block_number)
+            .get_batch_number_by_block(block_number)
             .await?
         {
             Some(location) => location,
@@ -72,7 +72,7 @@ impl RpcHandler for GetWithdrawalProof {
         // Gets the withdrawal hashes for the batch
         let batch_withdrawal_hashes = match context
             .l2_store
-            .get_withdrawal_hashes_for_batch(batch_number)
+            .get_withdrawal_hashes_by_batch(batch_number)
             .await?
         {
             Some(withdrawals) => withdrawals,

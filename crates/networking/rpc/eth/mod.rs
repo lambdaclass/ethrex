@@ -13,7 +13,6 @@ pub(crate) mod max_priority_fee;
 #[cfg(test)]
 pub mod test_utils {
     use bytes::Bytes;
-    use ethrex_blockchain::Blockchain;
     use ethrex_common::{
         types::{
             Block, BlockBody, BlockHeader, EIP1559Transaction, Genesis, LegacyTransaction,
@@ -21,19 +20,9 @@ pub mod test_utils {
         },
         Address, Bloom, H256, U256,
     };
-    use ethrex_p2p::sync_manager::SyncManager;
     use ethrex_storage::{EngineType, Store};
-    #[cfg(feature = "l2")]
-    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
     use hex_literal::hex;
-    #[cfg(feature = "l2")]
-    use secp256k1::SecretKey;
-    use std::{str::FromStr, sync::Arc};
-
-    use crate::{
-        rpc::RpcApiContext,
-        utils::test_utils::{example_local_node_record, example_p2p_node},
-    };
+    use std::str::FromStr;
 
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
@@ -154,32 +143,6 @@ pub mod test_utils {
             .expect("Fail to create in-memory db test");
         store.add_initial_state(genesis).await.unwrap();
         store
-    }
-
-    pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        RpcApiContext {
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-            #[cfg(feature = "l2")]
-            l2_store: StoreL2::new("test-store", EngineTypeL2::InMemory)
-                .expect("Fail to create in-memory db test"),
-        }
     }
 
     pub async fn add_legacy_tx_blocks(storage: &Store, block_count: u64, tx_count: u64) {

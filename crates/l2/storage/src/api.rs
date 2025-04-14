@@ -10,26 +10,26 @@ use ethrex_storage::error::StoreError;
 #[async_trait::async_trait]
 pub trait StoreEngineL2: Debug + Send + Sync + RefUnwindSafe {
     /// Returns the batch number for a given block number.
-    async fn get_batch_number_for_block(
+    async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError>;
 
     /// Stores the batch number for a given block number.
-    async fn store_batch_number_for_block(
+    async fn store_batch_number_by_block(
         &self,
         block_number: BlockNumber,
         batch_number: u64,
     ) -> Result<(), StoreError>;
 
     /// Gets the withdrawal hashes for a given batch number.
-    async fn get_withdrawal_hashes_for_batch(
+    async fn get_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError>;
 
     /// Stores the withdrawal hashes for a given batch number.
-    async fn store_withdrawal_hashes_for_batch(
+    async fn store_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
         withdrawal_hashes: Vec<H256>,

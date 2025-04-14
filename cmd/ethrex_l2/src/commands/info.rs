@@ -50,7 +50,7 @@ impl Command {
         match self {
             Command::LatestBlocks => {
                 let last_committed_block =
-                    EthClient::get_last_committed_batch(&eth_client, on_chain_proposer_address)
+                    EthClient::get_last_committed_block(&eth_client, on_chain_proposer_address)
                         .await?;
 
                 let last_verified_block =

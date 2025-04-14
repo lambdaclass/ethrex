@@ -14,9 +14,9 @@ pub struct Store(Arc<Mutex<StoreInner>>);
 
 #[derive(Default, Debug)]
 struct StoreInner {
-    /// Map of block number to batch number
+    /// Map of batches by block numbers
     batches_by_block: HashMap<BlockNumber, u64>,
-    /// Map of batch number to withdrawals
+    /// Map of withdrawals hashes by batch numbers
     withdrawal_hashes_by_batch: HashMap<u64, Vec<H256>>,
 }
 
@@ -33,14 +33,14 @@ impl Store {
 
 #[async_trait::async_trait]
 impl StoreEngineL2 for Store {
-    async fn get_batch_number_for_block(
+    async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
         Ok(self.inner()?.batches_by_block.get(&block_number).copied())
     }
 
-    async fn store_batch_number_for_block(
+    async fn store_batch_number_by_block(
         &self,
         block_number: BlockNumber,
         batch_number: u64,
@@ -51,7 +51,7 @@ impl StoreEngineL2 for Store {
         Ok(())
     }
 
-    async fn get_withdrawal_hashes_for_batch(
+    async fn get_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError> {
@@ -62,7 +62,7 @@ impl StoreEngineL2 for Store {
             .cloned())
     }
 
-    async fn store_withdrawal_hashes_for_batch(
+    async fn store_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
         withdrawals: Vec<H256>,

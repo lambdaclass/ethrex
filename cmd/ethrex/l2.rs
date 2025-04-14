@@ -121,12 +121,12 @@ impl Command {
         match self {
             Command::Init { opts } => {
                 let data_dir = set_datadir(&opts.node_opts.datadir);
-                let data_dir_l2 = data_dir.clone() + "/l2_store";
+                let l2_store_dir = data_dir.clone() + "/l2_store";
 
                 let network = get_network(&opts.node_opts);
 
                 let l1_store = init_store(&data_dir, &network).await;
-                let l2_store = init_l2_store(&data_dir_l2).await;
+                let l2_store = init_l2_store(&l2_store_dir).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, l1_store.clone());
 

@@ -53,38 +53,38 @@ impl Store {
         Ok(store)
     }
 
-    pub async fn get_batch_number_for_block(
+    pub async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<u64>, StoreError> {
-        self.engine.get_batch_number_for_block(block_number).await
+        self.engine.get_batch_number_by_block(block_number).await
     }
-    pub async fn store_batch_number_for_block(
+    pub async fn store_batch_number_by_block(
         &self,
         block_number: BlockNumber,
         batch_number: u64,
     ) -> Result<(), StoreError> {
         self.engine
-            .store_batch_number_for_block(block_number, batch_number)
+            .store_batch_number_by_block(block_number, batch_number)
             .await
     }
 
-    pub async fn get_withdrawal_hashes_for_batch(
+    pub async fn get_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<H256>>, StoreError> {
         self.engine
-            .get_withdrawal_hashes_for_batch(batch_number)
+            .get_withdrawal_hashes_by_batch(batch_number)
             .await
     }
 
-    pub async fn store_withdrawal_hashes_for_batch(
+    pub async fn store_withdrawal_hashes_by_batch(
         &self,
         batch_number: u64,
         withdrawal_hashes: Vec<H256>,
     ) -> Result<(), StoreError> {
         self.engine
-            .store_withdrawal_hashes_for_batch(batch_number, withdrawal_hashes)
+            .store_withdrawal_hashes_by_batch(batch_number, withdrawal_hashes)
             .await
     }
 }
