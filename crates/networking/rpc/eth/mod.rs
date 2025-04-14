@@ -24,9 +24,6 @@ pub mod test_utils {
     use hex_literal::hex;
     use std::str::FromStr;
 
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-
     // Base price for each test transaction.
     pub const BASE_PRICE_IN_WEI: u64 = 10_u64.pow(9);
 

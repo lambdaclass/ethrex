@@ -521,11 +521,6 @@ mod tests {
     use std::io::BufReader;
     use std::str::FromStr;
 
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
-
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
     fn to_rpc_response_success_value(str: &str) -> serde_json::Value {
