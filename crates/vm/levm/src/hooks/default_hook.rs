@@ -342,6 +342,7 @@ impl Hook for DefaultHook {
 
         // 1. Undo value transfer if Tx reverted
         if !report.is_success() {
+            // In a create if Tx was reverted the account won't even exist by this point.
             if !vm.is_create() {
                 vm.db.decrease_account_balance(
                     initial_call_frame.to,
