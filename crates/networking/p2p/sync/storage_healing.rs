@@ -30,8 +30,7 @@ pub(crate) async fn storage_healer(
     state_root: H256,
     peers: PeerHandler,
     store: Store,
-    global_cancel_token: CancellationToken,
-    state_healer_cancel_token: CancellationToken,
+    cancel_token: CancellationToken,
 ) -> Result<bool, SyncError> {
     // List of paths in need of healing, grouped by hashed address
     let mut pending_paths = BTreeMap::<H256, Vec<Nibbles>>::new();
@@ -39,7 +38,7 @@ pub(crate) async fn storage_healer(
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
     let mut last_update = Instant::now();
-    while !(stale || global_cancel_token.is_cancelled()) {
+    while !(stale || cancel_token.is_cancelled()) {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
             info!("Storage Healing in Progress, storages queued: {}", pending_paths.len());
@@ -53,10 +52,6 @@ pub(crate) async fn storage_healer(
                     .await?
                     .into_iter(),
             );
-        }
-        // If the state healer has signaled its end via its cancel token and we have nothing to work on cut the loop
-        if state_healer_cancel_token.is_cancelled() && (stale || pending_paths.is_empty()) {
-            break;
         }
         // If we have enough pending storages to fill a batch
         // or if we have no more incoming batches, spawn a fetch process

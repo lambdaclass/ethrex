@@ -598,14 +598,12 @@ impl Syncer {
             ));
         };
         // Spawn storage healer earlier so we can start healing stale storages
-        // Create a cancellation token so we can signal the storage healer that state healing has ended
-        // This is only a soft cancel, as the storage healer will continue working if it can, storage healing may take longer than state healing
-        let storage_healer_cancell_token = CancellationToken::new();
+        // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
+        let storage_healer_cancell_token = self.cancel_token.child_token();
         let storage_healer_handler = tokio::spawn(storage_healer(
             state_root,
             self.peers.clone(),
             store.clone(),
-            self.cancel_token.clone(),
             storage_healer_cancell_token.clone(),
         ));
         // Perform state sync if it was not already completed on a previous cycle
@@ -653,10 +651,7 @@ impl Syncer {
         let state_heal_complete =
             heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
         // Wait for storage healer to end
-        if !state_heal_complete {
-            // Only cancel storage heal
-            storage_healer_cancell_token.cancel();
-        }
+        storage_healer_cancell_token.cancel();
         let storage_heal_complete = storage_healer_handler.await??;
         if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");
