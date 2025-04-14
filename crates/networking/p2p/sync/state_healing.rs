@@ -18,7 +18,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, Node, EMPTY_TRIE_HASH};
 use tokio::sync::mpsc::{channel, Sender};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,

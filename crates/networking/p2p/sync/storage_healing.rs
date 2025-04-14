@@ -41,7 +41,10 @@ pub(crate) async fn storage_healer(
     while !(stale || cancel_token.is_cancelled()) {
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             last_update = Instant::now();
-            info!("Storage Healing in Progress, storages queued: {}", pending_paths.len());
+            info!(
+                "Storage Healing in Progress, storages queued: {}",
+                pending_paths.len()
+            );
         }
         // If we have few storages in queue, fetch more from the store
         // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
