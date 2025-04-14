@@ -133,13 +133,14 @@ async fn rebuild_state_trie_in_backgound(
                 cancel_token.clone(),
             )
             .await?;
-            // Update status and count time taken if rebuild took place
+
+            // Count time taken if rebuild took place
             if current_root != root {
                 total_rebuild_time += rebuild_start.elapsed().as_millis();
-                // Update status
-                root = current_root;
-                rebuild_status[current_segment].current = current_hash;
             }
+            // Update status
+            root = current_root;
+            rebuild_status[current_segment].current = current_hash;
         }
         // Update DB checkpoint
         let checkpoint = (root, rebuild_status.clone().map(|st| st.current));
