@@ -158,7 +158,7 @@ impl Blockchain {
             //info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
         }
 
-        panic!("STOP EXECUTION");
+        // panic!("STOP EXECUTION");
 
         if result.is_ok() {
             info!(

@@ -63,11 +63,11 @@ async fn main() -> eyre::Result<()> {
 
     let store = init_store(&data_dir, &network).await;
 
-    if let Err(_) = generate_rlp(100, &store) {
-        panic!("ERROR GENERATING RLP")
-    }
+    // if let Err(_) = generate_rlp(100, &store) {
+    //     panic!("ERROR GENERATING RLP")
+    // }
 
-    panic!("STOP EXECUTION");
+    // panic!("STOP EXECUTION");
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
