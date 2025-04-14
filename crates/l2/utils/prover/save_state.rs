@@ -174,9 +174,9 @@ pub fn write_state(block_number: u64, state_type: &StateType) -> Result<(), Save
     Ok(())
 }
 
-fn get_latest_block_number_and_path() -> Result<(u64, PathBuf), SaveStateError> {
+fn get_latest_batch_number_and_path() -> Result<(u64, PathBuf), SaveStateError> {
     let data_dir = default_datadir()?;
-    let latest_block_number = read_dir(&data_dir)?
+    let latest_batch_number = read_dir(&data_dir)?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
@@ -188,13 +188,13 @@ fn get_latest_block_number_and_path() -> Result<(u64, PathBuf), SaveStateError> 
         })
         .max();
 
-    match latest_block_number {
-        Some(block_number) => {
-            let latest_path = data_dir.join(block_number.to_string());
-            Ok((block_number, latest_path))
+    match latest_batch_number {
+        Some(batch_number) => {
+            let latest_path = data_dir.join(batch_number.to_string());
+            Ok((batch_number, latest_path))
         }
         None => Err(SaveStateError::Custom(
-            "No valid block directories found".to_owned(),
+            "No valid batch directories found".to_owned(),
         )),
     }
 }
@@ -207,7 +207,7 @@ fn get_batch_state_path(batch_number: u64) -> Result<PathBuf, SaveStateError> {
 
 /// GET the latest block_number given the proposed structure
 pub fn get_latest_block_number() -> Result<u64, SaveStateError> {
-    let (block_number, _) = get_latest_block_number_and_path()?;
+    let (block_number, _) = get_latest_batch_number_and_path()?;
     Ok(block_number)
 }
 
@@ -256,7 +256,7 @@ pub fn read_proof(
 /// READ the latest state given the [StateFileType].
 /// latest means the state for the highest block_number available.
 pub fn read_latest_state(state_file_type: StateFileType) -> Result<StateType, SaveStateError> {
-    let (latest_block_state_number, _) = get_latest_block_number_and_path()?;
+    let (latest_block_state_number, _) = get_latest_batch_number_and_path()?;
     let state = read_state(latest_block_state_number, state_file_type)?;
     Ok(state)
 }
@@ -274,13 +274,13 @@ pub fn delete_state_file(
 }
 
 /// DELETE the [StateFileType]
-/// latest means the state for the highest block_number available.
+/// latest means the state for the highest batch_number available.
 pub fn delete_latest_state_file(state_file_type: StateFileType) -> Result<(), SaveStateError> {
-    let (latest_block_state_number, _) = get_latest_block_number_and_path()?;
-    let latest_block_state_path = get_batch_state_path(latest_block_state_number)?;
+    let (latest_batch_state_number, _) = get_latest_batch_number_and_path()?;
+    let latest_batch_state_path = get_batch_state_path(latest_batch_state_number)?;
     let file_path: PathBuf = get_state_file_path(
-        &latest_block_state_path,
-        latest_block_state_number,
+        &latest_batch_state_path,
+        latest_batch_state_number,
         &state_file_type,
     );
     std::fs::remove_file(file_path)?;
@@ -298,7 +298,7 @@ pub fn prune_state(batch_number: u64) -> Result<(), SaveStateError> {
 /// PRUNE all the files
 /// latest means the state for the highest block_number available.
 pub fn prune_latest_state() -> Result<(), SaveStateError> {
-    let (latest_block_state_number, _) = get_latest_block_number_and_path()?;
+    let (latest_block_state_number, _) = get_latest_batch_number_and_path()?;
     let latest_block_state_path = get_batch_state_path(latest_block_state_number)?;
     std::fs::remove_dir_all(latest_block_state_path)?;
     Ok(())
@@ -484,7 +484,7 @@ mod tests {
         }
 
         // Check if the latest block_number saved matches the latest block in the chain.rlp
-        let (latest_block_state_number, _) = get_latest_block_number_and_path()?;
+        let (latest_block_state_number, _) = get_latest_batch_number_and_path()?;
 
         assert_eq!(
             latest_block_state_number,
@@ -492,7 +492,7 @@ mod tests {
         );
 
         // Delete account_updates file
-        let (_, latest_path) = get_latest_block_number_and_path()?;
+        let (_, latest_path) = get_latest_batch_number_and_path()?;
 
         assert!(path_has_state_file(
             StateFileType::AccountUpdates,
@@ -518,7 +518,7 @@ mod tests {
 
         // Delete latest path
         prune_latest_state()?;
-        let (latest_block_state_number, _) = get_latest_block_number_and_path()?;
+        let (latest_block_state_number, _) = get_latest_batch_number_and_path()?;
         assert_eq!(
             latest_block_state_number,
             blocks.last().unwrap().header.number - 1

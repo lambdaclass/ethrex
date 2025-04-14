@@ -39,10 +39,10 @@ pub async fn start_l2(store: Store, l2_store: StoreL2, blockchain: Arc<Blockchai
     ));
     task_set.spawn(l1_committer::start_l1_committer(
         store.clone(),
-        l2_store,
+        l2_store.clone(),
         execution_cache.clone(),
     ));
-    task_set.spawn(prover_server::start_prover_server(store.clone()));
+    task_set.spawn(prover_server::start_prover_server(store.clone(), l2_store));
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,

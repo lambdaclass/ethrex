@@ -18,7 +18,8 @@ use ethrex_common::{
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
-use ethrex_vm::{Evm, EvmError, ExecutionDB};
+use ethrex_storage_l2::StoreL2;
+use ethrex_vm::{EvmError, ExecutionDB, StoreWrapper, ToExecDB};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr, time::Duration};
@@ -58,6 +59,7 @@ struct ProverServer {
     l1_address: Address,
     l1_private_key: SecretKey,
     needed_proof_types: Vec<ProverType>,
+    l2_store: StoreL2,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -117,13 +119,18 @@ impl ProofData {
     }
 }
 
-pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
+pub async fn start_prover_server(store: Store, l2_store: StoreL2) -> Result<(), ConfigError> {
     let server_config = ProverServerConfig::from_env()?;
     let eth_config = EthConfig::from_env()?;
     let proposer_config = CommitterConfig::from_env()?;
-    let mut prover_server =
-        ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
-            .await?;
+    let mut prover_server = ProverServer::new_from_config(
+        server_config.clone(),
+        &proposer_config,
+        eth_config,
+        store,
+        l2_store,
+    )
+    .await?;
     prover_server.run(&server_config).await;
     Ok(())
 }
@@ -134,6 +141,7 @@ impl ProverServer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
+        l2_store: StoreL2,
     ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
@@ -181,6 +189,7 @@ impl ProverServer {
             l1_address: config.l1_address,
             l1_private_key: config.l1_private_key,
             needed_proof_types,
+            l2_store,
         })
     }
 
@@ -456,26 +465,23 @@ impl ProverServer {
                     return Ok(());
                 }
 
-                // The ProverType::Exec doesn't generate a real proof, we don't need to save it.
-                if calldata.prover_type != ProverType::Exec {
-                    // Check if we have the proof for that ProverType
-                    let has_proof = match batch_number_has_state_file(
-                        StateFileType::Proof(calldata.prover_type),
-                        batch_number,
-                    ) {
-                        Ok(has_proof) => has_proof,
-                        Err(e) => {
-                            let error = format!("{e}");
-                            if !error.contains("No such file or directory") {
-                                return Err(e.into());
-                            }
-                            false
+                // Check if we have the proof for that ProverType
+                let has_proof = match batch_number_has_state_file(
+                    StateFileType::Proof(calldata.prover_type),
+                    batch_number,
+                ) {
+                    Ok(has_proof) => has_proof,
+                    Err(e) => {
+                        let error = format!("{e}");
+                        if !error.contains("No such file or directory") {
+                            return Err(e.into());
                         }
-                    };
-                    // If we don't have it, insert it.
-                    if !has_proof {
-                        write_state(batch_number, &StateType::Proof(calldata))?;
+                        false
                     }
+                };
+                // If we don't have it, insert it.
+                if !has_proof {
+                    write_state(batch_number, &StateType::Proof(calldata))?;
                 }
 
                 // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
@@ -549,7 +555,11 @@ impl ProverServer {
         &self,
         batch_number: u64,
     ) -> Result<ProverInputData, ProverServerError> {
-        let Some(block_numbers) = self.store_l2.get_block_numbers_for_batch(batch_number)? else {
+        let Some(block_numbers) = self
+            .l2_store
+            .get_block_numbers_for_batch(batch_number)
+            .await?
+        else {
             return Err(ProverServerError::ItemNotFoundInStore(format!(
                 "Batch number {batch_number} not found in store"
             )));

@@ -24,7 +24,7 @@ ethrex-vm = { workspace = true, features = ["l2"] }
 ethrex-levm.workspace = true
 ethrex-dev = { path = "../../crates/blockchain/dev", default-features = false }
 ethrex-metrics = { path = "../blockchain/metrics", default-features = false }
-ethrex-sdk = { path = "./sdk" }
+ethrex-sdk = { path = "./sdk", features = ["l2"]}
 hex.workspace = true
 bytes.workspace = true
 jsonwebtoken.workspace = true

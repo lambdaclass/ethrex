@@ -2,7 +2,7 @@
 use std::any::type_name;
 use std::{fmt::Debug, marker::PhantomData};
 
-use ethrex_common::H256;
+use ethrex_common::{types::BlockNumber, H256};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
@@ -10,6 +10,7 @@ use libmdbx::orm::{Decodable, Encodable};
 use redb::TypeName;
 
 pub type WithdrawalHashesRLP = Rlp<Vec<H256>>;
+pub type BlockNumbersRLP = Rlp<Vec<BlockNumber>>;
 
 #[derive(Clone, Debug)]
 pub struct Rlp<T>(Vec<u8>, PhantomData<T>);
@@ -19,6 +20,12 @@ impl<T: RLPEncode> From<T> for Rlp<T> {
         let mut buf = Vec::new();
         RLPEncode::encode(&value, &mut buf);
         Self(buf, Default::default())
+    }
+}
+
+impl<T> Rlp<T> {
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(bytes, Default::default())
     }
 }
 
