@@ -7,10 +7,42 @@ use ethrex::{
     },
     utils::{set_datadir, store_known_peers},
 };
+use ethrex_common::types::Block;
 use ethrex_p2p::network::peer_table;
-use std::{path::PathBuf, time::Duration};
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_storage::Store;
+use std::{io::Write, path::PathBuf, time::Duration};
 use tokio_util::task::TaskTracker;
 use tracing::info;
+
+/// Generates a `test.rlp` file for use by the prover during testing.
+/// Place this in the `proposer/mod.rs` file,
+/// specifically in the `start` function,
+/// before calling `send_commitment()` to send the block commitment.
+pub fn generate_rlp(
+    up_to_block_number: u64,
+    store: &Store,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if store.get_latest_block_number()? == up_to_block_number {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let file_name = "l2-test.rlp";
+
+        path.push(file_name);
+
+        let mut file = std::fs::File::create(path.to_str().unwrap())?;
+        for i in 1..up_to_block_number {
+            let body = store.get_block_body(i)?.unwrap();
+            let header = store.get_block_header(i)?.unwrap();
+
+            let block = Block::new(header, body);
+            let vec = block.encode_to_vec();
+            file.write_all(&vec)?;
+        }
+
+        info!("TEST RLP GENERATED AT: {path:?}");
+    }
+    Ok(())
+}
 
 #[cfg(any(feature = "l2", feature = "based"))]
 use ethrex::l2::L2Options;
@@ -30,6 +62,12 @@ async fn main() -> eyre::Result<()> {
     let network = get_network(&opts);
 
     let store = init_store(&data_dir, &network).await;
+
+    if let Err(_) = generate_rlp(100, &store) {
+        panic!("ERROR GENERATING RLP")
+    }
+
+    panic!("STOP EXECUTION");
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
