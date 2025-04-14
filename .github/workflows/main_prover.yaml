@@ -23,6 +23,8 @@ jobs:
 
       - name: RISC-V SP1 toolchain install
         run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          . "$HOME/.cargo/env"
           export PATH="/home/admin/.cargo/bin:$PATH"
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 4.1.0
