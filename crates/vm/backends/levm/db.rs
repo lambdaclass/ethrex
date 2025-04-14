@@ -1,6 +1,7 @@
 use ethrex_common::types::AccountInfo;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
+use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::db::{ExecutionDB, StoreWrapper};
@@ -188,13 +189,18 @@ impl LevmDatabase for ExecutionDB {
         let Some(acc_info) = self.accounts.get(&address) else {
             return Ok(ethrex_levm::AccountInfo::default());
         };
-        let acc_code = self
-            .code
-            .get(&acc_info.code_hash)
-            .ok_or(DatabaseError::Custom(format!(
-                "Could not find account's code hash {}",
-                &acc_info.code_hash
-            )))?;
+
+        let acc_code = if acc_info.code_hash != EMPTY_CODE_HASH {
+            self.code
+                .get(&acc_info.code_hash)
+                .ok_or(DatabaseError::Custom(format!(
+                    "Could not find account's code hash {}",
+                    &acc_info.code_hash
+                )))?
+        } else {
+            &bytes::Bytes::new()
+        };
+
         Ok(ethrex_levm::AccountInfo {
             balance: acc_info.balance,
             bytecode: acc_code.clone(),

@@ -263,7 +263,7 @@ impl Hook for L2Hook {
         report.gas_refunded = refunded_gas;
 
         if vm.env.config.fork >= Fork::Prague {
-            let floor_gas_price = vm.get_floor_gas_price(initial_call_frame)?;
+            let floor_gas_price = vm.get_min_gas_used(initial_call_frame)?;
             let execution_gas_used = consumed_gas.saturating_sub(refunded_gas);
             if floor_gas_price > execution_gas_used {
                 consumed_gas = floor_gas_price;
