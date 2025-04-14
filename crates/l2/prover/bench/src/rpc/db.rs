@@ -437,13 +437,8 @@ impl LevmDatabase for RpcDB {
                 return true;
             }
         }
-        if self
-            .fetch_account_blocking(address, &[], false)
+        self.fetch_account_blocking(address, &[], false)
             .is_ok_and(|account| matches!(account, Account::Existing { .. }))
-        {
-            return true;
-        }
-        false
     }
 
     fn get_account_code(&self, _code_hash: H256) -> Result<Option<Bytes>, DatabaseError> {
