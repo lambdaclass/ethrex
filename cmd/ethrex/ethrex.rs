@@ -65,7 +65,7 @@ async fn main() -> eyre::Result<()> {
 
     let store = init_store(&data_dir, &network).await;
 
-    if let Err(_) = generate_rlp(100, &store) {
+    if let Err(_) = generate_rlp(100000, &store) {
         panic!("ERROR GENERATING RLP")
     }
 
