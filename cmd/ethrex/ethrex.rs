@@ -23,24 +23,26 @@ pub fn generate_rlp(
     up_to_block_number: u64,
     store: &Store,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if store.get_latest_block_number()? == up_to_block_number {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let file_name = "l2-test.rlp";
+    let up_to_block_number = store.get_latest_block_number()?.min(up_to_block_number);
+    info!("Generating RLP up to block {}", up_to_block_number);
+    // if store.get_latest_block_number()? >= up_to_block_number {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let file_name = "l2-test.rlp";
 
-        path.push(file_name);
+    path.push(file_name);
 
-        let mut file = std::fs::File::create(path.to_str().unwrap())?;
-        for i in 1..up_to_block_number {
-            let body = store.get_block_body(i)?.unwrap();
-            let header = store.get_block_header(i)?.unwrap();
+    let mut file = std::fs::File::create(path.to_str().unwrap())?;
+    for i in 1..up_to_block_number {
+        let body = store.get_block_body(i)?.unwrap();
+        let header = store.get_block_header(i)?.unwrap();
 
-            let block = Block::new(header, body);
-            let vec = block.encode_to_vec();
-            file.write_all(&vec)?;
-        }
-
-        info!("TEST RLP GENERATED AT: {path:?}");
+        let block = Block::new(header, body);
+        let vec = block.encode_to_vec();
+        file.write_all(&vec)?;
     }
+
+    info!("TEST RLP GENERATED AT: {path:?}");
+    // }
     Ok(())
 }
 
