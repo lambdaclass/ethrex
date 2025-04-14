@@ -417,10 +417,8 @@ impl Hook for DefaultHook {
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
-        if coinbase_fee != U256::zero() {
-            vm.db
-                .increase_account_balance(coinbase_address, coinbase_fee, None)?;
-        };
+        vm.db
+            .increase_account_balance(coinbase_address, coinbase_fee, None)?;
 
         // 4. Destruct addresses in vm.selfdestruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
