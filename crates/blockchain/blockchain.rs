@@ -82,7 +82,7 @@ impl Blockchain {
         );
         let execution_result = vm.execute_block(block)?;
 
-        dbg!(&execution_result);
+        // dbg!(&execution_result);
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
@@ -126,7 +126,16 @@ impl Blockchain {
             .ok_or(ChainError::ParentStateNotFound)?;
 
         // Check state root matches the one in block header
-        validate_state_root(&block.header, new_state_root)?;
+        match validate_state_root(&block.header, new_state_root) {
+            Ok(_) => (),
+            Err(err) => {
+                error!(
+                    "State root validation failed: {:?}. Account updates: {:?}",
+                    err, execution_result.account_updates
+                );
+                return Err(err);
+            }
+        }
 
         self.storage
             .add_block(block.clone())
@@ -146,7 +155,14 @@ impl Blockchain {
         // Async doesn't play well with `.and_then`
         let inner = || async {
             let res = self.execute_block(block).await?;
-            self.store_block(block, res).await
+
+            match self.evm_engine {
+                EvmEngine::LEVM => self.store_block(block, res).await,
+                EvmEngine::REVM => {
+                    dbg!(res.clone());
+                    panic!("Panic because of REVM!");
+                }
+            }
         };
 
         let result = inner().await;
@@ -310,7 +326,16 @@ impl Blockchain {
     //TODO: Forkchoice Update shouldn't be part of this function
     pub async fn import_blocks(&self, blocks: &[Block]) {
         let size = blocks.len();
+
+        let checkpoint_block = self
+            .storage
+            .get_latest_block_number()
+            .expect("Failed to get latest block number");
+
         for block in blocks {
+            if block.header.number <= checkpoint_block {
+                continue;
+            }
             let hash = block.hash();
             info!(
                 "Adding block {} with hash {:#x}.",
