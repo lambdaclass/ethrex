@@ -108,7 +108,7 @@ async fn heal_storage_batch(
         .request_storage_trienodes(state_root, batch.clone())
         .await
     {
-        debug!("Received {} storage nodes", nodes.len());
+        info!("Received {} storage nodes", nodes.len());
         // Process the nodes for each account path
         for (acc_path, paths) in batch.iter_mut() {
             let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
