@@ -8,10 +8,13 @@ use sha3::{Digest, Keccak256};
 /// If the encoded node is less than 32 bits, contains the encoded node itself
 // TODO: Check if we can omit the Inline variant, as nodes will always be bigger than 32 bits in our use case
 // TODO: Check if making this `Copy` can make the code less verbose at a reasonable performance cost
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NodeHash {
     Hashed(H256),
     Inline(Vec<u8>),
+    UnhashedIndex(usize),
+    #[default]
+    None,
 }
 
 impl AsRef<[u8]> for NodeHash {
@@ -19,6 +22,7 @@ impl AsRef<[u8]> for NodeHash {
         match self {
             NodeHash::Inline(x) => x.as_ref(),
             NodeHash::Hashed(x) => x.as_bytes(),
+            _ => &[],
         }
     }
 }
@@ -41,6 +45,7 @@ impl NodeHash {
                 H256::from_slice(Keccak256::new().chain_update(&*x).finalize().as_slice())
             }
             NodeHash::Hashed(x) => x,
+            _ => H256::zero(),
         }
     }
 
@@ -48,12 +53,12 @@ impl NodeHash {
     /// The hash will only be considered invalid if it is empty
     /// Aka if it has a default value instead of being a product of hash computation
     pub fn is_valid(&self) -> bool {
-        !matches!(self, NodeHash::Inline(v) if v.is_empty())
+        !matches!(self, NodeHash::None)
     }
 
     /// Const version of `Default` trait impl
     pub const fn const_default() -> Self {
-        Self::Inline(vec![])
+        Self::None
     }
 }
 
@@ -77,6 +82,7 @@ impl From<NodeHash> for Vec<u8> {
         match val {
             NodeHash::Hashed(x) => x.0.to_vec(),
             NodeHash::Inline(x) => x,
+            _ => vec![],
         }
     }
 }
@@ -86,6 +92,7 @@ impl From<&NodeHash> for Vec<u8> {
         match val {
             NodeHash::Hashed(x) => x.0.to_vec(),
             NodeHash::Inline(x) => x.clone(),
+            _ => vec![],
         }
     }
 }
@@ -106,12 +113,6 @@ impl Decodable for NodeHash {
             32 => NodeHash::Hashed(H256::from_slice(b)),
             _ => NodeHash::Inline(b.into()),
         })
-    }
-}
-
-impl Default for NodeHash {
-    fn default() -> Self {
-        NodeHash::Inline(Vec::new())
     }
 }
 

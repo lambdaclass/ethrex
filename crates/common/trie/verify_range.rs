@@ -110,10 +110,10 @@ pub fn verify_range(
     for (key, value) in keys.iter().zip(values.iter()) {
         trie.insert(key.0.to_vec(), value.clone())?;
     }
+    let hash = trie.hash()?;
     // Check for elements to the right of the range before we wipe the sate
     let has_right_element = has_right_element(root, last_key.as_bytes(), &trie.state)?;
     // Check that the hash is the one we expected (aka the trie was properly reconstructed from the edge proofs and the range)
-    let hash = trie.hash()?;
     if hash != root {
         return Err(TrieError::Verify(format!(
             "invalid proof, expected root hash {}, got  {}",
@@ -444,6 +444,7 @@ impl<'a> ProofNodeStorage<'a> {
             }
 
             NodeHash::Inline(ref encoded) => encoded,
+            _ => todo!(),
         };
         Ok(Node::decode_raw(encoded)?)
     }
@@ -466,6 +467,7 @@ mod tests {
         for k in 25..100_u8 {
             trie.insert([k; 32].to_vec(), [k; 32].to_vec()).unwrap()
         }
+        let _ = trie.hash().unwrap();
         let mut proof = trie.get_proof(&[50; 32].to_vec()).unwrap();
         proof.extend(trie.get_proof(&[75; 32].to_vec()).unwrap());
         let root = trie.hash().unwrap();
@@ -526,6 +528,7 @@ mod tests {
         for val in trie_values.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
+        let _ = trie.hash().unwrap();
         let mut proof = trie.get_proof(&trie_values[7]).unwrap();
         proof.extend(trie.get_proof(&trie_values[17]).unwrap());
         let root = trie.hash().unwrap();

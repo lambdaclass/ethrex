@@ -13,6 +13,7 @@ use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use node_hash::NodeHash;
 use sha3::{Digest, Keccak256};
+use smallvec::SmallVec;
 use std::collections::HashSet;
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
@@ -41,6 +42,38 @@ pub type PathRLP = Vec<u8>;
 pub type ValueRLP = Vec<u8>;
 /// RLP-encoded trie node
 pub type NodeRLP = Vec<u8>;
+
+pub struct ActualTrie {
+    root: Option<ActualNode>,
+    root_hash: Option<H256>,
+}
+
+pub enum ActualNode {
+    Null,
+    Leaf(ActualLeafNode),
+    Extension(ActualExtensionNode),
+    Branch(ActualBranchNode),
+}
+
+pub struct ActualLeafNode {
+    hash: Option<H256>,
+    data: SmallVec<[u8; 32]>,
+}
+
+pub struct ActualBranchNode {
+    children: [Option<Box<ActualNode>>; 16],
+    children_hashes: [Option<H256>; 16],
+    hash: Option<H256>,
+    data: SmallVec<[u8; 32]>,
+}
+
+pub struct ActualExtensionNode {
+    child: Option<Box<ActualNode>>,
+    child_hash: Option<H256>,
+    hash: Option<H256>,
+    data: SmallVec<[u8; 32]>,
+    path: Nibbles,
+}
 
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
@@ -143,8 +176,9 @@ impl Trie {
     }
 
     pub fn commit(&mut self) -> Result<(), TrieError> {
-        if let Some(ref root) = self.root {
-            self.state.commit(root)?;
+        let root = self.root.clone();
+        if let Some(ref root) = root {
+            self.root = self.state.commit(root)?;
         }
         Ok(())
     }
@@ -840,6 +874,7 @@ mod test {
                 cita_trie.insert(val.clone(), val.clone()).unwrap();
             }
             let _ = cita_trie.root();
+            let _ = trie.hash().unwrap();
             for val in data.iter(){
                 let proof = trie.get_proof(val).unwrap();
                 let cita_proof = cita_trie.get_proof(val).unwrap();
@@ -868,6 +903,7 @@ mod test {
             }
             // Compare proofs
             let _ = cita_trie.root();
+            let _ = trie.hash().unwrap();
             for (val, _) in data.iter() {
                 let proof = trie.get_proof(val).unwrap();
                 let cita_proof = cita_trie.get_proof(val).unwrap();
@@ -900,6 +936,7 @@ mod test {
             }
             // Compare proofs
             let _ = cita_trie.root();
+            let _ = trie.hash().unwrap();
             for val in data.iter() {
                 let proof = trie.get_proof(val).unwrap();
                 let cita_proof = cita_trie.get_proof(val).unwrap();
@@ -944,6 +981,7 @@ mod test {
         trie.insert(b"duck".to_vec(), b"duck".to_vec()).unwrap();
         trie.insert(b"goose".to_vec(), b"goose".to_vec()).unwrap();
         let _ = cita_trie.root();
+        let _ = trie.hash().unwrap();
         let cita_proof = cita_trie.get_proof(b"duck".as_ref()).unwrap();
         let trie_proof = trie.get_proof(&b"duck".to_vec()).unwrap();
         assert_eq!(cita_proof, trie_proof);
@@ -958,6 +996,7 @@ mod test {
         cita_trie.insert(val.clone(), val.clone()).unwrap();
         trie.insert(val.clone(), val.clone()).unwrap();
         let _ = cita_trie.root();
+        let _ = trie.hash().unwrap();
         let cita_proof = cita_trie.get_proof(&val).unwrap();
         let trie_proof = trie.get_proof(&val).unwrap();
         assert_eq!(cita_proof, trie_proof);
@@ -976,6 +1015,7 @@ mod test {
         trie.insert(vec![183, 0, 0, 0, 0, 0], vec![183, 0, 0, 0, 0, 0])
             .unwrap();
         let _ = cita_trie.root();
+        let _ = trie.hash().unwrap();
         let cita_proof = cita_trie.get_proof(&[183]).unwrap();
         let trie_proof = trie.get_proof(&vec![183]).unwrap();
         assert_eq!(cita_proof, trie_proof);
@@ -994,6 +1034,7 @@ mod test {
         trie.remove(a.clone()).unwrap();
         cita_trie.remove(&a).unwrap();
         let _ = cita_trie.root();
+        let _ = trie.hash().unwrap();
         let cita_proof = cita_trie.get_proof(&a).unwrap();
         let trie_proof = trie.get_proof(&a).unwrap();
         assert_eq!(cita_proof, trie_proof);
