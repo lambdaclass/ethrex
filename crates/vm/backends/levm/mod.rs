@@ -479,7 +479,6 @@ impl LEVM {
         {
             let all_code_accessed = logger_ref.code_accessed.lock().unwrap();
             for code_hash in all_code_accessed.iter() {
-                dbg!(&code_hash);
                 code_accessed.insert(
                     *code_hash,
                     store.get_account_code(*code_hash).unwrap().unwrap().clone(),
