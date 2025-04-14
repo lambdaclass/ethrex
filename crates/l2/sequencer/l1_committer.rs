@@ -259,11 +259,16 @@ impl Committer {
         last_block_number: u64,
         withdrawal_hashes: Vec<H256>,
     ) -> Result<(), CommitterError> {
-        for block_number in first_block_number..=last_block_number {
+        let blocks: Vec<u64> = (first_block_number..=last_block_number).collect();
+
+        for block_number in blocks.iter() {
             self.l2_store
-                .store_batch_number_for_block(block_number, batch_number)
+                .store_batch_number_for_block(*block_number, batch_number)
                 .await?;
         }
+        self.l2_store
+            .store_block_numbers_for_batch(batch_number, blocks)
+            .await?;
         self.l2_store
             .store_withdrawal_hashes_for_batch(batch_number, withdrawal_hashes)
             .await?;

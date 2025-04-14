@@ -87,7 +87,7 @@ pub fn generate_program_input(
         store,
         block_hash: parent_hash,
     };
-    let db = store.to_exec_db(&block)?;
+    let db = store.to_exec_db(&Vec::new())?;
 
     Ok(ProgramInput {
         db,
