@@ -21,14 +21,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: RISC-V SP1 toolchain install
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          . "$HOME/.cargo/env"
-          export PATH="/home/admin/.cargo/bin:$PATH"
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.0
-
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
 
@@ -36,6 +28,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
             cache-on-failure: "true"
+
+      - name: RISC-V SP1 toolchain install
+        run: |
+          . "$HOME/.cargo/env"
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 4.1.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
