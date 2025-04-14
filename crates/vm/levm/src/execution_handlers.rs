@@ -20,20 +20,18 @@ impl<'a> VM<'a> {
         backup: StateBackup,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
-            Ok(output) => {
-                Ok(ExecutionReport {
-                    result: TxResult::Success,
-                    gas_used: current_call_frame.gas_used,
-                    gas_refunded: 0,
-                    output,
-                    logs: std::mem::take(&mut current_call_frame.logs),
-                })
-            }
+            Ok(output) => Ok(ExecutionReport {
+                result: TxResult::Success,
+                gas_used: current_call_frame.gas_used,
+                gas_refunded: 0,
+                output,
+                logs: std::mem::take(&mut current_call_frame.logs),
+            }),
             Err(error) => {
                 if error.is_internal() {
                     return Err(error);
                 }
-                
+
                 self.restore_state(backup);
 
                 Ok(ExecutionReport {
@@ -233,7 +231,6 @@ impl<'a> VM<'a> {
         current_call_frame: &mut CallFrame,
         backup: StateBackup,
     ) -> Result<ExecutionReport, VMError> {
-
         if error.is_internal() {
             return Err(error);
         }
