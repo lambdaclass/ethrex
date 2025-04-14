@@ -6,6 +6,7 @@ services:
     platform: linux/amd64
     container_name: contract_deployer
     image: ethrex_l2_contract_deployer
+    command: --deposit_rich
     build:
       context: ../../
       args:

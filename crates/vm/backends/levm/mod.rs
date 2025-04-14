@@ -461,7 +461,7 @@ impl LEVM {
                 Ok((*address, account?))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let code = execution_updates
+        let mut code: HashMap<H256, Bytes> = execution_updates
             .clone()
             .iter()
             .map(|update| {
@@ -475,6 +475,21 @@ impl LEVM {
                 ))
             })
             .collect::<Result<_, ExecutionDBError>>()?;
+
+        let mut code_accessed = HashMap::new();
+
+        {
+            let all_code_accessed = logger_ref.code_accessed.lock().unwrap();
+            for code_hash in all_code_accessed.iter() {
+                dbg!(&code_hash);
+                code_accessed.insert(
+                    *code_hash,
+                    store.get_account_code(*code_hash).unwrap().unwrap().clone(),
+                );
+            }
+            code.extend(code_accessed);
+        }
+
         let storage = execution_updates
             .iter()
             .map(|update| {

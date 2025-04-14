@@ -385,12 +385,18 @@ pub fn block_number_has_all_needed_proofs(
 mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
-    use ethrex_vm::{backends::levm::{CacheDB, LEVM}, StoreWrapper};
+    use ethrex_vm::{
+        backends::levm::{CacheDB, LEVM},
+        StoreWrapper,
+    };
 
     use super::*;
     use crate::utils::test_data_io;
     use ethrex_levm::vm::GeneralizedDatabase;
-    use std::{fs::{self}, sync::Arc};
+    use std::{
+        fs::{self},
+        sync::Arc,
+    };
 
     #[tokio::test]
     async fn test_state_file_integration() -> Result<(), Box<dyn std::error::Error>> {
@@ -406,10 +412,14 @@ mod tests {
         let genesis_file_path = path.join("genesis-l2-ci.json");
 
         // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
-        let in_memory_db = Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
+        let in_memory_db =
+            Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
 
         let genesis = test_data_io::read_genesis_file(genesis_file_path.to_str().unwrap());
-        in_memory_db.add_initial_state(genesis.clone()).await.unwrap();
+        in_memory_db
+            .add_initial_state(genesis.clone())
+            .await
+            .unwrap();
 
         let blocks = test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
         // create blockchain
@@ -439,10 +449,14 @@ mod tests {
 
         // Write all the account_updates and proofs for each block
         for block in &blocks {
-            let store = StoreWrapper { store: in_memory_db.clone(), block_hash: block.hash() };
+            let store = StoreWrapper {
+                store: in_memory_db.clone(),
+                block_hash: block.hash(),
+            };
             let mut db = GeneralizedDatabase::new(Arc::new(store.clone()), CacheDB::new());
-            let account_updates =
-                LEVM::execute_block(blocks.last().unwrap(), &mut db).unwrap().account_updates;
+            let account_updates = LEVM::execute_block(blocks.last().unwrap(), &mut db)
+                .unwrap()
+                .account_updates;
 
             account_updates_vec.push(account_updates.clone());
 
