@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744403804665,
+  "lastUpdate": 1744660084836,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2905,6 +2905,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182322649564,
             "range": "± 756927307",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5c9f45926ce10b0b0fd9564ac0704ca34768eed9",
+          "message": "fix(levm): fix last blockchain ef test (#2455)\n\n**Motivation**\n\nHere we fix the last ef test from the blockchain test suite.\n\n**Description**\n\nWhen calling a precompiled contract we were returning an execution\nreport with gas refunded equal to zero. Before Pectra this wasn't a\nproblem because there wasn't a case were a refund could be made.\nBut with de EIP-7702, in the `prepare_execution` hook a refund was\npossible so that behavior had to be changed.\n\nThis branch follows the PR #2436 fixing the test mentioned there.\n\nCloses #2449\n\n---------\n\nCo-authored-by: JereSalo <jeresalo17@gmail.com>",
+          "timestamp": "2025-04-14T18:58:15Z",
+          "tree_id": "963492ca2b2dc873be94d8fa01c1a75db760d598",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5c9f45926ce10b0b0fd9564ac0704ca34768eed9"
+        },
+        "date": 1744660082517,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180177828782,
+            "range": "± 512333073",
             "unit": "ns/iter"
           }
         ]
