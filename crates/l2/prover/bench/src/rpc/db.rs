@@ -127,29 +127,35 @@ impl RpcDB {
             for (address, account) in &fetched {
                 let acc_account_mut = child_cache.get_mut(address);
                 if let Some(acc_account) = acc_account_mut {
-                    match account {
-                        Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage: storage_acc, account_proof, storage_proofs: storage_proofs_acc, code } => {
-                                    storage_acc.extend(storage);
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
-                                Account::NonExisting { account_proof, storage_proofs } => {
-                                    unreachable!()
-                                },
-                            }
-                        },
-                        Account::NonExisting { account_proof, storage_proofs } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                                    unreachable!()
-                                },
-                                Account::NonExisting { account_proof, storage_proofs: storage_proofs_acc } => {
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
-                            }
-                        },
-                    }   
+                    match (account, acc_account) {
+                        (
+                            Account::Existing {
+                                storage,
+                                storage_proofs,
+                                ..
+                            },
+                            Account::Existing {
+                                storage: storage_acc,
+                                storage_proofs: storage_proofs_acc,
+                                ..
+                            },
+                        ) => {
+                            storage_acc.extend(storage);
+                            storage_proofs_acc.extend(storage_proofs.clone());
+                        }
+                        (
+                            Account::NonExisting { storage_proofs, .. },
+                            Account::NonExisting {
+                                storage_proofs: storage_proofs_acc,
+                                ..
+                            },
+                        ) => {
+                            storage_proofs_acc.extend(storage_proofs.clone());
+                        }
+                        _ => {
+                            unreachable!()
+                        }
+                    };
                 } else {
                     child_cache.insert(*address, account.clone());
                 }
@@ -159,29 +165,35 @@ impl RpcDB {
             for (address, account) in &fetched {
                 let acc_account_mut = cache.get_mut(address);
                 if let Some(acc_account) = acc_account_mut {
-                    match account {
-                        Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage: storage_acc, account_proof, storage_proofs: storage_proofs_acc, code } => {
-                                    storage_acc.extend(storage);
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
-                                Account::NonExisting { account_proof, storage_proofs } => {
-                                    unreachable!()
-                                },
-                            }
-                        },
-                        Account::NonExisting { account_proof, storage_proofs } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                                    unreachable!()
-                                },
-                                Account::NonExisting { account_proof, storage_proofs: storage_proofs_acc } => {
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
-                            }
-                        },
-                    }   
+                    match (account, acc_account) {
+                        (
+                            Account::Existing {
+                                storage,
+                                storage_proofs,
+                                ..
+                            },
+                            Account::Existing {
+                                storage: storage_acc,
+                                storage_proofs: storage_proofs_acc,
+                                ..
+                            },
+                        ) => {
+                            storage_acc.extend(storage);
+                            storage_proofs_acc.extend(storage_proofs.clone());
+                        }
+                        (
+                            Account::NonExisting { storage_proofs, .. },
+                            Account::NonExisting {
+                                storage_proofs: storage_proofs_acc,
+                                ..
+                            },
+                        ) => {
+                            storage_proofs_acc.extend(storage_proofs.clone());
+                        }
+                        _ => {
+                            unreachable!()
+                        }
+                    };
                 } else {
                     cache.insert(*address, account.clone());
                 }
@@ -249,9 +261,7 @@ impl RpcDB {
                     account_proof,
                     storage_proofs,
                     code,
-                } => {
-                    (*address, storage.keys().cloned().collect())
-                },
+                } => (*address, storage.keys().cloned().collect()),
                 Account::NonExisting {
                     account_proof,
                     storage_proofs,
@@ -472,7 +482,8 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        let account = self.fetch_accounts_blocking(&[(address, vec![key])], false)
+        let account = self
+            .fetch_accounts_blocking(&[(address, vec![key])], false)
             .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
             .get(&address)
             .unwrap()
