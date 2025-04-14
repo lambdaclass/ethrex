@@ -10,7 +10,7 @@ use super::{BranchNode, Node};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExtensionNode {
     pub prefix: Nibbles,
     pub child: NodeHash,
@@ -159,6 +159,8 @@ impl ExtensionNode {
             NodeHash::Hashed(x) => {
                 encoder = encoder.encode_bytes(&x.0);
             }
+            // None and unhashed nodes can't be encoded
+            _ => (),
         }
         encoder.finish();
         buf
@@ -166,7 +168,7 @@ impl ExtensionNode {
 
     /// Inserts the node into the state and returns its hash
     pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
-        let hash = self.compute_hash();
+        let hash = state.alloc_unhashed();
         state.insert_node(self.into(), hash.clone());
         Ok(hash)
     }

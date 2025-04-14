@@ -12,6 +12,7 @@ use super::{node::Node, node_hash::NodeHash};
 pub struct TrieState {
     db: Box<dyn TrieDB>,
     cache: HashMap<NodeHash, Node>,
+    next_unhashed: usize,
 }
 
 impl TrieState {
@@ -20,7 +21,14 @@ impl TrieState {
         TrieState {
             db,
             cache: Default::default(),
+            next_unhashed: 0,
         }
+    }
+
+    pub fn alloc_unhashed(&mut self) -> NodeHash {
+        let hash = NodeHash::UnhashedIndex(self.next_unhashed);
+        self.next_unhashed += 1;
+        hash
     }
 
     /// Retrieves a node based on its hash
@@ -41,55 +49,70 @@ impl TrieState {
     /// Inserts a node
     pub fn insert_node(&mut self, node: Node, hash: NodeHash) {
         // Don't insert the node if it is already inlined on the parent
-        if matches!(hash, NodeHash::Hashed(_)) {
+        if matches!(hash, NodeHash::Hashed(_) | NodeHash::UnhashedIndex(_)) {
             self.cache.insert(hash, node);
         }
     }
 
     /// Commits cache changes to DB and clears it
     /// Only writes nodes that follow the root's canonical trie
-    pub fn commit(&mut self, root: &NodeHash) -> Result<(), TrieError> {
-        self.commit_node(root)?;
+    pub fn commit(&mut self, root: &NodeHash) -> Result<Option<NodeHash>, TrieError> {
+        let root_hash = self.commit_node(root)?;
         self.cache.clear();
-        Ok(())
+        Ok(root_hash)
     }
 
     // Writes a node and its children into the DB
-    fn commit_node(&mut self, node_hash: &NodeHash) -> Result<(), TrieError> {
+    fn commit_node(&mut self, node_hash: &NodeHash) -> Result<Option<NodeHash>, TrieError> {
         let mut to_commit = vec![];
-        self.commit_node_tail_recursive(node_hash, &mut to_commit)?;
+        let hash = self.commit_node_tail_recursive(node_hash.clone(), &mut to_commit)?;
+        if hash.is_some() {
+            self.db.put_batch(to_commit)?;
+        }
 
-        self.db.put_batch(to_commit)?;
-
-        Ok(())
+        Ok(hash)
     }
 
     // Writes a node and its children into the DB
     fn commit_node_tail_recursive(
         &mut self,
-        node_hash: &NodeHash,
+        mut node_hash: NodeHash,
         acc: &mut Vec<(Vec<u8>, Vec<u8>)>,
-    ) -> Result<(), TrieError> {
-        let Some(node) = self.cache.remove(node_hash) else {
+    ) -> Result<Option<NodeHash>, TrieError> {
+        let Some(mut node) = self.cache.remove(&node_hash) else {
             // If the node is not in the cache then it means it is already stored in the DB
-            return Ok(());
+            return Ok(None);
         };
+        let mut dirty = matches!(node_hash, NodeHash::UnhashedIndex(_));
         // Commit children (if any)
-        match &node {
+        match &mut node {
             Node::Branch(n) => {
-                for child in n.choices.iter() {
+                for child in n.choices.iter_mut() {
                     if child.is_valid() {
-                        self.commit_node_tail_recursive(child, acc)?;
+                        let child_hash = self.commit_node_tail_recursive(child.clone(), acc)?;
+                        if let Some(hash) = child_hash {
+                            dirty = true;
+                            *child = hash;
+                        }
                     }
                 }
             }
-            Node::Extension(n) => self.commit_node_tail_recursive(&n.child, acc)?,
+            Node::Extension(n) => {
+                let child_hash = self.commit_node_tail_recursive(n.child.clone(), acc)?;
+                if let Some(hash) = child_hash {
+                    dirty = true;
+                    n.child = hash;
+                }
+            }
             Node::Leaf(_) => {}
         }
         // Commit self
-        acc.push((node_hash.into(), node.encode_to_vec()));
+        if dirty {
+            node_hash = node.compute_hash();
+        }
+        acc.push((node_hash.clone().into(), node.encode_to_vec()));
 
-        Ok(())
+        Ok(dirty.then_some(node_hash.clone()))
     }
 
     /// Writes a node directly to the DB bypassing the cache

@@ -8,7 +8,7 @@ use ethrex_rlp::{
 };
 
 /// Struct representing a list of nibbles (half-bytes)
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Nibbles {
     data: Vec<u8>,
 }

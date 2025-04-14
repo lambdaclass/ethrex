@@ -6,7 +6,7 @@ use super::{ExtensionNode, LeafNode, Node};
 
 /// Branch Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's value and the hash of its children nodes
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BranchNode {
     // TODO: check if switching to hashmap is a better solution
     pub choices: Box<[NodeHash; 16]>,
@@ -228,7 +228,7 @@ impl BranchNode {
 
     /// Inserts the node into the state and returns its hash
     pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
-        let hash = self.compute_hash();
+        let hash = state.alloc_unhashed();
         state.insert_node(self.into(), hash.clone());
         Ok(hash)
     }

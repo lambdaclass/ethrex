@@ -8,7 +8,7 @@ use crate::{
 use super::{ExtensionNode, Node};
 /// Leaf Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's hash, value & path
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct LeafNode {
     pub partial: Nibbles,
     pub value: ValueRLP,
@@ -117,9 +117,14 @@ impl LeafNode {
     /// Inserts the node into the state and returns its hash
     /// Receives the offset that needs to be traversed to reach the leaf node from the canonical root, used to compute the node hash
     pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
-        let hash = self.compute_hash();
-        state.insert_node(self.into(), hash.clone());
-        Ok(hash)
+        let raw = self.encode_raw();
+        if raw.len() >= 32 {
+            let hash = state.alloc_unhashed();
+            state.insert_node(self.into(), hash.clone());
+            Ok(hash)
+        } else {
+            Ok(NodeHash::Inline(raw))
+        }
     }
 
     /// Encodes the node and appends it to `node_path` if the encoded node is 32 or more bytes long
