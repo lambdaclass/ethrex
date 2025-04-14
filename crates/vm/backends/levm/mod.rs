@@ -412,29 +412,29 @@ impl LEVM {
                 ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
             })?
             .clone();
-        let index: Vec<_> = account_accessed
-            .iter()
-            .map(|address| {
-                // Search for the storage keys read
-                let storage_keys = logger_ref
-                    .storage_accessed
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter_map(
-                        |((addr, key), _)| {
-                            if *addr == *address {
-                                Some(key)
-                            } else {
-                                None
-                            }
-                        },
-                    )
-                    .map(|key| H256::from_slice(&key.to_fixed_bytes()))
-                    .collect::<Vec<_>>();
-                (address, storage_keys)
-            })
-            .collect();
+
+        let mut index = Vec::with_capacity(account_accessed.len());
+        for address in account_accessed.iter() {
+            let storage_keys = logger_ref
+                .storage_accessed
+                .lock()
+                .map_err(|_| {
+                    ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+                })?
+                .iter()
+                .filter_map(
+                    |((addr, key), _)| {
+                        if *addr == *address {
+                            Some(key)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .map(|key| H256::from_slice(&key.to_fixed_bytes()))
+                .collect::<Vec<_>>();
+            index.push((address, storage_keys));
+        }
 
         // fetch all read/written values from store
         let cache_accounts = account_accessed.iter().filter_map(|address| {
@@ -477,11 +477,16 @@ impl LEVM {
         let mut code_accessed = HashMap::new();
 
         {
-            let all_code_accessed = logger_ref.code_accessed.lock().unwrap();
+            let all_code_accessed = logger_ref.code_accessed.lock().map_err(|_| {
+                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+            })?;
             for code_hash in all_code_accessed.iter() {
                 code_accessed.insert(
                     *code_hash,
-                    store.get_account_code(*code_hash).unwrap().unwrap().clone(),
+                    store
+                        .get_account_code(*code_hash)?
+                        .ok_or(ExecutionDBError::CodeNotFound(code_hash.0.into()))?
+                        .clone(),
                 );
             }
             code.extend(code_accessed);
