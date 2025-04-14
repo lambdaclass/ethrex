@@ -1,4 +1,7 @@
+use std::path::PathBuf;
+
 use serde::Deserialize;
+use tracing::{info, warn};
 
 use super::{
     block_producer::BlockProducerConfig, committer::CommitterConfig, deployer::DeployerConfig,
@@ -41,11 +44,19 @@ impl SequencerConfig {
         config.write_env(&ConfigMode::Sequencer.get_env_path_or_default())
     }
 
+    /// Load the sequencer config.
+    /// If the `ETHREX_SEQUENCER_CONFIG` env var is set, the config is parsed from that file.
+    /// Else, the config is tried to be getted from the environment.
     pub fn load() -> Result<Self, ConfigError> {
-        let configs_path = std::env::var("CONFIGS_PATH")
-            .map_err(|_| ConfigError::EnvNotFound("CONFIGS_PATH".to_string()))?;
-        Self::from_env().or(Self::parse_toml(
-            &ConfigMode::Sequencer.get_config_file_path(&configs_path),
-        ))
+        match std::env::var("ETHREX_SEQUENCER_CONFIG") {
+            Ok(config_path) => {
+                info!("Reading config from TOML file: {config_path}");
+                Self::parse_toml(&PathBuf::from(&config_path))
+            }
+            Err(_) => {
+                warn!("ETHREX_SEQUENCER_CONFIG env var not set. Reading config from environment");
+                Self::from_env()
+            }
+        }
     }
 }

@@ -27,7 +27,7 @@ pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>) {
     let config = match SequencerConfig::load() {
         Ok(config) => config,
         Err(err) => {
-            error!("{err}");
+            error!("Failed to load config. {err}");
             return;
         }
     };

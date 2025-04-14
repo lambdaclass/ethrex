@@ -23,7 +23,7 @@ For more detailed documentation on each part of the system:
    - The `salt_is_zero` can be set to:
      - `false` &rarr; randomizes the SALT to allow multiple deployments with random addresses.
      - `true` &rarr; uses SALT equal to `H256::zero()` to deploy to deterministic addresses.
-     - The `L1` has to be restarted to use the `salt_is_zero = true`. 
+     - The `L1` has to be restarted to use the `salt_is_zero = true`.
      - Set it to `false` if not using the CI or running a deterministic test.
 4. `make init`
    - Init the L1 in a docker container on port `8545`.
@@ -35,7 +35,7 @@ For more information on how to run the L2 node with the prover attached to it, t
 
 ## Configuration
 
-Configuration consists of two steps, the parsing of a `.toml` config file and the creation and modification of a `.env` file, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
+Configuration can be passed in two ways: with a `.toml` file or with environment variables. To use a `.toml` file, the `ETHREX_SEQUENCER_CONFIG` (for the sequencer) or `ETHREX_PROVER_CONFIG` (for the prover) env var must be set with the path to the file. If not present, the binary will try to read the config from the environment, and will fail in case some variable is missing. A detailed list of configuration parameters is available in the [sequencer](./sequencer.md) and [prover](./prover.md) docs.
 
 ## Testing
 
@@ -57,7 +57,7 @@ The first one sends regular transfers between accounts, the second runs an EVM-h
 
 To have more control over the load tests and its parameters, you can use the CLI (the Makefile targets use the CLI underneath).
 
-The tests take a list of private keys and send a bunch of transactions from each of them to some address (either the address of some account to send eth to or the address of the contract that we're interacting with). 
+The tests take a list of private keys and send a bunch of transactions from each of them to some address (either the address of some account to send eth to or the address of the contract that we're interacting with).
 
 The CLI can be installed with the `cli` target:
 

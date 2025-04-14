@@ -184,23 +184,12 @@ prover_server_endpoint=<ip-address>:3900
 
 ## Configuration
 
-Configuration is done through environment variables. The easiest way to configure the ProverClient is by creating a `prover_client_config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
-
-The following environment variables are available to configure the Proposer consider looking at the provided [prover_client_config_example.toml](../configs/prover_client_config_example.toml):
-
-The following environment variables are used by the ProverClient:
-
-- `CONFIGS_PATH`: The path where the `PROVER_CLIENT_CONFIG_FILE` is located at.
-- `PROVER_CLIENT_CONFIG_FILE`: The `.toml` that contains the config for the `prover_client`.
-- `PROVER_ENV_FILE`: The name of the `.env` that has the parsed `.toml` configuration.
-- `PROVER_CLIENT_PROVER_SERVER_ENDPOINT`: Prover Server's Endpoint used to connect the Client to the Server.
-
-The following environment variables are used by the ProverServer:
-
-- `PROVER_SERVER_LISTEN_IP`: IP used to start the Server.
-- `PROVER_SERVER_LISTEN_PORT`: Port used to start the Server.
-- `PROVER_SERVER_VERIFIER_ADDRESS`: The address of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
-- `PROVER_SERVER_VERIFIER_PRIVATE_KEY`: The private key of the account that sends the zkProofs on-chain and interacts with the `OnChainProposer` `verify()` function.
+Below are the parameters for the Prover Client, that can be configured in a `.toml` file (passed in the `ETHREX_PROVER_CONFIG` env var) or via environment variables. The name for the env vars are the same as in the `.toml` but in uppercase and prefixed with `PROVER_CLIENT_`, (e.g., `PROVER_CLIENT_PROVER_SERVER_ENDPOINT`).
 
 > [!NOTE]
-> The `PROVER_SERVER_VERIFIER` account must differ from the `COMMITTER_L1` account.
+> An example of a `.toml` file can be found in [configs/prover_client_config_example.toml](../configs/prover_client_config_example.toml).
+
+- `prover_server_endpoint`: Prover Server's Endpoint used to connect the Client to the Server.
+- `proving_time_ms`: TBD.
+
+Configuration for the Prover Server can be found in the [Sequencer docs](./sequencer.md).

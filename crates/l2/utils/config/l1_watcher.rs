@@ -15,7 +15,7 @@ pub struct L1WatcherConfig {
 }
 
 impl L2Config for L1WatcherConfig {
-    const PREFIX: &str = "L1_WATCHER_";
+    const PREFIX: &str = "WATCHER_";
 
     fn to_env(&self) -> String {
         format!(

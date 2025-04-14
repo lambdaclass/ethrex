@@ -41,20 +41,17 @@ For more information about the Prover Server, the [Prover Docs](./prover.md) pro
 
 ## Configuration
 
-Configuration is done through environment variables. The easiest way to configure the Sequencer is by creating a `sequencer_config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
+Below are the parameters for the Sequencer, that can be configured in a `.toml` file (passed in the `ETHREX_SEQUENCER_CONFIG` env var) or via environment variables. The name for the env vars are the same as in the `.toml` but in uppercase and prefixed with the section name (e.g., `DEPLOYER_L1_ADDRESS`).
 
 > [!NOTE]
-> The deployer.rs is in charge of parsing the `.toml` and creating/updating the `.env`
-> If you don't deploy files, the `.toml` will not be parsed.
-
-The following environment variables are available to configure the Proposer consider looking at the provided [sequencer_config_example.toml](../configs/sequencer_config_example.toml):
+> An example of a `.toml` file can be found in [configs/sequencer_config_example.toml](../configs/sequencer_config_example.toml).
 
 <!-- NOTE: Mantain the sections in the same order as present in [sequencer_config_example.toml](../configs/sequencer_config_example.toml). -->
 
 - Under the `[deployer]` section:
 
   - `l1_address`: L1 account which will deploy the common bridge contracts in L1.
-  - `l1_private key`: Its private key.
+  - `l1_private_key`: Its private key.
   - `pico_contract_verifier`: Address which will verify the `pico` proofs.
   - `pico_deploy_verifier`: Whether to deploy the `pico` verifier contract or not.
   - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
@@ -72,7 +69,7 @@ The following environment variables are available to configure the Proposer cons
 - Under the `[proposer]` section:
 
   - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
-  - `coinbase address`: Address which will receive the execution fees.
+  - `coinbase_address`: Address which will receive the execution fees.
 
 - Under the `[committer]` section:
 
@@ -89,8 +86,3 @@ The following environment variables are available to configure the Proposer cons
   - `listen_ip`: IP to listen for proof data requests.
   - `listen_port`: Port to listen for proof data requests.
   - `dev_mode`: Whether `dev_mode` is activated or not.
-
-If you want to use a different configuration file, you can set the:
-
-- `CONFIGS_PATH`: The path where the `SEQUENCER_CONFIG_FILE` is located at.
-- `SEQUENCER_CONFIG_FILE`: The `.toml` that contains the config for the `sequencer`.

@@ -15,17 +15,12 @@ async fn main() {
         return;
     }
 
-    if let Err(e) = ProverClientConfig::toml_to_env() {
-        warn!("Failed to parse .toml file: {e}");
-    }
-
-    if let Err(e) = read_env_file_by_config(ConfigMode::ProverClient) {
-        warn!("Failed to read .env file. It is '.env.prover' by default: {e}");
-    }
-
-    let Ok(config) = ProverClientConfig::from_env() else {
-        error!("Failed to read ProverClientConfig from environment variables. You can set them in a .env or .toml file");
-        return;
+    let config = match ProverClientConfig::load() {
+        Ok(config) => config,
+        Err(err) => {
+            error!("Failed to load config. {err}");
+            return;
+        }
     };
 
     debug!("Prover Client has started");
