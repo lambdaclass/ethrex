@@ -164,7 +164,7 @@ impl Default for EVMConfig {
 }
 
 pub struct VM<'a> {
-    pub call_frames: Vec<CallFrame>,
+    pub initial_call_frame: CallFrame,
     pub env: Environment,
     /// Information that is acted upon immediately following the
     /// transaction.
@@ -270,7 +270,7 @@ impl<'a> VM<'a> {
                 let cache_backup = db.cache.clone();
 
                 Ok(Self {
-                    call_frames: vec![initial_call_frame],
+                    initial_call_frame,
                     env,
                     accrued_substate: substate,
                     db,
@@ -312,7 +312,7 @@ impl<'a> VM<'a> {
                 let cache_backup = db.cache.clone();
 
                 Ok(Self {
-                    call_frames: vec![initial_call_frame],
+                    initial_call_frame,
                     env,
                     accrued_substate: substate,
                     db,
@@ -414,10 +414,7 @@ impl<'a> VM<'a> {
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         self.cache_backup = self.db.cache.clone();
 
-        let mut initial_call_frame = self
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        let mut initial_call_frame = self.initial_call_frame.clone();
 
         if let Err(e) = self.prepare_execution(&mut initial_call_frame) {
             // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
@@ -456,12 +453,6 @@ impl<'a> VM<'a> {
         self.finalize_execution(&initial_call_frame, &mut report)?;
 
         Ok(report)
-    }
-
-    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
-        self.call_frames.last_mut().ok_or(VMError::Internal(
-            InternalError::CouldNotAccessLastCallframe,
-        ))
     }
 
     /// Accesses to an account's storage slot.
