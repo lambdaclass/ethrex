@@ -442,7 +442,7 @@ impl<'a> VM<'a> {
 
         let mut report = self.run_execution(&mut initial_call_frame)?;
 
-        self.finalize_execution(&mut initial_call_frame, &mut report)?;
+        self.finalize_execution(&initial_call_frame, &mut report)?;
 
         Ok(report)
     }
@@ -551,7 +551,7 @@ impl<'a> VM<'a> {
 
     fn finalize_execution(
         &mut self,
-        initial_call_frame: &mut CallFrame,
+        initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
         // NOTE: ATTOW the default hook is created in VM::new(), so
