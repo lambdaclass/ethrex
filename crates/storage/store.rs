@@ -475,6 +475,7 @@ impl Store {
         self.update_earliest_block_number(genesis_block_number)?;
         self.update_latest_block_number(genesis_block_number)?;
         self.set_canonical_block(genesis_block_number, genesis_hash)?;
+        self.get_block_header_by_hash(genesis_hash).unwrap();
 
         // Set chain config
         self.set_chain_config(&genesis.config)

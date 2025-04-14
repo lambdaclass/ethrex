@@ -69,22 +69,44 @@ impl std::fmt::Debug for MDBXFork {
     }
 }
 
-pub static SYNC_STATUS: AtomicBool = AtomicBool::new(false);
-pub static LATEST_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
-pub static EARLIEST_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
-pub static FINALIZED_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
-pub static SAFE_BLOCK_NUMBER: AtomicU64 = AtomicU64::new(0);
-lazy_static::lazy_static! {
-    pub static ref CHAIN_CONFIG: Arc<Mutex<Option<ChainConfig>>> = Default::default() ;
-    pub static ref STORAGE_TRIE: InMemoryTrieDB = Default::default();
-    pub static ref STATE_TRIE: InMemoryTrieDB = Default::default();
-}
-
 impl MDBXFork {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         let client_version = Default::default();
         let db_args = DatabaseArguments::new(client_version);
         let env = init_db(path, db_args).expect("Failed to initialize MDBX Fork");
+
+        // Create tables in main environment
+        let tx = env.begin_rw_txn().unwrap();
+
+        // DupSort tables (those with SubKey)
+        tx.create_db(Some("AccountTrie"), DatabaseFlags::DUP_SORT)
+            .unwrap();
+        tx.create_db(Some("Receipts"), DatabaseFlags::DUP_SORT)
+            .unwrap();
+
+        // Regular tables
+        tx.create_db(Some("StorageTrie"), DatabaseFlags::default())
+            .unwrap();
+        tx.create_db(Some("PayloadsTable"), DatabaseFlags::default())
+            .unwrap();
+        tx.create_db(Some("TransactionLocations"), DatabaseFlags::default())
+            .unwrap();
+        tx.create_db(Some("Bodies"), DatabaseFlags::default())
+            .unwrap();
+        tx.create_db(Some("Headers"), DatabaseFlags::default())
+            .unwrap();
+        tx.create_db(Some("BlockNumbers"), DatabaseFlags::default())
+            .unwrap();
+        tx.create_db(Some("PendingBlocks"), DatabaseFlags::default())
+            .unwrap();
+        tx.create_db(Some("CanonicalBlockHashes"), DatabaseFlags::default())
+            .unwrap();
+
+        tx.create_db(Some("ChainData"), DatabaseFlags::default())
+            .unwrap();
+
+        tx.commit().unwrap();
+
         let env_account_trie = DatabaseEnv::open(
             Path::new("/tmp/account_trie"),
             reth_db::DatabaseEnvKind::RW,
@@ -99,6 +121,7 @@ impl MDBXFork {
         .unwrap();
         let account_trie = Arc::new(MDBXTrieDupsort::new(env_account_trie));
         let storage_trie = Arc::new(MDBXTrieDB::new(env_storage_trie));
+
         Ok(Self {
             env,
             account_trie,
@@ -301,7 +324,14 @@ tables! {
     table AccountTrie<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
     table Receipts<Key = Vec<u8>, Value = Vec<u8>, SubKey = u64>;
     table StorageTrie<Key = Vec<u8>, Value = Vec<u8>>;
-    table PayloadsTable <Key = u64, Value = Vec<u8>>;
+    table PayloadsTable<Key = u64, Value = Vec<u8>>;
+    table TransactionLocations<Key = Vec<u8>, Value = Vec<u8>>;
+    table Bodies<Key = Vec<u8>, Value = Vec<u8>>;
+    table Headers<Key = Vec<u8>, Value = Vec<u8>>;
+    table CanonicalBlockHashes<Key = u64, Value = Vec<u8>>;
+    table BlockNumbers<Key = Vec<u8>, Value = u64>;
+    table PendingBlocks<Key = Vec<u8>, Value = Vec<u8>>;
+    table ChainData<Key = u8, Value = Vec<u8>>;
 }
 
 impl StoreEngine for MDBXFork {
@@ -314,10 +344,7 @@ impl StoreEngine for MDBXFork {
             .env
             .tx_mut()
             .expect("Could not start TX for block headers");
-        let block_number = block_header.number;
-        tx.put::<tables::HeaderNumbers>(block_hash.0.into(), block_number)
-            .unwrap();
-        tx.put::<tables::Headers>(block_number, ethrex_header_to_ret_header(block_header))
+        tx.put::<Headers>(block_hash.encode_to_vec(), block_header.encode_to_vec())
             .unwrap();
         tx.commit().unwrap();
         Ok(())
@@ -333,10 +360,7 @@ impl StoreEngine for MDBXFork {
             .tx_mut()
             .expect("Could not start tx for block headers (batched)");
         for (header, hash) in block_headers.into_iter().zip(block_hashes) {
-            let block_number = header.number;
-            tx.put::<tables::HeaderNumbers>(hash.0.into(), block_number)
-                .unwrap();
-            tx.put::<tables::Headers>(block_number, ethrex_header_to_ret_header(header))
+            tx.put::<Headers>(hash.encode_to_vec(), header.encode_to_vec())
                 .unwrap();
         }
 
@@ -349,8 +373,14 @@ impl StoreEngine for MDBXFork {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
         let tx = self.env.tx().expect("Could not start tx for block headers");
-        let header = tx.get::<tables::Headers>(block_number).unwrap();
-        Ok(header.map(|header| reth_header_to_ethrex_header(header)))
+        let Some(header_hash) = tx.get::<CanonicalBlockHashes>(block_number).unwrap() else {
+            return Ok(None);
+        };
+        let header = tx
+            .get::<Headers>(header_hash)
+            .unwrap()
+            .map(|h| BlockHeader::decode(h.as_ref()).unwrap());
+        Ok(header)
     }
 
     fn add_block_body(
@@ -363,58 +393,26 @@ impl StoreEngine for MDBXFork {
     }
 
     fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        let pre_processed: Vec<_> = blocks
-            .iter()
-            .map(|Block { header, body, .. }| {
-                let hash = header.compute_block_hash();
-                let header =
-                    SealedHeader::new(ethrex_header_to_ret_header(header.clone()), hash.0.into());
-                let ommers = body
-                    .ommers
-                    .iter()
-                    .map(|h| ethrex_header_to_ret_header(h.clone()))
-                    .collect();
-                let ws: Option<Withdrawals> = body.withdrawals.as_ref().map(|ws| {
-                    Withdrawals::new(
-                        ws.iter()
-                            .map(|w| ethrex_withdrawal_to_reth_withdrawal(w.clone()))
-                            .collect(),
-                    )
-                });
-                let transactions: Vec<_> = body
-                    .transactions
-                    .iter()
-                    // FIXME: Properly transform the tx type
-                    .map(|_tx| TransactionSigned::default())
-                    .collect();
-
-                let body = RethBlockBody {
-                    transactions: transactions.clone(),
-                    ommers,
-                    withdrawals: ws,
-                    requests: None,
-                };
-                let senders = transactions
-                    .iter()
-                    .map(|_tx_| {
-                        // FIXME: Properly transform the tx type
-                        let tx = TransactionSigned::default();
-                        tx.recover_signer().unwrap()
-                    })
-                    .collect();
-                let block = SealedBlock::new(header, body);
-                SealedBlockWithSenders::new(block, senders).unwrap()
-            })
-            .collect();
         let tx = self.env.tx_mut().unwrap();
-        let provider = StaticFileProvider::read_write("/tmp/provider").unwrap();
-        // let db_provider = DatabaseProvider
-        let spec: ChainSpec = Default::default();
-        let provider = DatabaseProvider::new_rw(tx, Arc::new(spec), provider, Default::default());
-        for block in pre_processed {
-            provider.insert_block(block).unwrap();
+        for block in blocks {
+            let number = block.header.number;
+            let hash = block.hash();
+            for (index, transaction) in block.body.transactions.iter().enumerate() {
+                tx.put::<TransactionLocations>(
+                    transaction.compute_hash().0.into(),
+                    (number, hash, index as u64).encode_to_vec(),
+                )
+                .unwrap();
+            }
+
+            tx.put::<Bodies>(hash.encode_to_vec(), block.body.encode_to_vec())
+                .unwrap();
+            tx.put::<Headers>(hash.encode_to_vec(), block.header.encode_to_vec())
+                .unwrap();
+            tx.put::<BlockNumbers>(hash.encode_to_vec(), number)
+                .unwrap();
         }
-        provider.commit().unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
@@ -438,12 +436,11 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
         let tx = self.env.tx().unwrap();
-        let block_number = tx
-            .get::<tables::HeaderNumbers>(block_hash.0.into())
+        let header = tx
+            .get::<Headers>(block_hash.encode_to_vec())
             .unwrap()
-            .unwrap();
-        let header = tx.get::<tables::Headers>(block_number).unwrap().unwrap();
-        Ok(Some(reth_header_to_ethrex_header(header)))
+            .map(|header| BlockHeader::decode(&header[..]).unwrap());
+        Ok(header)
     }
 
     fn add_block_number(
@@ -516,28 +513,60 @@ impl StoreEngine for MDBXFork {
     }
 
     fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        let mut config = CHAIN_CONFIG.lock().unwrap();
-        *config = Some(chain_config.clone());
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<ChainData>(
+            ChainDataIndex::ChainConfig as u8,
+            serde_json::to_string(chain_config).unwrap().into_bytes(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        Ok(CHAIN_CONFIG.lock().unwrap().unwrap().clone())
+        let tx = self.env.tx().unwrap();
+        match tx
+            .get::<ChainData>(ChainDataIndex::ChainConfig as u8)
+            .unwrap()
+        {
+            None => Err(StoreError::Custom("Chain config not found".to_string())),
+            Some(bytes) => {
+                let json = String::from_utf8(bytes).map_err(|_| StoreError::DecodeError)?;
+                let chain_config: ChainConfig =
+                    serde_json::from_str(&json).map_err(|_| StoreError::DecodeError)?;
+                Ok(chain_config)
+            }
+        }
     }
 
     fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        EARLIEST_BLOCK_NUMBER.swap(block_number, std::sync::atomic::Ordering::Acquire);
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<ChainData>(
+            ChainDataIndex::EarliestBlockNumber as u8,
+            block_number.encode_to_vec(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
     fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(Some(
-            EARLIEST_BLOCK_NUMBER.load(std::sync::atomic::Ordering::Acquire),
-        ))
+        let tx = self.env.tx().unwrap();
+        let res = tx
+            .get::<ChainData>(ChainDataIndex::EarliestBlockNumber as u8)
+            .unwrap()
+            .map(|r| RLPDecode::decode(r.as_ref()).unwrap());
+        Ok(res)
     }
 
     fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        FINALIZED_BLOCK_NUMBER.swap(block_number, std::sync::atomic::Ordering::Acquire);
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<ChainData>(
+            ChainDataIndex::FinalizedBlockNumber as u8,
+            block_number.encode_to_vec(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
@@ -546,7 +575,13 @@ impl StoreEngine for MDBXFork {
     }
 
     fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        FINALIZED_BLOCK_NUMBER.swap(block_number, std::sync::atomic::Ordering::Acquire);
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<ChainData>(
+            ChainDataIndex::SafeBlockNumber as u8,
+            block_number.encode_to_vec(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
@@ -555,14 +590,23 @@ impl StoreEngine for MDBXFork {
     }
 
     fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        LATEST_BLOCK_NUMBER.swap(block_number, std::sync::atomic::Ordering::Acquire);
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<ChainData>(
+            ChainDataIndex::LatestBlockNumber as u8,
+            block_number.encode_to_vec(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
     fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        Ok(Some(
-            LATEST_BLOCK_NUMBER.load(std::sync::atomic::Ordering::Acquire),
-        ))
+        let tx = self.env.tx().unwrap();
+        let res = tx
+            .get::<ChainData>(ChainDataIndex::LatestBlockNumber as u8)
+            .unwrap()
+            .map(|r| RLPDecode::decode(r.as_ref()).unwrap());
+        Ok(res)
     }
 
     fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
@@ -584,8 +628,9 @@ impl StoreEngine for MDBXFork {
 
     fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
-        tx.put::<tables::CanonicalHeaders>(number, hash.0.into())
+        tx.put::<CanonicalBlockHashes>(number, hash.encode_to_vec())
             .unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
@@ -594,11 +639,11 @@ impl StoreEngine for MDBXFork {
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         let tx = self.env.tx().unwrap();
-        let bytes = tx.get::<tables::CanonicalHeaders>(number).unwrap();
+        let bytes = tx.get::<CanonicalBlockHashes>(number).unwrap();
 
         match bytes {
             Some(bytes) => {
-                let hash = BlockHash::from_slice(bytes.as_slice());
+                let hash: BlockHash = RLPDecode::decode(bytes.as_ref()).unwrap();
                 Ok(Some(hash))
             }
             None => Ok(None),
@@ -646,7 +691,14 @@ impl StoreEngine for MDBXFork {
     }
 
     fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
-        todo!()
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<PendingBlocks>(
+            block.header.compute_block_hash().encode_to_vec(),
+            block.encode_to_vec(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
@@ -730,11 +782,18 @@ impl StoreEngine for MDBXFork {
     }
 
     fn is_synced(&self) -> Result<bool, StoreError> {
-        Ok(SYNC_STATUS.load(std::sync::atomic::Ordering::Relaxed))
+        let tx = self.env.tx().unwrap();
+        let sync_status = tx
+            .get::<ChainData>(ChainDataIndex::IsSynced as u8)
+            .unwrap()
+            .unwrap();
+        Ok(RLPDecode::decode(&sync_status).unwrap())
     }
 
     fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        SYNC_STATUS.store(status, std::sync::atomic::Ordering::Relaxed);
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<ChainData>(ChainDataIndex::IsSynced as u8, status.encode_to_vec())
+            .unwrap();
         Ok(())
     }
 

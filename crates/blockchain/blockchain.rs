@@ -66,6 +66,7 @@ impl Blockchain {
     fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
+            panic!("PARENT NOT FOUND");
             // If the parent is not present, we store it as pending.
             self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
@@ -602,7 +603,7 @@ pub fn is_canonical(
     block_number: BlockNumber,
     block_hash: BlockHash,
 ) -> Result<bool, StoreError> {
-    match store.get_canonical_block_hash(block_number)? {
+    match dbg!(store.get_canonical_block_hash(block_number)?) {
         Some(hash) if hash == block_hash => Ok(true),
         _ => Ok(false),
     }
