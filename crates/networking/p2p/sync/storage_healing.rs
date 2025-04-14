@@ -10,8 +10,9 @@ use std::collections::BTreeMap;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{peer_handler::PeerHandler, sync::node_missing_children};
 
@@ -19,7 +20,7 @@ use crate::{peer_handler::PeerHandler, sync::node_missing_children};
 /// More paths will be read from the Store if the amount goes below this value
 const MINUMUM_STORAGES_IN_QUEUE: usize = 400;
 
-use super::{SyncError, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE};
+use super::{SyncError, MAX_PARALLEL_FETCHES, NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION};
 
 /// Waits for incoming hashed addresses from the receiver channel endpoint and queues the associated root nodes for state retrieval
 /// Also retrieves their children nodes until we have the full storage trie stored
@@ -36,7 +37,12 @@ pub(crate) async fn storage_healer(
     // The pivot may become stale while the fetcher is active, we will still keep the process
     // alive until the end signal so we don't lose queued messages
     let mut stale = false;
+    let mut last_update = Instant::now();
     while !(stale || cancel_token.is_cancelled()) {
+        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            last_update = Instant::now();
+            info!("Storage Healing in Progress, storages queued: {}", pending_paths.len());
+        }
         // If we have few storages in queue, fetch more from the store
         // We won't be retrieving all of them as the read can become quite long and we may not end up using all of the paths in this cycle
         if pending_paths.len() < MINUMUM_STORAGES_IN_QUEUE {
