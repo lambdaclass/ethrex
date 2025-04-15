@@ -82,8 +82,6 @@ impl Blockchain {
         );
         let execution_result = vm.execute_block(block)?;
 
-        dbg!(&execution_result);
-
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
@@ -157,8 +155,6 @@ impl Blockchain {
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
             //info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
         }
-
-        panic!("STOP EXECUTION");
 
         if result.is_ok() {
             info!(
