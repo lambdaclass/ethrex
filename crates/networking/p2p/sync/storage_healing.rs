@@ -107,6 +107,7 @@ async fn heal_storage_batch(
         .await
     {
         info!("Received {} storage nodes", nodes.len());
+        info!("Received batch: {batch:?}");
         // Process the nodes for each account path
         for (acc_path, paths) in batch.iter_mut() {
             let mut trie = store.open_storage_trie(*acc_path, *EMPTY_TRIE_HASH);
@@ -126,6 +127,7 @@ async fn heal_storage_batch(
                 break;
             }
         }
+        info!("Return batch: {batch:?}");
         // Return remaining and added paths to be added to the queue
         // Filter out the storages we completely fetched
         batch.retain(|_, v| !v.is_empty());
