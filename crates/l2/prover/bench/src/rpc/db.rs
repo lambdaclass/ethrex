@@ -495,12 +495,14 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, DatabaseError> {
-        Ok(self
-            .block_hashes
-            .lock()
-            .unwrap()
-            .get(&block_number)
-            .cloned())
+        let handle = tokio::runtime::Handle::current();
+        let hash = tokio::task::block_in_place(|| {
+            handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
+        })
+        .map_err(|e| DatabaseError::Custom(e))
+        .map(|block| block.hash())?;
+        self.block_hashes.lock().unwrap().insert(block_number, hash);
+        Ok(Some(hash))
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
