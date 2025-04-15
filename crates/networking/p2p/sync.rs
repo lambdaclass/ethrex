@@ -606,7 +606,7 @@ impl Syncer {
             self.peers.clone(),
             store.clone(),
             storage_healer_cancell_token.clone(),
-            state_healing_ended.clone()
+            state_healing_ended.clone(),
         ));
         // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in

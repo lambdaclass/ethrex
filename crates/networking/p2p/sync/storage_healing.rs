@@ -5,7 +5,13 @@
 //! For each storage received, the process will first queue their root nodes and then queue all the missing children from each node fetched in the same way as state healing
 //! Even if the pivot becomes stale, the healer will remain active and listening until a termination signal (an empty batch) is received
 
-use std::{collections::BTreeMap, sync::{atomic::{AtomicBool, Ordering}, Arc}};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use ethrex_common::H256;
 use ethrex_storage::Store;
