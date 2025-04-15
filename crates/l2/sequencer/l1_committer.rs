@@ -108,8 +108,9 @@ impl Committer {
                 .await?;
         let first_block_to_commit = last_committed_block_number + 1;
 
-        let (blobs_bundle, withdrawal_hashes, deposit_logs_hash, last_block_of_batch) =
-            self.prepare_batch_from_block(last_committed_block_number)?;
+        let (blobs_bundle, withdrawal_hashes, deposit_logs_hash, last_block_of_batch) = self
+            .prepare_batch_from_block(last_committed_block_number)
+            .await?;
 
         if last_committed_block_number == last_block_of_batch {
             debug!("No new blocks to commit, skipping..");
@@ -143,7 +144,7 @@ impl Committer {
         }
     }
 
-    fn prepare_batch_from_block(
+    async fn prepare_batch_from_block(
         &self,
         mut last_commited_block_number: BlockNumber,
     ) -> Result<(BlobsBundle, Vec<H256>, H256, BlockNumber), CommitterError> {
@@ -162,6 +163,7 @@ impl Committer {
             let Some(block_to_commit_body) = self
                 .store
                 .get_block_body(last_commited_block_number + 1)
+                .await
                 .map_err(CommitterError::from)?
             else {
                 debug!("No new block to commit, skipping..");
@@ -180,7 +182,8 @@ impl Committer {
             for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
                 let receipt = self
                     .store
-                    .get_receipt(last_commited_block_number + 1, index.try_into()?)?
+                    .get_receipt(last_commited_block_number + 1, index.try_into()?)
+                    .await?
                     .ok_or(CommitterError::InternalError(
                         "Transactions in a block should have a receipt".to_owned(),
                     ))?;
@@ -214,14 +217,16 @@ impl Committer {
                 }
             }
 
-            let state_diff = self.prepare_state_diff(
-                first_block_of_batch,
-                block_to_commit_header,
-                self.store.clone(),
-                &acc_withdrawals,
-                &acc_deposits,
-                acc_account_updates.clone().into_values().collect(),
-            )?;
+            let state_diff = self
+                .prepare_state_diff(
+                    first_block_of_batch,
+                    block_to_commit_header,
+                    self.store.clone(),
+                    &acc_withdrawals,
+                    &acc_deposits,
+                    acc_account_updates.clone().into_values().collect(),
+                )
+                .await?;
 
             match self.generate_blobs_bundle(&state_diff) {
                 Ok(bundle) => {
@@ -336,8 +341,8 @@ impl Committer {
         }
     }
 
-    /// Prepare the state diff for the blocks.
-    fn prepare_state_diff(
+    /// Prepare the state diff for the block.
+    async fn prepare_state_diff(
         &self,
         first_block_number: BlockNumber,
         last_header: BlockHeader,
@@ -353,6 +358,7 @@ impl Committer {
                 // and we may have to keep track of the latestCommittedBlock (last block of the batch),
                 // the batch_size and the latestCommittedBatch in the contract.
                 .get_account_info(first_block_number - 1, account_update.address)
+                .await
                 .map_err(StoreError::from)?
             {
                 Some(acc) => acc.nonce,

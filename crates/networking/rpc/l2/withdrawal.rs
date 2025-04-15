@@ -43,7 +43,10 @@ impl RpcHandler for GetWithdrawalProof {
         );
 
         // Gets the transaction from the storage
-        let withdrawal_transaction = match storage.get_transaction_by_hash(self.transaction_hash)? {
+        let withdrawal_transaction = match storage
+            .get_transaction_by_hash(self.transaction_hash)
+            .await?
+        {
             Some(transaction) => transaction,
             _ => return Ok(Value::Null),
         };
@@ -53,11 +56,13 @@ impl RpcHandler for GetWithdrawalProof {
             .ok_or_else(|| RpcErr::BadParams("Transaction is not a withdrawal".to_string()))?;
 
         // Gets the block number where the transaction was included
-        let (block_number, _block_hash, _index) =
-            match storage.get_transaction_location(self.transaction_hash)? {
-                Some(location) => location,
-                _ => return Ok(Value::Null),
-            };
+        let (block_number, _block_hash, _index) = match storage
+            .get_transaction_location(self.transaction_hash)
+            .await?
+        {
+            Some(location) => location,
+            _ => return Ok(Value::Null),
+        };
 
         // Gets the batch number for the block
         let batch_number = match context

@@ -350,13 +350,13 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_estimateGas" => EstimateGasRequest::call(req, context).await,
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
-            NewFilterRequest::stateful_call(req, context.storage, context.active_filters)
+            NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
         }
         "eth_uninstallFilter" => {
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
         }
         "eth_getFilterChanges" => {
-            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters)
+            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters).await
         }
         "eth_sendRawTransaction" => {
             cfg_if::cfg_if! {

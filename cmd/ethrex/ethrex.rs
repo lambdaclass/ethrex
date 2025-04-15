@@ -59,7 +59,8 @@ async fn main() -> eyre::Result<()> {
         tracker.clone(),
         #[cfg(feature = "l2")]
         StoreL2::default(),
-    );
+    )
+    .await;
 
     init_metrics(&opts, tracker.clone());
 
@@ -67,7 +68,7 @@ async fn main() -> eyre::Result<()> {
         if #[cfg(feature = "dev")] {
             use ethrex::initializers::init_dev_network;
 
-            init_dev_network(&opts, &store, tracker.clone());
+            init_dev_network(&opts, &store, tracker.clone()).await;
         } else {
             use ethrex::initializers::init_network;
 

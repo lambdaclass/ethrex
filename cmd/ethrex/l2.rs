@@ -152,7 +152,8 @@ impl Command {
                     cancel_token.clone(),
                     tracker.clone(),
                     l2_store.clone(),
-                );
+                )
+                .await;
 
                 // TODO: Add a --metrics flag to enable metrics.
                 init_metrics(&opts.node_opts, tracker.clone());

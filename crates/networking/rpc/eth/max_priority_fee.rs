@@ -18,7 +18,7 @@ impl RpcHandler for MaxPriorityFee {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let estimated_gas_tip = estimate_gas_tip(&context.storage)?;
+        let estimated_gas_tip = estimate_gas_tip(&context.storage).await?;
 
         let gas_tip = match estimated_gas_tip {
             Some(gas_tip) => gas_tip,

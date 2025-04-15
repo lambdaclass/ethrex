@@ -54,7 +54,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
             }
         }
     }
-    check_poststate_against_db(test_key, test, &store)
+    check_poststate_against_db(test_key, test, &store).await
 }
 
 /// Tests the rlp decoding of a block
@@ -136,13 +136,14 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
 /// Checks that all accounts in the post-state are present and have the correct values in the DB
 /// Panics if any comparison fails
 /// Tests that previously failed the validation stage shouldn't be executed with this function.
-fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
-    let latest_block_number = db.get_latest_block_number().unwrap();
+async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
+    let latest_block_number = db.get_latest_block_number().await.unwrap();
     for (addr, account) in &test.post_state {
         let expected_account: CoreAccount = account.clone().into();
         // Check info
         let db_account_info = db
             .get_account_info(latest_block_number, *addr)
+            .await
             .expect("Failed to read from DB")
             .unwrap_or_else(|| {
                 panic!("Account info for address {addr} not found in DB, test:{test_key}")
@@ -167,6 +168,7 @@ fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
         for (key, value) in expected_account.storage {
             let db_storage_value = db
                 .get_storage_at(latest_block_number, *addr, key)
+                .await
                 .expect("Failed to read from DB")
                 .unwrap_or_else(|| {
                     panic!("Storage missing for address {addr} key {key} in DB test:{test_key}")
@@ -178,7 +180,7 @@ fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
         }
     }
     // Check lastblockhash is in store
-    let last_block_number = db.get_latest_block_number().unwrap();
+    let last_block_number = db.get_latest_block_number().await.unwrap();
     let last_block_hash = db
         .get_block_header(last_block_number)
         .unwrap()
