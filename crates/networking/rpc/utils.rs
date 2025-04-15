@@ -1,4 +1,3 @@
-#[cfg(feature = "l2")]
 use ethrex_common::{types::Transaction, Address, H256};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
@@ -281,7 +280,6 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     }
 }
 
-#[cfg(feature = "l2")]
 /// Returns the formated hash of the withdrawal transaction,
 /// or None if the transaction is not a withdrawal.
 /// The hash is computed as keccak256(to || value || tx_hash)
@@ -298,7 +296,7 @@ pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
         [to.as_bytes(), &value, tx.compute_hash().as_bytes()].concat(),
     ))
 }
-#[cfg(feature = "l2")]
+
 pub fn merkle_proof(data: Vec<H256>, base_element: H256) -> Option<Vec<H256>> {
     use keccak_hash::keccak;
 

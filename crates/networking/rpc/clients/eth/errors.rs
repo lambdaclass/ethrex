@@ -34,7 +34,6 @@ pub enum EthClientError {
     GetCodeError(#[from] GetCodeError),
     #[error("eth_getTransactionByHash request error: {0}")]
     GetTransactionByHashError(#[from] GetTransactionByHashError),
-    #[cfg(feature = "l2")]
     #[error("ethrex_getEithdrawalProof request error: {0}")]
     GetWithdrawalProofError(#[from] GetWithdrawalProofError),
     #[error("Unreachable nonce")]
@@ -213,7 +212,6 @@ pub enum CalldataEncodeError {
     InternalError,
 }
 
-#[cfg(feature = "l2")]
 #[derive(Debug, thiserror::Error)]
 pub enum GetWithdrawalProofError {
     #[error("{0}")]

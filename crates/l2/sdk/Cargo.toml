@@ -34,5 +34,3 @@ as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
 
-[features]
-l2 = ["ethrex-rpc/l2"]

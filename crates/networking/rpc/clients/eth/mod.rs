@@ -1,5 +1,3 @@
-#[cfg(feature = "l2")]
-use crate::l2::withdrawal::WithdrawalProof;
 use std::{collections::HashMap, fmt};
 
 use crate::{
@@ -89,6 +87,14 @@ const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 
 // 0x08c379a0 == Error(String)
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
+
+#[derive(Serialize, Deserialize)]
+pub struct WithdrawalProof {
+    pub batch_number: u64,
+    pub index: usize,
+    pub withdrawal_hash: H256,
+    pub merkle_proof: Vec<H256>,
+}
 
 impl EthClient {
     pub fn new(url: &str) -> Self {
@@ -1041,7 +1047,6 @@ impl EthClient {
         ))
     }
 
-    #[cfg(feature = "l2")]
     pub async fn get_withdrawal_proof(
         &self,
         transaction_hash: H256,
@@ -1065,7 +1070,6 @@ impl EthClient {
         }
     }
 
-    #[cfg(feature = "l2")]
     pub async fn wait_for_withdrawal_proof(
         &self,
         transaction_hash: H256,

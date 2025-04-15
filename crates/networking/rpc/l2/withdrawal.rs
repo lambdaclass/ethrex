@@ -1,23 +1,15 @@
 use keccak_hash::H256;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::info;
 
 use crate::{
+    clients::eth::WithdrawalProof,
     rpc::{RpcApiContext, RpcHandler},
     utils::{get_withdrawal_hash, merkle_proof, RpcErr},
 };
 
 pub struct GetWithdrawalProof {
     pub transaction_hash: H256,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct WithdrawalProof {
-    pub batch_number: u64,
-    pub index: usize,
-    pub withdrawal_hash: H256,
-    pub merkle_proof: Vec<H256>,
 }
 
 impl RpcHandler for GetWithdrawalProof {
