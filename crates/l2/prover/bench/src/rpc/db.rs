@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
-use crate::rpc::{get_account, retry};
+use crate::rpc::{get_account, get_db, retry};
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -12,7 +12,7 @@ use ethrex_common::{
 use ethrex_levm::db::Database as LevmDatabase;
 use ethrex_levm::vm::GeneralizedDatabase;
 use ethrex_storage::{hash_address, hash_key};
-use ethrex_trie::{Node, PathRLP, Trie};
+use ethrex_trie::{Nibbles, Node, PathRLP, Trie};
 use ethrex_vm::backends::levm::{CacheDB, LEVM};
 use ethrex_vm::{ExecutionDB, ExecutionDBError};
 use futures_util::future::join_all;
@@ -128,28 +128,51 @@ impl RpcDB {
                 let acc_account_mut = child_cache.get_mut(address);
                 if let Some(acc_account) = acc_account_mut {
                     match account {
-                        Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage: storage_acc, account_proof, storage_proofs: storage_proofs_acc, code } => {
-                                    storage_acc.extend(storage);
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
-                                Account::NonExisting { account_proof, storage_proofs } => {
-                                    unreachable!()
-                                },
+                        Account::Existing {
+                            account_state,
+                            storage,
+                            account_proof,
+                            storage_proofs,
+                            code,
+                        } => match acc_account {
+                            Account::Existing {
+                                account_state,
+                                storage: storage_acc,
+                                account_proof,
+                                storage_proofs: storage_proofs_acc,
+                                code,
+                            } => {
+                                storage_acc.extend(storage);
+                                storage_proofs_acc.extend(storage_proofs.clone());
+                            }
+                            Account::NonExisting {
+                                account_proof,
+                                storage_proofs,
+                            } => {
+                                unreachable!()
                             }
                         },
-                        Account::NonExisting { account_proof, storage_proofs } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                                    unreachable!()
-                                },
-                                Account::NonExisting { account_proof, storage_proofs: storage_proofs_acc } => {
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
+                        Account::NonExisting {
+                            account_proof,
+                            storage_proofs,
+                        } => match acc_account {
+                            Account::Existing {
+                                account_state,
+                                storage,
+                                account_proof,
+                                storage_proofs,
+                                code,
+                            } => {
+                                unreachable!()
+                            }
+                            Account::NonExisting {
+                                account_proof,
+                                storage_proofs: storage_proofs_acc,
+                            } => {
+                                storage_proofs_acc.extend(storage_proofs.clone());
                             }
                         },
-                    }   
+                    }
                 } else {
                     child_cache.insert(*address, account.clone());
                 }
@@ -160,28 +183,51 @@ impl RpcDB {
                 let acc_account_mut = cache.get_mut(address);
                 if let Some(acc_account) = acc_account_mut {
                     match account {
-                        Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage: storage_acc, account_proof, storage_proofs: storage_proofs_acc, code } => {
-                                    storage_acc.extend(storage);
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
-                                Account::NonExisting { account_proof, storage_proofs } => {
-                                    unreachable!()
-                                },
+                        Account::Existing {
+                            account_state,
+                            storage,
+                            account_proof,
+                            storage_proofs,
+                            code,
+                        } => match acc_account {
+                            Account::Existing {
+                                account_state,
+                                storage: storage_acc,
+                                account_proof,
+                                storage_proofs: storage_proofs_acc,
+                                code,
+                            } => {
+                                storage_acc.extend(storage);
+                                storage_proofs_acc.extend(storage_proofs.clone());
+                            }
+                            Account::NonExisting {
+                                account_proof,
+                                storage_proofs,
+                            } => {
+                                unreachable!()
                             }
                         },
-                        Account::NonExisting { account_proof, storage_proofs } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                                    unreachable!()
-                                },
-                                Account::NonExisting { account_proof, storage_proofs: storage_proofs_acc } => {
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
+                        Account::NonExisting {
+                            account_proof,
+                            storage_proofs,
+                        } => match acc_account {
+                            Account::Existing {
+                                account_state,
+                                storage,
+                                account_proof,
+                                storage_proofs,
+                                code,
+                            } => {
+                                unreachable!()
+                            }
+                            Account::NonExisting {
+                                account_proof,
+                                storage_proofs: storage_proofs_acc,
+                            } => {
+                                storage_proofs_acc.extend(storage_proofs.clone());
                             }
                         },
-                    }   
+                    }
                 } else {
                     cache.insert(*address, account.clone());
                 }
@@ -249,9 +295,7 @@ impl RpcDB {
                     account_proof,
                     storage_proofs,
                     code,
-                } => {
-                    (*address, storage.keys().cloned().collect())
-                },
+                } => (*address, storage.keys().cloned().collect()),
                 Account::NonExisting {
                     account_proof,
                     storage_proofs,
@@ -280,7 +324,26 @@ impl RpcDB {
         let initial_storage_proofs = initial_accounts
             .iter()
             .map(|(address, account)| (address, account.get_storage_proofs()));
-        let final_storage_proofs = final_accounts
+
+        initial_storage_proofs
+            .clone()
+            .for_each(|(address, proofs)| {
+                dbg!("initial");
+                dbg!(&address);
+                proofs.iter().for_each(|(key, proof)| {
+                    dbg!(&key);
+                    dbg!(proof
+                        .iter()
+                        .map(|node| match Node::decode_raw(node).unwrap() {
+                            Node::Leaf(_) => "leaf",
+                            Node::Branch(_) => "branch",
+                            Node::Extension(_) => "extension",
+                        })
+                        .collect::<Vec<_>>());
+                });
+            });
+
+        let removed_accounts: Vec<_> = execution_updates
             .iter()
             .filter_map(|update| {
                 if update.removed {
@@ -332,20 +395,47 @@ impl RpcDB {
             });
 
         // get potential child nodes of deleted nodes after execution
+        let mut undetermined_account_paths = Vec::new();
         let potential_account_child_nodes = final_removed_account_proofs
-            .filter_map(|(address, proof)| get_potential_child_nodes(proof, &hash_address(address)))
+            .filter_map(|(address, proof)| {
+                get_potential_child_nodes(
+                    proof,
+                    &hash_address(address),
+                    &mut undetermined_account_paths,
+                )
+            })
             .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()));
 
-        let potential_storage_child_nodes: HashMap<_, _> = final_removed_storage_proofs
+        let (undetermined_storage_paths, potential_storage_child_nodes): (
+            HashMap<_, _>,
+            HashMap<_, _>,
+        ) = final_removed_storage_proofs
             .map(|(address, proofs)| {
+                let mut undetermined_storage_prefixes = Vec::new();
                 let nodes: Vec<_> = proofs
                     .iter()
-                    .filter_map(|(key, proof)| get_potential_child_nodes(proof, &hash_key(&key)))
+                    .filter_map(|(key, proof)| {
+                        dbg!(&key);
+                        dbg!(&address);
+                        get_potential_child_nodes(
+                            proof,
+                            &hash_key(key),
+                            &mut undetermined_storage_prefixes,
+                        )
+                    })
                     .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
                     .collect();
-                (address, nodes)
+                ((address, undetermined_storage_prefixes), (address, nodes))
             })
             .collect();
+
+        // let undetermined_accounts_index = undetermined_account_paths
+        //     .into_iter()
+        //     .map(|path| (Address::from_))
+        //     .collect();
+        // let undetermined_accounts = self
+        //     .fetch_accounts_blocking(&undetermined_accounts_index, false)
+        //     .unwrap();
 
         #[derive(Clone)]
         struct ExistingAccount<'a> {
@@ -515,7 +605,8 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        let account = self.fetch_accounts_blocking(&[(address, vec![key])], false)
+        let account = self
+            .fetch_accounts_blocking(&[(address, vec![key])], false)
             .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
             .get(&address)
             .unwrap()
@@ -566,8 +657,13 @@ impl LevmDatabase for RpcDB {
 /// If we don't have this child node (because we're modifying a partial trie), then we can't
 /// perform the deletion. If we have the final proof of exclusion of the deleted value, we can
 /// calculate all posible child nodes.
-fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
+fn get_potential_child_nodes(
+    proof: &[NodeRLP],
+    key: &PathRLP,
+    undetermined_paths: &mut Vec<PathRLP>,
+) -> Option<Vec<Node>> {
     // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones.
+    dbg!(proof.len());
     let trie = Trie::from_nodes(
         proof.first(),
         &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
@@ -576,19 +672,62 @@ fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Nod
 
     // return some only if this is a proof of exclusion
     if trie.get(key).unwrap().is_none() {
+        dbg!(&key);
+        dbg!(proof
+            .iter()
+            .map(|node| match Node::decode_raw(node).unwrap() {
+                Node::Leaf(_) => "leaf",
+                Node::Branch(_) => "branch",
+                Node::Extension(_) => "extension",
+            })
+            .collect::<Vec<_>>());
         let final_node = Node::decode_raw(proof.last().unwrap()).unwrap();
         match final_node {
             Node::Leaf(mut node) => {
-                let mut variants = Vec::with_capacity(node.partial.len());
-                while {
-                    variants.push(Node::from(node.clone()));
-                    node.partial.next().is_some()
-                } {}
-                Some(variants)
+                // remove first nibble (parent's choice index)
+                node.partial.next();
+                dbg!(&node.compute_hash());
+                Some(vec![Node::Leaf(node)])
             }
-            _ => None,
+            // this is a problematic case in which the missing child can't be determined with the
+            // information provided, and it's necessary to fetch it externally.
+            Node::Extension(ext) => {
+                // the missing child has the path [k1, k2, .., kn] | [ext_prefix], where
+                // k1, k2, .., kn are the first n nibbles of `key` with n = proof.len() - 1 and
+                // they're concatenated with the extension node's path.
+                let key = Nibbles::from_raw(key, false);
+                let padding = Nibbles::from_raw(&vec![0; 64 - proof.len()], false);
+                let path = key.slice(0, proof.len() - 1).concat(ext.prefix);
+                // create a key with the path as a prefix
+                let path_key = path.concat(padding);
+
+                // we can retrieve the child by fetching the leaf next to the one that was deleted,
+                // so the key to search is the first that is (lexicographically) greater than
+                // path_key
+
+                undetermined_paths.push(path.to_bytes());
+
+                let handle = tokio::runtime::Handle::current();
+                tokio::task::block_in_place(|| {
+                    handle.block_on({
+                        let hash = ext.child.finalize();
+                        get_db(
+                            "https://eth-mainnet.g.alchemy.com/v2/Wk4T-RKtdxa_TYAt6HTLOvc2pcjRFRQ-",
+                            hash,
+                        )
+                    })
+                })
+                .unwrap();
+                None
+            }
+            // e.g a branch has more than 1 child (leaf) and one of them is deleted
+            Node::Branch(_) => None,
+            // because keys are keccak hashes they have a fixed length (32 bytes), so it's not
+            // possible to have a branch or extension node at the same level as a leaf.
+            //_ => unreachable!(),
         }
     } else {
+        dbg!("not an exclusion proof");
         None
     }
 }

@@ -92,6 +92,7 @@ impl LeafNode {
 
     /// Removes own value if the path matches own path and returns self and the value if it was removed
     pub fn remove(self, path: Nibbles) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
+        dbg!("remove from leaf");
         Ok(if self.partial == path {
             (None, Some(self.value))
         } else {

@@ -1,0 +1,136 @@
+Makefile:43: warning: overriding commands for target `pico'
+Makefile:14: warning: ignoring old commands for target `pico'
+Makefile:45: warning: overriding commands for target `pico-gpu'
+Makefile:16: warning: ignoring old commands for target `pico-gpu'
+SP1_PROVER=cpu cargo r -r --features sp1 -- --rpc-url https://icy-indulgent-night.quiknode.pro/98c3ade0cb473ef0e5b93656502b49f8c618b22e/ --block-number 22235921
+warning: unused variable: `path`
+  --> crates/storage/store.rs:78:16
+   |
+78 |     pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
+   |                ^^^^ help: if this is intentional, prefix it with an underscore: `_path`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: type alias `AccountCodeHashRLP` is never used
+  --> crates/storage/rlp.rs:20:10
+   |
+20 | pub type AccountCodeHashRLP = Rlp<H256>;
+   |          ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: type alias `AccountCodeRLP` is never used
+  --> crates/storage/rlp.rs:21:10
+   |
+21 | pub type AccountCodeRLP = Rlp<Bytes>;
+   |          ^^^^^^^^^^^^^^
+
+warning: type alias `AccountHashRLP` is never used
+  --> crates/storage/rlp.rs:22:10
+   |
+22 | pub type AccountHashRLP = Rlp<H256>;
+   |          ^^^^^^^^^^^^^^
+
+warning: type alias `AccountStateRLP` is never used
+  --> crates/storage/rlp.rs:23:10
+   |
+23 | pub type AccountStateRLP = Rlp<AccountState>;
+   |          ^^^^^^^^^^^^^^^
+
+warning: type alias `BlockHashRLP` is never used
+  --> crates/storage/rlp.rs:26:10
+   |
+26 | pub type BlockHashRLP = Rlp<BlockHash>;
+   |          ^^^^^^^^^^^^
+
+warning: type alias `BlockHeaderRLP` is never used
+  --> crates/storage/rlp.rs:27:10
+   |
+27 | pub type BlockHeaderRLP = Rlp<BlockHeader>;
+   |          ^^^^^^^^^^^^^^
+
+warning: type alias `BlockBodyRLP` is never used
+  --> crates/storage/rlp.rs:28:10
+   |
+28 | pub type BlockBodyRLP = Rlp<BlockBody>;
+   |          ^^^^^^^^^^^^
+
+warning: type alias `BlockRLP` is never used
+  --> crates/storage/rlp.rs:29:10
+   |
+29 | pub type BlockRLP = Rlp<Block>;
+   |          ^^^^^^^^
+
+warning: type alias `TransactionHashRLP` is never used
+  --> crates/storage/rlp.rs:36:10
+   |
+36 | pub type TransactionHashRLP = Rlp<H256>;
+   |          ^^^^^^^^^^^^^^^^^^
+
+warning: type alias `PayloadBundleRLP` is never used
+  --> crates/storage/rlp.rs:39:10
+   |
+39 | pub type PayloadBundleRLP = Rlp<PayloadBundle>;
+   |          ^^^^^^^^^^^^^^^^
+
+warning: type alias `TupleRLP` is never used
+  --> crates/storage/rlp.rs:42:10
+   |
+42 | pub type TupleRLP<A, B> = Rlp<(A, B)>;
+   |          ^^^^^^^^
+
+warning: field `0` is never read
+  --> crates/storage/rlp.rs:45:19
+   |
+45 | pub struct Rlp<T>(Vec<u8>, PhantomData<T>);
+   |            ---    ^^^^^^^
+   |            |
+   |            field in this struct
+   |
+   = note: `Rlp` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+   |
+45 | pub struct Rlp<T>((), PhantomData<T>);
+   |                   ~~
+
+warning: method `to` is never used
+  --> crates/storage/rlp.rs:56:12
+   |
+55 | impl<T: RLPDecode> Rlp<T> {
+   | ------------------------- method in this implementation
+56 |     pub fn to(&self) -> T {
+   |            ^^
+
+warning: associated items `from_bytes` and `bytes` are never used
+  --> crates/storage/rlp.rs:62:12
+   |
+61 | impl<T> Rlp<T> {
+   | -------------- associated items in this implementation
+62 |     pub fn from_bytes(bytes: Vec<u8>) -> Self {
+   |            ^^^^^^^^^^
+...
+66 |     pub fn bytes(&self) -> &Vec<u8> {
+   |            ^^^^^
+
+warning: `ethrex-storage` (lib) generated 15 warnings
+warning: unused import: `Block`
+ --> crates/vm/db.rs:5:26
+  |
+5 |     types::{AccountInfo, Block, ChainConfig},
+  |                          ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: `ethrex-vm` (lib) generated 1 warning (run `cargo fix --lib -p ethrex-vm` to apply 1 suggestion)
+warning: unused imports: `EngineClient` and `EthClient`
+ --> crates/networking/rpc/rpc.rs:2:22
+  |
+2 | use crate::clients::{EngineClient, EthClient};
+  |                      ^^^^^^^^^^^^  ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: `ethrex-rpc` (lib) generated 1 warning (run `cargo fix --lib -p ethrex-rpc` to apply 1 suggestion)
+   Compiling zkvm_interface v0.1.0 (/Users/xqft/git/ethrex/crates/l2/prover/zkvm/interface)
+warning: zkvm_interface@0.1.0: rustc +succinct --version: "rustc 1.85.0-dev\n"
+warning: zkvm_interface@0.1.0: zkvm-sp1-program built at 2025-04-14 17:16:08

@@ -288,6 +288,59 @@ where
     policy.retry(|| fut.call()).await
 }
 
+pub async fn get_account_range(
+    rpc_url: &str,
+    block_number: usize,
+    start: H256,
+) -> Result<String, String> {
+    let block_number = format!("0x{block_number:x}");
+    let start = format!("0x{start:x}");
+    let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "debug_dbGet",
+        "params": [block_number, start, 0x1, true, true, false]
+    });
+
+    let response = CLIENT
+        .post(rpc_url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(get_result)
+    //.and_then(decode_hex)
+}
+
+pub async fn get_db(rpc_url: &str, key: H256) -> Result<String, String> {
+    let key = format!("0x{key:x}");
+    let request = &json!({
+        "id": 1,
+        "jsonrpc": "2.0",
+        "method": "debug_dbGet",
+        "params": [key]
+    });
+
+    let response = CLIENT
+        .post(rpc_url)
+        .json(request)
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(get_result)
+    //.and_then(decode_hex)
+}
+
 async fn get_code(rpc_url: &str, block_number: usize, address: &Address) -> Result<Bytes, String> {
     let block_number = format!("0x{block_number:x}");
     let address = format!("0x{address:x}");
@@ -331,6 +384,8 @@ fn decode_hex(hex: String) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod test {
+    use std::str::FromStr;
+
     use super::*;
 
     const RPC_URL: &str = "<to-complete>";
@@ -355,5 +410,15 @@ mod test {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_mpt_node_works() {
+        let node_hash =
+            H256::from_str("0x4c5ff4afc99b7be7383e0433542d7b346ae5041270a0c2e524985fb03dbb0d98")
+                .unwrap();
+        let node = get_db(RPC_URL, node_hash).await.unwrap();
+        dbg!(node);
+        panic!();
     }
 }

@@ -234,6 +234,7 @@ pub mod trie {
                     for (storage_key, storage_value) in &update.added_storage {
                         let hashed_key = hash_key(storage_key);
                         if storage_value.is_zero() {
+                            dbg!(&storage_key);
                             storage_trie.remove(hashed_key)?;
                         } else {
                             storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;

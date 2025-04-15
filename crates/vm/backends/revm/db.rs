@@ -230,14 +230,6 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
     if trie.get(key).unwrap().is_none() {
         let final_node = Node::decode_raw(proof.last().unwrap()).unwrap();
         match final_node {
-            Node::Extension(mut node) => {
-                let mut variants = Vec::with_capacity(node.prefix.len());
-                while {
-                    variants.push(Node::from(node.clone()));
-                    node.prefix.next().is_some()
-                } {}
-                Some(variants)
-            }
             Node::Leaf(mut node) => {
                 let mut variants = Vec::with_capacity(node.partial.len());
                 while {
@@ -246,7 +238,9 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
                 } {}
                 Some(variants)
             }
-            _ => None,
+            // because keys are keccak hashes they have a fixed length (32 bytes), so it's not
+            // possible to have a branch or extension node at the same level as a leaf.
+            _ => unreachable!(),
         }
     } else {
         None

@@ -133,20 +133,27 @@ impl BranchNode {
                 Branch { [childA, childB, ... ], None } ->   Branch { [childA, childB, ... ], None }
         */
 
+        dbg!("remove from branch");
+        dbg!(hex::encode(path.as_ref()));
+
         // Step 1: Remove value
         // Check if the value is located in a child subtrie
         let value = if let Some(choice_index) = path.next_choice() {
             if self.choices[choice_index].is_valid() {
+                dbg!("choice valid, getting child");
                 let child_node = state
                     .get_node(self.choices[choice_index].clone())?
                     .ok_or(TrieError::InconsistentTree)?;
                 // Remove value from child node
+                dbg!("remove value from child");
+                dbg!(&child_node.compute_hash());
                 let (child_node, old_value) = child_node.remove(state, path.clone())?;
                 if let Some(child_node) = child_node {
                     // Update child node
                     self.choices[choice_index] = child_node.insert_self(state)?;
                 } else {
                     // Remove child hash if the child subtrie was removed in the process
+                    dbg!("removed child");
                     self.choices[choice_index] = NodeHash::default();
                 }
                 old_value
@@ -242,6 +249,7 @@ impl BranchNode {
         mut path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
+        dbg!("branch get path");
         // Add self to node_path (if not inlined in parent)
         let encoded = self.encode_raw();
         if encoded.len() >= 32 {

@@ -51,6 +51,9 @@ pub fn main() {
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
+    dbg!(&initial_state_hash);
+    dbg!(&final_state_hash);
+    dbg!(&block.header.state_root);
     if final_state_hash != block.header.state_root {
         panic!("invalid final state trie");
     }

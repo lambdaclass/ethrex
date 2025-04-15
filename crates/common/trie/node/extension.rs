@@ -54,6 +54,7 @@ impl ExtensionNode {
             * Prefix partially matches path
             Extension { prefix, child } -> Extension { prefix[..match], Extension { path[match..] child } } (insert into new extension node)
         */
+        dbg!("insert extension");
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
             // Insert into child node
@@ -105,6 +106,7 @@ impl ExtensionNode {
             Extension { prefix, child } -> ChildLeaf (if child.remove = Leaf)
         */
 
+        dbg!("remove from extension");
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
             let child_node = state
@@ -180,6 +182,7 @@ impl ExtensionNode {
         mut path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
+        dbg!("extension get path");
         // Add self to node_path (if not inlined in parent)
         let encoded = self.encode_raw();
         if encoded.len() >= 32 {

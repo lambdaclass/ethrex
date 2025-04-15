@@ -104,14 +104,18 @@ impl Trie {
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+        dbg!("remove called");
         let root = self.root.take();
         if let Some(root) = root {
+            dbg!("get root node");
             let root_node = self
                 .state
                 .get_node(root)?
                 .ok_or(TrieError::InconsistentTree)?;
+            dbg!("root node remove");
             let (root_node, old_value) =
                 root_node.remove(&mut self.state, Nibbles::from_bytes(&path))?;
+            dbg!("insert self new root node");
             self.root = root_node
                 .map(|root| root.insert_self(&mut self.state))
                 .transpose()?;
@@ -286,6 +290,7 @@ impl Trie {
 
     fn get_node_inner(&self, node: Node, mut partial_path: Nibbles) -> Result<Vec<u8>, TrieError> {
         // If we reached the end of the partial path, return the current node
+        dbg!("get node inner");
         if partial_path.is_empty() {
             return Ok(node.encode_raw());
         }
