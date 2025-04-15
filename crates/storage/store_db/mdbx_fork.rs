@@ -75,19 +75,14 @@ impl MDBXFork {
         let db_args = DatabaseArguments::new(client_version);
         let env = init_db(path, db_args).expect("Failed to initialize MDBX Fork");
 
-        // Create tables in main environment
         let tx = env.begin_rw_txn().unwrap();
 
-        // DupSort tables (those with SubKey)
         tx.create_db(Some("AccountTrie"), DatabaseFlags::DUP_SORT)
             .unwrap();
         tx.create_db(Some("Receipts"), DatabaseFlags::DUP_SORT)
             .unwrap();
 
-        // Regular tables
         tx.create_db(Some("StorageTrie"), DatabaseFlags::default())
-            .unwrap();
-        tx.create_db(Some("PayloadsTable"), DatabaseFlags::default())
             .unwrap();
         tx.create_db(Some("TransactionLocations"), DatabaseFlags::default())
             .unwrap();
@@ -330,7 +325,6 @@ tables! {
     table AccountTrie<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
     table Receipts<Key = Vec<u8>, Value = Vec<u8>, SubKey = u64>;
     table StorageTrie<Key = Vec<u8>, Value = Vec<u8>>;
-    table PayloadsTable<Key = u64, Value = Vec<u8>>;
     table TransactionLocations<Key = Vec<u8>, Value = Vec<u8>>;
     table Bodies<Key = Vec<u8>, Value = Vec<u8>>;
     table Headers<Key = Vec<u8>, Value = Vec<u8>>;
@@ -668,7 +662,7 @@ impl StoreEngine for MDBXFork {
 
     fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         let tx = self.env.tx().unwrap();
-        let res = tx.get::<PayloadsTable>(payload_id).unwrap();
+        let res = tx.get::<Payloads>(payload_id).unwrap();
         match res {
             Some(encoded) => Ok(Some(PayloadBundle::decode(&encoded[..]).unwrap())),
             None => Ok(None),
@@ -676,7 +670,11 @@ impl StoreEngine for MDBXFork {
     }
 
     fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
-        todo!()
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<Payloads>(payload_id, payload.encode_to_vec())
+            .unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_transaction_by_hash(

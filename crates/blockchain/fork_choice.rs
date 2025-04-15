@@ -62,7 +62,7 @@ pub fn apply_fork_choice(
     }
 
     // Find blocks that will be part of the new canonical chain.
-    let Some(new_canonical_blocks) = dbg!(find_link_with_canonical_chain(store, &head)?) else {
+    let Some(new_canonical_blocks) = find_link_with_canonical_chain(store, &head)? else {
         return Err(InvalidForkChoice::Disconnected(
             error::ForkChoiceElement::Head,
             error::ForkChoiceElement::Safe,
@@ -177,7 +177,7 @@ fn find_link_with_canonical_chain(
         let parent_hash = header.parent_hash;
 
         // Check that the parent exists.
-        let parent_header = match dbg!(store.get_block_header_by_hash(parent_hash)) {
+        let parent_header = match store.get_block_header_by_hash(parent_hash) {
             Ok(Some(header)) => header,
             Ok(None) => return Ok(None),
             Err(error) => return Err(error),

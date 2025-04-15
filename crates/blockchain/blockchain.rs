@@ -66,7 +66,6 @@ impl Blockchain {
     fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            panic!("PARENT NOT FOUND");
             // If the parent is not present, we store it as pending.
             self.storage.add_pending_block(block.clone())?;
             return Err(ChainError::ParentNotFound);
