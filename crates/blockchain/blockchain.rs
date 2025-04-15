@@ -359,7 +359,7 @@ impl Blockchain {
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
     #[cfg(feature = "c-kzg")]
-    pub fn add_blob_transaction_to_pool(
+    pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
@@ -372,7 +372,7 @@ impl Blockchain {
         let sender = transaction.sender();
 
         // Validate transaction
-        self.validate_transaction(&transaction, sender)?;
+        self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction and blobs bundle to storage
         let hash = transaction.compute_hash();
@@ -383,14 +383,17 @@ impl Blockchain {
     }
 
     /// Add a transaction to the mempool checking that the transaction is valid
-    pub fn add_transaction_to_pool(&self, transaction: Transaction) -> Result<H256, MempoolError> {
+    pub async fn add_transaction_to_pool(
+        &self,
+        transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
         let sender = transaction.sender();
         // Validate transaction
-        self.validate_transaction(&transaction, sender)?;
+        self.validate_transaction(&transaction, sender).await?;
 
         let hash = transaction.compute_hash();
 
@@ -438,14 +441,18 @@ impl Blockchain {
 
     */
 
-    pub fn validate_transaction(
+    pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
     ) -> Result<(), MempoolError> {
         // TODO: Add validations here
 
-        let header_no = self.storage.get_latest_block_number()?;
+        if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
+            return Ok(());
+        }
+
+        let header_no = self.storage.get_latest_block_number().await?;
         let header = self
             .storage
             .get_block_header(header_no)?
@@ -485,7 +492,7 @@ impl Blockchain {
             }
         };
 
-        let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender)?;
+        let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
             if tx.nonce() < sender_acc_info.nonce {
@@ -570,8 +577,8 @@ pub fn validate_receipts_root(
 }
 
 // Returns the hash of the head of the canonical chain (the latest valid hash).
-pub fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
-    let latest_block_number = storage.get_latest_block_number()?;
+pub async fn latest_canonical_block_hash(storage: &Store) -> Result<H256, ChainError> {
+    let latest_block_number = storage.get_latest_block_number().await?;
     if let Some(latest_valid_header) = storage.get_block_header(latest_block_number)? {
         let latest_valid_hash = latest_valid_header.compute_block_hash();
         return Ok(latest_valid_hash);
@@ -619,12 +626,12 @@ pub fn validate_block(
     Ok(())
 }
 
-pub fn is_canonical(
+pub async fn is_canonical(
     store: &Store,
     block_number: BlockNumber,
     block_hash: BlockHash,
 ) -> Result<bool, StoreError> {
-    match store.get_canonical_block_hash(block_number)? {
+    match store.get_canonical_block_hash(block_number).await? {
         Some(hash) if hash == block_hash => Ok(true),
         _ => Ok(false),
     }

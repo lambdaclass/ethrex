@@ -31,24 +31,26 @@ pub enum BlockTag {
 }
 
 impl BlockIdentifier {
-    pub fn resolve_block_number(&self, storage: &Store) -> Result<Option<BlockNumber>, StoreError> {
+    pub async fn resolve_block_number(
+        &self,
+        storage: &Store,
+    ) -> Result<Option<BlockNumber>, StoreError> {
         match self {
             BlockIdentifier::Number(num) => Ok(Some(*num)),
             BlockIdentifier::Tag(tag) => match tag {
-                BlockTag::Earliest => Ok(Some(storage.get_earliest_block_number()?)),
-                BlockTag::Finalized => storage.get_finalized_block_number(),
-                BlockTag::Safe => storage.get_safe_block_number(),
-                BlockTag::Latest => Ok(Some(storage.get_latest_block_number()?)),
+                BlockTag::Earliest => Ok(Some(storage.get_earliest_block_number().await?)),
+                BlockTag::Finalized => storage.get_finalized_block_number().await,
+                BlockTag::Safe => storage.get_safe_block_number().await,
+                BlockTag::Latest => Ok(Some(storage.get_latest_block_number().await?)),
                 BlockTag::Pending => {
                     // TODO(#1112): We need to check individual intrincacies of the pending tag for
                     // each RPC method that uses it.
-                    storage
-                        .get_pending_block_number()
+                    if let Some(pending_block_number) = storage.get_pending_block_number().await? {
+                        Ok(Some(pending_block_number))
+                    } else {
                         // If there are no pending blocks, we return the latest block number
-                        .and_then(|pending_block_number| match pending_block_number {
-                            Some(block_number) => Ok(Some(block_number)),
-                            None => Ok(Some(storage.get_latest_block_number()?)),
-                        })
+                        Ok(Some(storage.get_latest_block_number().await?))
+                    }
                 }
             },
         }
@@ -76,8 +78,11 @@ impl BlockIdentifier {
         Ok(BlockIdentifier::Number(block_number))
     }
 
-    pub fn resolve_block_header(&self, storage: &Store) -> Result<Option<BlockHeader>, StoreError> {
-        match self.resolve_block_number(storage)? {
+    pub async fn resolve_block_header(
+        &self,
+        storage: &Store,
+    ) -> Result<Option<BlockHeader>, StoreError> {
+        match self.resolve_block_number(storage).await? {
             Some(block_number) => storage.get_block_header(block_number),
             _ => Ok(None),
         }
@@ -86,10 +91,13 @@ impl BlockIdentifier {
 
 impl BlockIdentifierOrHash {
     #[allow(unused)]
-    pub fn resolve_block_number(&self, storage: &Store) -> Result<Option<BlockNumber>, StoreError> {
+    pub async fn resolve_block_number(
+        &self,
+        storage: &Store,
+    ) -> Result<Option<BlockNumber>, StoreError> {
         match self {
-            BlockIdentifierOrHash::Identifier(id) => id.resolve_block_number(storage),
-            BlockIdentifierOrHash::Hash(block_hash) => storage.get_block_number(*block_hash),
+            BlockIdentifierOrHash::Identifier(id) => id.resolve_block_number(storage).await,
+            BlockIdentifierOrHash::Hash(block_hash) => storage.get_block_number(*block_hash).await,
         }
     }
 
@@ -107,13 +115,13 @@ impl BlockIdentifierOrHash {
     }
 
     #[allow(unused)]
-    pub fn is_latest(&self, storage: &Store) -> Result<bool, StoreError> {
+    pub async fn is_latest(&self, storage: &Store) -> Result<bool, StoreError> {
         if self == &BlockTag::Latest {
             return Ok(true);
         }
 
-        let result = self.resolve_block_number(storage)?;
-        let latest = storage.get_latest_block_number()?;
+        let result = self.resolve_block_number(storage).await?;
+        let latest = storage.get_latest_block_number().await?;
 
         Ok(result.is_some_and(|res| res == latest))
     }
