@@ -1,5 +1,4 @@
 use crate::{
-    call_frame::CallFrame,
     constants::LAST_AVAILABLE_BLOCK_LIMIT,
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost,

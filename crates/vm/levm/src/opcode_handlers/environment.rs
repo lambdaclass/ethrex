@@ -1,5 +1,4 @@
 use crate::{
-    call_frame::CallFrame,
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},

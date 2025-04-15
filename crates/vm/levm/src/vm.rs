@@ -348,16 +348,11 @@ impl<'a> VM<'a> {
 
         if is_precompile(&self.current_call_frame()?.code_address, fork) {
             let mut current_call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let precompile_result = execute_precompile(self.current_call_frame_mut()?, fork);
-                    // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let backup = StateBackup::new(
-            self.db.cache.clone(),
-            self.accrued_substate.clone(),
-            self.env.refunded_gas,
-            self.env.transient_storage.clone(),
-        );
+            let precompile_result = execute_precompile(&mut current_call_frame, fork);
+            let backup = self.backups.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
             let report = self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
             self.handle_return(&current_call_frame, &report)?;
+            self.current_call_frame_mut()?.increment_pc_by(1)?;
             return Ok(report)
         }
 

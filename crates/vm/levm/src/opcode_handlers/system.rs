@@ -1,5 +1,5 @@
 use crate::{
-    call_frame::CallFrame, constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL}, db::cache, errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError}, gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND}, memory::{self, calculate_memory_size}, precompiles::{execute_precompile, is_precompile}, utils::{address_to_word, word_to_address, *}, vm::{RetData, StateBackup, VM}, Account
+    call_frame::CallFrame, constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL}, db::cache, errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError}, gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND}, memory::{self, calculate_memory_size}, precompiles::{is_precompile}, utils::{address_to_word, word_to_address, *}, vm::{RetData, StateBackup, VM}, Account
 };
 use bytes::Bytes;
 use ethrex_common::{types::Fork, Address, U256};
@@ -540,9 +540,6 @@ impl<'a> VM<'a> {
         };
         let fork = self.env.config.fork;
 
-
-        
-
         let (target_account_info, target_account_is_cold) =
             access_account(self.db, &mut self.accrued_substate, target_address)?;
 
@@ -778,6 +775,7 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation: bool,
     ) -> Result<OpcodeResult, VMError> {
+        println!("call to {to} with gas={gas_limit} out of {}", self.current_call_frame()?.gas_limit);
         let sender_account_info =
             access_account(self.db, &mut self.accrued_substate, msg_sender)?.0;
 
@@ -858,10 +856,6 @@ impl<'a> VM<'a> {
             false,
         );
         self.call_frames.push(new_call_frame);
-        if is_precompile(&to, self.env.config.fork) {
-            self.run_execution()?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 })
-        }
                 // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
                 let backup = StateBackup::new(
                     self.db.cache.clone(),
@@ -870,7 +864,12 @@ impl<'a> VM<'a> {
                     self.env.transient_storage.clone(),
                 );
                 self.backups.push(backup);
-        
+
+        if is_precompile(&to, self.env.config.fork) {
+            println!("running precompile {to}");
+            let _report = self.run_execution()?;
+            println!("{_report:#?}");
+        }
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
