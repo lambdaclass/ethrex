@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-04-14
+
+- Avoid unnecessary copies of the LEVM callframes. [2461](https://github.com/lambdaclass/ethrex/pull/2461)
+
 ### 2025-04-09
 
 - Fix an issue where the table was locked for up to 20 sec when performing a ping: [2368](https://github.com/lambdaclass/ethrex/pull/2368)
