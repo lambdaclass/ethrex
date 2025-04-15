@@ -14,10 +14,14 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize, COMMON_BRIDGE_L2_ADDRESS};
-use ethrex_rpc::clients::eth::{
-    eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
+use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
+use ethrex_l2_sdk::{
+    calldata::{encode_calldata, Value},
+    merkle_tree::merkelize,
+};
+use ethrex_rpc::{
+    clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
+    utils::get_withdrawal_hash,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate, Store};
 use ethrex_storage_l2::StoreL2;

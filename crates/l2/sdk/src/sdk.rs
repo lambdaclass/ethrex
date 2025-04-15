@@ -1,15 +1,13 @@
 use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
-use ethrex_common::types::{GenericTransaction, Transaction, TxKind};
+use ethrex_common::types::GenericTransaction;
 use ethrex_rpc::clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient};
 #[cfg(feature = "l2")]
 use ethrex_rpc::l2::withdrawal::WithdrawalProof;
-use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
+use ethrex_rpc::types::receipt::RpcReceipt;
 
-use itertools::Itertools;
 use keccak_hash::keccak;
-use merkle_tree::merkle_proof;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod calldata;
@@ -209,80 +207,6 @@ pub async fn claim_withdraw(
     eth_client
         .send_eip1559_transaction(&claim_tx, &from_pk)
         .await
-}
-
-/// Returns the formated hash of the withdrawal transaction,
-/// or None if the transaction is not a withdrawal.
-/// The hash is computed as keccak256(to || value || tx_hash)
-pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
-    let to_bytes: [u8; 20] = match tx.data().get(16..36)?.try_into() {
-        Ok(value) => value,
-        Err(_) => return None,
-    };
-    let to = Address::from(to_bytes);
-
-    let value = tx.value().to_big_endian();
-
-    Some(keccak_hash::keccak(
-        [to.as_bytes(), &value, tx.compute_hash().as_bytes()].concat(),
-    ))
-}
-
-pub async fn get_withdraw_merkle_proof(
-    client: &EthClient,
-    tx_hash: H256,
-) -> Result<(u64, Vec<H256>), EthClientError> {
-    let tx_receipt =
-        client
-            .get_transaction_receipt(tx_hash)
-            .await?
-            .ok_or(EthClientError::Custom(
-                "Failed to get transaction receipt".to_string(),
-            ))?;
-
-    let block = client
-        .get_block_by_hash(tx_receipt.block_info.block_hash)
-        .await?;
-
-    let transactions = match block.body {
-        BlockBodyWrapper::Full(body) => body.transactions,
-        BlockBodyWrapper::OnlyHashes(_) => unreachable!(),
-    };
-    let Some(Some((index, tx_withdrawal_hash))) = transactions
-        .iter()
-        .filter(|tx| match &tx.tx.to() {
-            ethrex_common::types::TxKind::Call(to) => *to == COMMON_BRIDGE_L2_ADDRESS,
-            ethrex_common::types::TxKind::Create => false,
-        })
-        .find_position(|tx| tx.hash == tx_hash)
-        .map(|(i, tx)| get_withdrawal_hash(&tx.tx).map(|withdrawal_hash| (i, (withdrawal_hash))))
-    else {
-        return Err(EthClientError::Custom(
-            "Failed to get widthdrawal hash, transaction is not a withdrawal".to_string(),
-        ));
-    };
-
-    let path = merkle_proof(
-        transactions
-            .iter()
-            .filter_map(|tx| match tx.tx.to() {
-                TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => get_withdrawal_hash(&tx.tx),
-                _ => None,
-            })
-            .collect(),
-        tx_withdrawal_hash,
-    )
-    .map_err(|err| EthClientError::Custom(format!("Failed to generate merkle proof: {err}")))?
-    .ok_or(EthClientError::Custom(
-        "Failed to generate merkle proof, element is not on the tree".to_string(),
-    ))?;
-
-    Ok((
-        index
-            .try_into()
-            .map_err(|err| EthClientError::Custom(format!("index does not fit in u64: {}", err)))?,
-        path,
-    ))
 }
 
 pub fn secret_key_deserializer<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>

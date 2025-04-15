@@ -9,7 +9,7 @@ ethrex-sdk.workspace = true
 ethrex-common.workspace = true
 ethrex-blockchain = { workspace = true, features = ["l2"] }
 ethrex-rlp.workspace = true
-ethrex-rpc.workspace = true
+ethrex-rpc = { workspace = true, features = ["l2"] }
 ethrex-storage = { workspace = true, features = ["libmdbx"] }
 ethrex-storage-l2 = { workspace = true, features = ["libmdbx"] }
 
