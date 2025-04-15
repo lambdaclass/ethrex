@@ -1,23 +1,31 @@
+use ef_tests_blockchain::test_runner::parse_and_execute;
+use ethrex_vm::EvmEngine;
 use std::path::Path;
 
-use ef_tests_blockchain::{
-    network::Network,
-    test_runner::{parse_test_file, run_ef_test},
-};
-
-fn parse_and_execute(path: &Path) -> datatest_stable::Result<()> {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let tests = parse_test_file(path);
-
-    for (test_key, test) in tests {
-        if test.network < Network::Merge {
-            // Discard this test
-            continue;
-        }
-
-        rt.block_on(run_ef_test(&test_key, &test));
-    }
+#[cfg(not(feature = "levm"))]
+fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
+    parse_and_execute(path, EvmEngine::REVM, None);
     Ok(())
 }
 
-datatest_stable::harness!(parse_and_execute, "vectors/shanghai/", r".*/.*/.*\.json");
+#[cfg(feature = "levm")]
+fn parse_and_execute_with_levm(path: &Path) -> datatest_stable::Result<()> {
+    parse_and_execute(path, EvmEngine::LEVM, None);
+    Ok(())
+}
+
+// REVM execution
+#[cfg(not(feature = "levm"))]
+datatest_stable::harness!(
+    parse_and_execute_with_revm,
+    "vectors/shanghai/",
+    r".*/.*/.*\.json",
+);
+
+// LEVM execution
+#[cfg(feature = "levm")]
+datatest_stable::harness!(
+    parse_and_execute_with_levm,
+    "vectors/shanghai/",
+    r".*/.*/.*\.json",
+);
