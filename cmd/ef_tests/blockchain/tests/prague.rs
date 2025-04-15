@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use ef_tests_blockchain::test_runner::parse_and_execute_with_filter;
+use ef_tests_blockchain::test_runner::parse_and_execute;
 use ethrex_vm::EvmEngine;
 
 // TODO: enable these tests once the evm is updated.
@@ -31,7 +31,7 @@ const SKIPPED_TESTS_LEVM: [&str; 8] = [
 fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
     // TODO: We may replace this function in favor of `parse_and_execute` once we no longer need to
     // filter more tests
-    parse_and_execute_with_filter(path, EvmEngine::REVM, &SKIPPED_TESTS_REVM);
+    parse_and_execute(path, EvmEngine::REVM, Some(&SKIPPED_TESTS_REVM));
     Ok(())
 }
 
@@ -39,7 +39,7 @@ fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
 fn parse_and_execute_with_levm(path: &Path) -> datatest_stable::Result<()> {
     // TODO: We may replace this function in favor of `parse_and_execute` once we no longer need to
     // filter more tests
-    parse_and_execute_with_filter(path, EvmEngine::LEVM, &SKIPPED_TESTS_LEVM);
+    parse_and_execute(path, EvmEngine::LEVM, Some(&SKIPPED_TESTS_LEVM));
     Ok(())
 }
 

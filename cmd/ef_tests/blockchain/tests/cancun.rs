@@ -4,13 +4,13 @@ use std::path::Path;
 
 #[cfg(not(feature = "levm"))]
 fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
-    parse_and_execute(path, EvmEngine::REVM);
+    parse_and_execute(path, EvmEngine::REVM, None);
     Ok(())
 }
 
 #[cfg(feature = "levm")]
 fn parse_and_execute_with_levm(path: &Path) -> datatest_stable::Result<()> {
-    parse_and_execute(path, EvmEngine::LEVM);
+    parse_and_execute(path, EvmEngine::LEVM, None);
     Ok(())
 }
 

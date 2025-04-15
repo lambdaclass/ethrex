@@ -12,26 +12,17 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
 
-pub fn parse_and_execute(path: &Path, evm: EvmEngine) {
+pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let tests = parse_test_file(path);
 
     for (test_key, test) in tests {
-        if test.network < Network::Merge {
-            // Discard this test
-            continue;
-        }
+        let should_skip_test = test.network < Network::Merge
+            || skipped_tests
+                .map(|skipped| skipped.contains(&test_key.as_str()))
+                .unwrap_or(false);
 
-        rt.block_on(run_ef_test(&test_key, &test, evm));
-    }
-}
-
-pub fn parse_and_execute_with_filter(path: &Path, evm: EvmEngine, skipped_tests: &[&str]) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let tests = parse_test_file(path);
-
-    for (test_key, test) in tests {
-        if test.network < Network::Merge || skipped_tests.contains(&test_key.as_str()) {
+        if should_skip_test {
             // Discard this test
             continue;
         }
