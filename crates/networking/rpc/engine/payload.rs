@@ -6,7 +6,7 @@ use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
