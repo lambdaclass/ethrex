@@ -114,14 +114,12 @@ async fn heal_storage_batch(
             // Get the corresponding nodes
             let trie_nodes: Vec<ethrex_trie::Node> =
                 nodes.drain(..paths.len().min(nodes.len())).collect();
-            info!("Acc path {acc_path}: requested paths: {}, nodes received: {}", paths.len(), trie_nodes.len());
             // Add children to batch
             let children = trie_nodes
                 .iter()
                 .zip(paths.drain(..trie_nodes.len()))
                 .map(|(node, path)| node_missing_children(node, &path, trie.state()))
                 .collect::<Result<Vec<_>, _>>()?;
-            info!("Acc path {acc_path}: children added: {}", children.len());
             paths.extend(children.into_iter().flatten());
             // Write nodes to trie
             trie.state_mut().write_node_batch(&nodes)?;
@@ -129,10 +127,10 @@ async fn heal_storage_batch(
                 break;
             }
         }
+        info!("Return batch: {batch:?}");
         // Return remaining and added paths to be added to the queue
         // Filter out the storages we completely fetched
         batch.retain(|_, v| !v.is_empty());
-        info!("Return batch (after cleanup): {batch:?}");
         return Ok((batch, false));
     }
     // Pivot became stale, lets inform the fetcher
