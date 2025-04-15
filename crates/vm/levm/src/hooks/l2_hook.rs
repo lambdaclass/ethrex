@@ -8,9 +8,8 @@ use crate::{
     errors::{InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     utils::{
-        add_intrinsic_gas, eip7702_set_access_code, get_account, get_account_mut_vm,
-        get_base_fee_per_blob_gas, get_intrinsic_gas, get_valid_jump_destinations, has_delegation,
-        increase_account_balance,
+        add_intrinsic_gas, eip7702_set_access_code, get_base_fee_per_blob_gas, get_intrinsic_gas,
+        get_valid_jump_destinations, has_delegation,
     },
     Account,
 };
@@ -30,7 +29,8 @@ impl Hook for L2Hook {
         vm: &mut crate::vm::VM<'_>,
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
-        increase_account_balance(vm.db, self.recipient, initial_call_frame.msg_value)?;
+        vm.db
+            .increase_account_balance(self.recipient, initial_call_frame.msg_value, None)?;
 
         initial_call_frame.msg_value = U256::from(0);
 
@@ -228,7 +228,7 @@ impl Hook for L2Hook {
 
         // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            let existing_account = get_account(vm.db, receiver_address)?; //TO Account
+            let existing_account = vm.db.get_account(receiver_address)?; //TO Account
 
             if has_delegation(&existing_account.info)? {
                 // This is the case where the "to" address and the
@@ -247,55 +247,59 @@ impl Hook for L2Hook {
         }
 
         // 2. Return unused gas + gas refunds to the sender.
-        let mut consumed_gas = report.gas_used;
+
+        // a. Calculate refunded gas
+        let gas_used_without_refunds = report.gas_used;
+
         // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        let quotient = if vm.env.config.fork < Fork::London {
+        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+        let refund_quotient = if vm.env.config.fork < Fork::London {
             MAX_REFUND_QUOTIENT_PRE_LONDON
         } else {
             MAX_REFUND_QUOTIENT
         };
-        let mut refunded_gas = report.gas_refunded.min(
-            consumed_gas
-                .checked_div(quotient)
+        let refunded_gas = report.gas_refunded.min(
+            gas_used_without_refunds
+                .checked_div(refund_quotient)
                 .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
         );
-        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
-        report.gas_refunded = refunded_gas;
 
-        if vm.env.config.fork >= Fork::Prague {
-            let floor_gas_price = vm.get_min_gas_used(initial_call_frame)?;
-            let execution_gas_used = consumed_gas.saturating_sub(refunded_gas);
-            if floor_gas_price > execution_gas_used {
-                consumed_gas = floor_gas_price;
-                refunded_gas = 0;
-            }
-        }
+        // b. Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
+        let exec_gas_consumed = gas_used_without_refunds
+            .checked_sub(refunded_gas)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
+
+        let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
+            let minimum_gas_consumed = vm.get_min_gas_used(initial_call_frame)?;
+            exec_gas_consumed.max(minimum_gas_consumed)
+        } else {
+            exec_gas_consumed
+        };
+
+        // c. Update gas used and refunded in the Execution Report.
+        report.gas_used = actual_gas_used;
+        report.gas_refunded = refunded_gas;
 
         // 3. Pay coinbase fee
         let coinbase_address = vm.env.coinbase;
-
-        let gas_to_pay_coinbase = consumed_gas
-            .checked_sub(refunded_gas)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
 
         let priority_fee_per_gas = vm
             .env
             .gas_price
             .checked_sub(vm.env.base_fee_per_gas)
             .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
-        let coinbase_fee = U256::from(gas_to_pay_coinbase)
+        let coinbase_fee = U256::from(actual_gas_used)
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
-        if coinbase_fee != U256::zero() {
-            increase_account_balance(vm.db, coinbase_address, coinbase_fee)?;
-        };
+        vm.db
+            .increase_account_balance(coinbase_address, coinbase_fee, None)?;
 
         // 4. Destruct addresses in vm.estruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = get_account_mut_vm(vm.db, address)?;
+            let account_to_remove = vm.db.get_account_mut(address, None)?;
             *account_to_remove = Account::default();
         }
 
