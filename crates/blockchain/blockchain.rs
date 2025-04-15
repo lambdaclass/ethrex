@@ -200,6 +200,11 @@ impl Blockchain {
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
+            info!(
+                "Executing block {:?} with hash {:?}",
+                block.header.number,
+                block.header.compute_block_hash()
+            );
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
                 let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
