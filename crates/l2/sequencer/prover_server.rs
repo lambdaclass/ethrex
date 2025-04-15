@@ -5,15 +5,13 @@ use crate::utils::{
         prover_server::ProverServerConfig,
     },
     prover::{
-        errors::SaveStateError,
         proving_systems::{ProofCalldata, ProverType},
         save_state::*,
     },
 };
-use bytes::Bytes;
 use ethrex_common::{
     types::{Block, BlockHeader},
-    Address, H160, H256, U256,
+    Address, Bytes, H160, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
@@ -498,29 +496,18 @@ impl ProofSender {
                     LAST_VERIFIED_BLOCK_FUNCTION_SELECTOR,
                     Overrides::default(),
                 )
-                .await
-                .unwrap()
+                .await?
                 .parse::<u64>()
-                .unwrap();
+                .map_err(|_| {
+                    ProverServerError::Custom(
+                        "Could not parse last verified block as u64".to_string(),
+                    )
+                })?;
 
-            if let Ok(true) =
-                block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types)
+            if block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types)
+                .is_ok_and(|has_all_proofs| has_all_proofs)
             {
                 self.send_proof(block_to_verify).await?;
-
-                // Remove the Proofs for that block_number
-                match prune_state(block_to_verify) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        if let SaveStateError::IOError(ref error) = e {
-                            if error.kind() != std::io::ErrorKind::NotFound {
-                                return Err(e.into());
-                            }
-                        } else {
-                            return Err(e.into());
-                        }
-                    }
-                }
             }
         }
 
