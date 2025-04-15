@@ -189,16 +189,14 @@ impl Syncer {
 
         loop {
             debug!("Requesting Block Headers from {search_head}");
-            // Hacky Speedup!!!
             let Some(mut block_headers) = self
                 .peers
-                .request_block_headers(sync_head, BlockRequestOrder::NewToOld)
+                .request_block_headers(current_head, BlockRequestOrder::OldToNew)
                 .await
             else {
                 warn!("Sync failed to find target block header, aborting");
                 return Ok(());
             };
-            block_headers.reverse();
 
             let first_block_header = match block_headers.first() {
                 Some(header) => header.clone(),
