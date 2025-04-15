@@ -504,11 +504,7 @@ impl LEVM {
                         .map(|key| {
                             let key = H256::from(key.to_fixed_bytes());
                             let value = store
-                                .get_storage_at_hash(
-                                    block.header.compute_block_hash(),
-                                    update.address,
-                                    key,
-                                )
+                                .get_storage_at_hash(parent_hash, update.address, key)
                                 .map_err(ExecutionDBError::Store)?
                                 .ok_or(ExecutionDBError::NewMissingStorage(update.address, key))?;
                             Ok((key, value))
