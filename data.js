@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744660084836,
+  "lastUpdate": 1744732963356,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2935,6 +2935,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180177828782,
             "range": "± 512333073",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5b5c66ca6a7670993734f17a8ce087d636bc03f4",
+          "message": "feat(l1, l2): make some store getters async (#2430)\n\n**Motivation**\n\nLike with #2336 the goal is to avoid blocking the current task.\n\n**Description**\n\nMakes store getters not related to tries (and thus the EVM) async, and\npropagates the changes to users of store. They are made async by using\n`spawn_blocking `\n\nMany instances of functional code (`and_then`, `map`) had to be replaced\ndue to bad async support.\n\nCloses #2424",
+          "timestamp": "2025-04-15T15:12:25Z",
+          "tree_id": "f4bfd48005450cea74206d968d0e16848b16e82d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5b5c66ca6a7670993734f17a8ce087d636bc03f4"
+        },
+        "date": 1744732961073,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182099820077,
+            "range": "± 1160214253",
             "unit": "ns/iter"
           }
         ]
