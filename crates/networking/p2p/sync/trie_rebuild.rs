@@ -239,6 +239,10 @@ async fn rebuild_storage_trie_in_background(
             && state_sync_finished(&store)?
         {
             parallelization_factor = STATE_SYNC_FINISHED_PARALLELIZATION_FACTOR;
+            // Also reset counters to measure the increased speed
+            total_rebuild_time = 0;
+            pending_historic_count = pending_storages.len();
+
         }
 
         // Spawn tasks to rebuild current storages
