@@ -5,6 +5,7 @@ use ethrex_blockchain::{
     payload::{create_payload, BuildPayloadArgs},
 };
 use ethrex_common::types::BlockHeader;
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
@@ -240,6 +241,12 @@ async fn handle_forkchoice(
                 )),
             ));
         }
+    }
+
+    if context.syncer.sync_mode() == SyncMode::Snap {
+        warn!("Snap sync in progress, setting new head optimistically");
+        context.syncer.set_head(fork_choice_state.head_block_hash);
+        return Ok((None, PayloadStatus::syncing().into()));
     }
 
     match apply_fork_choice(

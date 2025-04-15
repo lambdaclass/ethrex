@@ -146,7 +146,7 @@ impl SyncManager {
     }
 
     /// Returns the syncer's current syncmode (either snap or full)
-    fn sync_mode(&self) -> SyncMode {
+    pub fn sync_mode(&self) -> SyncMode {
         if self.snap_enabled.load(Ordering::Relaxed) {
             SyncMode::Snap
         } else {

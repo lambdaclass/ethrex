@@ -4,9 +4,9 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
-use ethrex_p2p::sync_manager::SyncStatus;
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
@@ -34,7 +34,9 @@ impl RpcHandler for NewPayloadV1Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v1(&self.payload)?;
-        handle_new_payload_v1_v2(&self.payload, context).await
+        let block = get_block_from_payload(&self.payload, None, None)?;
+        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
+        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -58,7 +60,9 @@ impl RpcHandler for NewPayloadV2Request {
             validate_execution_payload_v1(&self.payload)?;
         }
 
-        handle_new_payload_v1_v2(&self.payload, context).await
+        let block = get_block_from_payload(&self.payload, None, None)?;
+        let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
+        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -555,43 +559,10 @@ fn validate_ancestors(
     Ok(None)
 }
 
-// TODO: We need to check why we return a Result<Value, RpcErr> here instead of a Result<PayloadStatus, RpcErr> as in v3.
 async fn handle_new_payload_v1_v2(
     payload: &ExecutionPayload,
-    context: RpcApiContext,
-) -> Result<Value, RpcErr> {
-    let block = get_block_from_payload(payload, None, None)?;
-
-    // Check sync status
-    match context.syncer.status()? {
-        SyncStatus::Active(_) => {
-            return serde_json::to_value(PayloadStatus::syncing())
-                .map_err(|error| RpcErr::Internal(error.to_string()));
-        }
-        SyncStatus::Inactive => {}
-    }
-
-    // Validate block hash
-    if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
-        return serde_json::to_value(PayloadStatus::invalid_with_err(&error_msg))
-            .map_err(|error| RpcErr::Internal(error.to_string()));
-    }
-
-    // Check for invalid ancestors
-    if let Some(status) = validate_ancestors(&block, &context)? {
-        return serde_json::to_value(status).map_err(|error| RpcErr::Internal(error.to_string()));
-    }
-
-    // All checks passed, execute payload
-    let payload_status = try_execute_payload(&block, &context).await?;
-    serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
-}
-
-async fn handle_new_payload_v3(
-    payload: &ExecutionPayload,
-    context: RpcApiContext,
     block: Block,
-    expected_blob_versioned_hashes: Vec<H256>,
+    context: RpcApiContext,
 ) -> Result<PayloadStatus, RpcErr> {
     // Validate block hash
     if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
@@ -603,6 +574,22 @@ async fn handle_new_payload_v3(
         return Ok(status);
     }
 
+    if context.syncer.sync_mode() == SyncMode::Snap {
+        warn!("Snap sync in progress, skipping new payload validation");
+        return Ok(PayloadStatus::syncing());
+    }
+
+    // All checks passed, execute payload
+    let payload_status = try_execute_payload(&block, &context).await?;
+    Ok(payload_status)
+}
+
+async fn handle_new_payload_v3(
+    payload: &ExecutionPayload,
+    context: RpcApiContext,
+    block: Block,
+    expected_blob_versioned_hashes: Vec<H256>,
+) -> Result<PayloadStatus, RpcErr> {
     // V3 specific: validate blob hashes
     let blob_versioned_hashes: Vec<H256> = block
         .body
@@ -617,7 +604,7 @@ async fn handle_new_payload_v3(
         ));
     }
 
-    try_execute_payload(&block, &context).await
+    handle_new_payload_v1_v2(payload, block, context).await
 }
 
 // Elements of the list MUST be ordered by request_type in ascending order.
@@ -659,7 +646,6 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
             "Invalid block hash. Expected {actual_block_hash:#x}, got {block_hash:#x}"
         )));
     }
-    debug!("Block hash {block_hash} is valid");
     Ok(())
 }
 
@@ -676,6 +662,9 @@ async fn try_execute_payload(
 
     // Execute and store the block
     info!("Executing payload with block hash: {block_hash:#x}");
+
+    // TODO: this is not correct, the block being validated it no necesarily a descendant
+    // of the latest canonical block
     let latest_valid_hash =
         context
             .storage
