@@ -220,7 +220,7 @@ impl Command {
                     .checked_sub(U256::from(64))
                     .ok_or_eyre("Cannot get finalized block")?;
 
-                let event_signature = keccak("BlockCommitted(bytes32)");
+                let event_signature = keccak("BatchCommitted(bytes32)");
 
                 loop {
                     // Wait for a block

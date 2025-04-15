@@ -156,6 +156,8 @@ impl Committer {
         let mut withdrawal_hashes = vec![];
         let mut deposit_logs_hashes = vec![];
 
+        info!("Preparing state diff from block {}", first_block_of_batch);
+
         loop {
             let Some(block_to_commit_body) = self
                 .store
@@ -344,8 +346,6 @@ impl Committer {
         deposits: &[PrivilegedL2Transaction],
         account_updates: Vec<AccountUpdate>,
     ) -> Result<StateDiff, CommitterError> {
-        info!("Preparing state diff from block {}", first_block_number);
-
         let mut modified_accounts = HashMap::new();
         for account_update in account_updates {
             let prev_nonce = match store
