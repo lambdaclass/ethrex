@@ -12,9 +12,9 @@ impl<'a> VM<'a> {
     // DUP operation
     pub fn op_dup(
         &mut self,
-        current_call_frame: &mut CallFrame,
         depth: usize,
     ) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         // Increase the consumed gas
         current_call_frame.increase_consumed_gas(gas_cost::DUPN)?;
 

@@ -14,9 +14,9 @@ impl<'a> VM<'a> {
     // PUSH operation
     pub fn op_push(
         &mut self,
-        current_call_frame: &mut CallFrame,
         n_bytes: usize,
     ) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
         let read_n_bytes = read_bytcode_slice(current_call_frame, n_bytes)?;
@@ -36,13 +36,13 @@ impl<'a> VM<'a> {
 
     // PUSH0
     pub fn op_push0(
-        &mut self,
-        current_call_frame: &mut CallFrame,
+        &mut self
     ) -> Result<OpcodeResult, VMError> {
         // [EIP-3855] - PUSH0 is only available from SHANGHAI
         if self.env.config.fork < Fork::Shanghai {
             return Err(VMError::InvalidOpcode);
         }
+        let current_call_frame = self.current_call_frame_mut()?;
 
         current_call_frame.increase_consumed_gas(gas_cost::PUSH0)?;
 

@@ -15,9 +15,9 @@ impl<'a> VM<'a> {
     // LOG operation
     pub fn op_log(
         &mut self,
-        current_call_frame: &mut CallFrame,
         number_of_topics: u8,
     ) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         if current_call_frame.is_static {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
         }

@@ -35,7 +35,8 @@ static SHL_PRECALC: LazyLock<HashMap<u8, U256>> = LazyLock::new(|| {
 
 impl<'a> VM<'a> {
     // LT operation
-    pub fn op_lt(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_lt(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::LT)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
@@ -46,7 +47,8 @@ impl<'a> VM<'a> {
     }
 
     // GT operation
-    pub fn op_gt(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_gt(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::GT)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
@@ -57,7 +59,8 @@ impl<'a> VM<'a> {
     }
 
     // SLT operation (signed less than)
-    pub fn op_slt(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_slt(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
@@ -76,7 +79,8 @@ impl<'a> VM<'a> {
     }
 
     // SGT operation (signed greater than)
-    pub fn op_sgt(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_sgt(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
@@ -95,7 +99,8 @@ impl<'a> VM<'a> {
     }
 
     // EQ operation (equality check)
-    pub fn op_eq(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_eq(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
         let lho = current_call_frame.stack.pop()?;
         let rho = current_call_frame.stack.pop()?;
@@ -108,9 +113,9 @@ impl<'a> VM<'a> {
 
     // ISZERO operation (check if zero)
     pub fn op_iszero(
-        &mut self,
-        current_call_frame: &mut CallFrame,
+        &mut self
     ) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::ISZERO)?;
 
         let operand = current_call_frame.stack.pop()?;
@@ -122,7 +127,8 @@ impl<'a> VM<'a> {
     }
 
     // AND operation
-    pub fn op_and(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_and(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::AND)?;
         let a = current_call_frame.stack.pop()?;
         let b = current_call_frame.stack.pop()?;
@@ -132,7 +138,8 @@ impl<'a> VM<'a> {
     }
 
     // OR operation
-    pub fn op_or(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_or(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::OR)?;
         let a = current_call_frame.stack.pop()?;
         let b = current_call_frame.stack.pop()?;
@@ -142,7 +149,8 @@ impl<'a> VM<'a> {
     }
 
     // XOR operation
-    pub fn op_xor(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_xor(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
         let a = current_call_frame.stack.pop()?;
         let b = current_call_frame.stack.pop()?;
@@ -152,7 +160,8 @@ impl<'a> VM<'a> {
     }
 
     // NOT operation
-    pub fn op_not(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_not(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
         let a = current_call_frame.stack.pop()?;
         current_call_frame.stack.push(!a)?;
@@ -161,7 +170,8 @@ impl<'a> VM<'a> {
     }
 
     // BYTE operation
-    pub fn op_byte(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_byte(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::BYTE)?;
         let op1 = current_call_frame.stack.pop()?;
         let op2 = current_call_frame.stack.pop()?;
@@ -195,9 +205,11 @@ impl<'a> VM<'a> {
     }
 
     // SHL operation (shift left)
-    pub fn op_shl(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_shl(&mut self) -> Result<OpcodeResult, VMError> {
+        let fork = self.env.config.fork;
+        let current_call_frame = self.current_call_frame_mut()?;
         // Shift opcodes introduced in Constantinople https://eips.ethereum.org/EIPS/eip-145
-        if self.env.config.fork < Fork::Constantinople {
+        if fork < Fork::Constantinople {
             return Err(VMError::InvalidOpcode);
         }
         current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
@@ -243,9 +255,11 @@ impl<'a> VM<'a> {
     }
 
     // SHR operation (shift right)
-    pub fn op_shr(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_shr(&mut self) -> Result<OpcodeResult, VMError> {
+        let fork = self.env.config.fork;
+        let current_call_frame = self.current_call_frame_mut()?;
         // Shift opcodes introduced in Constantinople https://eips.ethereum.org/EIPS/eip-145
-        if self.env.config.fork < Fork::Constantinople {
+        if fork < Fork::Constantinople {
             return Err(VMError::InvalidOpcode);
         }
         current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
@@ -264,9 +278,11 @@ impl<'a> VM<'a> {
     }
 
     // SAR operation (arithmetic shift right)
-    pub fn op_sar(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
+    pub fn op_sar(&mut self) -> Result<OpcodeResult, VMError> {
+        let fork = self.env.config.fork;
+        let current_call_frame = self.current_call_frame_mut()?;
         // Shift opcodes introduced in Constantinople https://eips.ethereum.org/EIPS/eip-145
-        if self.env.config.fork < Fork::Constantinople {
+        if fork < Fork::Constantinople {
             return Err(VMError::InvalidOpcode);
         }
         current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
