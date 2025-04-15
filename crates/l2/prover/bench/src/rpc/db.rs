@@ -22,7 +22,7 @@ use ethrex_levm::db::error::DatabaseError;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use super::{Account, NodeRLP};
+use super::{get_block, Account, NodeRLP};
 
 #[derive(Clone)]
 pub struct RpcDB {
@@ -128,28 +128,51 @@ impl RpcDB {
                 let acc_account_mut = child_cache.get_mut(address);
                 if let Some(acc_account) = acc_account_mut {
                     match account {
-                        Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage: storage_acc, account_proof, storage_proofs: storage_proofs_acc, code } => {
-                                    storage_acc.extend(storage);
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
-                                Account::NonExisting { account_proof, storage_proofs } => {
-                                    unreachable!()
-                                },
+                        Account::Existing {
+                            account_state,
+                            storage,
+                            account_proof,
+                            storage_proofs,
+                            code,
+                        } => match acc_account {
+                            Account::Existing {
+                                account_state,
+                                storage: storage_acc,
+                                account_proof,
+                                storage_proofs: storage_proofs_acc,
+                                code,
+                            } => {
+                                storage_acc.extend(storage);
+                                storage_proofs_acc.extend(storage_proofs.clone());
+                            }
+                            Account::NonExisting {
+                                account_proof,
+                                storage_proofs,
+                            } => {
+                                unreachable!()
                             }
                         },
-                        Account::NonExisting { account_proof, storage_proofs } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                                    unreachable!()
-                                },
-                                Account::NonExisting { account_proof, storage_proofs: storage_proofs_acc } => {
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
+                        Account::NonExisting {
+                            account_proof,
+                            storage_proofs,
+                        } => match acc_account {
+                            Account::Existing {
+                                account_state,
+                                storage,
+                                account_proof,
+                                storage_proofs,
+                                code,
+                            } => {
+                                unreachable!()
+                            }
+                            Account::NonExisting {
+                                account_proof,
+                                storage_proofs: storage_proofs_acc,
+                            } => {
+                                storage_proofs_acc.extend(storage_proofs.clone());
                             }
                         },
-                    }   
+                    }
                 } else {
                     child_cache.insert(*address, account.clone());
                 }
@@ -160,28 +183,51 @@ impl RpcDB {
                 let acc_account_mut = cache.get_mut(address);
                 if let Some(acc_account) = acc_account_mut {
                     match account {
-                        Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage: storage_acc, account_proof, storage_proofs: storage_proofs_acc, code } => {
-                                    storage_acc.extend(storage);
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
-                                Account::NonExisting { account_proof, storage_proofs } => {
-                                    unreachable!()
-                                },
+                        Account::Existing {
+                            account_state,
+                            storage,
+                            account_proof,
+                            storage_proofs,
+                            code,
+                        } => match acc_account {
+                            Account::Existing {
+                                account_state,
+                                storage: storage_acc,
+                                account_proof,
+                                storage_proofs: storage_proofs_acc,
+                                code,
+                            } => {
+                                storage_acc.extend(storage);
+                                storage_proofs_acc.extend(storage_proofs.clone());
+                            }
+                            Account::NonExisting {
+                                account_proof,
+                                storage_proofs,
+                            } => {
+                                unreachable!()
                             }
                         },
-                        Account::NonExisting { account_proof, storage_proofs } => {
-                            match acc_account {
-                                Account::Existing { account_state, storage, account_proof, storage_proofs, code } => {
-                                    unreachable!()
-                                },
-                                Account::NonExisting { account_proof, storage_proofs: storage_proofs_acc } => {
-                                    storage_proofs_acc.extend(storage_proofs.clone());
-                                },
+                        Account::NonExisting {
+                            account_proof,
+                            storage_proofs,
+                        } => match acc_account {
+                            Account::Existing {
+                                account_state,
+                                storage,
+                                account_proof,
+                                storage_proofs,
+                                code,
+                            } => {
+                                unreachable!()
+                            }
+                            Account::NonExisting {
+                                account_proof,
+                                storage_proofs: storage_proofs_acc,
+                            } => {
+                                storage_proofs_acc.extend(storage_proofs.clone());
                             }
                         },
-                    }   
+                    }
                 } else {
                     cache.insert(*address, account.clone());
                 }
@@ -249,9 +295,7 @@ impl RpcDB {
                     account_proof,
                     storage_proofs,
                     code,
-                } => {
-                    (*address, storage.keys().cloned().collect())
-                },
+                } => (*address, storage.keys().cloned().collect()),
                 Account::NonExisting {
                     account_proof,
                     storage_proofs,
@@ -472,7 +516,8 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        let account = self.fetch_accounts_blocking(&[(address, vec![key])], false)
+        let account = self
+            .fetch_accounts_blocking(&[(address, vec![key])], false)
             .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
             .get(&address)
             .unwrap()
@@ -489,12 +534,14 @@ impl LevmDatabase for RpcDB {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, DatabaseError> {
-        Ok(self
-            .block_hashes
-            .lock()
-            .unwrap()
-            .get(&block_number)
-            .cloned())
+        let handle = tokio::runtime::Handle::current();
+        let hash = tokio::task::block_in_place(|| {
+            handle.block_on(retry(|| get_block(&self.rpc_url, block_number as usize)))
+        })
+        .map_err(|e| DatabaseError::Custom(e))
+        .map(|block| block.hash())?;
+        self.block_hashes.lock().unwrap().insert(block_number, hash);
+        Ok(Some(hash))
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
