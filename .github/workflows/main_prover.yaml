@@ -14,15 +14,10 @@ env:
 jobs:
   test:
     name: Integration Test
-    runs-on: ubuntu-latest
+    runs-on: gpu
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-
-      - name: RISC-V SP1 toolchain install
-        run: |
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.0
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
@@ -30,7 +25,13 @@ jobs:
       - name: Set up Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-            cache-on-failure: "true"
+          cache-on-failure: "true"
+
+      - name: RISC-V SP1 toolchain install
+        run: |
+          . "$HOME/.cargo/env"
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 4.1.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -58,6 +59,15 @@ jobs:
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          cp configs/sequencer_config_docker_sp1_example.toml configs/sequencer_config.toml
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
 
-          make integration-test
+          sed -i 's/sp1_deploy_verifier = false/sp1_deploy_verifier = true/' configs/sequencer_config.toml
+          sed -i 's/block_time_ms = 5000/block_time_ms = 12000/' configs/sequencer_config.toml
+          sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
+          sed -i 's/dev_mode = true/dev_mode = false/' configs/sequencer_config.toml
+
+          make integration-test-gpu
+
+      - name: Ensure admin permissions in _work
+        if: always()
+        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
