@@ -11,6 +11,7 @@ ethrex-rlp.workspace = true
 ethrex-prover.workspace = true
 ethrex-l2.workspace = true
 ethrex-trie.workspace = true
+ethrex-levm.workspace = true
 
 zkvm_interface = { path = "../zkvm/interface", default-features = false }
 
