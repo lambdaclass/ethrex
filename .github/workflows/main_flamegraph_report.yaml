@@ -273,12 +273,14 @@ jobs:
         with:
           toolchain: ${{ env.RUST_RETH_VERSION }}
 
+      # We need a reth version that does not depend on alloy version higher than 0.1.11, 
+      # as that creates a rust 2024 edition dependency. 
       - name: Checkout reth
         uses: actions/checkout@v4
         with:
           repository: paradigmxyz/reth
           path: "reth"
-          ref: main
+          ref: 1db3b55c7b27dc942f471f423374718c9a512544
 
       - name: Caching
         uses: Swatinem/rust-cache@v2
