@@ -30,7 +30,7 @@ use super::{
 /// The storage should be queued for rebuilding by the sender
 pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
 // Max storages to rebuild in parallel
-const MAX_PARALLEL_REBUILDS: usize = 15;
+const MAX_PARALLEL_REBUILDS: usize = 25;
 // Amount by which to multiply the amount of parallel rebuilds once state sync is over
 const STATE_SYNC_FINISHED_PARALLELIZATION_FACTOR: usize = 2;
 
@@ -252,15 +252,15 @@ async fn rebuild_storage_trie_in_background(
         }
 
         // Check if we can increase parallelization factor
-        if parallelization_factor < STATE_SYNC_FINISHED_PARALLELIZATION_FACTOR
-            && state_sync_finished(&store)?
-        {
-            parallelization_factor = STATE_SYNC_FINISHED_PARALLELIZATION_FACTOR;
-            // Also reset counters to measure the increased speed
-            total_rebuild_time = 0;
-            pending_historic_count = pending_storages.len();
+        // if parallelization_factor < STATE_SYNC_FINISHED_PARALLELIZATION_FACTOR
+        //     && state_sync_finished(&store)?
+        // {
+        //     parallelization_factor = STATE_SYNC_FINISHED_PARALLELIZATION_FACTOR;
+        //     Also reset counters to measure the increased speed
+        //     total_rebuild_time = 0;
+        //     pending_historic_count = pending_storages.len();
 
-        }
+        // }
 
         // Spawn tasks to rebuild current storages
         let rebuild_start = Instant::now();
