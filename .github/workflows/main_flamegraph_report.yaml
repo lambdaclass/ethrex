@@ -183,13 +183,6 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/inferno-*
           key: ${{ runner.os }}-extra-binaries
 
-      - name: Cache ethrex_l2
-        id: cache-ethrex-l2
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
-          key: ${{ runner.os }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
-
       - name: Change perf settings
         run: |
           sudo sysctl kernel.perf_event_paranoid=-1
@@ -235,16 +228,6 @@ jobs:
           else
             echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
-
-      - name: Install ethrex_l2 cli
-        run: |
-          if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
-            echo "$HOME/.cargo/bin/ethrex_l2" already found
-          else
-            cargo install --force --path cmd/ethrex_l2
-          fi
-          ethrex_l2 config create default --default
-          ethrex_l2 config set default
 
       # By default ethrex uses revm as evm backend.
       - id: generate-flamegraph-ethrex
@@ -316,13 +299,6 @@ jobs:
             ${{ env.HOME }}/.cargo/bin/inferno-*
           key: ${{ runner.os }}-extra-binaries
 
-      - name: Cache ethrex_l2
-        id: cache-ethrex-l2
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.HOME }}/.cargo/bin/ethrex_l2
-          key: ${{ runner.os }}-ethrex-l2-${{ hashFiles('cmd/ethrex_l2/Cargo.lock') }}
-
       - name: Change perf settings
         run: |
           sudo sysctl kernel.perf_event_paranoid=-1
@@ -368,16 +344,6 @@ jobs:
           else
             echo "$HOME/.cargo/bin/inferno-collapse-perf" already found
           fi
-
-      - name: Install ethrex_l2 cli
-        run: |
-          if [ -f "$HOME/.cargo/bin/ethrex_l2" ]; then
-            echo "$HOME/.cargo/bin/ethrex_l2" already found
-          else
-            cargo install --force --path cmd/ethrex_l2
-          fi
-          ethrex_l2 config create default --default
-          ethrex_l2 config set default
 
       - id: generate-flamegraph-reth
         name: Build and test reth
