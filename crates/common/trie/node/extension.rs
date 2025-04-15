@@ -1,10 +1,10 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::error::TrieError;
 use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
 use crate::state::TrieState;
 use crate::ValueRLP;
+use crate::{cache::CacheKey, error::TrieError};
 
 use super::{BranchNode, Node};
 
@@ -13,12 +13,12 @@ use super::{BranchNode, Node};
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtensionNode {
     pub prefix: Nibbles,
-    pub child: NodeHash,
+    pub child: CacheKey,
 }
 
 impl ExtensionNode {
     /// Creates a new extension node given its child hash and prefix
-    pub(crate) fn new(prefix: Nibbles, child: NodeHash) -> Self {
+    pub(crate) fn new(prefix: Nibbles, child: CacheKey) -> Self {
         Self { prefix, child }
     }
 
@@ -27,11 +27,7 @@ impl ExtensionNode {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
-            let child_node = state
-                .get_node(self.child.clone())?
-                .ok_or(TrieError::InconsistentTree)?;
-
-            child_node.get(state, path)
+            state[self.child.clone()].get(state, path)
         } else {
             Ok(None)
         }
@@ -57,37 +53,32 @@ impl ExtensionNode {
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
             // Insert into child node
-            let child_node = state
-                .get_node(self.child)?
-                .ok_or(TrieError::InconsistentTree)?;
-            let new_child_node =
-                child_node.insert(state, path.offset(match_index), value.clone())?;
-            self.child = new_child_node.insert_self(state)?;
+            let child_node = state[self.child].clone();
+            let new_child_node = child_node.insert(state, path.offset(match_index), value)?;
+            self.child = new_child_node.insert_self(state);
             Ok(self.into())
         } else if match_index == 0 {
             let new_node = if self.prefix.len() == 1 {
                 self.child
             } else {
-                ExtensionNode::new(self.prefix.offset(1), self.child).insert_self(state)?
+                ExtensionNode::new(self.prefix.offset(1), self.child).insert_self(state)
             };
             let mut choices = BranchNode::EMPTY_CHOICES;
             let branch_node = if self.prefix.at(0) == 16 {
-                match state.get_node(new_node)? {
-                    Some(Node::Leaf(leaf)) => {
-                        BranchNode::new_with_value(Box::new(choices), leaf.value)
-                    }
+                match &state[new_node] {
+                    Node::Leaf(leaf) => BranchNode::new_with_value(choices, leaf.value.clone()),
                     _ => return Err(TrieError::InconsistentTree),
                 }
             } else {
                 choices[self.prefix.at(0)] = new_node;
-                BranchNode::new(Box::new(choices))
+                BranchNode::new(choices)
             };
             return branch_node.insert(state, path, value);
         } else {
             let new_extension = ExtensionNode::new(self.prefix.offset(match_index), self.child);
             let new_node = new_extension.insert(state, path.offset(match_index), value)?;
             self.prefix = self.prefix.slice(0, match_index);
-            self.child = new_node.insert_self(state)?;
+            self.child = new_node.insert_self(state);
             Ok(self.into())
         }
     }
@@ -107,9 +98,7 @@ impl ExtensionNode {
 
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
-            let child_node = state
-                .get_node(self.child)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node = state[self.child].clone();
             // Remove value from child subtrie
             let (child_node, old_value) = child_node.remove(state, path)?;
             // Restructure node based on removal
@@ -119,7 +108,7 @@ impl ExtensionNode {
                 Some(node) => Some(match node {
                     // If it is a branch node set it as self's child
                     Node::Branch(branch_node) => {
-                        self.child = branch_node.insert_self(state)?;
+                        self.child = branch_node.insert_self(state);
                         self.into()
                     }
                     // If it is an extension replace self with it after updating its prefix
@@ -165,10 +154,8 @@ impl ExtensionNode {
     }
 
     /// Inserts the node into the state and returns its hash
-    pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
-        let hash = self.compute_hash();
-        state.insert_node(self.into(), hash.clone());
-        Ok(hash)
+    pub fn insert_self(self, state: &mut TrieState) -> CacheKey {
+        state.insert_node(todo!(), self.into())
     }
 
     /// Traverses own subtrie until reaching the node containing `path`

@@ -1,6 +1,9 @@
 use ethrex_rlp::structs::Encoder;
 
-use crate::{error::TrieError, nibbles::Nibbles, node_hash::NodeHash, state::TrieState, ValueRLP};
+use crate::{
+    cache::CacheKey, error::TrieError, nibbles::Nibbles, node_hash::NodeHash, state::TrieState,
+    ValueRLP,
+};
 
 use super::{ExtensionNode, LeafNode, Node};
 
@@ -9,33 +12,16 @@ use super::{ExtensionNode, LeafNode, Node};
 #[derive(Debug, Clone, PartialEq)]
 pub struct BranchNode {
     // TODO: check if switching to hashmap is a better solution
-    pub choices: Box<[NodeHash; 16]>,
+    pub choices: [CacheKey; 16],
     pub value: ValueRLP,
 }
 
 impl BranchNode {
     /// Empty choice array for more convenient node-building
-    pub const EMPTY_CHOICES: [NodeHash; 16] = [
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-        NodeHash::const_default(),
-    ];
+    pub const EMPTY_CHOICES: [CacheKey; 16] = [CacheKey::INVALID; 16];
 
     /// Creates a new branch node given its children, without any stored value
-    pub fn new(choices: Box<[NodeHash; 16]>) -> Self {
+    pub fn new(choices: [CacheKey; 16]) -> Self {
         Self {
             choices,
             value: Default::default(),
@@ -43,7 +29,7 @@ impl BranchNode {
     }
 
     /// Creates a new branch node given its children and value
-    pub fn new_with_value(choices: Box<[NodeHash; 16]>, value: ValueRLP) -> Self {
+    pub fn new_with_value(choices: [CacheKey; 16], value: ValueRLP) -> Self {
         Self { choices, value }
     }
 
@@ -58,12 +44,9 @@ impl BranchNode {
         // Otherwise, check the corresponding choice and delegate accordingly if present.
         if let Some(choice) = path.next_choice() {
             // Delegate to children if present
-            let child_hash = &self.choices[choice];
-            if child_hash.is_valid() {
-                let child_node = state
-                    .get_node(child_hash.clone())?
-                    .ok_or(TrieError::InconsistentTree)?;
-                child_node.get(state, path)
+            let child_key = self.choices[choice];
+            if child_key.is_valid() {
+                state[child_key].get(state, path)
             } else {
                 Ok(None)
             }
@@ -83,22 +66,15 @@ impl BranchNode {
         // If path is at the end, insert or replace its own value.
         // Otherwise, check the corresponding choice and insert or delegate accordingly.
         if let Some(choice) = path.next_choice() {
-            match &mut self.choices[choice] {
-                // Create new child (leaf node)
-                choice_hash if !choice_hash.is_valid() => {
-                    let new_leaf = LeafNode::new(path, value);
-                    let child_hash = new_leaf.insert_self(state)?;
-                    *choice_hash = child_hash;
-                }
+            let mut choice_key = &mut self.choices[choice];
+            if choice_key.is_valid() {
                 // Insert into existing child and then update it
-                choice_hash => {
-                    let child_node = state
-                        .get_node(choice_hash.clone())?
-                        .ok_or(TrieError::InconsistentTree)?;
-
-                    let child_node = child_node.insert(state, path, value)?;
-                    *choice_hash = child_node.insert_self(state)?;
-                }
+                let child_node = state[*choice_key].clone().insert(state, path, value)?;
+                *choice_key = child_node.insert_self(state);
+            } else {
+                // Create new child (leaf node)
+                let new_leaf = LeafNode::new(path, value);
+                *choice_key = new_leaf.insert_self(state);
             }
         } else {
             // Insert into self
@@ -137,17 +113,15 @@ impl BranchNode {
         // Check if the value is located in a child subtrie
         let value = if let Some(choice_index) = path.next_choice() {
             if self.choices[choice_index].is_valid() {
-                let child_node = state
-                    .get_node(self.choices[choice_index].clone())?
-                    .ok_or(TrieError::InconsistentTree)?;
+                let child_node = state[self.choices[choice_index]].clone();
                 // Remove value from child node
                 let (child_node, old_value) = child_node.remove(state, path.clone())?;
                 if let Some(child_node) = child_node {
                     // Update child node
-                    self.choices[choice_index] = child_node.insert_self(state)?;
+                    self.choices[choice_index] = child_node.insert_self(state);
                 } else {
                     // Remove child hash if the child subtrie was removed in the process
-                    self.choices[choice_index] = NodeHash::default();
+                    self.choices[choice_index] = CacheKey::INVALID;
                 }
                 old_value
             } else {
@@ -169,6 +143,7 @@ impl BranchNode {
         let children = self
             .choices
             .iter()
+            .copied()
             .enumerate()
             .filter(|(_, child)| child.is_valid())
             .collect::<Vec<_>>();
@@ -177,15 +152,13 @@ impl BranchNode {
             (0, true) => LeafNode::new(Nibbles::from_hex(vec![16]), self.value).into(),
             // If this node doesn't have a value and has only one child, replace it with its child node
             (1, false) => {
-                let (choice_index, child_hash) = children[0];
-                let child = state
-                    .get_node(child_hash.clone())?
-                    .ok_or(TrieError::InconsistentTree)?;
+                let (choice_index, child_key) = children[0];
+                let child = state[child_key].clone();
                 match child {
                     // Replace self with an extension node leading to the child
                     Node::Branch(_) => ExtensionNode::new(
                         Nibbles::from_hex(vec![choice_index as u8]),
-                        child_hash.clone(),
+                        child_key.clone(),
                     )
                     .into(),
                     // Replace self with the child extension node, updating its path in the process
@@ -227,10 +200,8 @@ impl BranchNode {
     }
 
     /// Inserts the node into the state and returns its hash
-    pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
-        let hash = self.compute_hash();
-        state.insert_node(self.into(), hash.clone());
-        Ok(hash)
+    pub fn insert_self(self, state: &mut TrieState) -> CacheKey {
+        state.insert_node(todo!(), self.into())
     }
 
     /// Traverses own subtrie until reaching the node containing `path`

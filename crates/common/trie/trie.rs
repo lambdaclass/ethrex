@@ -1,3 +1,4 @@
+mod cache;
 pub mod db;
 pub mod error;
 mod nibbles;
@@ -21,7 +22,7 @@ pub use self::verify_range::verify_range;
 pub use self::{node::Node, state::TrieState};
 
 pub use self::error::TrieError;
-use self::{node::LeafNode, trie_iter::TrieIterator};
+use self::{cache::CacheKey, node::LeafNode, trie_iter::TrieIterator};
 
 use lazy_static::lazy_static;
 
@@ -45,7 +46,7 @@ pub type NodeRLP = Vec<u8>;
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     /// Hash of the current node
-    root: Option<NodeHash>,
+    root: Option<CacheKey>,
     /// Contains the trie's nodes
     pub(crate) state: TrieState,
 }
@@ -70,12 +71,8 @@ impl Trie {
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        if let Some(root) = &self.root {
-            let root_node = self
-                .state
-                .get_node(root.clone())?
-                .ok_or(TrieError::InconsistentTree)?;
-            root_node.get(&self.state, Nibbles::from_bytes(path))
+        if let Some(root) = self.root {
+            self.state[root].get(&self.state, Nibbles::from_bytes(path))
         } else {
             Ok(None)
         }
@@ -84,19 +81,14 @@ impl Trie {
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let root = self.root.take();
-        if let Some(root_node) = root
-            .map(|root| self.state.get_node(root))
-            .transpose()?
-            .flatten()
-        {
+        if let Some(root_node) = root.map(|root| self.state[root].clone()) {
             // If the trie is not empty, call the root node's insertion logic
-            let root_node =
-                root_node.insert(&mut self.state, Nibbles::from_bytes(&path), value.clone())?;
-            self.root = Some(root_node.insert_self(&mut self.state)?)
+            let root_node = root_node.insert(&mut self.state, Nibbles::from_bytes(&path), value)?;
+            self.root = Some(root_node.insert_self(&mut self.state))
         } else {
             // If the trie is empty, just add a leaf.
             let new_leaf = Node::from(LeafNode::new(Nibbles::from_bytes(&path), value));
-            self.root = Some(new_leaf.insert_self(&mut self.state)?)
+            self.root = Some(new_leaf.insert_self(&mut self.state))
         }
         Ok(())
     }
@@ -106,15 +98,10 @@ impl Trie {
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let root = self.root.take();
         if let Some(root) = root {
-            let root_node = self
-                .state
-                .get_node(root)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let root_node = self.state[root].clone();
             let (root_node, old_value) =
                 root_node.remove(&mut self.state, Nibbles::from_bytes(&path))?;
-            self.root = root_node
-                .map(|root| root.insert_self(&mut self.state))
-                .transpose()?;
+            self.root = root_node.map(|root| root.insert_self(&mut self.state));
             Ok(old_value)
         } else {
             Ok(None)
@@ -126,11 +113,7 @@ impl Trie {
     /// Also commits changes to the DB
     pub fn hash(&mut self) -> Result<H256, TrieError> {
         self.commit()?;
-        Ok(self
-            .root
-            .as_ref()
-            .map(|root| root.clone().finalize())
-            .unwrap_or(*EMPTY_TRIE_HASH))
+        Ok(self.hash_no_commit())
     }
 
     /// Return the hash of the trie's root node.

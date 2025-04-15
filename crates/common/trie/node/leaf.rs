@@ -1,8 +1,8 @@
 use ethrex_rlp::structs::Encoder;
 
 use crate::{
-    error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash, state::TrieState,
-    ValueRLP,
+    cache::CacheKey, error::TrieError, nibbles::Nibbles, node::BranchNode, node_hash::NodeHash,
+    state::TrieState, ValueRLP,
 };
 
 use super::{ExtensionNode, Node};
@@ -58,23 +58,23 @@ impl LeafNode {
                 // Branch { [ Leaf { Value } , ... ], SelfValue}
                 let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?;
-                BranchNode::new_with_value(Box::new(choices), self.value)
+                choices[new_leaf_choice_idx] = new_leaf.insert_self(state);
+                BranchNode::new_with_value(choices, self.value)
             } else if new_leaf_choice_idx == 16 {
                 // Create a branch node with self as a child and store the value in the branch node
                 // Branch { [Self,...], Value }
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[self_choice_idx] = self.clone().insert_self(state)?;
-                BranchNode::new_with_value(Box::new(choices), value)
+                choices[self_choice_idx] = self.clone().insert_self(state);
+                BranchNode::new_with_value(choices, value)
             } else {
                 // Create a new leaf node and store the path and value in it
                 // Create a new branch node with the leaf and self as children
                 // Branch { [ Leaf { Path, Value }, Self, ... ], None, None}
                 let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?;
-                choices[self_choice_idx] = self.clone().insert_self(state)?;
-                BranchNode::new(Box::new(choices))
+                choices[new_leaf_choice_idx] = new_leaf.insert_self(state);
+                choices[self_choice_idx] = self.clone().insert_self(state);
+                BranchNode::new(choices)
             };
 
             let final_node = if match_index == 0 {
@@ -82,7 +82,7 @@ impl LeafNode {
             } else {
                 // Create an extension node with the branch node as child
                 // Extension { BranchNode }
-                ExtensionNode::new(path.slice(0, match_index), branch_node.insert_self(state)?)
+                ExtensionNode::new(path.slice(0, match_index), branch_node.insert_self(state))
                     .into()
             };
 
@@ -116,10 +116,8 @@ impl LeafNode {
 
     /// Inserts the node into the state and returns its hash
     /// Receives the offset that needs to be traversed to reach the leaf node from the canonical root, used to compute the node hash
-    pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
-        let hash = self.compute_hash();
-        state.insert_node(self.into(), hash.clone());
-        Ok(hash)
+    pub fn insert_self(self, state: &mut TrieState) -> CacheKey {
+        state.insert_node(todo!(), self.into())
     }
 
     /// Encodes the node and appends it to `node_path` if the encoded node is 32 or more bytes long
