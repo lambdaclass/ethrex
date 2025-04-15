@@ -502,11 +502,11 @@ impl Syncer {
     async fn add_blocks(
         blockchain: Arc<Blockchain>,
         blocks: Vec<Block>,
-        _sync_head_found: bool,
+        sync_head_found: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
         // DEBUG: Here we are forcing the blocks to be added sequentially
-        if true {
+        if sync_head_found {
             let mut last_valid_hash = H256::default();
             for block in blocks {
                 blockchain.add_block(&block).await.map_err(|e| {
