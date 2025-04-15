@@ -524,13 +524,8 @@ impl LEVM {
             .map(|(num, hash)| (num, H256::from(hash.0)))
             .collect();
 
-        let new_store = store.clone();
-        new_store
-            .apply_account_updates(block.hash(), &execution_updates)
-            .await?;
-
         // get account proofs
-        let state_trie = new_store
+        let state_trie = store
             .state_trie(block.hash())?
             .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
         let parent_state_trie = store
@@ -565,7 +560,7 @@ impl LEVM {
                 // way the storage trie was initially empty so there aren't any proofs to add.
                 continue;
             };
-            let storage_trie = new_store.storage_trie(block.hash(), *address)?.ok_or(
+            let storage_trie = store.storage_trie(block.hash(), *address)?.ok_or(
                 ExecutionDBError::NewMissingStorageTrie(block.hash(), *address),
             )?;
             let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
