@@ -104,7 +104,7 @@ async fn heal_storage_batch(
             // Get the corresponding nodes
             let trie_nodes: Vec<ethrex_trie::Node> =
                 nodes.drain(..paths.len().min(nodes.len())).collect();
-            // Add children to batch
+            // Update batch: remove fetched paths & add children
             let children = trie_nodes
                 .iter()
                 .zip(paths.drain(..trie_nodes.len()))
