@@ -78,7 +78,37 @@ impl Store {
     }
 
     // Helper method to read from a libmdbx table
-    fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
+    async fn read<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
+            txn.get::<T>(key).map_err(StoreError::LibmdbxError)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    // Helper method to read from a libmdbx table
+    async fn read_bulk<T: Table>(&self, keys: Vec<T::Key>) -> Result<Vec<T::Value>, StoreError> {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut res = Vec::new();
+            let txn = db.begin_read().map_err(StoreError::LibmdbxError)?;
+            for key in keys {
+                let val = txn.get::<T>(key).map_err(StoreError::LibmdbxError)?;
+                match val {
+                    Some(val) => res.push(val),
+                    None => Err(StoreError::ReadError)?,
+                }
+            }
+            Ok(res)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("task panicked: {e}")))?
+    }
+
+    // Helper method to read from a libmdbx table
+    fn read_sync<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, StoreError> {
         let txn = self.db.begin_read().map_err(StoreError::LibmdbxError)?;
         txn.get::<T>(key).map_err(StoreError::LibmdbxError)
     }
@@ -87,7 +117,9 @@ impl Store {
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        Ok(self.read::<CanonicalBlockHashes>(number)?.map(|a| a.to()))
+        Ok(self
+            .read_sync::<CanonicalBlockHashes>(number)?
+            .map(|a| a.to()))
     }
 }
 
@@ -120,7 +152,7 @@ impl StoreEngine for Store {
         block_number: BlockNumber,
     ) -> Result<Option<BlockHeader>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            Ok(self.read::<Headers>(hash.into())?.map(|b| b.to()))
+            Ok(self.read_sync::<Headers>(hash.into())?.map(|b| b.to()))
         } else {
             Ok(None)
         }
@@ -183,26 +215,54 @@ impl StoreEngine for Store {
         self.write_batch::<CanonicalBlockHashes>(key_values).await
     }
 
-    fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
+    async fn get_block_body(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockBody>, StoreError> {
         if let Some(hash) = self.get_block_hash_by_block_number(block_number)? {
-            self.get_block_body_by_hash(hash)
+            self.get_block_body_by_hash(hash).await
         } else {
             Ok(None)
         }
     }
 
-    fn get_block_body_by_hash(
+    async fn get_block_bodies(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        let numbers = (from..=to).collect();
+        let hashes = self.read_bulk::<CanonicalBlockHashes>(numbers).await?;
+        let blocks = self.read_bulk::<Bodies>(hashes).await?;
+        Ok(blocks.into_iter().map(|b| b.to()).collect())
+    }
+
+    async fn get_block_bodies_by_hash(
+        &self,
+        hashes: Vec<BlockHash>,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        let hashes = hashes.into_iter().map(|h| h.into()).collect();
+        let blocks = self.read_bulk::<Bodies>(hashes).await?;
+        Ok(blocks.into_iter().map(|b| b.to()).collect())
+    }
+
+    async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        Ok(self.read::<Bodies>(block_hash.into())?.map(|b| b.to()))
+        Ok(self
+            .read::<Bodies>(block_hash.into())
+            .await?
+            .map(|b| b.to()))
     }
 
     fn get_block_header_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        Ok(self.read::<Headers>(block_hash.into())?.map(|b| b.to()))
+        Ok(self
+            .read_sync::<Headers>(block_hash.into())?
+            .map(|b| b.to()))
     }
 
     async fn add_block_number(
@@ -214,8 +274,11 @@ impl StoreEngine for Store {
             .await
     }
 
-    fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
-        self.read::<BlockNumbers>(block_hash.into())
+    async fn get_block_number(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        self.read::<BlockNumbers>(block_hash.into()).await
     }
 
     async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
@@ -224,7 +287,9 @@ impl StoreEngine for Store {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
-        Ok(self.read::<AccountCodes>(code_hash.into())?.map(|b| b.to()))
+        Ok(self
+            .read_sync::<AccountCodes>(code_hash.into())?
+            .map(|b| b.to()))
     }
 
     async fn add_receipt(
@@ -240,7 +305,7 @@ impl StoreEngine for Store {
         self.write_batch::<Receipts>(entries).await
     }
 
-    fn get_receipt(
+    async fn get_receipt(
         &self,
         block_number: BlockNumber,
         index: Index,
@@ -269,7 +334,7 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_transaction_location(
+    async fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
@@ -298,7 +363,7 @@ impl StoreEngine for Store {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::ChainConfig)? {
+        match self.read_sync::<ChainData>(ChainDataIndex::ChainConfig)? {
             None => Err(StoreError::Custom("Chain config not found".to_string())),
             Some(bytes) => {
                 let json = String::from_utf8(bytes).map_err(|_| StoreError::DecodeError)?;
@@ -320,8 +385,11 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::EarliestBlockNumber)? {
+    async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        match self
+            .read::<ChainData>(ChainDataIndex::EarliestBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(rlp)
                 .map(Some)
@@ -340,8 +408,11 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::FinalizedBlockNumber)? {
+    async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        match self
+            .read::<ChainData>(ChainDataIndex::FinalizedBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(rlp)
                 .map(Some)
@@ -357,8 +428,11 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::SafeBlockNumber)? {
+    async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        match self
+            .read::<ChainData>(ChainDataIndex::SafeBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(rlp)
                 .map(Some)
@@ -377,8 +451,11 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::LatestBlockNumber)? {
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        match self
+            .read::<ChainData>(ChainDataIndex::LatestBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(rlp)
                 .map(Some)
@@ -397,8 +474,11 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::PendingBlockNumber)? {
+    async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        match self
+            .read::<ChainData>(ChainDataIndex::PendingBlockNumber)
+            .await?
+        {
             None => Ok(None),
             Some(ref rlp) => RLPDecode::decode(rlp)
                 .map(Some)
@@ -428,11 +508,12 @@ impl StoreEngine for Store {
             .await
     }
 
-    fn get_canonical_block_hash(
+    async fn get_canonical_block_hash(
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<CanonicalBlockHashes>(number)
+            .await
             .map(|o| o.map(|hash_rlp| hash_rlp.to()))
     }
 
@@ -441,8 +522,8 @@ impl StoreEngine for Store {
             .await
     }
 
-    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        let r = self.read::<Payloads>(payload_id)?;
+    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
+        let r = self.read::<Payloads>(payload_id).await?;
         Ok(r.map(|b| b.to()))
     }
 
@@ -454,24 +535,24 @@ impl StoreEngine for Store {
         self.write::<Payloads>(payload_id, payload.into()).await
     }
 
-    fn get_transaction_by_hash(
+    async fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
         let (_block_number, block_hash, index) =
-            match self.get_transaction_location(transaction_hash)? {
+            match self.get_transaction_location(transaction_hash).await? {
                 Some(location) => location,
                 None => return Ok(None),
             };
-        self.get_transaction_by_location(block_hash, index)
+        self.get_transaction_by_location(block_hash, index).await
     }
 
-    fn get_transaction_by_location(
+    async fn get_transaction_by_location(
         &self,
         block_hash: H256,
         index: u64,
     ) -> Result<Option<Transaction>, StoreError> {
-        let block_body = match self.get_block_body_by_hash(block_hash)? {
+        let block_body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
         };
@@ -481,12 +562,12 @@ impl StoreEngine for Store {
             .and_then(|index: usize| block_body.transactions.get(index).cloned()))
     }
 
-    fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
+    async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
         let header = match self.get_block_header_by_hash(block_hash)? {
             Some(header) => header,
             None => return Ok(None),
         };
-        let body = match self.get_block_body_by_hash(block_hash)? {
+        let body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
         };
@@ -511,9 +592,10 @@ impl StoreEngine for Store {
             .await
     }
 
-    fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
+    async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
         Ok(self
-            .read::<PendingBlocks>(block_hash.into())?
+            .read::<PendingBlocks>(block_hash.into())
+            .await?
             .map(|b| b.to()))
     }
 
@@ -607,8 +689,9 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)?
+    async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint)
+            .await?
             .map(|ref h| BlockHash::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
@@ -625,10 +708,11 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_state_trie_key_checkpoint(
+    async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StateTrieKeyCheckpoint)?
+        self.read::<SnapState>(SnapStateIndex::StateTrieKeyCheckpoint)
+            .await?
             .map(|ref c| {
                 <Vec<H256>>::decode(c)?
                     .try_into()
@@ -677,8 +761,8 @@ impl StoreEngine for Store {
         Ok(res)
     }
 
-    fn is_synced(&self) -> Result<bool, StoreError> {
-        match self.read::<ChainData>(ChainDataIndex::IsSynced)? {
+    async fn is_synced(&self) -> Result<bool, StoreError> {
+        match self.read::<ChainData>(ChainDataIndex::IsSynced).await? {
             None => Err(StoreError::Custom("Sync status not found".to_string())),
             Some(ref rlp) => RLPDecode::decode(rlp).map_err(|_| StoreError::DecodeError),
         }
@@ -694,8 +778,9 @@ impl StoreEngine for Store {
             .await
     }
 
-    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StateHealPaths)?
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StateHealPaths)
+            .await?
             .map(|ref h| <Vec<Nibbles>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
@@ -786,11 +871,12 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_state_trie_rebuild_checkpoint(
+    async fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         let Some((root, checkpoints)) = self
-            .read::<SnapState>(SnapStateIndex::StateTrieRebuildCheckpoint)?
+            .read::<SnapState>(SnapStateIndex::StateTrieRebuildCheckpoint)
+            .await?
             .map(|ref c| <(H256, Vec<H256>)>::decode(c))
             .transpose()?
         else {
@@ -815,8 +901,11 @@ impl StoreEngine for Store {
         .await
     }
 
-    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        self.read::<SnapState>(SnapStateIndex::StorageTrieRebuildPending)?
+    async fn get_storage_trie_rebuild_pending(
+        &self,
+    ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+        self.read::<SnapState>(SnapStateIndex::StorageTrieRebuildPending)
+            .await?
             .map(|ref h| <Vec<(H256, H256)>>::decode(h))
             .transpose()
             .map_err(StoreError::RLPDecode)
@@ -849,7 +938,7 @@ impl StoreEngine for Store {
         Ok(iter.collect::<Vec<_>>())
     }
 
-    fn read_storage_snapshot(
+    async fn read_storage_snapshot(
         &self,
         account_hash: H256,
         start: H256,
@@ -868,8 +957,12 @@ impl StoreEngine for Store {
         Ok(iter.collect::<Vec<_>>())
     }
 
-    fn get_latest_valid_ancestor(&self, block: BlockHash) -> Result<Option<BlockHash>, StoreError> {
+    async fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError> {
         self.read::<InvalidAncestors>(block.into())
+            .await
             .map(|o| o.map(|a| a.to()))
     }
 

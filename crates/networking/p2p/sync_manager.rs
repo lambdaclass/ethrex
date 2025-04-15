@@ -36,7 +36,7 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
-    pub fn new(
+    pub async fn new(
         peer_table: Arc<Mutex<KademliaTable>>,
         sync_mode: SyncMode,
         cancel_token: CancellationToken,
@@ -60,6 +60,7 @@ impl SyncManager {
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
         if store
             .get_header_download_checkpoint()
+            .await
             .is_ok_and(|res| res.is_some())
         {
             sync_manager.start_sync();
@@ -103,12 +104,14 @@ impl SyncManager {
     pub fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
-        let Ok(Some(current_head)) = self.store.get_latest_canonical_block_hash() else {
-            tracing::error!("Failed to fecth latest canonical block, unable to sync");
-            return;
-        };
         let sync_head = self.last_fcu_head.clone();
+
         tokio::spawn(async move {
+            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
+                tracing::error!("Failed to fecth latest canonical block, unable to sync");
+                return;
+            };
+
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             let Ok(mut syncer) = syncer.try_lock() else {
                 return;
@@ -135,6 +138,7 @@ impl SyncManager {
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
                     .get_header_download_checkpoint()
+                    .await
                     .ok()
                     .flatten()
                     .is_none()

@@ -213,7 +213,8 @@ async fn handle_forkchoice(
 
     if let Some(latest_valid_hash) = context
         .storage
-        .get_latest_valid_ancestor(fork_choice_state.head_block_hash)?
+        .get_latest_valid_ancestor(fork_choice_state.head_block_hash)
+        .await?
     {
         return Ok((
             None,
@@ -231,7 +232,8 @@ async fn handle_forkchoice(
     {
         if let Some(latest_valid_hash) = context
             .storage
-            .get_latest_valid_ancestor(head_block.parent_hash)?
+            .get_latest_valid_ancestor(head_block.parent_hash)
+            .await?
         {
             return Ok((
                 None,
@@ -260,7 +262,11 @@ async fn handle_forkchoice(
         Ok(head) => {
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            match context.storage.get_block_by_hash(head.compute_block_hash()) {
+            match context
+                .storage
+                .get_block_by_hash(head.compute_block_hash())
+                .await
+            {
                 Ok(Some(block)) => {
                     for tx in &block.body.transactions {
                         context
@@ -291,7 +297,9 @@ async fn handle_forkchoice(
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
                     ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        latest_canonical_block_hash(&context.storage).unwrap(),
+                        latest_canonical_block_hash(&context.storage)
+                            .await
+                            .map_err(|e| RpcErr::Internal(e.to_string()))?,
                     ))
                 }
                 InvalidForkChoice::Syncing => {
@@ -320,10 +328,13 @@ async fn handle_forkchoice(
                         "Invalid fork choice payload. Reason: {}",
                         reason.to_string()
                     );
-                    let latest_valid_hash =
-                        context.storage.get_latest_canonical_block_hash()?.ok_or(
-                            RpcErr::Internal("Missing latest canonical block".to_owned()),
-                        )?;
+                    let latest_valid_hash = context
+                        .storage
+                        .get_latest_canonical_block_hash()
+                        .await?
+                        .ok_or(RpcErr::Internal(
+                            "Missing latest canonical block".to_owned(),
+                        ))?;
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(
                         latest_valid_hash,
                         reason.to_string(),

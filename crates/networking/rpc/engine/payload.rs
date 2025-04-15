@@ -229,7 +229,7 @@ impl RpcHandler for GetPayloadV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context)?;
+        let payload = get_payload(self.payload_id, &context).await?;
         // NOTE: This validation is actually not required to run Hive tests. Not sure if it's
         // necessary
         validate_payload_v1_v2(&payload.block, &context)?;
@@ -252,7 +252,7 @@ impl RpcHandler for GetPayloadV2Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context)?;
+        let payload = get_payload(self.payload_id, &context).await?;
         validate_payload_v1_v2(&payload.block, &context)?;
         let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
@@ -324,7 +324,7 @@ impl RpcHandler for GetPayloadV3Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context)?;
+        let payload = get_payload(self.payload_id, &context).await?;
         validate_fork(&payload.block, Fork::Cancun, &context)?;
         let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
@@ -361,7 +361,7 @@ impl RpcHandler for GetPayloadV4Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context)?;
+        let payload = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config()?;
 
         if !chain_config.is_prague_activated(payload.block.header.timestamp) {
@@ -413,11 +413,10 @@ impl RpcHandler for GetPayloadBodiesByHashV1Request {
         if self.hashes.len() >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let bodies = self
-            .hashes
-            .iter()
-            .map(|hash| context.storage.get_block_body_by_hash(*hash))
-            .collect::<Result<Vec<Option<BlockBody>>, _>>()?;
+        let mut bodies = Vec::new();
+        for hash in self.hashes.iter() {
+            bodies.push(context.storage.get_block_body_by_hash(*hash).await?)
+        }
         build_payload_body_response(bodies)
     }
 }
@@ -450,12 +449,10 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         if self.count as usize >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number()?;
+        let latest_block_number = context.storage.get_latest_block_number().await?;
         let last = latest_block_number.min(self.start + self.count - 1);
-        let bodies = (self.start..=last)
-            .map(|block_num| context.storage.get_block_body(block_num))
-            .collect::<Result<Vec<Option<BlockBody>>, _>>()?;
-        build_payload_body_response(bodies)
+        let bodies = context.storage.get_block_bodies(self.start, last).await?;
+        build_payload_body_response(bodies.into_iter().map(Some).collect())
     }
 }
 
@@ -533,12 +530,16 @@ fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), 
 }
 
 // This function is used to make sure neither the current block nor its parent have been invalidated
-fn validate_ancestors(
+async fn validate_ancestors(
     block: &Block,
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
     // Check if the block has already been invalidated
-    if let Some(latest_valid_hash) = context.storage.get_latest_valid_ancestor(block.hash())? {
+    if let Some(latest_valid_hash) = context
+        .storage
+        .get_latest_valid_ancestor(block.hash())
+        .await?
+    {
         return Ok(Some(PayloadStatus::invalid_with(
             latest_valid_hash,
             "Header has been previously invalidated.".into(),
@@ -548,7 +549,8 @@ fn validate_ancestors(
     // Check if the parent block has already been invalidated
     if let Some(latest_valid_hash) = context
         .storage
-        .get_latest_valid_ancestor(block.header.parent_hash)?
+        .get_latest_valid_ancestor(block.header.parent_hash)
+        .await?
     {
         return Ok(Some(PayloadStatus::invalid_with(
             latest_valid_hash,
@@ -570,7 +572,7 @@ async fn handle_new_payload_v1_v2(
     }
 
     // Check for invalid ancestors
-    if let Some(status) = validate_ancestors(&block, &context)? {
+    if let Some(status) = validate_ancestors(&block, &context).await? {
         return Ok(status);
     }
 
@@ -656,7 +658,7 @@ async fn try_execute_payload(
     let block_hash = block.hash();
     let storage = &context.storage;
     // Return the valid message directly if we have it.
-    if storage.get_block_by_hash(block_hash)?.is_some() {
+    if storage.get_block_by_hash(block_hash).await?.is_some() {
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 
@@ -665,13 +667,13 @@ async fn try_execute_payload(
 
     // TODO: this is not correct, the block being validated it no necesarily a descendant
     // of the latest canonical block
-    let latest_valid_hash =
-        context
-            .storage
-            .get_latest_canonical_block_hash()?
-            .ok_or(RpcErr::Internal(
-                "Missing latest canonical block".to_owned(),
-            ))?;
+    let latest_valid_hash = context
+        .storage
+        .get_latest_canonical_block_hash()
+        .await?
+        .ok_or(RpcErr::Internal(
+            "Missing latest canonical block".to_owned(),
+        ))?;
 
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {
@@ -755,9 +757,9 @@ fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr>
     Ok(payload_id)
 }
 
-fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
+async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
     info!("Requested payload with id: {:#018x}", payload_id);
-    let Some(payload) = context.storage.get_payload(payload_id)? else {
+    let Some(payload) = context.storage.get_payload(payload_id).await? else {
         return Err(RpcErr::UnknownPayload(format!(
             "Payload with id {:#018x} not found",
             payload_id
