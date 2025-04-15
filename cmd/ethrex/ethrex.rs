@@ -7,10 +7,8 @@ use ethrex::{
     },
     utils::{set_datadir, store_known_peers},
 };
-use ethrex_common::{BigEndianHash, H256};
-use ethrex_p2p::{network::peer_table, peer_handler::HASH_MAX};
-use ethrex_storage::STATE_TRIE_SEGMENTS;
-use std::{array, path::PathBuf, time::Duration};
+use ethrex_p2p::network::peer_table;
+use std::{path::PathBuf, time::Duration};
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
@@ -32,10 +30,6 @@ async fn main() -> eyre::Result<()> {
     let network = get_network(&opts);
 
     let store = init_store(&data_dir, &network).await;
-    // Hack: restore snap sync status
-    store.set_header_download_checkpoint(store.get_latest_canonical_block_hash().unwrap().unwrap()).await.unwrap();
-    store.set_state_trie_key_checkpoint(
-        array::from_fn(|i| H256::from_uint(&(HASH_MAX.into_uint()/STATE_TRIE_SEGMENTS * (i+1))))).await.unwrap();
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
