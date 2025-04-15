@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use ef_tests_blockchain::test_runner::{parse_and_execute, parse_and_execute_with_filter};
+use ef_tests_blockchain::test_runner::parse_and_execute_with_filter;
 use ethrex_vm::EvmEngine;
 
 // TODO: enable these tests once the evm is updated.
@@ -11,10 +11,12 @@ const SKIPPED_TESTS_REVM: [&str; 1] = [
 
 // TODO: enable these tests once the they are fixed
 #[cfg(feature = "levm")]
-const SKIPPED_TESTS_LEVM: [&str; 11] = [
-    "tests/prague/eip6110_deposits/test_deposits.py::test_deposit[fork_Prague-blockchain_test-single_deposit_from_contract_call_high_depth]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_max_depth_call_stack[fork_Prague-blockchain_test]",
-    "tests/prague/eip7702_set_code_tx/test_set_code_txs_2.py::test_pointer_contract_pointer_loop[fork_Prague-blockchain_test]",
+const SKIPPED_TESTS_LEVM: [&str; 8] = [
+    // These 3 tests fail if RUST_MIN_STACK=11000000 is not used
+    //"tests/prague/eip6110_deposits/test_deposits.py::test_deposit[fork_Prague-blockchain_test-single_deposit_from_contract_call_high_depth]",
+    //"tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_max_depth_call_stack[fork_Prague-blockchain_test]",
+    //"tests/prague/eip7702_set_code_tx/test_set_code_txs_2.py::test_pointer_contract_pointer_loop[fork_Prague-blockchain_test]",
+    ////
     "tests/prague/eip7702_set_code_tx/test_set_code_txs_2.py::test_gas_diff_pointer_vs_direct_call[fork_Prague-blockchain_test-access_list_to_AccessListTo.CONTRACT_ADDRESS-pointer_definition_PointerDefinition.SEPARATE-access_list_rule_AccessListCall.IN_NORMAL_TX_ONLY]",
     "tests/prague/eip7702_set_code_tx/test_set_code_txs_2.py::test_gas_diff_pointer_vs_direct_call[fork_Prague-blockchain_test-access_list_to_AccessListTo.CONTRACT_ADDRESS-pointer_definition_PointerDefinition.SEPARATE-access_list_rule_AccessListCall.IN_BOTH_TX]",
     "tests/prague/eip7702_set_code_tx/test_set_code_txs_2.py::test_gas_diff_pointer_vs_direct_call[fork_Prague-blockchain_test-access_list_to_AccessListTo.CONTRACT_ADDRESS-pointer_definition_PointerDefinition.SEPARATE-access_list_rule_AccessListCall.NONE]",
