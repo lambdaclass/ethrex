@@ -190,17 +190,17 @@ jobs:
             simulation: ethereum/eest/consume-engine
             test_pattern: ".*tests/prague.*"
             ethrex_flags: ""
-            hive_flags: ""
+            hive_flags: "--sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v4.1.0/fixtures_develop.tar.gz"
           - name: "Eest Consume-Engine (Cancun)"
             simulation: ethereum/eest/consume-engine
             test_pattern: ".*tests/cancun.*"
             ethrex_flags: ""
-            hive_flags: ""
+            hive_flags: "--sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v4.1.0/fixtures_develop.tar.gz"
           - name: "Eest Consume-Engine (Shanghai)"
             simulation: ethereum/eest/consume-engine
             test_pattern: ".*tests/shanghai.*"
             ethrex_flags: ""
-            hive_flags: ""
+            hive_flags: "--sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v4.1.0/fixtures_develop.tar.gz"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
