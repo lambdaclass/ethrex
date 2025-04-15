@@ -61,6 +61,7 @@ impl SyncManager {
             .get_header_download_checkpoint()
             .is_ok_and(|res| res.is_some())
         {
+            info!("Header download checkpoint found, restarting sync");
             sync_manager.start_sync();
         }
         sync_manager
