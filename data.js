@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744732963356,
+  "lastUpdate": 1744746417317,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2965,6 +2965,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182099820077,
             "range": "± 1160214253",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "72b8edc87a0bf08e4f2bf16caddcdb019bf47a66",
+          "message": "feat(l2): make deposits on l2 work as expected (#2332)\n\n**Motivation**\n\nIn this PR we refactor some of the code and add functionality to work as\nexpected. Remove the txs magic hack data #2147\n\n**Description**\n\n* Add a `recipient` field to the privileged transactions.\n* Deposit the value to the recipient instead of the `to` address.\n* Add functionality to call a contract and make a deposit in the same\nprivileged transaction.\n* Remove the signing of the privileged transactions.\n* Remove the checking of the nonce and balance when making the deposit,\nhere we mint the tokens.\n* Add new hook in the L2 to address this new features for the Privileged\nTransactions.\n\nCloses #2147\n\n---------\n\nCo-authored-by: fborello-lambda <federicoborello@lambdaclass.com>\nCo-authored-by: Federico Borello <156438142+fborello-lambda@users.noreply.github.com>\nCo-authored-by: Estéfano Bargas <estefano.bargas@fing.edu.uy>\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>\nCo-authored-by: Tomás Casagrande <53660242+samoht9277@users.noreply.github.com>",
+          "timestamp": "2025-04-15T18:57:34Z",
+          "tree_id": "443633b23eea8ca5aeeb368d7f2f9dd728a217b6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/72b8edc87a0bf08e4f2bf16caddcdb019bf47a66"
+        },
+        "date": 1744746415715,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183296746051,
+            "range": "± 730727745",
             "unit": "ns/iter"
           }
         ]
