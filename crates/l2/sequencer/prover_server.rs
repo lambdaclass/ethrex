@@ -397,7 +397,7 @@ impl ProverServer {
     ) -> Result<(), ProverServerError> {
         debug!("Request received");
 
-        let latest_block_number = self.store.get_latest_block_number()?;
+        let latest_block_number = self.store.get_latest_block_number().await?;
 
         let response = if block_number > latest_block_number {
             let response = ProofData::response(None, None);
@@ -449,7 +449,8 @@ impl ProverServer {
             .ok_or(ProverServerError::StorageDataIsNone)?;
         let body = self
             .store
-            .get_block_body(block_number)?
+            .get_block_body(block_number)
+            .await?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
         let block = Block::new(header, body);
