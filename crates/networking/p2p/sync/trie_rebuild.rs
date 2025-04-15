@@ -322,7 +322,7 @@ async fn rebuild_storage_trie(
         }
     }
     if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
-        warn!("Mismatched storage root for account {account_hash}");
+        warn!("Mismatched storage root for account {account_hash}, expected: {}, got {}", expected_root, storage_trie.hash_no_commit());
         store
             .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
             .await?;
