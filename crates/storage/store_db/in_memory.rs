@@ -491,14 +491,27 @@ impl StoreEngine for Store {
 
     async fn set_storage_heal_paths(
         &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
+        paths: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.inner().snap_state.storage_heal_paths = Some(accounts);
+        self.inner()
+            .snap_state
+            .storage_heal_paths
+            .get_or_insert(Default::default())
+            .extend(paths);
         Ok(())
     }
 
-    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        Ok(self.inner().snap_state.storage_heal_paths.clone())
+    async fn take_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
+        Ok(self
+            .inner()
+            .snap_state
+            .storage_heal_paths
+            .as_mut()
+            .map(|paths| paths.drain(..limit).collect())
+            .unwrap_or_default())
     }
 
     async fn clear_snap_state(&self) -> Result<(), StoreError> {

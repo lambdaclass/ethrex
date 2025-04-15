@@ -6,9 +6,12 @@ use std::sync::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::{error::StoreError, Store};
-use tokio::sync::Mutex;
+use tokio::{
+    sync::Mutex,
+    time::{sleep, Duration},
+};
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     kademlia::KademliaTable,
@@ -47,12 +50,21 @@ impl SyncManager {
             cancel_token,
             blockchain,
         )));
-        Self {
+        let sync_manager = Self {
             snap_enabled,
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
-            store,
+            store: store.clone(),
+        };
+        // If the node was in the middle of a sync and then re-started we must resume syncing
+        // Otherwise we will incorreclty assume the node is already synced and work on invalid state
+        if store
+            .get_header_download_checkpoint()
+            .is_ok_and(|res| res.is_some())
+        {
+            sync_manager.start_sync();
         }
+        sync_manager
     }
 
     /// Creates a dummy SyncManager for tests where syncing is not needed
@@ -110,6 +122,12 @@ impl SyncManager {
                     };
                     *sync_head
                 };
+                // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start
+                if sync_head.is_zero() {
+                    info!("Resuming sync after node restart, waiting for next FCU");
+                    sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
                 // Start the sync cycle
                 syncer
                     .start_sync(current_head, sync_head, store.clone())
