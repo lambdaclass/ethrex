@@ -22,18 +22,26 @@ jobs:
     strategy:
       matrix:
         test:
-          - {
-              name: "Rpc Compat tests",
-              file_name: rpc-compat,
-              simulation: ethereum/rpc-compat,
-            }
-          - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
-          - {
-              name: "Cancun Engine tests",
-              file_name: engine,
-              simulation: ethereum/engine,
-            }
-          - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
+          - name: "Rpc Compat tests"
+            file_name: rpc-compat
+            simulation: ethereum/rpc-compat
+            hive_flags: ""
+          - name: "Devp2p eth tests"
+            file_name: devp2p
+            simulation: devp2p
+            hive_flags: ""
+          - name: "Cancun Engine tests"
+            file_name: engine
+            simulation: ethereum/engine
+            hive_flags: ""
+          - name: "Sync tests"
+            file_name: sync 
+            simulation: ethereum/sync
+            hive_flags: ""
+          - name: "Eest Engine-Consume tests"
+            file_name: consume-engine
+            simulation: ethereum/eest/consume-engine"
+            hive_flags: --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v4.1.0/fixtures_develop.tar.gz
 
     steps:
       - name: Checkout sources
@@ -63,7 +71,7 @@ jobs:
         run: make setup-hive
 
       - name: Run Hive Simulation
-        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16
+        run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16 ${{ matrix.test.simulation }}
         continue-on-error: true
 
       - name: Upload results
