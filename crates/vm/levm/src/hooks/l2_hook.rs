@@ -1,40 +1,38 @@
-use crate::{
-    account::Account,
-    call_frame::CallFrame,
-    constants::*,
-    db::cache::{insert_account, remove_account},
-    errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    hooks::hook::Hook,
-    utils::*,
-    vm::VM,
-};
-
-use ethrex_common::{types::Fork, U256};
-
 use std::cmp::max;
 
-pub const MAX_REFUND_QUOTIENT: u64 = 5;
-pub const MAX_REFUND_QUOTIENT_PRE_LONDON: u64 = 2;
+use ethrex_common::{types::Fork, Address, U256};
 
-pub struct DefaultHook;
+use crate::{
+    constants::{INIT_CODE_MAX_SIZE, TX_BASE_COST, VALID_BLOB_PREFIXES},
+    db::cache::remove_account,
+    errors::{InternalError, TxResult, TxValidationError, VMError},
+    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    utils::{
+        add_intrinsic_gas, eip7702_set_access_code, get_account, get_account_mut_vm,
+        get_base_fee_per_blob_gas, get_intrinsic_gas, get_valid_jump_destinations, has_delegation,
+        increase_account_balance,
+    },
+    Account,
+};
 
-impl Hook for DefaultHook {
-    /// ## Description
-    /// This method performs validations and returns an error if any of the validations fail.
-    /// It also makes pre-execution changes:
-    /// - It increases sender nonce
-    /// - It substracts up-front-cost from sender balance.
-    /// - It adds value to receiver balance.
-    /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
-    ///   See 'docs' for more information about validations.
+use super::{
+    default_hook::{MAX_REFUND_QUOTIENT, MAX_REFUND_QUOTIENT_PRE_LONDON},
+    hook::Hook,
+};
+
+pub struct L2Hook {
+    pub recipient: Address,
+}
+
+impl Hook for L2Hook {
     fn prepare_execution(
         &self,
-        vm: &mut VM<'_>,
-        initial_call_frame: &mut CallFrame,
-    ) -> Result<(), VMError> {
-        let sender_address = vm.env.origin;
-        let sender_account = get_account(vm.db, sender_address)?;
+        vm: &mut crate::vm::VM<'_>,
+        initial_call_frame: &mut crate::call_frame::CallFrame,
+    ) -> Result<(), crate::errors::VMError> {
+        increase_account_balance(vm.db, self.recipient, initial_call_frame.msg_value)?;
+
+        initial_call_frame.msg_value = U256::from(0);
 
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
@@ -64,61 +62,11 @@ impl Hook for DefaultHook {
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
             let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
+
             if initial_call_frame.gas_limit < min_gas_limit {
                 return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
             }
         }
-
-        // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
-        let gaslimit_price_product = vm
-            .env
-            .gas_price
-            .checked_mul(vm.env.gas_limit.into())
-            .ok_or(VMError::TxValidation(
-                TxValidationError::GasLimitPriceProductOverflow,
-            ))?;
-
-        // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
-        let value = initial_call_frame.msg_value;
-
-        // blob gas cost = max fee per blob gas * blob gas used
-        // https://eips.ethereum.org/EIPS/eip-4844
-        let max_blob_gas_cost = get_max_blob_gas_price(
-            vm.env.tx_blob_hashes.clone(),
-            vm.env.tx_max_fee_per_blob_gas,
-        )?;
-
-        // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
-        // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
-        let gas_fee_for_valid_tx = vm
-            .env
-            .tx_max_fee_per_gas
-            .unwrap_or(vm.env.gas_price)
-            .checked_mul(vm.env.gas_limit.into())
-            .ok_or(VMError::TxValidation(
-                TxValidationError::GasLimitPriceProductOverflow,
-            ))?;
-
-        let balance_for_valid_tx = gas_fee_for_valid_tx
-            .checked_add(value)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?
-            .checked_add(max_blob_gas_cost)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?;
-        if sender_account.info.balance < balance_for_valid_tx {
-            return Err(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ));
-        }
-
-        let blob_gas_cost = get_blob_gas_price(
-            vm.env.tx_blob_hashes.clone(),
-            vm.env.block_excess_blob_gas,
-            &vm.env.config,
-        )?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
@@ -130,25 +78,6 @@ impl Hook for DefaultHook {
                 ));
             }
         }
-
-        // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
-        let up_front_cost = gaslimit_price_product
-            .checked_add(value)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?
-            .checked_add(blob_gas_cost)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?;
-        // There is no error specified for overflow in up_front_cost
-        // in ef_tests. We went for "InsufficientAccountFunds" simply
-        // because if the upfront cost is bigger than U256, then,
-        // technically, the sender will not be able to pay it.
-
-        // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        decrease_account_balance(vm.db, sender_address, up_front_cost)
-            .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas {
@@ -178,15 +107,6 @@ impl Hook for DefaultHook {
             &vm.authorization_list,
         )?;
 
-        // (7) NONCE_IS_MAX
-        increment_account_nonce(vm.db, sender_address)
-            .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
-
-        // check for nonce mismatch
-        if sender_account.info.nonce != vm.env.tx_nonce {
-            return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
-        }
-
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             vm.env.tx_max_priority_fee_per_gas,
@@ -197,11 +117,6 @@ impl Hook for DefaultHook {
                     TxValidationError::PriorityGreaterThanMaxFeePerGas,
                 ));
             }
-        }
-
-        // (9) SENDER_NOT_EOA
-        if sender_account.has_code() && !has_delegation(&sender_account.info)? {
-            return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 
         // (10) GAS_ALLOWANCE_EXCEEDED
@@ -252,12 +167,6 @@ impl Hook for DefaultHook {
             }
 
             // (15) TYPE_3_TX_CONTRACT_CREATION
-            // NOTE: This will never happen, since the EIP-4844 tx (type 3) does not have a TxKind field
-            // only supports an Address which must be non-empty.
-            // If a type 3 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
-            // it won't reach this point.
-            // For more information, please check the following thread:
-            // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
             if vm.is_create() {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type3TxContractCreation,
@@ -275,12 +184,6 @@ impl Hook for DefaultHook {
 
             // (17) TYPE_4_TX_CONTRACT_CREATION
             // From the EIP docs: a null destination is not valid.
-            // NOTE: This will never happen, since the EIP-7702 tx (type 4) does not have a TxKind field
-            // only supports an Address which must be non-empty.
-            // If a type 4 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
-            // it won't reach this point.
-            // For more information, please check the following thread:
-            // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
             if vm.is_create() {
                 return Err(VMError::TxValidation(
                     TxValidationError::Type4TxContractCreation,
@@ -310,27 +213,17 @@ impl Hook for DefaultHook {
             initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
             initial_call_frame.valid_jump_destinations =
                 get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
-        } else {
-            // Transfer value to receiver
-            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            increase_account_balance(vm.db, initial_call_frame.to, initial_call_frame.msg_value)?;
         }
         Ok(())
     }
 
-    /// ## Changes post execution
-    /// 1. Undo value transfer if the transaction was reverted
-    /// 2. Return unused gas + gas refunds to the sender.
-    /// 3. Pay coinbase fee
-    /// 4. Destruct addresses in selfdestruct set.
     fn finalize_execution(
         &self,
-        vm: &mut VM<'_>,
-        initial_call_frame: &CallFrame,
-        report: &mut ExecutionReport,
-    ) -> Result<(), VMError> {
+        vm: &mut crate::vm::VM<'_>,
+        initial_call_frame: &crate::call_frame::CallFrame,
+        report: &mut crate::errors::ExecutionReport,
+    ) -> Result<(), crate::errors::VMError> {
         // POST-EXECUTION Changes
-        let sender_address = initial_call_frame.msg_sender;
         let receiver_address = initial_call_frame.to;
 
         // 1. Undo value transfer if the transaction has reverted
@@ -347,78 +240,50 @@ impl Hook for DefaultHook {
                 // If transaction execution results in failure (any
                 // exceptional condition or code reverting), setting
                 // delegation designations is not rolled back.
-                decrease_account_balance(vm.db, receiver_address, initial_call_frame.msg_value)?;
             } else {
-                // If the receiver of the transaction was in the cache before the transaction we restore it's state,
-                // but if it wasn't then we remove the account from cache like nothing happened.
-                if let Some(receiver_account) = vm.cache_backup.get(&receiver_address) {
-                    insert_account(&mut vm.db.cache, receiver_address, receiver_account.clone());
-                } else {
-                    remove_account(&mut vm.db.cache, &receiver_address);
-                }
+                // We remove the receiver account from the cache, like nothing changed in it's state.
+                remove_account(&mut vm.db.cache, &receiver_address);
             }
-
-            increase_account_balance(vm.db, sender_address, initial_call_frame.msg_value)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
-
-        // a. Calculate refunded gas
-        let gas_used_without_refunds = report.gas_used;
-
+        let mut consumed_gas = report.gas_used;
         // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
-        let refund_quotient = if vm.env.config.fork < Fork::London {
+        let quotient = if vm.env.config.fork < Fork::London {
             MAX_REFUND_QUOTIENT_PRE_LONDON
         } else {
             MAX_REFUND_QUOTIENT
         };
-        let refunded_gas = report.gas_refunded.min(
-            gas_used_without_refunds
-                .checked_div(refund_quotient)
+        let mut refunded_gas = report.gas_refunded.min(
+            consumed_gas
+                .checked_div(quotient)
                 .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
         );
-
-        // b. Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
-        let exec_gas_consumed = gas_used_without_refunds
-            .checked_sub(refunded_gas)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
-
-        let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
-            let minimum_gas_consumed = vm.get_min_gas_used(initial_call_frame)?;
-            exec_gas_consumed.max(minimum_gas_consumed)
-        } else {
-            exec_gas_consumed
-        };
-
-        // c. Update gas used and refunded in the Execution Report.
-        report.gas_used = actual_gas_used;
+        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
         report.gas_refunded = refunded_gas;
 
-        // d. Finally, return unspent gas to the sender.
-        let gas_to_return = vm
-            .env
-            .gas_limit
-            .checked_sub(actual_gas_used)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(0)))?;
-
-        let wei_return_amount = vm
-            .env
-            .gas_price
-            .checked_mul(U256::from(gas_to_return))
-            .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
-
-        increase_account_balance(vm.db, sender_address, wei_return_amount)?;
+        if vm.env.config.fork >= Fork::Prague {
+            let floor_gas_price = vm.get_min_gas_used(initial_call_frame)?;
+            let execution_gas_used = consumed_gas.saturating_sub(refunded_gas);
+            if floor_gas_price > execution_gas_used {
+                consumed_gas = floor_gas_price;
+                refunded_gas = 0;
+            }
+        }
 
         // 3. Pay coinbase fee
         let coinbase_address = vm.env.coinbase;
+
+        let gas_to_pay_coinbase = consumed_gas
+            .checked_sub(refunded_gas)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
 
         let priority_fee_per_gas = vm
             .env
             .gas_price
             .checked_sub(vm.env.base_fee_per_gas)
             .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
-        let coinbase_fee = U256::from(actual_gas_used)
+        let coinbase_fee = U256::from(gas_to_pay_coinbase)
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
@@ -426,7 +291,7 @@ impl Hook for DefaultHook {
             increase_account_balance(vm.db, coinbase_address, coinbase_fee)?;
         };
 
-        // 4. Destruct addresses in vm.selfdestruct set.
+        // 4. Destruct addresses in vm.estruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {

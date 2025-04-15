@@ -34,6 +34,8 @@ pub enum EFTestRunnerError {
     VMExecutionMismatch(String),
     #[error("Exception does not match the expected: {0}")]
     ExpectedExceptionDoesNotMatchReceived(String),
+    #[error("EIP-7702 should not be a create type")]
+    EIP7702ShouldNotBeCreateType,
     #[error("This is a bug: {0}")]
     Internal(#[from] InternalError),
 }
