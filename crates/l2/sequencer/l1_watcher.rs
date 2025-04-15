@@ -277,6 +277,7 @@ impl L1Watcher {
 
             match blockchain
                 .add_transaction_to_pool(Transaction::PrivilegedL2Transaction(mint_transaction))
+                .await
             {
                 Ok(hash) => {
                     info!("Mint transaction added to mempool {hash:#x}",);

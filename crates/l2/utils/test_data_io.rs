@@ -33,11 +33,11 @@ pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
 /// Place this in the `proposer/mod.rs` file,
 /// specifically in the `start` function,
 /// before calling `send_commitment()` to send the block commitment.
-pub fn generate_rlp(
+pub async fn generate_rlp(
     up_to_block_number: u64,
     store: &Store,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if store.get_latest_block_number()? == up_to_block_number {
+    if store.get_latest_block_number().await? == up_to_block_number {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let file_name = "l2-test.rlp";
 
@@ -45,7 +45,7 @@ pub fn generate_rlp(
 
         let mut file = std::fs::File::create(path.to_str().unwrap())?;
         for i in 1..up_to_block_number {
-            let body = store.get_block_body(i)?.unwrap();
+            let body = store.get_block_body(i).await?.unwrap();
             let header = store.get_block_header(i)?.unwrap();
 
             let block = Block::new(header, body);

@@ -93,6 +93,7 @@ impl Committer {
         let Some(block_to_commit_body) = self
             .store
             .get_block_body(block_number)
+            .await
             .map_err(CommitterError::from)?
         else {
             debug!("No new block to commit, skipping..");
@@ -111,7 +112,8 @@ impl Committer {
         for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
             let receipt = self
                 .store
-                .get_receipt(block_number, index.try_into()?)?
+                .get_receipt(block_number, index.try_into()?)
+                .await?
                 .ok_or(CommitterError::InternalError(
                     "Transactions in a block should have a receipt".to_owned(),
                 ))?;
@@ -151,13 +153,15 @@ impl Committer {
             }
         };
 
-        let state_diff = self.prepare_state_diff(
-            &block_to_commit,
-            self.store.clone(),
-            withdrawals,
-            deposits,
-            &account_updates,
-        )?;
+        let state_diff = self
+            .prepare_state_diff(
+                &block_to_commit,
+                self.store.clone(),
+                withdrawals,
+                deposits,
+                &account_updates,
+            )
+            .await?;
 
         let blobs_bundle = self.generate_blobs_bundle(&state_diff)?;
 
@@ -262,7 +266,7 @@ impl Committer {
     }
 
     /// Prepare the state diff for the block.
-    fn prepare_state_diff(
+    async fn prepare_state_diff(
         &self,
         block: &Block,
         store: Store,
@@ -279,6 +283,7 @@ impl Committer {
                 // and we may have to keep track of the latestCommittedBlock (last block of the batch),
                 // the batch_size and the latestCommittedBatch in the contract.
                 .get_account_info(block.header.number - 1, account_update.address)
+                .await
                 .map_err(StoreError::from)?
             {
                 Some(acc) => acc.nonce,

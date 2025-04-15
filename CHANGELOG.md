@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-04-11
+
+- Asyncify some DB read APIs, as well as its users [#2430](https://github.com/lambdaclass/ethrex/pull/2430)
+
 ### 2025-04-09
 
 - Fix an issue where the table was locked for up to 20 sec when performing a ping: [2368](https://github.com/lambdaclass/ethrex/pull/2368)

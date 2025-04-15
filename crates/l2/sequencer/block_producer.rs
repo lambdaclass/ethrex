@@ -76,7 +76,7 @@ impl BlockProducer {
     ) -> Result<(), BlockProducerError> {
         let version = 3;
         let head_header = {
-            let current_block_number = store.get_latest_block_number()?;
+            let current_block_number = store.get_latest_block_number().await?;
             store
                 .get_block_header(current_block_number)?
                 .ok_or(BlockProducerError::StorageDataIsNone)?
