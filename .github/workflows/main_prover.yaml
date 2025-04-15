@@ -69,3 +69,7 @@ jobs:
           sed -i 's/dev_mode = true/dev_mode = false/' configs/sequencer_config.toml
 
           make integration-test
+
+      - name: Ensure admin permissions in _work
+        if: always()
+        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
