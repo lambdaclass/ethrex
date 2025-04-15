@@ -6,7 +6,106 @@ use ethrex_levm::db::Database as LevmDatabase;
 
 use crate::db::{ExecutionDB, StoreWrapper};
 use ethrex_levm::db::error::DatabaseError;
+use std::collections::HashMap;
 use std::result::Result;
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+pub struct DatabaseLogger {
+    pub block_hashes_accessed: Arc<Mutex<HashMap<u64, CoreH256>>>,
+    pub accounts_accessed: Arc<Mutex<Vec<CoreAddress>>>,
+    pub storage_accessed: Arc<Mutex<HashMap<(CoreAddress, CoreH256), CoreU256>>>,
+    pub code_accessed: Arc<Mutex<Vec<CoreH256>>>,
+    pub store: Arc<dyn LevmDatabase>,
+}
+
+impl DatabaseLogger {
+    pub fn new(store: Arc<dyn LevmDatabase>) -> Self {
+        Self {
+            block_hashes_accessed: Arc::new(Mutex::new(HashMap::new())),
+            accounts_accessed: Arc::new(Mutex::new(Vec::new())),
+            storage_accessed: Arc::new(Mutex::new(HashMap::new())),
+            code_accessed: Arc::new(Mutex::new(vec![])),
+            store,
+        }
+    }
+}
+
+impl LevmDatabase for DatabaseLogger {
+    fn get_account_info(
+        &self,
+        address: CoreAddress,
+    ) -> Result<ethrex_levm::AccountInfo, DatabaseError> {
+        let acc_info = self.store.get_account_info(address)?;
+        self.accounts_accessed
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .push(address);
+        Ok(acc_info)
+    }
+
+    fn account_exists(&self, address: CoreAddress) -> bool {
+        self.store.account_exists(address)
+    }
+
+    fn get_storage_slot(
+        &self,
+        address: CoreAddress,
+        key: CoreH256,
+    ) -> Result<CoreU256, DatabaseError> {
+        let slot = self.store.get_storage_slot(address, key)?;
+        self.storage_accessed
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .insert((address, key), slot);
+        Ok(slot)
+    }
+
+    fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
+        let block_hash = self.store.get_block_hash(block_number)?;
+        if let Some(hash) = block_hash {
+            self.block_hashes_accessed
+                .lock()
+                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+                .insert(block_number, hash);
+        }
+        Ok(block_hash)
+    }
+
+    fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
+        self.store.get_chain_config()
+    }
+
+    fn get_account_info_by_hash(
+        &self,
+        block_hash: ethrex_common::types::BlockHash,
+        address: CoreAddress,
+    ) -> Result<Option<AccountInfo>, DatabaseError> {
+        let account = self.store.get_account_info_by_hash(block_hash, address)?;
+        {
+            if let Some(acc) = account.clone() {
+                let mut code_accessed = self
+                    .code_accessed
+                    .lock()
+                    .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
+                code_accessed.push(acc.code_hash);
+            }
+        }
+
+        Ok(account)
+    }
+
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
+        {
+            let mut code_accessed = self
+                .code_accessed
+                .lock()
+                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
+            code_accessed.push(code_hash);
+        }
+        self.store.get_account_code(code_hash)
+    }
+}
 
 impl LevmDatabase for StoreWrapper {
     fn get_account_info(
@@ -135,20 +234,12 @@ impl LevmDatabase for ExecutionDB {
     fn get_account_info_by_hash(
         &self,
         _block_hash: ethrex_common::types::BlockHash,
-        _address: CoreAddress,
+        address: CoreAddress,
     ) -> Result<Option<ethrex_common::types::AccountInfo>, DatabaseError> {
-        Err(DatabaseError::Custom(
-            "Error: You should not be calling `get_account_info_by_hash` on the ExecutionDb"
-                .to_owned(),
-        ))
+        Ok(self.accounts.get(&address).cloned())
     }
 
-    fn get_account_code(
-        &self,
-        _code_hash: CoreH256,
-    ) -> Result<Option<bytes::Bytes>, DatabaseError> {
-        Err(DatabaseError::Custom(
-            "Error: You should not be calling `get_account_code` on the ExecutionDb".to_owned(),
-        ))
+    fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
+        Ok(self.code.get(&code_hash).cloned())
     }
 }

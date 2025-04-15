@@ -171,7 +171,7 @@ impl EthClient {
                     .await
             }
             WrappedTransaction::L2(privileged_l2_transaction) => {
-                self.send_privileged_l2_transaction(privileged_l2_transaction, private_key)
+                self.send_privileged_l2_transaction(privileged_l2_transaction)
                     .await
             }
         }
@@ -263,11 +263,8 @@ impl EthClient {
     pub async fn send_privileged_l2_transaction(
         &self,
         tx: &PrivilegedL2Transaction,
-        private_key: &SecretKey,
     ) -> Result<H256, EthClientError> {
-        let signed_tx = tx.sign(private_key);
-
-        let mut encoded_tx = signed_tx.encode_to_vec();
+        let mut encoded_tx = tx.encode_to_vec();
         encoded_tx.insert(0, TxType::Privileged.into());
 
         self.send_raw_transaction(encoded_tx.as_slice()).await
@@ -820,6 +817,7 @@ impl EthClient {
     pub async fn build_privileged_transaction(
         &self,
         to: Address,
+        recipient: Address,
         from: Address,
         calldata: Bytes,
         overrides: Overrides,
@@ -827,6 +825,7 @@ impl EthClient {
         let mut get_gas_price = 1;
         let mut tx = PrivilegedL2Transaction {
             to: TxKind::Call(to),
+            recipient,
             chain_id: if let Some(chain_id) = overrides.chain_id {
                 chain_id
             } else {
@@ -850,6 +849,7 @@ impl EthClient {
             value: overrides.value.unwrap_or_default(),
             data: calldata,
             access_list: overrides.access_list,
+            from,
             ..Default::default()
         };
 

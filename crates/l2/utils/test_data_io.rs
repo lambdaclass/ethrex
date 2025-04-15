@@ -5,7 +5,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{StoreWrapper, ToExecDB};
+use ethrex_vm::Evm;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -58,7 +58,7 @@ pub async fn generate_rlp(
     Ok(())
 }
 
-pub fn generate_program_input(
+pub async fn generate_program_input(
     genesis: Genesis,
     chain: Vec<Block>,
     block_number: usize,
@@ -83,11 +83,7 @@ pub fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    let store = StoreWrapper {
-        store,
-        block_hash: parent_hash,
-    };
-    let db = store.to_exec_db(&block)?;
+    let db = Evm::to_execution_db(&store, &block).await?;
 
     Ok(ProgramInput {
         db,

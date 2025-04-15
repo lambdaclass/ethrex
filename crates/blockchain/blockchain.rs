@@ -440,6 +440,10 @@ impl Blockchain {
     ) -> Result<(), MempoolError> {
         // TODO: Add validations here
 
+        if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
+            return Ok(());
+        }
+
         let header_no = self.storage.get_latest_block_number().await?;
         let header = self
             .storage
