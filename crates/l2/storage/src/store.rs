@@ -87,4 +87,20 @@ impl Store {
             .store_withdrawal_hashes_by_batch(batch_number, withdrawal_hashes)
             .await
     }
+
+    pub async fn store_batch(
+        &self,
+        batch_number: u64,
+        first_block_number: u64,
+        last_block_number: u64,
+        withdrawal_hashes: Vec<H256>,
+    ) -> Result<(), StoreError> {
+        for block_number in first_block_number..=last_block_number {
+            self.store_batch_number_by_block(block_number, batch_number)
+                .await?;
+        }
+        self.store_withdrawal_hashes_by_batch(batch_number, withdrawal_hashes)
+            .await?;
+        Ok(())
+    }
 }

@@ -3443,6 +3443,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "ethrex-storage",
+ "ethrex-storage-l2",
  "eyre",
  "hex",
  "itertools 0.13.0",

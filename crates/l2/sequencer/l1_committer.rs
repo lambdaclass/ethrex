@@ -130,7 +130,7 @@ impl Committer {
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}. first_block: {first_block_to_commit}, last_block {last_block_of_batch}.",
                 );
-                self.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
+                self.l2_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
@@ -248,24 +248,6 @@ impl Committer {
             deposit_logs_hash,
             last_commited_block_number,
         ))
-    }
-
-    async fn store_batch(
-        &self,
-        batch_number: u64,
-        first_block_number: u64,
-        last_block_number: u64,
-        withdrawal_hashes: Vec<H256>,
-    ) -> Result<(), CommitterError> {
-        for block_number in first_block_number..=last_block_number {
-            self.l2_store
-                .store_batch_number_by_block(block_number, batch_number)
-                .await?;
-        }
-        self.l2_store
-            .store_withdrawal_hashes_by_batch(batch_number, withdrawal_hashes)
-            .await?;
-        Ok(())
     }
 
     fn get_block_withdrawals(
