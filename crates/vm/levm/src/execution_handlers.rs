@@ -26,7 +26,7 @@ impl<'a> VM<'a> {
                 Ok(ExecutionReport {
                     result: TxResult::Success,
                     gas_used: current_call_frame.gas_used,
-                    gas_refunded: 0,
+                    gas_refunded: self.env.refunded_gas,
                     output,
                     logs: std::mem::take(&mut current_call_frame.logs),
                 })
