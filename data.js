@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744746417317,
+  "lastUpdate": 1744747751014,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -2995,6 +2995,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183296746051,
             "range": "± 730727745",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9d0fa850eb3d3f4232a1511c933824556bbc1194",
+          "message": "feat(levm): fix gas refund on precompiles on success (#2471)\n\n**Motivation**\n\nIn this PR we fix the missing gas refunded while giving the execution\nreport on a precompile\n\n**Description**\n\nReturn the gas refunded in the environment instead of zero value",
+          "timestamp": "2025-04-15T19:20:18Z",
+          "tree_id": "b4546f40212ff5dc89b98148794ab01d2a1939de",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9d0fa850eb3d3f4232a1511c933824556bbc1194"
+        },
+        "date": 1744747749288,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180475257584,
+            "range": "± 431007686",
             "unit": "ns/iter"
           }
         ]
