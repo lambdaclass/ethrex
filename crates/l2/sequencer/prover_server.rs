@@ -7,9 +7,10 @@ use crate::utils::{
     prover::{
         errors::SaveStateError,
         proving_systems::{ProofCalldata, ProverType},
-        save_state::{StateFileType, StateType, *},
+        save_state::*,
     },
 };
+use bytes::Bytes;
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address, H160, H256, U256,
@@ -21,6 +22,8 @@ use ethrex_vm::{Evm, EvmError, ExecutionDB};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr, time::Duration};
+use tokio::join;
+use tokio::sync::oneshot::Receiver;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -39,6 +42,7 @@ const DEV_MODE_ADDRESS: H160 = H160([
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+const LAST_VERIFIED_BLOCK_FUNCTION_SELECTOR: Bytes = Bytes::from_static(&[0x2f, 0xde, 0x80, 0xe5]); // keccack(lastVerifiedBlock())[:4]
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -54,9 +58,6 @@ struct ProverServer {
     store: Store,
     eth_client: EthClient,
     on_chain_proposer_address: Address,
-    l1_address: Address,
-    l1_private_key: SecretKey,
-    needed_proof_types: Vec<ProverType>,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -119,11 +120,18 @@ impl ProofData {
 pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
     let server_config = ProverServerConfig::from_env()?;
     let eth_config = EthConfig::from_env()?;
-    let proposer_config = CommitterConfig::from_env()?;
-    let mut prover_server =
-        ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
-            .await?;
-    prover_server.run(&server_config).await;
+    let committer_config = CommitterConfig::from_env()?;
+    let prover_server = ProverServer::new_from_config(
+        server_config.clone(),
+        &committer_config,
+        eth_config.clone(),
+        store,
+    )
+    .await?;
+    let proof_sender = ProofSender::new(&server_config, &committer_config, &eth_config).await?;
+
+    join!(prover_server.run(&server_config), proof_sender.run());
+
     Ok(())
 }
 
@@ -137,53 +145,16 @@ impl ProverServer {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
-        let verifier_contracts = EthClient::get_verifier_contracts(
-            &eth_client,
-            &VERIFIER_CONTRACTS,
-            on_chain_proposer_address,
-        )
-        .await?;
-
-        let mut needed_proof_types = vec![];
-        if !config.dev_mode {
-            for (key, addr) in verifier_contracts {
-                if addr == DEV_MODE_ADDRESS {
-                    continue;
-                } else {
-                    match key.as_str() {
-                        "R0VERIFIER()" => {
-                            info!("RISC0 proof needed");
-                            needed_proof_types.push(ProverType::RISC0);
-                        }
-                        "SP1VERIFIER()" => {
-                            info!("SP1 proof needed");
-                            needed_proof_types.push(ProverType::SP1);
-                        }
-                        "PICOVERIFIER()" => {
-                            info!("PICO proof needed");
-                            needed_proof_types.push(ProverType::Pico);
-                        }
-                        _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
-                    }
-                }
-            }
-        } else {
-            needed_proof_types.push(ProverType::Exec);
-        }
-
         Ok(Self {
             ip: config.listen_ip,
             port: config.listen_port,
             store,
             eth_client,
             on_chain_proposer_address,
-            l1_address: config.l1_address,
-            l1_private_key: config.l1_private_key,
-            needed_proof_types,
         })
     }
 
-    pub async fn run(&mut self, server_config: &ProverServerConfig) {
+    pub async fn run(&self, server_config: &ProverServerConfig) {
         loop {
             let result = self.clone().main_logic().await;
 
@@ -248,7 +219,7 @@ impl ProverServer {
                                     // The important fields are `Store` and `EthClient`
                                     // Both fields are wrapped with an Arc, making it possible to clone
                                     // the entire structure.
-                                    let mut self_clone = self.clone();
+                                    let self_clone = self.clone();
                                     tokio::task::spawn(async move {
                                         if let Err(e) = self_clone.handle_connection(stream).await {
                                             error!("Error handling connection from {addr}: {e}");
@@ -278,7 +249,7 @@ impl ProverServer {
         Ok(())
     }
 
-    async fn handle_connection(&mut self, mut stream: TcpStream) -> Result<(), ProverServerError> {
+    async fn handle_connection(&self, mut stream: TcpStream) -> Result<(), ProverServerError> {
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).await?;
 
@@ -288,49 +259,11 @@ impl ProverServer {
 
         let block_to_verify = last_verified_block + 1;
 
-        let mut tx_submitted = false;
-
-        // If we have all the proofs send a transaction to verify them on chain
-        let send_tx =
-            match block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types) {
-                Ok(has_all_proofs) => has_all_proofs,
-                Err(e) => {
-                    if let SaveStateError::IOError(ref error) = e {
-                        if error.kind() != std::io::ErrorKind::NotFound {
-                            return Err(e.into());
-                        }
-                    } else {
-                        return Err(e.into());
-                    }
-                    false
-                }
-            };
-
-        if send_tx {
-            self.handle_proof_submission(block_to_verify).await?;
-
-            // Remove the Proofs for that block_number
-            match prune_state(block_to_verify) {
-                Ok(_) => (),
-                Err(e) => {
-                    if let SaveStateError::IOError(ref error) = e {
-                        if error.kind() != std::io::ErrorKind::NotFound {
-                            return Err(e.into());
-                        }
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-            }
-
-            tx_submitted = true;
-        }
-
         let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
         match data {
             Ok(ProofData::Request) => {
                 if let Err(e) = self
-                    .handle_request(&mut stream, block_to_verify, tx_submitted)
+                    .handle_request(&mut stream, block_to_verify, false)
                     .await
                 {
                     warn!("Failed to handle request: {e}");
@@ -347,12 +280,6 @@ impl ProverServer {
                 // the provers generate them fast enough. In this way, we will avoid unneeded reexecution.
                 if block_number != block_to_verify {
                     return Err(ProverServerError::Custom(format!("Prover Client submitted an invalid block_number: {block_number}. The last_proved_block is: {last_verified_block}")));
-                }
-
-                // If the transaction was submitted for the block_to_verify
-                // avoid storing already used proofs.
-                if tx_submitted {
-                    return Ok(());
                 }
 
                 // Check if we have the proof for that ProverType
@@ -373,9 +300,6 @@ impl ProverServer {
                 if !has_proof {
                     write_state(block_number, &StateType::Proof(calldata))?;
                 }
-
-                // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
-                self.handle_proof_submission(block_number).await?;
             }
             Err(e) => {
                 warn!("Failed to parse request: {e}");
@@ -473,11 +397,137 @@ impl ProverServer {
             parent_block_header,
         })
     }
+}
 
-    pub async fn handle_proof_submission(
-        &self,
-        block_number: u64,
-    ) -> Result<H256, ProverServerError> {
+struct ProofSender {
+    eth_client: EthClient,
+    l1_address: Address,
+    l1_private_key: SecretKey,
+    on_chain_proposer_address: Address,
+    needed_proof_types: Vec<ProverType>,
+}
+
+impl ProofSender {
+    async fn new(
+        config: &ProverServerConfig,
+        committer_config: &CommitterConfig,
+        eth_config: &EthConfig,
+    ) -> Result<Self, ConfigError> {
+        let eth_client = EthClient::new(&eth_config.rpc_url);
+
+        let verifier_contracts = EthClient::get_verifier_contracts(
+            &eth_client,
+            &VERIFIER_CONTRACTS,
+            committer_config.on_chain_proposer_address,
+        )
+        .await?;
+
+        let mut needed_proof_types = vec![];
+        if !config.dev_mode {
+            for (key, addr) in verifier_contracts {
+                if addr == DEV_MODE_ADDRESS {
+                    continue;
+                } else {
+                    match key.as_str() {
+                        "R0VERIFIER()" => {
+                            info!("RISC0 proof needed");
+                            needed_proof_types.push(ProverType::RISC0);
+                        }
+                        "SP1VERIFIER()" => {
+                            info!("SP1 proof needed");
+                            needed_proof_types.push(ProverType::SP1);
+                        }
+                        "PICOVERIFIER()" => {
+                            info!("PICO proof needed");
+                            needed_proof_types.push(ProverType::Pico);
+                        }
+                        _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
+                    }
+                }
+            }
+        } else {
+            needed_proof_types.push(ProverType::Exec);
+        }
+
+        Ok(Self {
+            eth_client,
+            l1_address: config.l1_address,
+            l1_private_key: config.l1_private_key,
+            on_chain_proposer_address: committer_config.on_chain_proposer_address,
+            needed_proof_types,
+        })
+    }
+
+    async fn run(&self) {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+        tokio::task::spawn(async move {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                error!("Error handling ctrl_c: {e}");
+            };
+            if let Err(e) = shutdown_tx.send(0) {
+                error!("Error sending shutdown message through the oneshot::channel {e}");
+            };
+        });
+
+        loop {
+            match self.main_logic(&mut shutdown_rx).await {
+                Ok(()) => {
+                    info!("Proof sender finished. Shutting down");
+                    break;
+                }
+                Err(e) => {
+                    error!("Proof sender exited with error, trying to restart the main_logic function: {e}")
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    async fn main_logic(&self, shutdown_rx: &mut Receiver<i32>) -> Result<(), ProverServerError> {
+        loop {
+            if shutdown_rx.try_recv().is_ok() {
+                debug!("Received shutdown signal");
+                break;
+            }
+
+            let block_to_verify = 1 + self
+                .eth_client
+                .call(
+                    self.on_chain_proposer_address,
+                    LAST_VERIFIED_BLOCK_FUNCTION_SELECTOR,
+                    Overrides::default(),
+                )
+                .await
+                .unwrap()
+                .parse::<u64>()
+                .unwrap();
+
+            if let Ok(true) =
+                block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types)
+            {
+                self.send_proof(block_to_verify).await?;
+
+                // Remove the Proofs for that block_number
+                match prune_state(block_to_verify) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        if let SaveStateError::IOError(ref error) = e {
+                            if error.kind() != std::io::ErrorKind::NotFound {
+                                return Err(e.into());
+                            }
+                        } else {
+                            return Err(e.into());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn send_proof(&self, block_number: u64) -> Result<H256, ProverServerError> {
         // TODO: change error
         // TODO: If the proof is not needed, a default calldata is used,
         // the structure has to match the one defined in the OnChainProposer.sol contract.
