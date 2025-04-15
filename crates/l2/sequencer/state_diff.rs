@@ -490,7 +490,7 @@ impl Decoder {
 
 /// Calculates nonce_diff between current and previous block.
 /// Uses cache if provided to optimize account_info lookups.
-pub fn get_nonce_diff(
+pub async fn get_nonce_diff(
     account_update: &AccountUpdate,
     store: &Store,
     accounts_info_cache: Option<&mut HashMap<Address, Option<AccountInfo>>>,
@@ -500,13 +500,17 @@ pub fn get_nonce_diff(
     let account_info = match accounts_info_cache {
         None => store
             .get_account_info(current_block_number - 1, account_update.address)
+            .await
             .map_err(StoreError::from)?,
-        Some(cache) => account_info_from_cache(
-            cache,
-            store,
-            account_update.address,
-            current_block_number - 1,
-        )?,
+        Some(cache) => {
+            account_info_from_cache(
+                cache,
+                store,
+                account_update.address,
+                current_block_number - 1,
+            )
+            .await?
+        }
     };
 
     // Get previous nonce
@@ -534,7 +538,7 @@ pub fn get_nonce_diff(
 
 /// Retrieves account info from cache or falls back to store.
 /// Updates cache with fresh data if cache miss occurs.
-fn account_info_from_cache(
+async fn account_info_from_cache(
     cache: &mut HashMap<Address, Option<AccountInfo>>,
     store: &Store,
     address: Address,
@@ -545,6 +549,7 @@ fn account_info_from_cache(
         None => {
             let account_info = store
                 .get_account_info(block_number, address)
+                .await
                 .map_err(StoreError::from)?;
             cache.insert(address, account_info.clone());
             account_info

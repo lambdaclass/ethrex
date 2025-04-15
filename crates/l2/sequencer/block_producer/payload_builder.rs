@@ -55,7 +55,7 @@ pub async fn build_payload(
     let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, store)?;
 
     blockchain.apply_withdrawals(&mut context)?;
-    fill_transactions(blockchain.clone(), &mut context, store)?;
+    fill_transactions(blockchain.clone(), &mut context, store).await?;
     blockchain.extract_requests(&mut context)?;
     blockchain.finalize_payload(&mut context).await?;
 
@@ -78,7 +78,7 @@ pub async fn build_payload(
 
 /// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size  
 /// stays within the blob size limit after processing each transaction.
-pub fn fill_transactions(
+pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
     context: &mut PayloadBuildContext,
     store: &Store,
@@ -174,7 +174,9 @@ pub fn fill_transactions(
                     &receipt,
                     context,
                     &mut accounts_info_cache,
-                )? {
+                )
+                .await?
+                {
                     debug!(
                         "Skipping transaction: {}, doesn't fit in blob_size",
                         head_tx.tx.compute_hash()
@@ -225,7 +227,7 @@ pub fn fill_transactions(
 /// | Withdrawals       |
 /// | Deposits          |
 /// +-------------------+
-fn check_state_diff_size(
+async fn check_state_diff_size(
     acc_withdrawals_size: &mut usize,
     acc_deposits_size: &mut usize,
     acc_state_diff_size: &mut usize,
@@ -240,7 +242,7 @@ fn check_state_diff_size(
     if is_deposit_l2(&tx) {
         *acc_deposits_size += L2_DEPOSIT_SIZE;
     }
-    let modified_accounts_size = calc_modified_accounts_size(context, accounts_info_cache)?;
+    let modified_accounts_size = calc_modified_accounts_size(context, accounts_info_cache).await?;
 
     let current_state_diff_size = 1 /* version (u8) */ + HEADER_FIELDS_SIZE + *acc_withdrawals_size + *acc_deposits_size + modified_accounts_size;
 
@@ -262,7 +264,7 @@ fn check_state_diff_size(
     Ok(true)
 }
 
-fn calc_modified_accounts_size(
+async fn calc_modified_accounts_size(
     context: &mut PayloadBuildContext,
     accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
 ) -> Result<usize, BlockProducerError> {
@@ -287,6 +289,7 @@ fn calc_modified_accounts_size(
             Some(accounts_info_cache),
             context.block_number(),
         )
+        .await
         .map_err(|e| {
             BlockProducerError::Custom(format!("Block Producer failed to get nonce diff: {e}"))
         })?;

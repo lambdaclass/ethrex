@@ -6,6 +6,7 @@ use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
 use crate::ExecutionDB;
 use crate::{db::StoreWrapper, errors::EvmError};
+use derive_more::derive::Debug;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
@@ -275,7 +276,7 @@ impl Evm {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
