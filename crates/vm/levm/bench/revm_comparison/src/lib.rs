@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex_common::{
-    types::{code_hash, Account, AccountInfo, TxKind},
+    types::{code_hash, Account, AccountInfo, EIP1559Transaction, Transaction, TxKind},
     Address as EthrexAddress, U256,
 };
 use ethrex_levm::{
@@ -187,13 +187,9 @@ fn new_vm_with_ops_addr_bal_db(
         ..Default::default()
     };
 
-    VM::new(
-        TxKind::Call(EthrexAddress::from_low_u64_be(42)),
-        env,
-        Default::default(),
-        Default::default(),
-        db,
-        Vec::new(),
-        None,
-    )
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(EthrexAddress::from_low_u64_be(42)),
+        ..Default::default()
+    });
+    VM::new(env, db, &tx)
 }
