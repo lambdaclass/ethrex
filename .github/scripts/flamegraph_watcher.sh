@@ -25,11 +25,11 @@ echo "All load test transactions included in $minutes min $seconds s, killing no
 echo killing "$PROGRAM"
 sudo pkill "$PROGRAM"
 
-while pgrep -l "$PROGRAM" >/dev/null; do
-    echo "$PROGRAM still alive, waiting for it to exit..."
+while pgrep -l "perf" >/dev/null; do
+    echo "perf still alive, waiting for it to exit..."
     sleep 10
 done
-echo "$PROGRAM exited"
+echo "perf exited"
 
 # We need this for the following job, to add to the static page
 echo "time=$minutes minutes $seconds seconds" >>"$GITHUB_OUTPUT"
