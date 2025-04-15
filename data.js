@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744747751014,
+  "lastUpdate": 1744752493282,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3025,6 +3025,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180475257584,
             "range": "± 431007686",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "43799596+JulianVentura@users.noreply.github.com",
+            "name": "Julian Ventura",
+            "username": "JulianVentura"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "62f8887c09c9cf09792e2f2feba202f94ceee373",
+          "message": "ci(l1): enable blockchain ef tests to be run with levm (#2440)\n\n**Motivation**\n\nWe want to run the Ethereum Foundation blockchain tests with LEVM.\nCurrently, we are only running them with REVM.\n\n**Description**\n\nThis PR modifies the EF tests runner so it executes the EF tests with\nboth VMs. The implementation combines both executions on the same\ncommand `cargo test`, but could be easily modified to include a feature\nflag to separate both executions if that's desired.",
+          "timestamp": "2025-04-15T20:40:51Z",
+          "tree_id": "c251efcdd649c8dd819a52a5506c90434cd64f34",
+          "url": "https://github.com/lambdaclass/ethrex/commit/62f8887c09c9cf09792e2f2feba202f94ceee373"
+        },
+        "date": 1744752491715,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179805809394,
+            "range": "± 901043701",
             "unit": "ns/iter"
           }
         ]
