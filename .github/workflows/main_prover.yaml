@@ -68,7 +68,7 @@ jobs:
           sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
           sed -i 's/dev_mode = true/dev_mode = false/' configs/sequencer_config.toml
 
-          make integration-test
+          make integration-test-gpu
 
       - name: Ensure admin permissions in _work
         if: always()
