@@ -26,7 +26,7 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use std::{
-    collections::{BTreeSet, HashMap, HashSet}, fmt::Debug, ops::Add, sync::Arc
+    collections::{BTreeSet, HashMap, HashSet}, fmt::Debug, sync::Arc
 };
 pub type Storage = HashMap<U256, H256>;
 
@@ -173,7 +173,8 @@ pub struct VM<'a> {
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
     pub cache_backup: CacheDB, // Backup of the cache before executing the transaction
-    pub return_data: Vec<RetData>
+    pub return_data: Vec<RetData>,
+    pub backups: Vec<StateBackup>
 }
 
 pub struct RetData {
@@ -289,7 +290,8 @@ impl<'a> VM<'a> {
                     authorization_list,
                     hooks,
                     cache_backup,
-                    return_data: vec![]
+                    return_data: vec![],
+                    backups: vec![]
                 })
             }
             TxKind::Create => {
@@ -332,7 +334,8 @@ impl<'a> VM<'a> {
                     authorization_list,
                     hooks,
                     cache_backup,
-                    return_data: vec![]
+                    return_data: vec![],
+                    backups: vec![]
                 })
             }
         }
@@ -341,18 +344,18 @@ impl<'a> VM<'a> {
     pub fn run_execution(
         &mut self
     ) -> Result<ExecutionReport, VMError> {
-        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
+        let fork = self.env.config.fork;
+
+        if is_precompile(&self.current_call_frame()?.code_address, fork) {
+            let mut current_call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+            let precompile_result = execute_precompile(self.current_call_frame_mut()?, fork);
+                    // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let backup = StateBackup::new(
             self.db.cache.clone(),
             self.accrued_substate.clone(),
             self.env.refunded_gas,
             self.env.transient_storage.clone(),
         );
-        let fork = self.env.config.fork;
-
-        if is_precompile(&self.current_call_frame()?.code_address, fork) {
-            let mut current_call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let precompile_result = execute_precompile(self.current_call_frame_mut()?, fork);
             let report = self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
             self.handle_return(&current_call_frame, &report)?;
             return Ok(report)
@@ -369,17 +372,21 @@ impl<'a> VM<'a> {
                 }
                 Ok(OpcodeResult::Halt) => {
                     let mut current_call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_result(backup, &mut current_call_frame)?;
-                    self.handle_return(&current_call_frame, &report)?;
-                    self.current_call_frame_mut()?.increment_pc_by(1)?;
-                    return Ok(report)
+                    let report = self.handle_opcode_result(&mut current_call_frame)?;
+                    if self.handle_return(&current_call_frame, &report)? {
+                        self.current_call_frame_mut()?.increment_pc_by(1)?;
+                    } else {
+                        return Ok(report)
+                    }
                 }
                 Err(error) => {
                     let mut current_call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_error(error, backup, &mut current_call_frame)?;
-                    self.handle_return(&current_call_frame, &report)?;
-                    self.current_call_frame_mut()?.increment_pc_by(1)?;
-                    return Ok(report)
+                    let report = self.handle_opcode_error(error, &mut current_call_frame)?;
+                    if self.handle_return(&current_call_frame, &report)? {
+                        self.current_call_frame_mut()?.increment_pc_by(1)?;
+                    } else {
+                        return Ok(report)
+                    }
                 }
             }
         }
@@ -477,11 +484,18 @@ impl<'a> VM<'a> {
         }
 
         self.call_frames.push(initial_call_frame);
+                // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
+                let backup = StateBackup::new(
+                    self.db.cache.clone(),
+                    self.accrued_substate.clone(),
+                    self.env.refunded_gas,
+                    self.env.transient_storage.clone(),
+                );
+        self.backups.push(backup);
 
         let mut report = self.run_execution()?;
 
         self.finalize_execution(&mut report)?;
-
         Ok(report)
     }
 

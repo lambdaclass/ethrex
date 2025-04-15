@@ -192,6 +192,7 @@ impl<'a> VM<'a> {
         if self.env.config.fork < Fork::Cancun {
             return Err(VMError::InvalidOpcode);
         }
+        self.current_call_frame_mut()?.increase_consumed_gas(gas_cost::BLOBHASH)?;
 
         let index = self.current_call_frame_mut()?.stack.pop()?;
 
@@ -211,9 +212,7 @@ impl<'a> VM<'a> {
             .ok_or(VMError::Internal(InternalError::BlobHashOutOfRange))?;
         let hash = U256::from_big_endian(blob_hash.as_bytes()); 
         
-        let current_call_frame = self.current_call_frame_mut()?;
-        current_call_frame.increase_consumed_gas(gas_cost::BLOBHASH)?;
-        current_call_frame
+        self.current_call_frame_mut()?
             .stack
             .push(hash)?;
 

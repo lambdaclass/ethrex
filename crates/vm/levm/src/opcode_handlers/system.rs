@@ -1,5 +1,5 @@
 use crate::{
-    call_frame::CallFrame, constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL}, db::cache, errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError}, gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND}, memory::{self, calculate_memory_size}, precompiles::{execute_precompile, is_precompile}, utils::{address_to_word, word_to_address, *}, vm::{RetData, VM}, Account
+    call_frame::CallFrame, constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL}, db::cache, errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError}, gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND}, memory::{self, calculate_memory_size}, precompiles::{execute_precompile, is_precompile}, utils::{address_to_word, word_to_address, *}, vm::{RetData, StateBackup, VM}, Account
 };
 use bytes::Bytes;
 use ethrex_common::{types::Fork, Address, U256};
@@ -747,6 +747,14 @@ impl<'a> VM<'a> {
             value: value_in_wei_to_send,
             max_message_call_gas
         });
+                        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
+                        let backup = StateBackup::new(
+                            self.db.cache.clone(),
+                            self.accrued_substate.clone(),
+                            self.env.refunded_gas,
+                            self.env.transient_storage.clone(),
+                        );
+                        self.backups.push(backup);
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
@@ -854,6 +862,14 @@ impl<'a> VM<'a> {
             self.run_execution()?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 })
         }
+                // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
+                let backup = StateBackup::new(
+                    self.db.cache.clone(),
+                    self.accrued_substate.clone(),
+                    self.env.refunded_gas,
+                    self.env.transient_storage.clone(),
+                );
+                self.backups.push(backup);
         
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
@@ -861,18 +877,19 @@ impl<'a> VM<'a> {
     pub fn handle_return(&mut self, 
         call_frame: &CallFrame,
         tx_report: &ExecutionReport
-    ) -> Result<(), VMError> {
+    ) -> Result<bool, VMError> {
         if call_frame.depth == 0 {
             self.call_frames.push(call_frame.clone());
-            return Ok(())
+            return Ok(false)
         }
         let retdata = self.return_data.pop().ok_or(VMError::Internal                    
             (InternalError::CouldNotPopCallframe))?;
         if retdata.is_create {
-            self.handle_return_create(tx_report, retdata)
+            self.handle_return_create(tx_report, retdata)?;
         } else {
-            self.handle_return_call(call_frame, tx_report, retdata)
+            self.handle_return_call(call_frame, tx_report, retdata)?;
         }
+        Ok(true)
     }
     pub fn handle_return_call(&mut self, 
         call_frame: &CallFrame,
