@@ -107,7 +107,7 @@ async fn heal_storage_batch(
             // Add children to batch
             let children = trie_nodes
                 .iter()
-                .zip(paths.drain(..paths.len().min(nodes.len())))
+                .zip(paths.drain(..trie_nodes.len()))
                 .map(|(node, path)| node_missing_children(node, &path, trie.state()))
                 .collect::<Result<Vec<_>, _>>()?;
             paths.extend(children.into_iter().flatten());
