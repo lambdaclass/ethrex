@@ -10,7 +10,7 @@ set -e
 # Requires a PROGRAM variable to be set (e.g. ethrex). This $PROGRAM will be killed when the
 # load test finishes. Must be run from the context of the repo root.
 
-# TODO: Move this to a cached build outside.
+# TODO(#2486): Move this to a cached build outside.
 echo "Building load test"
 cargo build --release --manifest-path ./cmd/load_test/Cargo.toml
 

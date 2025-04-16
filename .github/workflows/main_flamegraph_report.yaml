@@ -6,9 +6,8 @@ permissions:
   id-token: write
 
 on:
-  # re-enable this when fixing the workflow
-  # push:
-  #   branches: ["main"]
+  push:
+    branches: ["main"]
   workflow_dispatch:
 
 env:
