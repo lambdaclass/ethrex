@@ -290,6 +290,44 @@ RPC options:
 ```
 <!-- END_CLI_HELP -->
 
+### Syncing with Holesky
+
+#### Step 1: Set up a jwt secret for both clients
+
+As an example, we put the secret in a `secrets` directory in the home folder.
+
+```bash
+sudo mkdir -p ~/secrets
+openssl rand -hex 32 | tr -d "\n" | sudo tee ~/secrets/jwt.hex
+```
+
+We will pass this new file’s path as an argument for both clients.
+
+#### Step 2: Launch Ethrex
+
+Pass holesky as a network and the jwt secret we set in the previous step.
+This will launch the node in full sync mode, in order to test out snap sync you can add the flag `--syncmode snap`.
+
+```bash
+cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --network holesky --authrpc.jwtsecret ~/secrets/jwt.hex
+```
+
+#### Step 3: Set up a Consensus Node
+
+For this quick tutorial we will be using lighthouse, but you can learn how to install and run any consensus node by reading their documentation.
+
+You can choose your preferred installation method from [lighthouse's installation guide](https://lighthouse-book.sigmaprime.io/installation.html) and then run the following command to launch the node ans sync it from a public endpoint
+
+```bash
+lighthouse bn --network holesky --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url https://checkpoint-sync.holesky.ethpandaops.io
+```
+
+If using lighthouse directly from its repository, replace `lighthouse bn` with `cargo run --bin lighthouse -- bn`
+
+Aside from holesky, these steps can also be used to connect to other supported networks by replacing the `--network` argument by another supported network and looking up a checkpoint sync endpoint for that network [here](https://eth-clients.github.io/checkpoint-sync-endpoints/)
+
+If you have a running execution node that you want to connect to your ethrex node you can do so by passing its enode as a bootnode using the `--bootnodes` flag
+
 # ethrex L2
 
 In this mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.
