@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744821482156,
+  "lastUpdate": 1744821603389,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3175,6 +3175,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182871455247,
             "range": "± 971409953",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cfec7f9820dc8148ca3bfdbca61b9627f6b80108",
+          "message": "refactor(l1): remove usage of `assert_eq` in frame decoding (rlpx) (#2456)\n\n**Motivation**\nReplaces `assert_eq` usage with proper errors in rlpx frame decoding\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add error variant `RLPXError::InvalidMessageFrame`\n* Remove usage of `assert_eq` in `RLPxCodec::decode` impl\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #1748",
+          "timestamp": "2025-04-16T15:51:53Z",
+          "tree_id": "a77bb95438ba0f7a3b739013ec6813c160de2d78",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cfec7f9820dc8148ca3bfdbca61b9627f6b80108"
+        },
+        "date": 1744821601079,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183723113373,
+            "range": "± 1046565490",
             "unit": "ns/iter"
           }
         ]
