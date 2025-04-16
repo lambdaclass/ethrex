@@ -26,7 +26,9 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use std::{
-    collections::{BTreeSet, HashMap, HashSet}, fmt::Debug, sync::Arc
+    collections::{BTreeSet, HashMap, HashSet},
+    fmt::Debug,
+    sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
 
@@ -174,7 +176,7 @@ pub struct VM<'a> {
     pub hooks: Vec<Arc<dyn Hook>>,
     pub cache_backup: CacheDB, // Backup of the cache before executing the transaction
     pub return_data: Vec<RetData>,
-    pub backups: Vec<StateBackup>
+    pub backups: Vec<StateBackup>,
 }
 
 pub struct RetData {
@@ -185,7 +187,7 @@ pub struct RetData {
     pub to: Address,
     pub msg_sender: Address,
     pub value: U256,
-    pub max_message_call_gas: u64
+    pub max_message_call_gas: u64,
 }
 
 pub struct GeneralizedDatabase {
@@ -291,7 +293,7 @@ impl<'a> VM<'a> {
                     hooks,
                     cache_backup,
                     return_data: vec![],
-                    backups: vec![]
+                    backups: vec![],
                 })
             }
             TxKind::Create => {
@@ -335,25 +337,30 @@ impl<'a> VM<'a> {
                     hooks,
                     cache_backup,
                     return_data: vec![],
-                    backups: vec![]
+                    backups: vec![],
                 })
             }
         }
     }
 
-    pub fn run_execution(
-        &mut self
-    ) -> Result<ExecutionReport, VMError> {
+    pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
         let fork = self.env.config.fork;
 
         if is_precompile(&self.current_call_frame()?.code_address, fork) {
-            let mut current_call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+            let mut current_call_frame = self
+                .call_frames
+                .pop()
+                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
             let precompile_result = execute_precompile(&mut current_call_frame, fork);
-            let backup = self.backups.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let report = self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
+            let backup = self
+                .backups
+                .pop()
+                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+            let report =
+                self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
             self.handle_return(&current_call_frame, &report)?;
             self.current_call_frame_mut()?.increment_pc_by(1)?;
-            return Ok(report)
+            return Ok(report);
         }
 
         loop {
@@ -362,25 +369,31 @@ impl<'a> VM<'a> {
             let op_result = self.handle_current_opcode(opcode);
 
             match op_result {
-                Ok(OpcodeResult::Continue { pc_increment }) => {
-                    self.current_call_frame_mut()?.increment_pc_by(pc_increment)?
-                }
+                Ok(OpcodeResult::Continue { pc_increment }) => self
+                    .current_call_frame_mut()?
+                    .increment_pc_by(pc_increment)?,
                 Ok(OpcodeResult::Halt) => {
-                    let mut current_call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+                    let mut current_call_frame = self
+                        .call_frames
+                        .pop()
+                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
                     let report = self.handle_opcode_result(&mut current_call_frame)?;
                     if self.handle_return(&current_call_frame, &report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
-                        return Ok(report)
+                        return Ok(report);
                     }
                 }
                 Err(error) => {
-                    let mut current_call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+                    let mut current_call_frame = self
+                        .call_frames
+                        .pop()
+                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
                     let report = self.handle_opcode_error(error, &mut current_call_frame)?;
                     if self.handle_return(&current_call_frame, &report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
-                        return Ok(report)
+                        return Ok(report);
                     }
                 }
             }
@@ -479,13 +492,13 @@ impl<'a> VM<'a> {
         }
 
         self.call_frames.push(initial_call_frame);
-                // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-                let backup = StateBackup::new(
-                    self.db.cache.clone(),
-                    self.accrued_substate.clone(),
-                    self.env.refunded_gas,
-                    self.env.transient_storage.clone(),
-                );
+        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
+        let backup = StateBackup::new(
+            self.db.cache.clone(),
+            self.accrued_substate.clone(),
+            self.env.refunded_gas,
+            self.env.transient_storage.clone(),
+        );
         self.backups.push(backup);
 
         let mut report = self.run_execution()?;
@@ -600,14 +613,14 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    fn finalize_execution(
-        &mut self,
-        report: &mut ExecutionReport,
-    ) -> Result<(), VMError> {
+    fn finalize_execution(&mut self, report: &mut ExecutionReport) -> Result<(), VMError> {
         // NOTE: ATTOW the default hook is created in VM::new(), so
         // (in theory) _at least_ the default finalize execution should
         // run
-        let mut call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        let mut call_frame = self
+            .call_frames
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         for hook in self.hooks.clone() {
             hook.finalize_execution(self, &mut call_frame, report)?;
         }

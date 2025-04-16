@@ -17,18 +17,16 @@ impl<'a> VM<'a> {
         &mut self,
         precompile_result: Result<Bytes, VMError>,
         backup: StateBackup,
-        current_call_frame: &mut CallFrame
+        current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
-            Ok(output) => {
-                Ok(ExecutionReport {
-                    result: TxResult::Success,
-                    gas_used: current_call_frame.gas_used,
-                    gas_refunded: self.env.refunded_gas,
-                    output,
-                    logs: std::mem::take(&mut current_call_frame.logs),
-                })
-            }
+            Ok(output) => Ok(ExecutionReport {
+                result: TxResult::Success,
+                gas_used: current_call_frame.gas_used,
+                gas_refunded: self.env.refunded_gas,
+                output,
+                logs: std::mem::take(&mut current_call_frame.logs),
+            }),
             Err(error) => {
                 if error.is_internal() {
                     return Err(error);
@@ -46,11 +44,7 @@ impl<'a> VM<'a> {
             }
         }
     }
-    pub fn handle_current_opcode(
-        &mut self,
-        opcode: Opcode
-    ) -> Result<OpcodeResult, VMError> {
-        println!("op: {opcode:#?}");
+    pub fn handle_current_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
         match opcode {
             Opcode::STOP => Ok(OpcodeResult::Halt),
             Opcode::ADD => self.op_add(),
@@ -94,7 +88,7 @@ impl<'a> VM<'a> {
             // PUSHn
             op if (Opcode::PUSH1..=Opcode::PUSH32).contains(&op) => {
                 let n_bytes = get_n_value(op, Opcode::PUSH1)?;
-                self.op_push( n_bytes)
+                self.op_push(n_bytes)
             }
             Opcode::AND => self.op_and(),
             Opcode::OR => self.op_or(),
@@ -107,17 +101,17 @@ impl<'a> VM<'a> {
             // DUPn
             op if (Opcode::DUP1..=Opcode::DUP16).contains(&op) => {
                 let depth = get_n_value(op, Opcode::DUP1)?;
-                self.op_dup( depth)
+                self.op_dup(depth)
             }
             // SWAPn
             op if (Opcode::SWAP1..=Opcode::SWAP16).contains(&op) => {
                 let depth = get_n_value(op, Opcode::SWAP1)?;
-                self.op_swap( depth)
+                self.op_swap(depth)
             }
             Opcode::POP => self.op_pop(),
             op if (Opcode::LOG0..=Opcode::LOG4).contains(&op) => {
                 let number_of_topics = get_number_of_topics(op)?;
-                self.op_log( number_of_topics)
+                self.op_log(number_of_topics)
             }
             Opcode::MLOAD => self.op_mload(),
             Opcode::MSTORE => self.op_mstore(),
@@ -158,7 +152,7 @@ impl<'a> VM<'a> {
 
     pub fn handle_opcode_result(
         &mut self,
-        current_call_frame: &mut CallFrame
+        current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         // On successful create check output validity
         if (self.is_create() && current_call_frame.depth == 0)
@@ -204,7 +198,10 @@ impl<'a> VM<'a> {
                 Err(error) => {
                     // Revert if error
                     current_call_frame.gas_used = current_call_frame.gas_limit;
-                    let backup = self.backups.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+                    let backup = self
+                        .backups
+                        .pop()
+                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
                     self.restore_state(backup);
 
                     return Ok(ExecutionReport {
@@ -230,10 +227,12 @@ impl<'a> VM<'a> {
     pub fn handle_opcode_error(
         &mut self,
         error: VMError,
-        current_call_frame: &mut CallFrame
+        current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
-
-        let backup = self.backups.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        let backup = self
+            .backups
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if error.is_internal() {
             return Err(error);
         }
@@ -249,7 +248,7 @@ impl<'a> VM<'a> {
         let refunded = backup.refunded_gas;
         let output = std::mem::take(&mut current_call_frame.output); // Bytes::new() if error is not RevertOpcode
         let gas_used = current_call_frame.gas_used;
-        
+
         self.restore_state(backup);
 
         Ok(ExecutionReport {

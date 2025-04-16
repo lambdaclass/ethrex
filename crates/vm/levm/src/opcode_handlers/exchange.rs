@@ -9,10 +9,7 @@ use crate::{
 
 impl<'a> VM<'a> {
     // SWAP operation
-    pub fn op_swap(
-        &mut self,
-        depth: usize,
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_swap(&mut self, depth: usize) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SWAPN)?;
 

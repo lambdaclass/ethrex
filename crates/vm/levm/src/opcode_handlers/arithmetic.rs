@@ -150,9 +150,7 @@ impl<'a> VM<'a> {
     }
 
     // ADDMOD operation
-    pub fn op_addmod(
-        &mut self
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_addmod(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::ADDMOD)?;
 
@@ -186,9 +184,7 @@ impl<'a> VM<'a> {
     }
 
     // MULMOD operation
-    pub fn op_mulmod(
-        &mut self
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_mulmod(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::MULMOD)?;
 
@@ -240,9 +236,7 @@ impl<'a> VM<'a> {
     }
 
     // SIGNEXTEND operation
-    pub fn op_signextend(
-        &mut self
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_signextend(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::SIGNEXTEND)?;
 

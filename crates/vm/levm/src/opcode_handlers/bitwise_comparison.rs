@@ -111,9 +111,7 @@ impl<'a> VM<'a> {
     }
 
     // ISZERO operation (check if zero)
-    pub fn op_iszero(
-        &mut self
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_iszero(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::ISZERO)?;
 

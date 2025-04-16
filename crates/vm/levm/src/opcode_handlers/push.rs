@@ -12,10 +12,7 @@ use ethrex_common::{types::Fork, U256};
 
 impl<'a> VM<'a> {
     // PUSH operation
-    pub fn op_push(
-        &mut self,
-        n_bytes: usize,
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_push(&mut self, n_bytes: usize) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
@@ -35,9 +32,7 @@ impl<'a> VM<'a> {
     }
 
     // PUSH0
-    pub fn op_push0(
-        &mut self
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_push0(&mut self) -> Result<OpcodeResult, VMError> {
         // [EIP-3855] - PUSH0 is only available from SHANGHAI
         if self.env.config.fork < Fork::Shanghai {
             return Err(VMError::InvalidOpcode);
