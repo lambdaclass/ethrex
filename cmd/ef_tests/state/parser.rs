@@ -137,7 +137,7 @@ pub fn parse_ef_test_dir(
                 .to_owned(),
         ) {
             println!(
-                "Skipping test {:?} as it is in the list of tests to skip",
+                "Skipping test file {:?} as it is in the list of tests to skip",
                 test.path().file_name().unwrap()
             );
             continue;
@@ -151,7 +151,20 @@ pub fn parse_ef_test_dir(
         })?;
         for test in tests.0.iter_mut() {
             test.dir = test_dir.file_name().into_string().unwrap();
+
+            // We only want to include tests that have post states from the specified forks in EFTestsRunnerOptions.
+            let test_forks_numbers: Vec<u8> =
+                opts.tests_forks.iter().map(|fork| *fork as u8).collect();
+
+            test.post.forks = test
+                .post
+                .forks
+                .iter()
+                .filter(|a| test_forks_numbers.contains(&(*a.0 as u8)))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
         }
+        tests.0.retain(|test| !test.post.forks.is_empty());
         directory_tests.extend(tests.0);
     }
     Ok(directory_tests)

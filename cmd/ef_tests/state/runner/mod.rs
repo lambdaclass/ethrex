@@ -53,8 +53,14 @@ pub enum InternalError {
 
 #[derive(Parser, Debug)]
 pub struct EFTestRunnerOptions {
-    #[arg(short, long, value_name = "FORK", default_value = "Cancun")]
-    pub fork: Vec<SpecId>,
+    #[arg(
+        short,
+        long,
+        value_name = "FORK",
+        default_value = "Prague,Cancun,Shanghai,Merge,London",
+        use_value_delimiter = true
+    )]
+    pub tests_forks: Vec<SpecId>,
     /// For running specific .json files
     #[arg(short, long, value_name = "TESTS", use_value_delimiter = true)]
     pub tests: Vec<String>,
