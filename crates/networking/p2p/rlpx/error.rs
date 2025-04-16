@@ -49,6 +49,8 @@ pub(crate) enum RLPxError {
     MempoolError(#[from] MempoolError),
     #[error("Io Error: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Failed to decode message due to invalid frame: {0}")]
+    InvalidMessageFrame(String),
 }
 
 // tokio::sync::mpsc::error::SendError<Message> is too large to be part of the RLPxError enum directly

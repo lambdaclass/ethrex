@@ -113,9 +113,11 @@ impl Decoder for RLPxCodec {
                 .map_err(|_| RLPxError::CryptographyError("Invalid header mac".to_owned()))?,
         );
 
-        // TODO: replace these assert_eq! by actual errors
-        // https://github.com/lambdaclass/ethrex/issues/1748
-        assert_eq!(header_mac, expected_header_mac.0);
+        if header_mac != expected_header_mac.0 {
+            return Err(RLPxError::InvalidMessageFrame(
+                "Mismatched header mac".to_string(),
+            ));
+        }
 
         let header_text = header_ciphertext;
         // Use temporary value as it can be discarded if the buffer does not contain yet the full message
@@ -175,9 +177,11 @@ impl Decoder for RLPxCodec {
             .try_into()
             .map_err(|_| RLPxError::CryptographyError("Invalid frame mac".to_owned()))?;
 
-        // TODO: replace these assert_eq! by actual errors
-        // https://github.com/lambdaclass/ethrex/issues/1748
-        assert_eq!(frame_mac, expected_frame_mac);
+        if frame_mac != expected_frame_mac {
+            return Err(RLPxError::InvalidMessageFrame(
+                "Mismatched frame mac".to_string(),
+            ));
+        }
 
         // decrypt frame
         self.ingress_aes.apply_keystream(frame_ciphertext);
