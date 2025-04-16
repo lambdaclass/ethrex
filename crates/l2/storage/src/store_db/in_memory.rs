@@ -76,7 +76,7 @@ impl StoreEngineL2 for Store {
     }
 
     /// Returns the block numbers for a given batch_number
-    async fn store_block_numbers_for_batch(
+    async fn store_block_numbers_by_batch(
         &self,
         batch_number: u64,
         block_numbers: Vec<BlockNumber>,

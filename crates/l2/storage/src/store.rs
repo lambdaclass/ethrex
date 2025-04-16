@@ -53,42 +53,23 @@ impl Store {
         Ok(store)
     }
 
-    /// Returns the block numbers for a given batch_number
-    pub async fn get_block_numbers_for_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
-        self.engine.get_block_numbers_for_batch(batch_number).await
-    }
-
-    /// Stores the block numbers for a given batch_number
-    pub async fn store_block_numbers_for_batch(
+    /// Stores the block numbers by a given batch_number
+    pub async fn store_block_numbers_by_batch(
         &self,
         batch_number: u64,
         block_numbers: Vec<BlockNumber>,
     ) -> Result<(), StoreError> {
         self.engine
-            .store_block_numbers_for_batch(batch_number, block_numbers)
+            .store_block_numbers_by_batch(batch_number, block_numbers)
             .await
     }
 
-    /// Returns the block numbers for a given batch_number
+    /// Returns the block numbers by a given batch_number
     pub async fn get_block_numbers_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
-        self.engine.get_block_numbers_for_batch(batch_number).await
-    }
-
-    /// Stores the block numbers for a given batch_number
-    pub async fn store_block_numbers_for_batch(
-        &self,
-        batch_number: u64,
-        block_numbers: Vec<BlockNumber>,
-    ) -> Result<(), StoreError> {
-        self.engine
-            .store_block_numbers_for_batch(batch_number, block_numbers)
-            .await
+        self.engine.get_block_numbers_by_batch(batch_number).await
     }
 
     pub async fn get_batch_number_by_block(

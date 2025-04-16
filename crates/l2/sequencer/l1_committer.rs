@@ -278,7 +278,7 @@ impl Committer {
                 .await?;
         }
         self.l2_store
-            .store_block_numbers_for_batch(batch_number, blocks)
+            .store_block_numbers_by_batch(batch_number, blocks)
             .await?;
         self.l2_store
             .store_withdrawal_hashes_for_batch(batch_number, withdrawal_hashes)

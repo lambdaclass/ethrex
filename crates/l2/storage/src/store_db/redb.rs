@@ -140,7 +140,7 @@ impl StoreEngineL2 for RedBStoreL2 {
         .await
     }
 
-    async fn store_block_numbers_for_batch(
+    async fn store_block_numbers_by_batch(
         &self,
         batch_number: u64,
         block_numbers: Vec<BlockNumber>,
