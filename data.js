@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744819208452,
+  "lastUpdate": 1744821373269,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3115,6 +3115,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181976763690,
             "range": "± 803942940",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9e9ca0ba6522da60421f7a0497452b42f55b04ef",
+          "message": "fix(l1): don't cancel storage healer if state healing ends earlier (#2464)\n\n**Motivation**\nCurrenlty, when state healing finishes, the storage healer is cancelled,\neven if there are still storages to be fetched and the tries are not\nstale yet, which slows down storage healing due to the frequent restarts\nif state healing ends before storage healing. This PR aims to fix this\nby changing the behaviour to not cancel storage healing if state healing\nis complete, but to instead give this information to the storage healer\nvia an AtomicBoo, so that it can decide whether to stop based on if the\nstate has become stale, or if no more paths are left to heal and mo more\nwill be added by the state healer.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add AtomicBool param to `storage_healer` to signal whether state\nhealing has ended\n* Don't cancel storage healing if state healer ended due to state\nhealing being complete\n* End storage healer if there are no more pending storages left & state\nhealing has ended\n* (Misc) Remove outdated comment\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-16T15:48:52Z",
+          "tree_id": "861ddf3b5256943e565b14c1c68a2cebd82332ef",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9e9ca0ba6522da60421f7a0497452b42f55b04ef"
+        },
+        "date": 1744821371322,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179960048645,
+            "range": "± 542547153",
             "unit": "ns/iter"
           }
         ]
