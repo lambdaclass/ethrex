@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Usage:
 # ./flamegraph_watcher.sh
@@ -14,7 +15,7 @@ cargo build --release --manifest-path ./cmd/load_test/Cargo.toml
 
 echo "Starting load test"
 start_time=$(date +%s)
-./target/release/load_test -k ./test_data/private_keys.txt -t eth-transfers -N 1000 -n http://localhost:1729 -w 5 >/dev/null
+RUST_BACKTRACE=1 ./target/release/load_test -k ./test_data/private_keys.txt -t eth-transfers -N 1000 -n http://localhost:1729 -w 5 >/dev/null
 end_time=$(date +%s)
 
 elapsed=$((end_time - start_time))
