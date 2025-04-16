@@ -166,7 +166,7 @@ pub async fn fill_transactions(
         let receipt = match blockchain.apply_transaction(&head_tx, context) {
             Ok(receipt) => {
                 // This call is the part that differs from the original `fill_transactions`.
-                if !check_state_diff_size(
+                if !update_state_diff_size(
                     &mut acc_withdrawals_size,
                     &mut acc_deposits_size,
                     &mut acc_state_diff_size,
