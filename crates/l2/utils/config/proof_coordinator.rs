@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::net::IpAddr;
 
 #[derive(Clone, Deserialize)]
-pub struct ProverServerConfig {
+pub struct ProofCoordinatorConfig {
     pub l1_address: Address,
     #[serde(deserialize_with = "secret_key_deserializer")]
     pub l1_private_key: SecretKey,
@@ -15,13 +15,13 @@ pub struct ProverServerConfig {
     pub dev_mode: bool,
 }
 
-impl ProverServerConfig {
+impl ProofCoordinatorConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         envy::prefixed("PROVER_SERVER_")
             .from_env::<Self>()
             .map_err(|e| ConfigError::ConfigDeserializationError {
                 err: e,
-                from: "ProverServerConfig".to_string(),
+                from: "ProofCoordinatorConfig".to_string(),
             })
     }
 }
