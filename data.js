@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744821373269,
+  "lastUpdate": 1744821482156,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3145,6 +3145,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179960048645,
             "range": "± 542547153",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3bbb56e09d9b9dd4d7ffeb3f1d086c45c014db44",
+          "message": "feat(l1): show healing in progress message at set intervals (#2462)\n\n**Motivation**\nWe are not able to perform estimations on when healing will end, but we\nshould also not stay completely silent while healing takes place, as\nthis is not very user-friendly.\nThis PR aims to add messages to inform wether state and storage healing\nare taking place, at the same pace as we show state sync and rebuild\nprogress. For state sync, pending paths will be shown. These can give an\ninsight on the progress, as the amount of paths will continuously\nincrease as we progress through the trie, but will start gradually\ndecreasing as we near the end of healing. For storages it is a slightly\ndifferent story as we don't have the full number of pending storages\navailable for showing so we only show the storages currently in the\nqueue.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Periodically show amount of paths left during State Healing\n* Periodically show storages in queue during Storage Healing\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-04-16T15:49:55Z",
+          "tree_id": "704c72c4ecd616dbd7508e265f6e27c1fced5279",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3bbb56e09d9b9dd4d7ffeb3f1d086c45c014db44"
+        },
+        "date": 1744821480306,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182871455247,
+            "range": "± 971409953",
             "unit": "ns/iter"
           }
         ]
