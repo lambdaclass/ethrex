@@ -382,7 +382,6 @@ impl<'a> VM<'a> {
                     if self.handle_return(&current_call_frame, &report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
-                        self.call_frames.push(current_call_frame);
                         return Ok(report);
                     }
                 }
@@ -395,7 +394,6 @@ impl<'a> VM<'a> {
                     if self.handle_return(&current_call_frame, &report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
-                        self.call_frames.push(current_call_frame);
                         return Ok(report);
                     }
                 }
