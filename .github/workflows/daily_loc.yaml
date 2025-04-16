@@ -57,8 +57,7 @@ jobs:
               || format(
                   '{0} {1} {2}',
                   secrets.ETHREX_L1_SLACK_WEBHOOK,
-                  secrets.ETHREX_L2_SLACK_WEBHOOK,
-                  secrets.LEVM_SLACK_WEBHOOK
+                  secrets.ETHREX_L2_SLACK_WEBHOOK
                 )
             }}
         run: |

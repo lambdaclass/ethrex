@@ -55,8 +55,7 @@ jobs:
               || format(
                   '{0} {1} {2}',
                   secrets.ETHREX_L1_SLACK_WEBHOOK,
-                  secrets.ETHREX_L2_SLACK_WEBHOOK,
-                  secrets.LEVM_SLACK_WEBHOOK
+                  secrets.ETHREX_L2_SLACK_WEBHOOK
                 )
             }}
         run: |
@@ -72,8 +71,8 @@ jobs:
               && secrets.TEST_CHANNEL_SLACK
               || format(
                   '{0} {1}',
-                  secrets.ETHREX_L2_SLACK_WEBHOOK,
-                  secrets.LEVM_SLACK_WEBHOOK
+                  secrets.ETHREX_L1_SLACK_WEBHOOK,
+                  secrets.ETHREX_L2_SLACK_WEBHOOK
                 )
             }}
         run: |
@@ -87,7 +86,7 @@ jobs:
           SLACK_WEBHOOK: >
             ${{ github.event_name == 'workflow_dispatch'
               && secrets.TEST_CHANNEL_SLACK
-              || secrets.LEVM_SLACK_WEBHOOK
+              || secrets.ETHREX_L1_SLACK_WEBHOOK
             }}
         # Only send diff message if the diff has changed
         run: |
@@ -144,7 +143,7 @@ jobs:
           SLACK_WEBHOOK: >
             ${{ github.event_name == 'workflow_dispatch'
               && secrets.TEST_CHANNEL_SLACK
-              || secrets.LEVM_SLACK_WEBHOOK
+              || secrets.ETHREX_L1_SLACK_WEBHOOK
             }}
         run: sh .github/scripts/publish_levm_ef_tests.sh "$SLACK_WEBHOOK"
 
@@ -163,7 +162,7 @@ jobs:
               || format(
                   '{0} {1}',
                   secrets.ETHREX_L2_SLACK_WEBHOOK,
-                  secrets.LEVM_SLACK_WEBHOOK
+                  secrets.ETHREX_L1_SLACK_WEBHOOK
                 )
             }}
         run: |
