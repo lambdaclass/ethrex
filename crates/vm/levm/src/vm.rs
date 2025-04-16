@@ -479,7 +479,7 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
             if new_account.has_code_or_nonce() {
-                return self.handle_create_non_empty_account(&initial_call_frame);
+                return self.handle_create_non_empty_account();
             }
 
             // https://eips.ethereum.org/EIPS/eip-161
@@ -586,8 +586,7 @@ impl<'a> VM<'a> {
     }
 
     fn handle_create_non_empty_account(
-        &mut self,
-        initial_call_frame: &CallFrame,
+        &mut self
     ) -> Result<ExecutionReport, VMError> {
         let mut report = ExecutionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
@@ -617,12 +616,12 @@ impl<'a> VM<'a> {
         // NOTE: ATTOW the default hook is created in VM::new(), so
         // (in theory) _at least_ the default finalize execution should
         // run
-        let mut call_frame = self
+        let call_frame = self
             .call_frames
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         for hook in self.hooks.clone() {
-            hook.finalize_execution(self, &mut call_frame, report)?;
+            hook.finalize_execution(self, &call_frame, report)?;
         }
         self.call_frames.push(call_frame);
 
