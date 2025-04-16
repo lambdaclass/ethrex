@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744814327399,
+  "lastUpdate": 1744819208452,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3085,6 +3085,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182652744348,
             "range": "± 946337281",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "febb4dd946d795383b13c3eaa3ab122502d74b79",
+          "message": "fix(l2): limit block to blob size (#2292)\n\n**Motivation**\n\nWith our current implementation, if a block state diff exceeds the blob\nsize, we are unable to commit that block.\n\n**Description**\n\nThis PR provides an initial solution by calculating the state diff size\nafter including each transaction in the block. If the size exceeds the\nblob limit, the previous state is restored and transactions continue to\nbe added from the remaining senders in the mempool.\n\n**Observations**\n- `blockchain::build_payload` was \"replicated\" in\n`block_producer/payload_builder.rs` with two key differences:\n    - It doesn't call `blockchain::apply_system_operations`.\n- It uses a custom L2 implementation of `fill_transactions` which adds\nthe logic described above.\n- Some functions in `blockchain` are now public to allow access from\n`payload_builder`.\n- `PayloadBuildContext` now contains am owned `Block` instead of a\nmutable reference of it, as we need to be able to clone the\n`PayloadBuildContext` to restore a previous state.\n- `PayloadBuildContext` is cloned before each transaction execution,\nwhich may impact performance.\n- After each transaction, `vm.get_state_transitions()` is called to\ncompute the state diff size.\n- Since `REVM::vm.get_state_transitions()` mutates the\n`PayloadBuildContext`, we need to clone it to avoid unintended changes.\n- An `accounts_info_cache` is used to prevent calling `get_account_info`\non every tx execution.\n\n> [!WARNING]\n> - **REVM**: Payload building is **10x slower** due to frequent\n`clone()` calls.\n> - **LEVM**: Payload building is **100x slower** because\n`LEVM::get_state_transitions` internally calls `get_account_info`.\n>\n> *These issues will be addressed in future PRs.*",
+          "timestamp": "2025-04-16T15:12:01Z",
+          "tree_id": "1df649115f10f692d2a6bf2380c43c3ca61f0531",
+          "url": "https://github.com/lambdaclass/ethrex/commit/febb4dd946d795383b13c3eaa3ab122502d74b79"
+        },
+        "date": 1744819205978,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181976763690,
+            "range": "± 803942940",
             "unit": "ns/iter"
           }
         ]
