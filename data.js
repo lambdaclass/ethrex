@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744752493282,
+  "lastUpdate": 1744814327399,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3055,6 +3055,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179805809394,
             "range": "± 901043701",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3df5a169d87b54cc506209ff45d5474079aecde9",
+          "message": "l2(chore): pin solc version to latest (#2460)\n\n**Motivation**\n\nA new version of the Solidity compiler\n([v0.8.29](https://github.com/ethereum/solidity/releases/tag/v0.8.29))\nhas been released. This update modifies the bytecode format, which\ncauses changes in the `genesis-l2.json` file when launching L2 with\n`make init`.\n\n**Description**\n\n- Pin Solidity version `0.8.29` in our contracts.\n- Updates `genesis-l2.json`.\n\n\n\nCloses None",
+          "timestamp": "2025-04-16T13:50:42Z",
+          "tree_id": "508e55289804bfde4069c037c1a0e3b5e62af9c7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3df5a169d87b54cc506209ff45d5474079aecde9"
+        },
+        "date": 1744814324640,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182652744348,
+            "range": "± 946337281",
             "unit": "ns/iter"
           }
         ]
