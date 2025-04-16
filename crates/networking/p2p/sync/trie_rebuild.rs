@@ -7,7 +7,7 @@
 
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
+use ethrex_storage::{Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
 use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
 use std::array;
 use tokio::{
@@ -21,8 +21,8 @@ use tracing::{info, warn};
 use crate::sync::seconds_to_readable;
 
 use super::{
-    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, SHOW_PROGRESS_INTERVAL_DURATION,
-    STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
+    SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS,
+    SHOW_PROGRESS_INTERVAL_DURATION, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
 };
 
 /// The storage root used to indicate that the storage to be rebuilt is not complete
@@ -31,8 +31,6 @@ use super::{
 pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
 // Max storages to rebuild in parallel
 const MAX_PARALLEL_REBUILDS: usize = 15;
-// Amount by which to multiply the amount of parallel rebuilds once state sync is over
-const STATE_SYNC_FINISHED_PARALLELIZATION_FACTOR: usize = 2;
 
 const MAX_SNAPSHOT_READS_WITHOUT_COMMIT: usize = 5;
 
@@ -226,8 +224,6 @@ async fn rebuild_storage_trie_in_background(
     // Count of all storages that have entered the queue
     let mut pending_historic_count = pending_storages.len();
     let mut incoming = true;
-    // This factor will be increased after state sync is complete as we will have more resources available
-    let mut parallelization_factor = 1;
     while incoming || !pending_storages.is_empty() {
         if cancel_token.is_cancelled() {
             break;
@@ -251,21 +247,10 @@ async fn rebuild_storage_trie_in_background(
             pending_storages.extend(buffer.iter().flatten());
         }
 
-        // Check if we can increase parallelization factor
-        if parallelization_factor < STATE_SYNC_FINISHED_PARALLELIZATION_FACTOR
-            && state_sync_finished(&store)?
-        {
-            parallelization_factor = STATE_SYNC_FINISHED_PARALLELIZATION_FACTOR;
-            // Also reset counters to measure the increased speed
-            total_rebuild_time = 0;
-            pending_historic_count = pending_storages.len();
-
-        }
-
         // Spawn tasks to rebuild current storages
         let rebuild_start = Instant::now();
         let mut rebuild_tasks = JoinSet::new();
-        for _ in 0..MAX_PARALLEL_REBUILDS * parallelization_factor {
+        for _ in 0..MAX_PARALLEL_REBUILDS {
             if pending_storages.is_empty() {
                 break;
             }
@@ -374,12 +359,20 @@ async fn show_storage_tries_rebuild_progress(
     // Calculate current rebuild speed
     let rebuilt_storages_count = all_storages_in_queue.saturating_sub(current_storages_in_queue);
     let storage_rebuild_time = total_rebuild_time / (rebuilt_storages_count as u128 + 1);
+    // Check if state sync has already finished before reporting estimated finish time
+    let state_sync_finished = if let Ok(Some(checkpoint)) = store.get_state_trie_key_checkpoint() {
+        checkpoint
+            .iter()
+            .enumerate()
+            .all(|(i, checkpoint)| checkpoint == &STATE_TRIE_SEGMENTS_END[i])
+    } else {
+        false
+    };
     // Show current speed only as debug data
     info!("Rebuilding Storage Tries, average speed: {} milliseconds per storage, currently in queue: {} storages",
         storage_rebuild_time, current_storages_in_queue,
     );
-    // Check if state sync has already finished before reporting estimated finish time
-    if state_sync_finished(&store).unwrap_or_default() {
+    if state_sync_finished {
         // storage_rebuild_time (ms) * remaining storages / 1000
         let estimated_time_to_finish = (U512::from(storage_rebuild_time)
             * U512::from(current_storages_in_queue))
@@ -389,13 +382,4 @@ async fn show_storage_tries_rebuild_progress(
             seconds_to_readable(estimated_time_to_finish)
         )
     }
-}
-
-/// Returns true if state sync has already finished
-fn state_sync_finished(store: &Store) -> Result<bool, StoreError> {
-    Ok(store.get_state_trie_key_checkpoint()?.is_some_and(|ch| {
-        ch.iter()
-            .enumerate()
-            .all(|(i, checkpoint)| checkpoint == &STATE_TRIE_SEGMENTS_END[i])
-    }))
 }
