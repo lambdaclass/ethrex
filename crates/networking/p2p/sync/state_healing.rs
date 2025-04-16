@@ -8,7 +8,7 @@
 //! This process will stop once it has fixed all trie inconsistencies or when the pivot becomes stale, in which case it can be resumed on the next cycle
 //! All healed accounts will also have their bytecodes and storages healed by the corresponding processes
 
-use std::cmp::min;
+use std::{cmp::min, time::Instant};
 
 use ethrex_common::{
     types::{AccountState, EMPTY_KECCACK_HASH},
@@ -18,13 +18,13 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, Node, EMPTY_TRIE_HASH};
 use tokio::sync::mpsc::{channel, Sender};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,
     sync::{
         bytecode_fetcher, node_missing_children, MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES,
-        NODE_BATCH_SIZE,
+        NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION,
     },
 };
 
@@ -47,7 +47,12 @@ pub(crate) async fn heal_state_trie(
     ));
     // Add the current state trie root to the pending paths
     paths.push(Nibbles::default());
+    let mut last_update = Instant::now();
     while !paths.is_empty() {
+        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            last_update = Instant::now();
+            info!("State Healing in Progress, pending paths: {}", paths.len());
+        }
         // Spawn multiple parallel requests
         let mut state_tasks = tokio::task::JoinSet::new();
         for _ in 0..MAX_PARALLEL_FETCHES {
