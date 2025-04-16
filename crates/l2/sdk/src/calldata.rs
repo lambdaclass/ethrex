@@ -30,16 +30,44 @@ pub enum Value {
 
 fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEncodeError> {
     let sig = signature.trim().trim_start_matches("function ");
-    let (name, params) = sig
+    let (name, args) = sig
         .split_once('(')
         .ok_or(CalldataEncodeError::ParseError(signature.to_owned()))?;
-    let params: Vec<String> = params
-        .rsplit_once(')')
-        .map_or(params, |(left, _)| left)
-        .split(',')
-        .map(|x| x.trim().split_once(' ').unzip().0.unwrap_or(x).to_string())
-        .collect();
-    Ok((name.to_string(), params))
+    let args = args.rsplit_once(')').map_or(args, |(left, _)| left);
+
+    // We use this to only keep track of top level tuples
+    // "address,(uint256,uint256)" -> "address" and "(uint256,uint256)"
+    // "address,(unit256,(uint256,uint256))" -> "address" and "(unit256,(uint256,uint256))"
+    let mut splitted_params = Vec::new();
+    let mut current_param = String::new();
+    let mut parenthesis_depth = 0;
+
+    for ch in args.chars() {
+        match ch {
+            '(' => {
+                parenthesis_depth += 1;
+                current_param.push(ch);
+            }
+            ')' => {
+                parenthesis_depth -= 1;
+                current_param.push(ch);
+            }
+            ',' if parenthesis_depth == 0 => {
+                if !current_param.is_empty() {
+                    splitted_params.push(current_param.trim().to_string());
+                    current_param = String::new();
+                }
+            }
+            _ => current_param.push(ch),
+        }
+    }
+
+    // push the last param if it exists
+    if !current_param.is_empty() {
+        splitted_params.push(current_param.trim().to_string());
+    }
+
+    Ok((name.to_string(), splitted_params))
 }
 
 fn compute_function_selector(name: &str, params: &[String]) -> Result<H32, CalldataEncodeError> {
@@ -317,4 +345,52 @@ fn raw_function_selector() {
     let selector = compute_function_selector(&name, &params).unwrap();
 
     assert_eq!(selector, H32::from(&[0x02, 0xe8, 0x6b, 0xbe]));
+}
+
+#[test]
+fn encode_tuple_dynamic_offset() {
+    let raw_function_signature = "deposit((address,address,uint256,bytes))";
+    let address = Address::from_low_u64_be(424242_u64);
+
+    let tuple = Value::Tuple(vec![
+        Value::Address(address),
+        Value::Address(address),
+        Value::Uint(U256::from(21000 * 5)),
+        Value::Bytes(Bytes::from_static(b"")),
+    ]);
+    let values = vec![tuple];
+
+    let calldata = encode_calldata(raw_function_signature, &values).unwrap();
+
+    assert_eq!(calldata, hex::decode("02e86bbe0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000006793200000000000000000000000000000000000000000000000000000000000679320000000000000000000000000000000000000000000000000000000000019a2800000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000000").unwrap());
+
+    let mut encoding = vec![0x02, 0xe8, 0x6b, 0xbe]; // function selector
+    encoding.extend_from_slice(&encode_tuple(&values).unwrap());
+
+    assert_eq!(calldata, encoding);
+}
+
+#[test]
+fn correct_tuple_parsing() {
+    // the arguments are:
+    // - uint256
+    // - (uint256, address)
+    // - ((address, address), (uint256, bytes))
+    // - ((address, address), uint256)
+    // - (uint256, (address, address))
+    // - address
+    let raw_function_signature =
+        "my_function(uint256,(uin256,address),((address,address),(uint256,bytes)),((address,address),uint256),(uint256,(address,address)),address)";
+
+    let exepected_arguments: Vec<String> = vec![
+        "uint256".to_string(),
+        "(uin256,address)".to_string(),
+        "((address,address),(uint256,bytes))".to_string(),
+        "((address,address),uint256)".to_string(),
+        "(uint256,(address,address))".to_string(),
+        "address".to_string(),
+    ];
+    let (name, params) = parse_signature(raw_function_signature).unwrap();
+    assert_eq!(name, "my_function");
+    assert_eq!(params, exepected_arguments);
 }
