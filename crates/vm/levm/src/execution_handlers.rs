@@ -154,6 +154,10 @@ impl<'a> VM<'a> {
         &mut self,
         current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
+        let backup = self
+            .backups
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         // On successful create check output validity
         if (self.is_create() && current_call_frame.depth == 0)
             || current_call_frame.create_op_called
@@ -198,10 +202,6 @@ impl<'a> VM<'a> {
                 Err(error) => {
                     // Revert if error
                     current_call_frame.gas_used = current_call_frame.gas_limit;
-                    let backup = self
-                        .backups
-                        .pop()
-                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
                     self.restore_state(backup);
 
                     return Ok(ExecutionReport {
