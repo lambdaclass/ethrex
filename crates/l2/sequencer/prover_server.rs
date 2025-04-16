@@ -239,8 +239,14 @@ impl ProverServer {
                     error!("Failed to handle request: {e}");
                 }
             }
-            Ok(ProofData::ProofSubmit { .. }) => {
-                if let Err(e) = self.handle_submit(&mut stream, data?).await {
+            Ok(ProofData::ProofSubmit {
+                block_number,
+                calldata,
+            }) => {
+                if let Err(e) = self
+                    .handle_submit(&mut stream, block_number, calldata)
+                    .await
+                {
                     error!("Failed to handle submit: {e}");
                 }
             }
@@ -289,18 +295,9 @@ impl ProverServer {
     async fn handle_submit(
         &self,
         stream: &mut TcpStream,
-        message: ProofData,
+        block_number: u64,
+        calldata: ProofCalldata,
     ) -> Result<(), ProverServerError> {
-        let ProofData::ProofSubmit {
-            block_number,
-            calldata,
-        } = message
-        else {
-            return Err(ProverServerError::InternalError(
-                "Expected submit message".to_string(),
-            ));
-        };
-
         info!("Submit received for block number: {block_number}");
 
         // Check if we have the proof for that ProverType
