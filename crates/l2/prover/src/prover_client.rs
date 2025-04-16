@@ -66,13 +66,13 @@ impl ProverClient {
 
     async fn request_new_input(&self) -> Result<ProverData, String> {
         // Request the input with the correct block_number
-        let request = ProofData::request();
+        let request = ProofData::block_request();
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
         match response {
-            ProofData::Response {
+            ProofData::BlockResponse {
                 block_number,
                 input,
             } => match (block_number, input) {
@@ -102,14 +102,14 @@ impl ProverClient {
         block_number: u64,
         proving_output: ProofCalldata,
     ) -> Result<(), String> {
-        let submit = ProofData::submit(block_number, proving_output);
+        let submit = ProofData::proof_submit(block_number, proving_output);
 
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
             .await
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;
 
         match submit_ack {
-            ProofData::SubmitAck { block_number } => {
+            ProofData::ProofSubmitACK { block_number } => {
                 info!("Received submit ack for block_number: {}", block_number);
                 Ok(())
             }
