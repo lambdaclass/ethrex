@@ -190,6 +190,7 @@ pub struct RetData {
     pub max_message_call_gas: u64,
 }
 
+#[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,

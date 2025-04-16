@@ -39,7 +39,7 @@ impl<'a> VM<'a> {
                     gas_used: current_call_frame.gas_limit,
                     gas_refunded: self.env.refunded_gas,
                     output: Bytes::new(),
-                    logs: std::mem::take(&mut current_call_frame.logs),
+                    logs: vec![],
                 })
             }
         }
@@ -209,7 +209,7 @@ impl<'a> VM<'a> {
                         gas_used: current_call_frame.gas_used,
                         gas_refunded: self.env.refunded_gas,
                         output: std::mem::take(&mut current_call_frame.output),
-                        logs: std::mem::take(&mut current_call_frame.logs),
+                        logs: vec![],
                     });
                 }
             }
