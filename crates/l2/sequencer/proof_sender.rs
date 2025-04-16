@@ -10,29 +10,30 @@ use secp256k1::SecretKey;
 use tokio::sync::oneshot::Receiver;
 use tracing::{debug, error, info};
 
-use crate::utils::{
-    config::{
-        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        prover_server::ProverServerConfig,
-    },
-    prover::{
-        proving_systems::ProverType,
-        save_state::{block_number_has_all_needed_proofs, read_proof, StateFileType},
+use crate::{
+    sequencer::errors::ProofSenderError,
+    utils::{
+        config::{
+            committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
+            prover_server::ProverServerConfig,
+        },
+        prover::{
+            proving_systems::ProverType,
+            save_state::{block_number_has_all_needed_proofs, read_proof, StateFileType},
+        },
     },
 };
-
-use super::errors::ProverServerError;
 
 // These constants have to match with the OnChainProposer.sol contract
 const R0VERIFIER: &str = "R0VERIFIER()";
 const SP1VERIFIER: &str = "SP1VERIFIER()";
 const PICOVERIFIER: &str = "PICOVERIFIER()";
-pub const VERIFIER_CONTRACTS: [&str; 3] = [R0VERIFIER, SP1VERIFIER, PICOVERIFIER];
-pub const DEV_MODE_ADDRESS: H160 = H160([
+const VERIFIER_CONTRACTS: [&str; 3] = [R0VERIFIER, SP1VERIFIER, PICOVERIFIER];
+const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0xAA,
 ]);
-pub const VERIFY_FUNCTION_SIGNATURE: &str =
+const VERIFY_FUNCTION_SIGNATURE: &str =
     "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 pub async fn start_proof_sender() -> Result<(), ConfigError> {
@@ -132,7 +133,7 @@ impl ProofSender {
         }
     }
 
-    async fn main_logic(&self, shutdown_rx: &mut Receiver<i32>) -> Result<(), ProverServerError> {
+    async fn main_logic(&self, shutdown_rx: &mut Receiver<i32>) -> Result<(), ProofSenderError> {
         loop {
             if shutdown_rx.try_recv().is_ok() {
                 debug!("Received shutdown signal");
@@ -155,7 +156,7 @@ impl ProofSender {
         Ok(())
     }
 
-    pub async fn send_proof(&self, block_number: u64) -> Result<H256, ProverServerError> {
+    pub async fn send_proof(&self, block_number: u64) -> Result<H256, ProofSenderError> {
         // TODO: change error
         // TODO: If the proof is not needed, a default calldata is used,
         // the structure has to match the one defined in the OnChainProposer.sol contract.
@@ -166,9 +167,7 @@ impl ProofSender {
                 let risc0_proof =
                     read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
                 if risc0_proof.prover_type != ProverType::RISC0 {
-                    return Err(ProverServerError::Custom(
-                        "RISC0 Proof isn't present".to_string(),
-                    ));
+                    return Err(ProofSenderError::ProofNotPresent(ProverType::RISC0));
                 }
                 risc0_proof.calldata
             } else {
@@ -180,9 +179,7 @@ impl ProofSender {
             if self.needed_proof_types.contains(&ProverType::SP1) {
                 let sp1_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
                 if sp1_proof.prover_type != ProverType::SP1 {
-                    return Err(ProverServerError::Custom(
-                        "SP1 Proof isn't present".to_string(),
-                    ));
+                    return Err(ProofSenderError::ProofNotPresent(ProverType::SP1));
                 }
                 sp1_proof.calldata
             } else {
@@ -194,9 +191,7 @@ impl ProofSender {
             if self.needed_proof_types.contains(&ProverType::Pico) {
                 let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::Pico))?;
                 if pico_proof.prover_type != ProverType::Pico {
-                    return Err(ProverServerError::Custom(
-                        "Pico Proof isn't present".to_string(),
-                    ));
+                    return Err(ProofSenderError::ProofNotPresent(ProverType::Pico));
                 }
                 pico_proof.calldata
             } else {
@@ -222,7 +217,7 @@ impl ProofSender {
             .await?
             .try_into()
             .map_err(|_| {
-                ProverServerError::InternalError("Failed to convert gas_price to a u64".to_owned())
+                ProofSenderError::InternalError("Failed to convert gas_price to a u64".to_owned())
             })?;
 
         let verify_tx = self

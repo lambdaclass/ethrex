@@ -1,7 +1,7 @@
 use ethrex_common::{H256, U256};
 use ethrex_l2_sdk::calldata::Value;
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 /// Enum used to identify the different proving systems.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +50,17 @@ impl ProverType {
                 ]
             }
             ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
+        }
+    }
+}
+
+impl Display for ProverType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exec => write!(f, "Exec"),
+            Self::RISC0 => write!(f, "RISC0"),
+            Self::SP1 => write!(f, "SP1"),
+            Self::Pico => write!(f, "Pico"),
         }
     }
 }
