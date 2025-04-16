@@ -94,7 +94,7 @@ pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn init_rpc_api(
+pub async fn init_rpc_api(
     opts: &Options,
     #[cfg(feature = "l2")] l2_opts: &L2Options,
     signer: &SigningKey,
@@ -119,7 +119,8 @@ pub fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-    );
+    )
+    .await;
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
@@ -208,14 +209,15 @@ pub async fn init_network(
 }
 
 #[cfg(feature = "dev")]
-pub fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
+pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
     if opts.dev {
         info!("Running in DEV_MODE");
 
         let head_block_hash = {
-            let current_block_number = store.get_latest_block_number().unwrap();
+            let current_block_number = store.get_latest_block_number().await.unwrap();
             store
                 .get_canonical_block_hash(current_block_number)
+                .await
                 .unwrap()
                 .unwrap()
         };

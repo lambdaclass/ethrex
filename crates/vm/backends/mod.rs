@@ -4,9 +4,8 @@ pub mod revm;
 use self::revm::db::evm_state;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
-use crate::ExecutionDB;
 use crate::{db::StoreWrapper, errors::EvmError};
-use derive_more::derive::Debug;
+use crate::{ExecutionDB, ExecutionDBError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
@@ -41,6 +40,7 @@ impl TryFrom<String> for EvmEngine {
     }
 }
 
+#[derive(Clone)]
 pub enum Evm {
     REVM { state: EvmState },
     LEVM { db: GeneralizedDatabase },
@@ -80,6 +80,13 @@ impl Evm {
         Evm::LEVM {
             db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
         }
+    }
+
+    pub async fn to_execution_db(
+        store: &Store,
+        block: &Block,
+    ) -> Result<ExecutionDB, ExecutionDBError> {
+        LEVM::to_execution_db(block, store).await
     }
 
     pub fn default(store: Store, parent_hash: H256) -> Self {
