@@ -5,7 +5,7 @@ use crate::utils::prover::save_state::{
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        prover_server::ProverServerConfig,
+        proof_coordinator::ProofCoordinatorConfig,
     },
     prover::proving_systems::ProofCalldata,
 };
@@ -99,7 +99,7 @@ impl ProofData {
 }
 
 pub async fn start_proof_coordinator(store: Store) -> Result<(), ConfigError> {
-    let server_config = ProverServerConfig::from_env()?;
+    let server_config = ProofCoordinatorConfig::from_env()?;
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
     let prover_server = ProofCoordinator::new_from_config(
@@ -116,7 +116,7 @@ pub async fn start_proof_coordinator(store: Store) -> Result<(), ConfigError> {
 
 impl ProofCoordinator {
     pub async fn new_from_config(
-        config: ProverServerConfig,
+        config: ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
@@ -133,7 +133,7 @@ impl ProofCoordinator {
         })
     }
 
-    pub async fn run(&self, server_config: &ProverServerConfig) {
+    pub async fn run(&self, server_config: &ProofCoordinatorConfig) {
         loop {
             let result = self.clone().main_logic().await;
 

@@ -15,7 +15,7 @@ use crate::{
     utils::{
         config::{
             committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-            prover_server::ProverServerConfig,
+            proof_coordinator::ProofCoordinatorConfig,
         },
         prover::{
             proving_systems::ProverType,
@@ -39,7 +39,7 @@ const VERIFY_FUNCTION_SIGNATURE: &str =
 pub async fn start_l1_proof_sender() -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
-    let prover_server_config = ProverServerConfig::from_env()?;
+    let prover_server_config = ProofCoordinatorConfig::from_env()?;
 
     let proof_sender =
         L1ProofSender::new(&prover_server_config, &committer_config, &eth_config).await?;
@@ -58,7 +58,7 @@ struct L1ProofSender {
 
 impl L1ProofSender {
     async fn new(
-        config: &ProverServerConfig,
+        config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
     ) -> Result<Self, ConfigError> {

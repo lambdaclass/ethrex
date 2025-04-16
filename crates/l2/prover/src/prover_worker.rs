@@ -1,7 +1,7 @@
 use crate::{prove, to_calldata};
 use ethrex_l2::{
     sequencer::proof_coordinator::ProofData,
-    utils::{config::prover_client::ProverClientConfig, prover::proving_systems::ProofCalldata},
+    utils::{config::prover_worker::ProverWorkerConfig, prover::proving_systems::ProofCalldata},
 };
 use std::time::Duration;
 use tokio::{
@@ -12,7 +12,7 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 use zkvm_interface::io::ProgramInput;
 
-pub async fn start_prover_worker(config: ProverClientConfig) {
+pub async fn start_prover_worker(config: ProverWorkerConfig) {
     let prover_worker = ProverWorker::new(config);
     prover_worker.start().await;
 }
@@ -28,7 +28,7 @@ struct ProverWorker {
 }
 
 impl ProverWorker {
-    pub fn new(config: ProverClientConfig) -> Self {
+    pub fn new(config: ProverWorkerConfig) -> Self {
         Self {
             prover_server_endpoint: config.prover_server_endpoint,
             proving_time_ms: config.proving_time_ms,
