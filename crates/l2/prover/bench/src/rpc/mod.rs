@@ -27,7 +27,7 @@ lazy_static! {
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Account {
     Existing {
         account_state: AccountState,
