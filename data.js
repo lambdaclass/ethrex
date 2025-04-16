@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744821603389,
+  "lastUpdate": 1744821651549,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3205,6 +3205,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183723113373,
             "range": "± 1046565490",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5aa86f0cc1eadab93d31b51e3da6810a40a3f483",
+          "message": "feat(l1): add mainnet as preset network (#2459)\n\n**Motivation**\nAdds mainnet bootnodes & genesis file so we can connect to mainnet by\npassing `--network mainnet`\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* add mainnet bootnodes & genesis file\n* recognize mainnet as preset network\n* update docs\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nContributes to #72 \n\n**Notes**\nMainnet genesis file is quite large, it is copied from\n[here](https://github.com/eth-clients/mainnet/blob/main/metadata/genesis.json)",
+          "timestamp": "2025-04-16T15:51:24Z",
+          "tree_id": "33b9b3860027d8e5dbe3b7dfa7e1b8987ffd54b4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5aa86f0cc1eadab93d31b51e3da6810a40a3f483"
+        },
+        "date": 1744821649238,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184905153941,
+            "range": "± 1620058016",
             "unit": "ns/iter"
           }
         ]
