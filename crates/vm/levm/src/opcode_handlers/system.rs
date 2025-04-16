@@ -561,7 +561,9 @@ impl<'a> VM<'a> {
                 .insert(current_call_frame.to);
         }
         if account_exists(self.db, target_address) && target_account_info.is_empty() {
-            self.accrued_substate.touched_accounts.insert(target_address);
+            self.accrued_substate
+                .touched_accounts
+                .insert(target_address);
         }
 
         Ok(OpcodeResult::Halt)

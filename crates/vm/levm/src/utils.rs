@@ -720,12 +720,9 @@ pub fn eip7702_get_code(
 }
 
 /// Checks if a given account exists in the database or cache
-pub fn account_exists(
-    db: &mut GeneralizedDatabase,
-    address: Address,
-) -> bool {
+pub fn account_exists(db: &mut GeneralizedDatabase, address: Address) -> bool {
     match cache::get_account(&db.cache, &address) {
         Some(_) => true,
-        None => db.store.account_exists(address)
+        None => db.store.account_exists(address),
     }
 }
