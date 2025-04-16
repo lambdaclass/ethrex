@@ -219,7 +219,14 @@ pub async fn fill_transactions(
 /// Calculates the size of the current `StateDiff` of the block.
 /// If the current size exceeds the blob size limit, returns `Ok(false)`.
 /// If there is still space in the blob, returns `Ok(true)`.
-/// StateDiff:
+/// Updates the following mutable variables in the process:
+/// - `acc_withdrawals_size`: Accumulated size of withdrawals (incremented by L2_WITHDRAWAL_SIZE if tx is withdrawal)
+/// - `acc_deposits_size`: Accumulated size of deposits (incremented by L2_DEPOSIT_SIZE if tx is deposit)
+/// - `acc_state_diff_size`: Set to current total state diff size if within limit
+/// - `context`: Must be mutable because `get_state_transitions` requires mutable access
+/// - `accounts_info_cache`: When calculating account updates, we store account info in the cache if it's not already present
+///
+///  StateDiff:
 /// +-------------------+
 /// | Version           |
 /// | HeaderFields      |
@@ -227,7 +234,7 @@ pub async fn fill_transactions(
 /// | Withdrawals       |
 /// | Deposits          |
 /// +-------------------+
-async fn check_state_diff_size(
+async fn update_state_diff_size(
     acc_withdrawals_size: &mut usize,
     acc_deposits_size: &mut usize,
     acc_state_diff_size: &mut usize,
