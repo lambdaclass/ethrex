@@ -1,6 +1,6 @@
 // Source: https://github.com/brevis-network/pico-zkapp-template/blob/evm/contracts/src/IPicoVerifier.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity =0.8.29;
 
 /// @title Pico Verifier Interface
 /// @author Brevis Network

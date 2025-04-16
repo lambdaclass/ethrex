@@ -314,7 +314,7 @@ At a high level, the following new parts are added to the node:
 
 - [Rust (explained in L1 requirements section above)](#build)
 - [Docker](https://docs.docker.com/engine/install/) (with [Docker Compose](https://docs.docker.com/compose/install/))
-- [The Solidity Compiler](https://docs.soliditylang.org/en/latest/installing-solidity.html) (solc)
+- [The Solidity Compiler](https://docs.soliditylang.org/en/latest/installing-solidity.html) (solc v0.8.29)
 
 ## How to run
 

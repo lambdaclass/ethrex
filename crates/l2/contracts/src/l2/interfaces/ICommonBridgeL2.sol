@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity =0.8.29;
 
 /// @title Interface for the L2 side of the CommonBridge contract.
 /// @author LambdaClass
