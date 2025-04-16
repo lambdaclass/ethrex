@@ -786,28 +786,29 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
 
 async fn build_payload_if_necessary(
     payload_id: u64,
-    mut payload: PayloadBundle,
+    payload: PayloadBundle,
     context: RpcApiContext,
 ) -> Result<PayloadBundle, RpcErr> {
     if payload.completed {
         Ok(payload)
     } else {
-        let (blobs_bundle, requests, block_value) = {
+        let (blobs_bundle, requests, block_value, block) = {
             let PayloadBuildResult {
                 blobs_bundle,
                 block_value,
                 requests,
+                payload,
                 ..
             } = context
                 .blockchain
-                .build_payload(&mut payload.block)
+                .build_payload(payload.block)
                 .await
                 .map_err(|err| RpcErr::Internal(err.to_string()))?;
-            (blobs_bundle, requests, block_value)
+            (blobs_bundle, requests, block_value, payload)
         };
 
         let new_payload = PayloadBundle {
-            block: payload.block,
+            block,
             block_value,
             blobs_bundle,
             requests,
