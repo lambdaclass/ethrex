@@ -382,6 +382,7 @@ impl<'a> VM<'a> {
                     if self.handle_return(&current_call_frame, &report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
+                        self.call_frames.push(current_call_frame);
                         return Ok(report);
                     }
                 }
@@ -394,6 +395,7 @@ impl<'a> VM<'a> {
                     if self.handle_return(&current_call_frame, &report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
+                        self.call_frames.push(current_call_frame);
                         return Ok(report);
                     }
                 }
@@ -480,6 +482,7 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
             if new_account.has_code_or_nonce() {
+                self.call_frames.push(initial_call_frame);
                 return self.handle_create_non_empty_account();
             }
 
