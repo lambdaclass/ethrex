@@ -236,7 +236,8 @@ jobs:
         run: |
           rm -rf target/release/ethrex
           cargo build --release --bin ethrex --features dev
-          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" --bin ethrex --release -- \
+          CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph -c "record -o perf.data -F997 --call-graph dwarf,16384 -g" \
+          --bin ethrex --release --features dev -- \
           --dev --network /home/runner/work/ethrex/ethrex/test_data/genesis-l2.json --http.port 1729 >/dev/null &
           sleep 10
           echo "Executing load test..."
