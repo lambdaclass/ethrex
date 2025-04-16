@@ -55,16 +55,21 @@ pub enum InternalError {
 pub struct EFTestRunnerOptions {
     #[arg(short, long, value_name = "FORK", default_value = "Cancun")]
     pub fork: Vec<SpecId>,
+    /// For running specific .json files
     #[arg(short, long, value_name = "TESTS", use_value_delimiter = true)]
     pub tests: Vec<String>,
+    /// For running tests with a specific name
     #[arg(value_name = "SPECIFIC_TESTS", use_value_delimiter = true)]
     pub specific_tests: Option<Vec<String>>,
+    /// For running tests only with LEVM without the REVM re-run.
     #[arg(short, long, value_name = "SUMMARY", default_value = "false")]
     pub summary: bool,
     #[arg(long, value_name = "SKIP", use_value_delimiter = true)]
     pub skip: Vec<String>,
+    /// For providing more detailed information
     #[arg(long, value_name = "VERBOSE", default_value = "false")]
     pub verbose: bool,
+    /// For running tests ONLY with revm
     #[arg(long, value_name = "REVM", default_value = "false")]
     pub revm: bool,
 }
