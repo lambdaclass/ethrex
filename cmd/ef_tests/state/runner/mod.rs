@@ -52,7 +52,7 @@ pub enum InternalError {
     Custom(String),
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 pub struct EFTestRunnerOptions {
     #[arg(short, long, value_name = "FORK", default_value = "Cancun")]
     pub fork: Vec<SpecId>,
