@@ -4,6 +4,7 @@ use crate::utils::config::{read_env_file_by_config, ConfigMode};
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
+use ethrex_storage_l2::StoreL2;
 use execution_cache::ExecutionCache;
 use tokio::task::JoinSet;
 use tracing::{error, info};
@@ -21,7 +22,7 @@ pub mod execution_cache;
 pub mod errors;
 pub mod utils;
 
-pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>) {
+pub async fn start_l2(store: Store, l2_store: StoreL2, blockchain: Arc<Blockchain>) {
     info!("Starting Proposer");
 
     if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
@@ -38,6 +39,7 @@ pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>) {
     ));
     task_set.spawn(l1_committer::start_l1_committer(
         store.clone(),
+        l2_store,
         execution_cache.clone(),
     ));
     task_set.spawn(prover_server::start_prover_server(store.clone()));

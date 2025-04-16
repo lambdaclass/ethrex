@@ -6,6 +6,7 @@ use ethrex_common::{
 };
 use ethrex_l2::sequencer::state_diff::StateDiff;
 use ethrex_storage::{EngineType, Store};
+use ethrex_storage_l2::{EngineTypeL2, StoreL2};
 use eyre::ContextCompat;
 use itertools::Itertools;
 use secp256k1::SecretKey;
@@ -198,6 +199,13 @@ impl Command {
                     genesis.to_str().expect("Invalid genesis path"),
                 )
                 .await?;
+                let l2_store = StoreL2::new(
+                    store_path
+                        .join("../l2_store")
+                        .to_str()
+                        .expect("Invalid store path"),
+                    EngineTypeL2::Libmdbx,
+                )?;
 
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
                 let genesis_block_hash = genesis_header.compute_block_hash();
@@ -205,11 +213,16 @@ impl Command {
                 let mut new_trie = store
                     .state_trie(genesis_block_hash)?
                     .expect("Cannot open state trie");
-                let mut last_number = 0;
+                let mut last_block_number = 0;
                 let mut last_hash = genesis_block_hash;
+                let mut last_state_root = genesis_header.state_root;
 
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
-                for file in files.into_iter().sorted_by_key(|f| f.file_name()) {
+                for (batch_number, file) in files
+                    .into_iter()
+                    .sorted_by_key(|f| f.file_name())
+                    .enumerate()
+                {
                     let blob = std::fs::read(file.path())?;
 
                     if blob.len() != BYTES_PER_BLOB {
@@ -219,34 +232,92 @@ impl Command {
                     let blob = bytes_from_blob(blob.into());
                     let state_diff = StateDiff::decode(&blob)?;
                     let account_updates = state_diff.to_account_updates(&new_trie)?;
+                    let withdrawal_hashes = state_diff
+                        .withdrawal_logs
+                        .iter()
+                        .map(|w| {
+                            keccak_hash::keccak(
+                                [
+                                    w.address.as_bytes(),
+                                    &w.amount.to_big_endian(),
+                                    w.tx_hash.as_bytes(),
+                                ]
+                                .concat(),
+                            )
+                        })
+                        .collect();
+                    let first_block_number = last_block_number + 1;
 
                     new_trie = store
                         .apply_account_updates_from_trie(new_trie, &account_updates)
                         .await
                         .expect("Error applying account updates");
 
+                    while last_block_number + 1 < state_diff.last_header.number {
+                        let new_block = BlockHeader {
+                            coinbase,
+                            number: last_block_number + 1,
+                            parent_hash: last_hash,
+                            state_root: last_state_root,
+                            ..Default::default()
+                        };
+                        let new_block_hash = new_block.compute_block_hash();
+
+                        store.add_block_header(new_block_hash, new_block).await?;
+                        store
+                            .add_block_number(new_block_hash, last_block_number + 1)
+                            .await?;
+                        store
+                            .set_canonical_block(last_block_number + 1, new_block_hash)
+                            .await?;
+                        println!(
+                            "Stored block {} With state_root {}",
+                            last_block_number + 1,
+                            last_state_root
+                        );
+
+                        last_block_number += 1;
+                        last_hash = new_block_hash;
+                    }
                     let new_block = BlockHeader {
                         coinbase,
-                        number: last_number + 1,
                         parent_hash: last_hash,
                         state_root: new_trie.hash().expect("Error committing state"),
-                        ..state_diff.header
+                        ..state_diff.last_header
                     };
+
+                    assert!(state_diff.last_header.state_root == new_block.state_root);
+
                     let new_block_hash = new_block.compute_block_hash();
 
                     store.add_block_header(new_block_hash, new_block).await?;
                     store
-                        .add_block_number(new_block_hash, last_number + 1)
+                        .add_block_number(new_block_hash, state_diff.last_header.number)
                         .await?;
                     store
-                        .set_canonical_block(last_number + 1, new_block_hash)
+                        .set_canonical_block(state_diff.last_header.number, new_block_hash)
                         .await?;
-
-                    last_number += 1;
+                    println!(
+                        "Stored last header of blob. Block {}. State root {}",
+                        last_block_number + 1,
+                        state_diff.last_header.state_root
+                    );
+                    last_block_number += 1;
                     last_hash = new_block_hash;
-                }
+                    last_state_root = state_diff.last_header.state_root;
 
-                store.update_latest_block_number(last_number).await?;
+                    // Store batch in L2 storage
+                    l2_store
+                        .store_batch(
+                            batch_number as u64,
+                            first_block_number,
+                            last_block_number,
+                            withdrawal_hashes,
+                        )
+                        .await
+                        .expect("Error storing batch");
+                }
+                store.update_latest_block_number(last_block_number).await?;
             }
         }
         Ok(())
