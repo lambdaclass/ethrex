@@ -575,11 +575,9 @@ impl ProverServer {
             .header
             .parent_hash;
 
-        let store = StoreWrapper {
-            store: self.store.clone(),
-            block_hash: parent_hash,
-        };
-        let db = store.to_exec_db(&blocks).map_err(EvmError::ExecutionDB)?;
+        let db = Evm::to_execution_db(&self.store.clone(), &blocks)
+            .await
+            .map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store
