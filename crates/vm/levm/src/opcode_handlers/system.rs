@@ -64,7 +64,7 @@ impl<'a> VM<'a> {
             current_memory_size,
             address_was_cold,
             account_info.is_empty(),
-            self.db.store.account_exists(callee),
+            account_exists(self.db, callee),
             value_to_transfer,
             gas,
             gas_left,
@@ -506,7 +506,7 @@ impl<'a> VM<'a> {
         let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
             target_account_info.is_empty()
         } else {
-            !self.db.store.account_exists(target_address)
+            !account_exists(self.db, target_address)
         };
         current_call_frame.increase_consumed_gas(gas_cost::selfdestruct(
             target_account_is_cold,
@@ -559,6 +559,9 @@ impl<'a> VM<'a> {
             self.accrued_substate
                 .selfdestruct_set
                 .insert(current_call_frame.to);
+        }
+        if account_exists(self.db, target_address) && target_account_info.is_empty() {
+            self.accrued_substate.touched_accounts.insert(target_address);
         }
 
         Ok(OpcodeResult::Halt)
