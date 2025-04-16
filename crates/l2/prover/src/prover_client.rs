@@ -1,6 +1,6 @@
 use crate::{prove, to_calldata};
 use ethrex_l2::{
-    sequencer::prover_server::ProofData,
+    sequencer::proof_coordinator::ProofData,
     utils::{config::prover_client::ProverClientConfig, prover::proving_systems::ProofCalldata},
 };
 use std::time::Duration;

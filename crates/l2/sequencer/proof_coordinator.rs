@@ -33,7 +33,7 @@ pub struct ProverInputData {
 }
 
 #[derive(Clone)]
-struct ProverServer {
+struct ProofCoordinator {
     listen_ip: IpAddr,
     port: u16,
     store: Store,
@@ -98,11 +98,11 @@ impl ProofData {
     }
 }
 
-pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
+pub async fn start_proof_coordinator(store: Store) -> Result<(), ConfigError> {
     let server_config = ProverServerConfig::from_env()?;
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
-    let prover_server = ProverServer::new_from_config(
+    let prover_server = ProofCoordinator::new_from_config(
         server_config.clone(),
         &committer_config,
         eth_config.clone(),
@@ -114,7 +114,7 @@ pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
     Ok(())
 }
 
-impl ProverServer {
+impl ProofCoordinator {
     pub async fn new_from_config(
         config: ProverServerConfig,
         committer_config: &CommitterConfig,
