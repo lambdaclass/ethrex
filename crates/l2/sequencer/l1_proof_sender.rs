@@ -36,19 +36,19 @@ const DEV_MODE_ADDRESS: H160 = H160([
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
-pub async fn start_proof_sender() -> Result<(), ConfigError> {
+pub async fn start_l1_proof_sender() -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
     let prover_server_config = ProverServerConfig::from_env()?;
 
     let proof_sender =
-        ProofSender::new(&prover_server_config, &committer_config, &eth_config).await?;
+        L1ProofSender::new(&prover_server_config, &committer_config, &eth_config).await?;
     proof_sender.run().await;
 
     Ok(())
 }
 
-struct ProofSender {
+struct L1ProofSender {
     eth_client: EthClient,
     l1_address: Address,
     l1_private_key: SecretKey,
@@ -56,7 +56,7 @@ struct ProofSender {
     needed_proof_types: Vec<ProverType>,
 }
 
-impl ProofSender {
+impl L1ProofSender {
     async fn new(
         config: &ProverServerConfig,
         committer_config: &CommitterConfig,
