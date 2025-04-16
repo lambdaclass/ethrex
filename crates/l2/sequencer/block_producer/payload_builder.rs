@@ -271,7 +271,6 @@ async fn calc_modified_accounts_size(
     let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
 
     // We use a temporary_context because `get_state_transitions` mutates it.
-    // TODO: remove when we stop using revm
     let mut temporary_context = context.clone();
 
     let chain_config = &context.store.get_chain_config()?;
