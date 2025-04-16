@@ -585,9 +585,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    fn handle_create_non_empty_account(
-        &mut self
-    ) -> Result<ExecutionReport, VMError> {
+    fn handle_create_non_empty_account(&mut self) -> Result<ExecutionReport, VMError> {
         let mut report = ExecutionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
             gas_used: self.env.gas_limit,
