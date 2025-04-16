@@ -12,9 +12,9 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 use zkvm_interface::io::ProgramInput;
 
-pub async fn start_proof_data_client(config: ProverClientConfig) {
-    let proof_data_client = ProverClient::new(config);
-    proof_data_client.start().await;
+pub async fn start_prover_worker(config: ProverClientConfig) {
+    let prover_worker = ProverWorker::new(config);
+    prover_worker.start().await;
 }
 
 struct ProverData {
@@ -22,12 +22,12 @@ struct ProverData {
     input: ProgramInput,
 }
 
-struct ProverClient {
+struct ProverWorker {
     prover_server_endpoint: String,
     proving_time_ms: u64,
 }
 
-impl ProverClient {
+impl ProverWorker {
     pub fn new(config: ProverClientConfig) -> Self {
         Self {
             prover_server_endpoint: config.prover_server_endpoint,
