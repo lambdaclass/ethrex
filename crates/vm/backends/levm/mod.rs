@@ -17,7 +17,6 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_levm::account;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, GeneralizedDatabase, Substate, VM},
