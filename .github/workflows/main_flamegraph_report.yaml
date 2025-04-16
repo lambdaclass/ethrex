@@ -359,7 +359,7 @@ jobs:
           --txpool.basefee-max-size 1000000000000 --txpool.queued-max-count 1000000000 >/dev/null &
           sleep 30
           echo "Executing load test..."
-          (cd /home/runner/work/ethrex/ethrex; ./.github/scripts/flamegraph_watcher.sh &&)
+          (cd /home/runner/work/ethrex/ethrex; ./.github/scripts/flamegraph_watcher.sh)
           echo "Load test finished"
 
       - name: Generate SVG
