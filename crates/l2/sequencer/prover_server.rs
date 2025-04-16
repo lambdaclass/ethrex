@@ -11,7 +11,7 @@ use crate::utils::{
 };
 use ethrex_common::{
     types::{Block, BlockHeader},
-    Address, Bytes, H160, H256, U256,
+    Address, H160, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
@@ -40,7 +40,6 @@ const DEV_MODE_ADDRESS: H160 = H160([
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
-const LAST_VERIFIED_BLOCK_FUNCTION_SELECTOR: Bytes = Bytes::from_static(&[0x2f, 0xde, 0x80, 0xe5]); // keccack(lastVerifiedBlock())[:4]
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -51,7 +50,7 @@ pub struct ProverInputData {
 
 #[derive(Clone)]
 struct ProverServer {
-    ip: IpAddr,
+    listen_ip: IpAddr,
     port: u16,
     store: Store,
     eth_client: EthClient,
@@ -144,7 +143,7 @@ impl ProverServer {
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
         Ok(Self {
-            ip: config.listen_ip,
+            listen_ip: config.listen_ip,
             port: config.listen_port,
             store,
             eth_client,
@@ -188,13 +187,13 @@ impl ProverServer {
             };
         });
 
-        let listener = TcpListener::bind(format!("{}:{}", self.ip, self.port)).await?;
+        let listener = TcpListener::bind(format!("{}:{}", self.listen_ip, self.port)).await?;
 
         let concurent_clients = 3;
         let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurent_clients));
         info!(
             "Starting TCP server at {}:{} accepting {concurent_clients} concurrent clients.",
-            self.ip, self.port
+            self.listen_ip, self.port
         );
 
         loop {
@@ -251,52 +250,16 @@ impl ProverServer {
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).await?;
 
-        let last_verified_block =
-            EthClient::get_last_verified_block(&self.eth_client, self.on_chain_proposer_address)
-                .await?;
-
-        let block_to_verify = last_verified_block + 1;
-
         let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
         match data {
             Ok(ProofData::Request) => {
-                if let Err(e) = self
-                    .handle_request(&mut stream, block_to_verify, false)
-                    .await
-                {
-                    warn!("Failed to handle request: {e}");
+                if let Err(e) = self.handle_request(&mut stream).await {
+                    error!("Failed to handle request: {e}");
                 }
             }
-            Ok(ProofData::Submit {
-                block_number,
-                calldata,
-            }) => {
-                self.handle_submit(&mut stream, block_number).await?;
-
-                // Avoid storing a proof of a future block_number
-                // CHECK: maybe we would like to store all the proofs given the case in which
-                // the provers generate them fast enough. In this way, we will avoid unneeded reexecution.
-                if block_number != block_to_verify {
-                    return Err(ProverServerError::Custom(format!("Prover Client submitted an invalid block_number: {block_number}. The last_proved_block is: {last_verified_block}")));
-                }
-
-                // Check if we have the proof for that ProverType
-                let has_proof = match block_number_has_state_file(
-                    StateFileType::Proof(calldata.prover_type),
-                    block_number,
-                ) {
-                    Ok(has_proof) => has_proof,
-                    Err(e) => {
-                        let error = format!("{e}");
-                        if !error.contains("No such file or directory") {
-                            return Err(e.into());
-                        }
-                        false
-                    }
-                };
-                // If we don't have it, insert it.
-                if !has_proof {
-                    write_state(block_number, &StateType::Proof(calldata))?;
+            Ok(ProofData::Submit { .. }) => {
+                if let Err(e) = self.handle_submit(&mut stream, data?).await {
+                    error!("Failed to handle submit: {e}");
                 }
             }
             Err(e) => {
@@ -311,28 +274,25 @@ impl ProverServer {
         Ok(())
     }
 
-    async fn handle_request(
-        &self,
-        stream: &mut TcpStream,
-        block_number: u64,
-        tx_submitted: bool,
-    ) -> Result<(), ProverServerError> {
-        debug!("Request received");
+    async fn handle_request(&self, stream: &mut TcpStream) -> Result<(), ProverServerError> {
+        info!("Request received");
+
+        let block_to_verify = 1 + EthClient::get_last_verified_block(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+        )
+        .await?;
 
         let latest_block_number = self.store.get_latest_block_number().await?;
 
-        let response = if block_number > latest_block_number {
+        let response = if block_to_verify > latest_block_number {
             let response = ProofData::response(None, None);
-            debug!("Didn't send response");
-            response
-        } else if tx_submitted {
-            let response = ProofData::response(None, None);
-            debug!("Block: {block_number} has been submitted.");
+            debug!("Sending empty response");
             response
         } else {
-            let input = self.create_prover_input(block_number).await?;
-            let response = ProofData::response(Some(block_number), Some(input));
-            info!("Sent Response for block_number: {block_number}");
+            let input = self.create_prover_input(block_to_verify).await?;
+            let response = ProofData::response(Some(block_to_verify), Some(input));
+            debug!("Sending Response for block_number: {block_to_verify}");
             response
         };
 
@@ -340,16 +300,34 @@ impl ProverServer {
         stream
             .write_all(&buffer)
             .await
-            .map_err(ProverServerError::ConnectionError)?;
-        Ok(())
+            .map_err(ProverServerError::ConnectionError)
+            .map(|_| info!("Response sent for block number: {block_to_verify}"))
     }
 
     async fn handle_submit(
         &self,
         stream: &mut TcpStream,
-        block_number: u64,
+        message: ProofData,
     ) -> Result<(), ProverServerError> {
-        debug!("Submit received for BlockNumber: {block_number}");
+        let ProofData::Submit {
+            block_number,
+            calldata,
+        } = message
+        else {
+            return Err(ProverServerError::InternalError(
+                "Expected submit message".to_string(),
+            ));
+        };
+
+        info!("Submit received for block number: {block_number}");
+
+        // Check if we have the proof for that ProverType
+        match block_number_has_state_file(StateFileType::Proof(calldata.prover_type), block_number)
+        {
+            Ok(false) => write_state(block_number, &StateType::Proof(calldata))?,
+            Ok(true) => debug!("Already known proof. Skipping"),
+            Err(e) => return Err(ProverServerError::from(e)),
+        };
 
         let response = ProofData::submit_ack(block_number);
 
@@ -357,8 +335,8 @@ impl ProverServer {
         stream
             .write_all(&buffer)
             .await
-            .map_err(ProverServerError::ConnectionError)?;
-        Ok(())
+            .map_err(ProverServerError::ConnectionError)
+            .map(|_| info!("Submit ACK sent"))
     }
 
     async fn create_prover_input(
@@ -489,20 +467,11 @@ impl ProofSender {
                 break;
             }
 
-            let block_to_verify = 1 + self
-                .eth_client
-                .call(
-                    self.on_chain_proposer_address,
-                    LAST_VERIFIED_BLOCK_FUNCTION_SELECTOR,
-                    Overrides::default(),
-                )
-                .await?
-                .parse::<u64>()
-                .map_err(|_| {
-                    ProverServerError::Custom(
-                        "Could not parse last verified block as u64".to_string(),
-                    )
-                })?;
+            let block_to_verify = 1 + EthClient::get_last_verified_block(
+                &self.eth_client,
+                self.on_chain_proposer_address,
+            )
+            .await?;
 
             if block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types)
                 .is_ok_and(|has_all_proofs| has_all_proofs)
