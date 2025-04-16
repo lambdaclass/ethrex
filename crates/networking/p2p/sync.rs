@@ -600,11 +600,14 @@ impl Syncer {
         // Spawn storage healer earlier so we can start healing stale storages
         // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
         let storage_healer_cancell_token = self.cancel_token.child_token();
+        // Create an AtomicBool to signal to the storage healer whether state healing has ended
+        let state_healing_ended = Arc::new(AtomicBool::new(false));
         let storage_healer_handler = tokio::spawn(storage_healer(
             state_root,
             self.peers.clone(),
             store.clone(),
             storage_healer_cancell_token.clone(),
+            state_healing_ended.clone(),
         ));
         // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
@@ -651,7 +654,11 @@ impl Syncer {
         let state_heal_complete =
             heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
         // Wait for storage healer to end
-        storage_healer_cancell_token.cancel();
+        if state_heal_complete {
+            state_healing_ended.store(true, Ordering::Relaxed);
+        } else {
+            storage_healer_cancell_token.cancel();
+        }
         let storage_heal_complete = storage_healer_handler.await??;
         if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");
