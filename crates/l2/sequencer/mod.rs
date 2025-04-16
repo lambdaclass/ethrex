@@ -13,6 +13,7 @@ pub mod l1_committer;
 pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
+pub mod proof_sender;
 pub mod prover_server;
 pub mod state_diff;
 
@@ -41,6 +42,7 @@ pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>) {
         execution_cache.clone(),
     ));
     task_set.spawn(prover_server::start_prover_server(store.clone()));
+    task_set.spawn(proof_sender::start_proof_sender());
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,
