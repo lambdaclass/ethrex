@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744827650042,
+  "lastUpdate": 1744840039841,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3265,6 +3265,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183126585472,
             "range": "± 688815986",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "onoratomatias@gmail.com",
+            "name": "Matías Onorato",
+            "username": "mationorato"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "717e3fff8f1dedac3b8305cbe70da9a5b6934023",
+          "message": "feat(l2): enviroment variables option for \"l2 init\" command (#2488)\n\n**Motivation**\n\ndevops\n\n**Description**\n\nadd the following enviroment variables to customize the l2 init command.\nSpecially useful for systemd or docker services\n\n```\nETHREX_NETWORK\nETHREX_DATADIR\nETHREX_METRICS_PORT\nETHREX_EVM\nETHREX_HTTP_ADDR\nETHREX_HTTP_PORT\n```",
+          "timestamp": "2025-04-16T20:59:59Z",
+          "tree_id": "e0eefdaf598a93910cb30be506f19588056376ef",
+          "url": "https://github.com/lambdaclass/ethrex/commit/717e3fff8f1dedac3b8305cbe70da9a5b6934023"
+        },
+        "date": 1744840037946,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180360634406,
+            "range": "± 362640567",
             "unit": "ns/iter"
           }
         ]
