@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744821651549,
+  "lastUpdate": 1744827650042,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3235,6 +3235,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184905153941,
             "range": "± 1620058016",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "43799596+JulianVentura@users.noreply.github.com",
+            "name": "Julian Ventura",
+            "username": "JulianVentura"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac268f18df3eb0d5d6018cb8f1ecd8e68d3d8b84",
+          "message": "fix(levm): remove logs from transaction revert (#2483)\n\n**Description**\n\nThis PR removes logs from the `ExecutionReport` when a transaction\nreverts.\nWith this fix, LEVM no longer breaks at block 80k while syncing on\nHolesky testnet.",
+          "timestamp": "2025-04-16T17:31:45Z",
+          "tree_id": "bcf6ebd65344950ec4210b77adfb5026859378b4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ac268f18df3eb0d5d6018cb8f1ecd8e68d3d8b84"
+        },
+        "date": 1744827647641,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183126585472,
+            "range": "± 688815986",
             "unit": "ns/iter"
           }
         ]
