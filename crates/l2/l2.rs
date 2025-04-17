@@ -1,5 +1,4 @@
 pub mod errors;
-pub mod parse_toml;
 pub mod sequencer;
 pub mod utils;
 

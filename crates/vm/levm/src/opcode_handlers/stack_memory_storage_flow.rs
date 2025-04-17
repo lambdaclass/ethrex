@@ -11,7 +11,7 @@ use ethrex_common::{types::Fork, H256, U256};
 // Stack, Memory, Storage and Flow Operations (15)
 // Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
 
-impl VM {
+impl<'a> VM<'a> {
     // POP operation
     pub fn op_pop(&mut self, current_call_frame: &mut CallFrame) -> Result<OpcodeResult, VMError> {
         current_call_frame.increase_consumed_gas(gas_cost::POP)?;

@@ -1,5 +1,4 @@
 pub mod db;
-pub mod execution_db;
 pub mod helpers;
 #[cfg(feature = "l2")]
 mod mods;
@@ -9,9 +8,9 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
+use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
-use crate::spec_id;
-use crate::EvmError;
+use crate::helpers::spec_id;
 use db::EvmState;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
@@ -69,11 +68,12 @@ impl REVM {
                 }
             }
         }
+
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
-        for tx in block.body.transactions.iter() {
-            let result = Self::execute_tx(tx, block_header, state, spec_id, tx.sender())?;
+        for (tx, sender) in block.body.get_transactions_with_sender() {
+            let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
             cumulative_gas_used += result.gas_used();
             let receipt = Receipt::new(
                 tx.tx_type(),
@@ -81,6 +81,7 @@ impl REVM {
                 cumulative_gas_used,
                 result.logs(),
             );
+
             receipts.push(receipt);
         }
 
@@ -282,7 +283,7 @@ impl REVM {
                             if account.is_contract_changed() {
                                 // Update code in db
                                 if let Some(code) = new_acc_info.code {
-                                    account_update.code = Some(code.original_bytes().clone().0);
+                                    account_update.code = Some(code.original_bytes().0);
                                 }
                             }
                         }
@@ -447,46 +448,6 @@ fn run_evm(
     Ok(tx_result.into())
 }
 
-/// Processes a block's withdrawals, updating the account balances in the state
-pub fn process_withdrawals(
-    state: &mut EvmState,
-    withdrawals: &[Withdrawal],
-) -> Result<(), StoreError> {
-    //balance_increments is a vector of tuples (Address, increment as u128)
-    let balance_increments = withdrawals
-        .iter()
-        .filter(|withdrawal| withdrawal.amount > 0)
-        .map(|withdrawal| {
-            (
-                RevmAddress::from_slice(withdrawal.address.as_bytes()),
-                (withdrawal.amount as u128 * GWEI_TO_WEI as u128),
-            )
-        })
-        .collect::<Vec<_>>();
-    match state {
-        EvmState::Store(db) => {
-            db.increment_balances(balance_increments)?;
-        }
-        EvmState::Execution(db) => {
-            for (address, balance) in balance_increments {
-                if balance == 0 {
-                    continue;
-                }
-
-                let account = db
-                    .load_account(address)
-                    .map_err(|err| StoreError::Custom(format!("revm CacheDB error: {err}")))?;
-
-                account.info.balance += RevmU256::from(balance);
-                if account.account_state == RevmAccountState::None {
-                    account.account_state = RevmAccountState::Touched;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 pub fn block_env(header: &BlockHeader, spec_id: SpecId) -> BlockEnv {
     BlockEnv {
         number: RevmU256::from(header.number),
@@ -510,10 +471,7 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
         .max_fee_per_blob_gas()
         .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
-        caller: match tx {
-            Transaction::PrivilegedL2Transaction(_tx) => RevmAddress::ZERO,
-            _ => RevmAddress(sender.0.into()),
-        },
+        caller: RevmAddress(sender.0.into()),
         gas_limit: tx.gas_limit(),
         gas_price: RevmU256::from(tx.gas_price()),
         transact_to: match tx.to() {

@@ -8,7 +8,7 @@ use crate::{
 // Duplication Operation (16)
 // Opcodes: DUP1 ... DUP16
 
-impl VM {
+impl<'a> VM<'a> {
     // DUP operation
     pub fn op_dup(
         &mut self,

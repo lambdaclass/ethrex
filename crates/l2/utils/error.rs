@@ -1,6 +1,6 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_storage::error::StoreError;
-use ethrex_vm::errors::ExecutionDBError;
+use ethrex_vm::ExecutionDBError;
 use keccak_hash::H256;
 
 #[derive(Debug, thiserror::Error)]
@@ -15,4 +15,10 @@ pub enum ProverInputError {
     ChainError(#[from] ChainError),
     #[error("ExecutionDB error: {0}")]
     ExecutionDBError(#[from] ExecutionDBError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UtilsError {
+    #[error("Unable to parse withdrawal_event_selector: {0}")]
+    WithdrawalSelectorError(String),
 }

@@ -18,7 +18,7 @@ use crate::{
 /// and itself are made canonical.
 ///
 /// If the fork choice state is applied correctly, the head block header is returned.
-pub fn apply_fork_choice(
+pub async fn apply_fork_choice(
     store: &Store,
     head_hash: H256,
     safe_hash: H256,
@@ -54,15 +54,15 @@ pub fn apply_fork_choice(
         return Err(InvalidForkChoice::Syncing);
     };
 
-    let latest = store.get_latest_block_number()?;
+    let latest = store.get_latest_block_number().await?;
 
     // If the head block is an already present head ancestor, skip the update.
-    if is_canonical(store, head.number, head_hash)? && head.number < latest {
+    if is_canonical(store, head.number, head_hash).await? && head.number < latest {
         return Err(InvalidForkChoice::NewHeadAlreadyCanonical);
     }
 
     // Find blocks that will be part of the new canonical chain.
-    let Some(new_canonical_blocks) = find_link_with_canonical_chain(store, &head)? else {
+    let Some(new_canonical_blocks) = find_link_with_canonical_chain(store, &head).await? else {
         return Err(InvalidForkChoice::Disconnected(
             error::ForkChoiceElement::Head,
             error::ForkChoiceElement::Safe,
@@ -76,7 +76,7 @@ pub fn apply_fork_choice(
 
     // Check that finalized and safe blocks are part of the new canonical chain.
     if let Some(ref finalized) = finalized_res {
-        if !((is_canonical(store, finalized.number, finalized_hash)?
+        if !((is_canonical(store, finalized.number, finalized_hash).await?
             && finalized.number <= link_block_number)
             || (finalized.number == head.number && finalized_hash == head_hash)
             || new_canonical_blocks.contains(&(finalized.number, finalized_hash)))
@@ -89,7 +89,8 @@ pub fn apply_fork_choice(
     }
 
     if let Some(ref safe) = safe_res {
-        if !((is_canonical(store, safe.number, safe_hash)? && safe.number <= link_block_number)
+        if !((is_canonical(store, safe.number, safe_hash).await?
+            && safe.number <= link_block_number)
             || (safe.number == head.number && safe_hash == head_hash)
             || new_canonical_blocks.contains(&(safe.number, safe_hash)))
         {
@@ -104,24 +105,26 @@ pub fn apply_fork_choice(
 
     // Make all ancestors to head canonical.
     for (number, hash) in new_canonical_blocks {
-        store.set_canonical_block(number, hash)?;
+        store.set_canonical_block(number, hash).await?;
     }
 
     // Remove anything after the head from the canonical chain.
     for number in (head.number + 1)..(latest + 1) {
-        store.unset_canonical_block(number)?;
+        store.unset_canonical_block(number).await?;
     }
 
     // Make head canonical and label all special blocks correctly.
-    store.set_canonical_block(head.number, head_hash)?;
+    store.set_canonical_block(head.number, head_hash).await?;
     if let Some(finalized) = finalized_res {
-        store.update_finalized_block_number(finalized.number)?;
+        store
+            .update_finalized_block_number(finalized.number)
+            .await?;
     }
     if let Some(safe) = safe_res {
-        store.update_safe_block_number(safe.number)?;
+        store.update_safe_block_number(safe.number).await?;
     }
-    store.update_latest_block_number(head.number)?;
-    store.update_sync_status(true)?;
+    store.update_latest_block_number(head.number).await?;
+    store.update_sync_status(true).await?;
 
     Ok(head)
 }
@@ -157,7 +160,7 @@ fn check_order(
 // - Ok(Some([])): the block is already canonical.
 // - Ok(Some(branch)): the "branch" is a sequence of blocks that connects the ancestor and the
 //   descendant.
-fn find_link_with_canonical_chain(
+async fn find_link_with_canonical_chain(
     store: &Store,
     block: &BlockHeader,
 ) -> Result<Option<Vec<(BlockNumber, BlockHash)>>, StoreError> {
@@ -166,11 +169,11 @@ fn find_link_with_canonical_chain(
     let mut header = block.clone();
     let mut branch = Vec::new();
 
-    if is_canonical(store, block_number, block_hash)? {
+    if is_canonical(store, block_number, block_hash).await? {
         return Ok(Some(branch));
     }
 
-    let genesis_number = store.get_earliest_block_number()?;
+    let genesis_number = store.get_earliest_block_number().await?;
 
     while block_number > genesis_number {
         block_number -= 1;
@@ -183,7 +186,7 @@ fn find_link_with_canonical_chain(
             Err(error) => return Err(error),
         };
 
-        if is_canonical(store, block_number, parent_hash)? {
+        if is_canonical(store, block_number, parent_hash).await? {
             return Ok(Some(branch));
         } else {
             branch.push((block_number, parent_hash));

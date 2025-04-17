@@ -1,3 +1,4 @@
+use ethrex_common::{H256, U256};
 use ethrex_l2_sdk::calldata::Value;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -21,6 +22,35 @@ impl ProverType {
             ProverType::Pico,
         ]
         .into_iter()
+    }
+
+    /// Used to get the empty_calldata structure for that specific prover
+    /// It has to match the `OnChainProposer.sol` verify() function
+    pub fn empty_calldata(&self) -> Vec<Value> {
+        match self {
+            ProverType::RISC0 => {
+                vec![
+                    Value::Bytes(vec![].into()),
+                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                ]
+            }
+            ProverType::SP1 => {
+                vec![
+                    Value::FixedBytes(H256::zero().to_fixed_bytes().to_vec().into()),
+                    Value::Bytes(vec![].into()),
+                    Value::Bytes(vec![].into()),
+                ]
+            }
+            ProverType::Pico => {
+                vec![
+                    Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
+                    Value::Bytes(vec![].into()),
+                    Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
+                ]
+            }
+            ProverType::Exec => unimplemented!("Doesn't need to generate an empty calldata."),
+        }
     }
 }
 

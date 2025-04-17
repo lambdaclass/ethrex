@@ -14,7 +14,9 @@ use crate::{
     kademlia::{KademliaTable, PeerChannels},
     rlpx::{
         eth::{
-            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders},
+            blocks::{
+                BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, BLOCK_HEADER_LIMIT,
+            },
             receipts::{GetReceipts, Receipts},
         },
         message::Message as RLPxMessage,
@@ -26,21 +28,20 @@ use crate::{
     },
     snap::encodable_to_proof,
 };
-use tracing::info;
+use tracing::{debug, info};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
 pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
 pub const HASH_MAX: H256 = H256([0xFF; 32]);
 
-// Ask as much as 128 block bodies and 192 block headers per request
-// these magic numbers are not part of the protocol and are taken from geth, see:
+// Ask as much as 128 block bodies per request
+// this magic number is not part of the protocol and is taken from geth, see:
 // https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43
 //
 // Note: We noticed that while bigger values are supported
 // increasing them may be the cause of peers disconnection
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
-pub const MAX_BLOCK_HEADERS_TO_REQUEST: usize = 192;
 
 /// An abstraction over the [KademliaTable] containing logic to make requests to peers
 #[derive(Debug, Clone)]
@@ -83,20 +84,22 @@ impl PeerHandler {
         &self,
         start: H256,
         order: BlockRequestOrder,
-        limit: u64,
     ) -> Option<Vec<BlockHeader>> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
                 id: request_id,
                 startblock: start.into(),
-                limit,
+                limit: BLOCK_HEADER_LIMIT,
                 skip: 0,
                 reverse: matches!(order, BlockRequestOrder::NewToOld),
             });
             let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
             let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
+            if let Err(err) = peer.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                continue;
+            }
             if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
@@ -136,7 +139,10 @@ impl PeerHandler {
             });
             let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
             let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
+            if let Err(err) = peer.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                continue;
+            }
             if let Some(block_bodies) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
@@ -178,7 +184,10 @@ impl PeerHandler {
             });
             let peer = self.get_peer_channel_with_retry(Capability::Eth).await?;
             let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
+            if let Err(err) = peer.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                continue;
+            }
             if let Some(receipts) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
@@ -229,7 +238,10 @@ impl PeerHandler {
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
+            if let Err(err) = peer.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                continue;
+            }
             if let Some((accounts, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
@@ -287,7 +299,10 @@ impl PeerHandler {
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
+            if let Err(err) = peer.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                continue;
+            }
             if let Some(codes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
@@ -339,7 +354,10 @@ impl PeerHandler {
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
+            if let Err(err) = peer.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                continue;
+            }
             if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
@@ -435,7 +453,10 @@ impl PeerHandler {
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
+            if let Err(err) = peer.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                continue;
+            }
             if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
@@ -504,7 +525,10 @@ impl PeerHandler {
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
+            if let Err(err) = peer.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                continue;
+            }
             if let Some(nodes) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
@@ -566,7 +590,10 @@ impl PeerHandler {
             });
             let peer = self.get_peer_channel_with_retry(Capability::Snap).await?;
             let mut receiver = peer.receiver.lock().await;
-            peer.sender.send(request).await.ok()?;
+            if let Err(err) = peer.sender.send(request).await {
+                debug!("Failed to send message to peer: {err}");
+                continue;
+            }
             if let Some((mut slots, proof)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {

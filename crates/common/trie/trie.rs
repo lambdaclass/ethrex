@@ -125,9 +125,7 @@ impl Trie {
     /// Returns keccak(RLP_NULL) if the trie is empty
     /// Also commits changes to the DB
     pub fn hash(&mut self) -> Result<H256, TrieError> {
-        if let Some(ref root) = self.root {
-            self.state.commit(root)?;
-        }
+        self.commit()?;
         Ok(self
             .root
             .as_ref()
@@ -142,6 +140,13 @@ impl Trie {
             .as_ref()
             .map(|root| root.clone().finalize())
             .unwrap_or(*EMPTY_TRIE_HASH)
+    }
+
+    pub fn commit(&mut self) -> Result<(), TrieError> {
+        if let Some(ref root) = self.root {
+            self.state.commit(root)?;
+        }
+        Ok(())
     }
 
     /// Obtain a merkle proof for the given path.

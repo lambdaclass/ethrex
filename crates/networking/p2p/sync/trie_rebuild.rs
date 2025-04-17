@@ -8,7 +8,7 @@
 use ethrex_common::{BigEndianHash, H256, U256, U512};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS};
-use ethrex_trie::EMPTY_TRIE_HASH;
+use ethrex_trie::{Nibbles, EMPTY_TRIE_HASH};
 use std::array;
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
@@ -24,6 +24,11 @@ use super::{
     SyncError, MAX_CHANNEL_MESSAGES, MAX_CHANNEL_READS, MAX_PARALLEL_FETCHES,
     SHOW_PROGRESS_INTERVAL_DURATION, STATE_TRIE_SEGMENTS_END, STATE_TRIE_SEGMENTS_START,
 };
+
+/// The storage root used to indicate that the storage to be rebuilt is not complete
+/// This will tell the rebuilder to skip storage root validations for this trie
+/// The storage should be queued for rebuilding by the sender
+pub(crate) const REBUILDER_INCOMPLETE_STORAGE_ROOT: H256 = H256::zero();
 
 /// Represents the permanently ongoing background trie rebuild process
 /// This process will be started whenever a state sync is initiated and will be
@@ -91,7 +96,7 @@ async fn rebuild_state_trie_in_backgound(
     cancel_token: CancellationToken,
 ) -> Result<(), SyncError> {
     // Get initial status from checkpoint if available (aka node restart)
-    let checkpoint = store.get_state_trie_rebuild_checkpoint()?;
+    let checkpoint = store.get_state_trie_rebuild_checkpoint().await?;
     let mut rebuild_status = array::from_fn(|i| SegmentStatus {
         current: checkpoint
             .map(|(_, ch)| ch[i])
@@ -133,7 +138,7 @@ async fn rebuild_state_trie_in_backgound(
         }
         // Update DB checkpoint
         let checkpoint = (root, rebuild_status.clone().map(|st| st.current));
-        store.set_state_trie_rebuild_checkpoint(checkpoint)?;
+        store.set_state_trie_rebuild_checkpoint(checkpoint).await?;
         // Move on to the next segment
         current_segment = (current_segment + 1) % STATE_TRIE_SEGMENTS
     }
@@ -175,7 +180,8 @@ async fn rebuild_state_trie_segment(
         // Return if we have no more snapshot accounts to process for this segemnt
         if unfilled_batch {
             let state_sync_complete = store
-                .get_state_trie_key_checkpoint()?
+                .get_state_trie_key_checkpoint()
+                .await?
                 .is_some_and(|ch| ch[segment_number] == STATE_TRIE_SEGMENTS_END[segment_number]);
             // Mark segment as finished if state sync is complete
             if state_sync_complete {
@@ -197,7 +203,8 @@ async fn rebuild_storage_trie_in_background(
 ) -> Result<(), SyncError> {
     // (AccountHash, ExpectedRoot)
     let mut pending_storages = store
-        .get_storage_trie_rebuild_pending()?
+        .get_storage_trie_rebuild_pending()
+        .await?
         .unwrap_or_default();
     let mut incoming = true;
     while incoming || !pending_storages.is_empty() {
@@ -230,12 +237,15 @@ async fn rebuild_storage_trie_in_background(
             res?;
         }
     }
-    store.set_storage_trie_rebuild_pending(pending_storages)?;
+    store
+        .set_storage_trie_rebuild_pending(pending_storages)
+        .await?;
     Ok(())
 }
 
 /// Rebuilds a storage trie by reading from the storage snapshot
 /// Assumes that the storage has been fully downloaded and will only emit a warning if there is a mismatch between the expected root and the rebuilt root, as this is considered a bug
+/// If the expected_root is `REBUILDER_INCOMPLETE_STORAGE_ROOT` then this validation will be skipped, the sender should make sure to queue said storage for healing
 async fn rebuild_storage_trie(
     account_hash: H256,
     expected_root: H256,
@@ -244,7 +254,7 @@ async fn rebuild_storage_trie(
     let mut start = H256::zero();
     let mut storage_trie = store.open_storage_trie(account_hash, *EMPTY_TRIE_HASH);
     loop {
-        let batch = store.read_storage_snapshot(account_hash, start)?;
+        let batch = store.read_storage_snapshot(account_hash, start).await?;
         let unfilled_batch = batch.len() < MAX_SNAPSHOT_READS;
         // Update start
         if let Some(last) = batch.last() {
@@ -262,8 +272,11 @@ async fn rebuild_storage_trie(
             break;
         }
     }
-    if storage_trie.hash()? != expected_root {
+    if expected_root != REBUILDER_INCOMPLETE_STORAGE_ROOT && storage_trie.hash()? != expected_root {
         warn!("Mismatched storage root for account {account_hash}");
+        store
+            .set_storage_heal_paths(vec![(account_hash, vec![Nibbles::default()])])
+            .await?;
     }
     Ok(())
 }
@@ -292,7 +305,7 @@ async fn show_trie_rebuild_progress(
     let completion_rate = (U512::from(accounts_processed + U256::one()) * U512::from(100))
         / U512::from(U256::max_value());
     // Time to finish = Time since start / Accounts processed this cycle * Remaining accounts
-    let remaining_accounts = U256::MAX - accounts_processed;
+    let remaining_accounts = U256::MAX.saturating_sub(accounts_processed);
     let time_to_finish = (U512::from(start_time.elapsed().as_secs())
         * U512::from(remaining_accounts))
         / (U512::from(accounts_processed_this_cycle));

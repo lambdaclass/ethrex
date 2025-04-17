@@ -1,6 +1,6 @@
 use ethereum_types::{H160, H256};
 use ethrex_common::{types::BlockHash, Address};
-use ethrex_levm::errors::VMError;
+use ethrex_levm::{db::error::DatabaseError, errors::VMError};
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
 use revm::primitives::{
@@ -24,10 +24,14 @@ pub enum EvmError {
     InvalidEVM(String),
     #[error("{0}")]
     Custom(String),
+    #[error("Levm Database error: {0}")]
+    LevmDatabaseError(#[from] DatabaseError),
 }
 
 #[derive(Debug, Error)]
 pub enum ExecutionDBError {
+    #[error("Database error: {0}")]
+    Database(#[from] DatabaseError),
     #[error("Store error: {0}")]
     Store(#[from] StoreError),
     #[error("Evm error: {0}")]

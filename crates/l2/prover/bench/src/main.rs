@@ -6,8 +6,7 @@ use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
-use ethrex_prover_lib::{prove, execute};
-use ethrex_vm::execution_db::ToExecDB;
+use ethrex_prover_lib::execute;
 use zkvm_interface::io::ProgramInput;
 
 #[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
@@ -68,7 +67,6 @@ async fn main() {
                 .await
                 .expect("failed to create rpc db");
 
-            println!("pre-executing to build execution db");
             let db = rpc_db
                 .to_exec_db(&block)
                 .expect("failed to build execution db");
@@ -86,20 +84,20 @@ async fn main() {
     let now = std::time::Instant::now();
     if prove {
         println!("proving");
-            prove(ProgramInput {
-                block,
-                parent_block_header,
-                db,
-            })
-            .expect("proving failed");
+        ethrex_prover_lib::prove(ProgramInput {
+            block,
+            parent_block_header,
+            db,
+        })
+        .expect("proving failed");
     } else {
         println!("executing");
-            execute(ProgramInput {
-                block,
-                parent_block_header,
-                db,
-            })
-            .expect("proving failed");
+        execute(ProgramInput {
+            block,
+            parent_block_header,
+            db,
+        })
+        .expect("proving failed");
     }
     let elapsed = now.elapsed().as_secs();
     println!(

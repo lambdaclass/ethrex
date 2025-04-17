@@ -5,14 +5,17 @@ use super::errors::ConfigError;
 
 #[derive(Deserialize)]
 pub struct BlockProducerConfig {
-    pub interval_ms: u64,
+    pub block_time_ms: u64,
     pub coinbase_address: Address,
 }
 
 impl BlockProducerConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
-        envy::prefixed("PROPOSER_")
-            .from_env::<Self>()
-            .map_err(ConfigError::from)
+        envy::prefixed("PROPOSER_").from_env::<Self>().map_err(|e| {
+            ConfigError::ConfigDeserializationError {
+                err: e,
+                from: "BlockProducerConfig".to_string(),
+            }
+        })
     }
 }

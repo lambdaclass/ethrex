@@ -1,6 +1,5 @@
-use std::sync::mpsc::SendError;
-
 use crate::utils::config::errors::ConfigError;
+use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
@@ -43,8 +42,6 @@ pub enum ProverServerError {
     StorageDataIsNone,
     #[error("ProverServer failed to create ProverInputs: {0}")]
     FailedToCreateProverInputs(#[from] EvmError),
-    #[error("ProverServer SigIntError: {0}")]
-    SigIntError(#[from] SigIntError),
     #[error("ProverServer JoinError: {0}")]
     JoinError(#[from] JoinError),
     #[error("ProverServer failed: {0}")]
@@ -57,18 +54,10 @@ pub enum ProverServerError {
     SaveStateError(#[from] SaveStateError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum SigIntError {
-    #[error("SigInt sigint.recv() failed")]
-    Recv,
-    #[error("SigInt tx.send(()) failed: {0}")]
-    Send(#[from] SendError<()>),
-    #[error("SigInt shutdown(Shutdown::Both) failed: {0}")]
-    Shutdown(#[from] std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -95,6 +84,12 @@ pub enum BlockProducerError {
     FailedToDecodeJWT(#[from] hex::FromHexError),
     #[error("Block Producer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
+    #[error("Interval does not fit in u64")]
+    TryIntoError(#[from] std::num::TryFromIntError),
+    #[error("{0}")]
+    Custom(String),
+    #[error("Failed to parse withdrawal: {0}")]
+    FailedToParseWithdrawal(#[from] UtilsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -109,8 +104,6 @@ pub enum CommitterError {
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]
     FailedToRetrieveDataFromStorage,
-    #[error("Committer registered a negative nonce in AccountUpdate")]
-    FailedToCalculateNonce,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage")]
@@ -137,6 +130,8 @@ pub enum CommitterError {
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
+    #[error("Failed to get withdrawals: {0}")]
+    FailedToGetWithdrawals(#[from] UtilsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -171,6 +166,10 @@ pub enum StateDiffError {
     LengthTooBig(#[from] core::num::TryFromIntError),
     #[error("DB Error: {0}")]
     DbError(#[from] TrieError),
+    #[error("Store Error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("New nonce is lower than the previous one")]
+    FailedToCalculateNonce,
 }
 
 #[derive(Debug, thiserror::Error)]

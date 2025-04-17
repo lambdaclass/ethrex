@@ -1,9 +1,12 @@
 use crate::{
     sequencer::{
         errors::CommitterError,
-        state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
+        state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
+    utils::{
+        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
+        helpers::is_withdrawal_l2,
+    },
 };
 
 use ethrex_common::{
@@ -15,19 +18,18 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize, COMMON_BRIDGE_L2_ADDRESS};
+use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize};
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
-use ethrex_vm::backends::Evm;
+use ethrex_storage::{AccountUpdate, Store};
+use ethrex_vm::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
-use tokio::time::sleep;
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-use super::{errors::BlobEstimationError, execution_cache::ExecutionCache};
+use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
 
@@ -37,7 +39,7 @@ pub struct Committer {
     store: Store,
     l1_address: Address,
     l1_private_key: SecretKey,
-    interval_ms: u64,
+    commit_time_ms: u64,
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
 }
@@ -68,7 +70,7 @@ impl Committer {
             store,
             l1_address: committer_config.l1_address,
             l1_private_key: committer_config.l1_private_key,
-            interval_ms: committer_config.interval_ms,
+            commit_time_ms: committer_config.commit_time_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
         }
@@ -80,7 +82,7 @@ impl Committer {
                 error!("L1 Committer Error: {}", err);
             }
 
-            sleep(Duration::from_millis(self.interval_ms)).await;
+            sleep_random(self.commit_time_ms).await;
         }
     }
 
@@ -94,6 +96,7 @@ impl Committer {
         let Some(block_to_commit_body) = self
             .store
             .get_block_body(block_number)
+            .await
             .map_err(CommitterError::from)?
         else {
             debug!("No new block to commit, skipping..");
@@ -112,7 +115,8 @@ impl Committer {
         for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
             let receipt = self
                 .store
-                .get_receipt(block_number, index.try_into()?)?
+                .get_receipt(block_number, index.try_into()?)
+                .await?
                 .ok_or(CommitterError::InternalError(
                     "Transactions in a block should have a receipt".to_owned(),
                 ))?;
@@ -152,13 +156,15 @@ impl Committer {
             }
         };
 
-        let state_diff = self.prepare_state_diff(
-            &block_to_commit,
-            self.store.clone(),
-            withdrawals,
-            deposits,
-            &account_updates,
-        )?;
+        let state_diff = self
+            .prepare_state_diff(
+                &block_to_commit,
+                self.store.clone(),
+                withdrawals,
+                deposits,
+                &account_updates,
+            )
+            .await?;
 
         let blobs_bundle = self.generate_blobs_bundle(&state_diff)?;
 
@@ -186,26 +192,13 @@ impl Committer {
         &self,
         txs_and_receipts: &[(Transaction, Receipt)],
     ) -> Result<Vec<(H256, Transaction)>, CommitterError> {
-        // WithdrawalInitiated(address,address,uint256)
-        let withdrawal_event_selector: H256 =
-            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2").map_err(|_| CommitterError::InternalError("Failed to convert WithdrawalInitiated event selector to H256. This should never happen.".to_owned()))?;
         let mut ret = vec![];
 
         for (tx, receipt) in txs_and_receipts {
-            match tx.to() {
-                TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => {
-                    if receipt.logs.iter().any(|log| {
-                        log.topics
-                            .iter()
-                            .any(|topic| *topic == withdrawal_event_selector)
-                    }) {
-                        ret.push((tx.compute_hash(), tx.clone()))
-                    }
-                }
-                _ => continue,
+            if is_withdrawal_l2(tx, receipt)? {
+                ret.push((tx.compute_hash(), tx.clone()))
             }
         }
-
         Ok(ret)
     }
 
@@ -263,7 +256,7 @@ impl Committer {
     }
 
     /// Prepare the state diff for the block.
-    fn prepare_state_diff(
+    async fn prepare_state_diff(
         &self,
         block: &Block,
         store: Store,
@@ -275,32 +268,18 @@ impl Committer {
 
         let mut modified_accounts = HashMap::new();
         for account_update in account_updates {
-            let prev_nonce = match store
-                // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
-                // and we may have to keep track of the latestCommittedBlock (last block of the batch),
-                // the batch_size and the latestCommittedBatch in the contract.
-                .get_account_info(block.header.number - 1, account_update.address)
-                .map_err(StoreError::from)?
-            {
-                Some(acc) => acc.nonce,
-                None => 0,
-            };
-
-            let new_nonce = if let Some(info) = &account_update.info {
-                info.nonce
-            } else {
-                prev_nonce
-            };
+            // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
+            // and we may have to keep track of the latestCommittedBlock (last block of the batch),
+            // the batch_size and the latestCommittedBatch in the contract.
+            let nonce_diff = get_nonce_diff(account_update, &store, None, block.header.number)
+                .await
+                .map_err(CommitterError::from)?;
 
             modified_accounts.insert(
                 account_update.address,
                 AccountStateDiff {
                     new_balance: account_update.info.clone().map(|info| info.balance),
-                    nonce_diff: new_nonce
-                        .checked_sub(prev_nonce)
-                        .ok_or(CommitterError::FailedToCalculateNonce)?
-                        .try_into()
-                        .map_err(CommitterError::from)?,
+                    nonce_diff,
                     storage: account_update.added_storage.clone().into_iter().collect(),
                     bytecode: account_update.code.clone(),
                     bytecode_hash: None,
@@ -383,7 +362,15 @@ impl Committer {
         .await?
         .to_le_bytes();
 
-        let gas_price_per_blob = Some(U256::from_little_endian(&le_bytes));
+        let gas_price_per_blob = U256::from_little_endian(&le_bytes);
+        let gas_price = self
+            .eth_client
+            .get_gas_price_with_extra(20)
+            .await?
+            .try_into()
+            .map_err(|_| {
+                CommitterError::InternalError("Failed to convert gas_price to a u64".to_owned())
+            })?;
 
         let wrapped_tx = self
             .eth_client
@@ -393,25 +380,25 @@ impl Committer {
                 calldata.into(),
                 Overrides {
                     from: Some(self.l1_address),
-                    gas_price_per_blob,
+                    gas_price_per_blob: Some(gas_price_per_blob),
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
                     ..Default::default()
                 },
                 blobs_bundle,
-                10,
             )
             .await
             .map_err(CommitterError::from)?;
 
+        let mut tx = WrappedTransaction::EIP4844(wrapped_tx);
+        self.eth_client
+            .set_gas_for_wrapped_tx(&mut tx, self.l1_address)
+            .await?;
+
         let commit_tx_hash = self
             .eth_client
-            .send_wrapped_transaction_with_retry(
-                &WrappedTransaction::EIP4844(wrapped_tx),
-                &self.l1_private_key,
-                3 * 60, // 3 minutes
-                10,     // 180[secs]/20[retries] -> 18 seconds per retry
-            )
-            .await
-            .map_err(CommitterError::from)?;
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
+            .await?;
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 

@@ -4,7 +4,7 @@ use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_vm::backends::EvmEngine;
+use ethrex_vm::EvmEngine;
 use hex::FromHexError;
 #[cfg(feature = "l2")]
 use secp256k1::SecretKey;
@@ -29,7 +29,9 @@ pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
     info!("JWT secret not found in the provided path, generating JWT secret");
     let secret = generate_jwt_secret();
     std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
-    hex::decode(secret).unwrap().into()
+    hex::decode(secret)
+        .map(Bytes::from)
+        .expect("Failed to decode generated JWT secret")
 }
 
 pub fn generate_jwt_secret() -> String {

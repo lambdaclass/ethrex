@@ -290,15 +290,14 @@ mod tests {
     use ethrex_storage::EngineType;
     use ethrex_storage::{error::StoreError, Store};
 
-    fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
+    async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
         let block_number = header.number;
         let block_hash = header.compute_block_hash();
-        store.add_block_header(block_hash, header)?;
-        store.set_canonical_block(block_number, block_hash)?;
-        store.update_latest_block_number(block_number)?;
-        store.set_chain_config(&config)?;
-
+        store.add_block_header(block_hash, header).await?;
+        store.set_canonical_block(block_number, block_hash).await?;
+        store.update_latest_block_number(block_number).await?;
+        store.set_chain_config(&config).await?;
         Ok(store)
     }
 
@@ -500,11 +499,11 @@ mod tests {
         assert_eq!(intrinsic_gas, expected_gas_cost);
     }
 
-    #[test]
-    fn transaction_with_big_init_code_in_shanghai_fails() {
+    #[tokio::test]
+    async fn transaction_with_big_init_code_in_shanghai_fails() {
         let (config, header) = build_basic_config_and_header(false, true);
 
-        let store = setup_storage(config, header).expect("Storage setup");
+        let store = setup_storage(config, header).await.expect("Storage setup");
         let blockchain = Blockchain::default_with_store(store);
 
         let tx = EIP1559Transaction {
@@ -522,16 +521,16 @@ mod tests {
         let tx = Transaction::EIP1559Transaction(tx);
         let validation = blockchain.validate_transaction(&tx, Address::random());
         assert!(matches!(
-            validation,
+            validation.await,
             Err(MempoolError::TxMaxInitCodeSizeError)
         ));
     }
 
-    #[test]
-    fn transaction_with_gas_limit_higher_than_of_the_block_should_fail() {
+    #[tokio::test]
+    async fn transaction_with_gas_limit_higher_than_of_the_block_should_fail() {
         let (config, header) = build_basic_config_and_header(false, false);
 
-        let store = setup_storage(config, header).expect("Storage setup");
+        let store = setup_storage(config, header).await.expect("Storage setup");
         let blockchain = Blockchain::default_with_store(store);
 
         let tx = EIP1559Transaction {
@@ -549,16 +548,16 @@ mod tests {
         let tx = Transaction::EIP1559Transaction(tx);
         let validation = blockchain.validate_transaction(&tx, Address::random());
         assert!(matches!(
-            validation,
+            validation.await,
             Err(MempoolError::TxGasLimitExceededError)
         ));
     }
 
-    #[test]
-    fn transaction_with_priority_fee_higher_than_gas_fee_should_fail() {
+    #[tokio::test]
+    async fn transaction_with_priority_fee_higher_than_gas_fee_should_fail() {
         let (config, header) = build_basic_config_and_header(false, false);
 
-        let store = setup_storage(config, header).expect("Storage setup");
+        let store = setup_storage(config, header).await.expect("Storage setup");
         let blockchain = Blockchain::default_with_store(store);
 
         let tx = EIP1559Transaction {
@@ -576,15 +575,15 @@ mod tests {
         let tx = Transaction::EIP1559Transaction(tx);
         let validation = blockchain.validate_transaction(&tx, Address::random());
         assert!(matches!(
-            validation,
+            validation.await,
             Err(MempoolError::TxTipAboveFeeCapError)
         ));
     }
 
-    #[test]
-    fn transaction_with_gas_limit_lower_than_intrinsic_gas_should_fail() {
+    #[tokio::test]
+    async fn transaction_with_gas_limit_lower_than_intrinsic_gas_should_fail() {
         let (config, header) = build_basic_config_and_header(false, false);
-        let store = setup_storage(config, header).expect("Storage setup");
+        let store = setup_storage(config, header).await.expect("Storage setup");
         let blockchain = Blockchain::default_with_store(store);
         let intrinsic_gas_cost = TX_GAS_COST;
 
@@ -603,15 +602,15 @@ mod tests {
         let tx = Transaction::EIP1559Transaction(tx);
         let validation = blockchain.validate_transaction(&tx, Address::random());
         assert!(matches!(
-            validation,
+            validation.await,
             Err(MempoolError::TxIntrinsicGasCostAboveLimitError)
         ));
     }
 
-    #[test]
-    fn transaction_with_blob_base_fee_below_min_should_fail() {
+    #[tokio::test]
+    async fn transaction_with_blob_base_fee_below_min_should_fail() {
         let (config, header) = build_basic_config_and_header(false, false);
-        let store = setup_storage(config, header).expect("Storage setup");
+        let store = setup_storage(config, header).await.expect("Storage setup");
         let blockchain = Blockchain::default_with_store(store);
 
         let tx = EIP4844Transaction {
@@ -630,7 +629,7 @@ mod tests {
         let tx = Transaction::EIP4844Transaction(tx);
         let validation = blockchain.validate_transaction(&tx, Address::random());
         assert!(matches!(
-            validation,
+            validation.await,
             Err(MempoolError::TxBlobBaseFeeTooLowError)
         ));
     }

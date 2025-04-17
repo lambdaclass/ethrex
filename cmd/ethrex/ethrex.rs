@@ -12,28 +12,24 @@ use std::{path::PathBuf, time::Duration};
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
+#[cfg(any(feature = "l2", feature = "based"))]
+use ethrex::l2::L2Options;
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    let CLI {
-        opts,
-        #[cfg(feature = "based")]
-        based_opts,
-        #[cfg(feature = "l2")]
-        l2_opts,
-        command,
-    } = CLI::parse();
+    let CLI { opts, command } = CLI::parse();
 
     init_tracing(&opts);
 
     if let Some(subcommand) = command {
-        return subcommand.run(&opts);
+        return subcommand.run(&opts).await;
     }
 
     let data_dir = set_datadir(&opts.datadir);
 
     let network = get_network(&opts);
 
-    let store = init_store(&data_dir, &network);
+    let store = init_store(&data_dir, &network).await;
 
     let blockchain = init_blockchain(opts.evm, store.clone());
 
@@ -50,10 +46,8 @@ async fn main() -> eyre::Result<()> {
 
     init_rpc_api(
         &opts,
-        #[cfg(feature = "based")]
-        &based_opts,
-        #[cfg(feature = "l2")]
-        &l2_opts,
+        #[cfg(any(feature = "l2", feature = "based"))]
+        &L2Options::default(),
         &signer,
         peer_table.clone(),
         local_p2p_node,
@@ -61,7 +55,8 @@ async fn main() -> eyre::Result<()> {
         blockchain.clone(),
         cancel_token.clone(),
         tracker.clone(),
-    );
+    )
+    .await;
 
     init_metrics(&opts, tracker.clone());
 
@@ -69,7 +64,7 @@ async fn main() -> eyre::Result<()> {
         if #[cfg(feature = "dev")] {
             use ethrex::initializers::init_dev_network;
 
-            init_dev_network(&opts, &store, tracker.clone());
+            init_dev_network(&opts, &store, tracker.clone()).await;
         } else {
             use ethrex::initializers::init_network;
 
@@ -89,16 +84,6 @@ async fn main() -> eyre::Result<()> {
             } else {
                 info!("P2P is disabled");
             }
-        }
-    }
-
-    cfg_if::cfg_if! {
-        if #[cfg(all(feature = "l2", not(feature = "dev")))] {
-            use std::future::IntoFuture;
-
-            let l2_sequencer = ethrex_l2::start_l2(store, blockchain).into_future();
-
-            tracker.spawn(l2_sequencer);
         }
     }
 

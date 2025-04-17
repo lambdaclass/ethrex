@@ -28,6 +28,8 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
+    #[cfg(feature = "based")]
+    InvalidBasedMessage(String),
     #[cfg(feature = "l2")]
     InvalidEthrexL2Message(String),
 }
@@ -129,6 +131,12 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
+            #[cfg(feature = "based")]
+            RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
+                code: -38003,
+                data: None,
+                message: format!("Invalid based message: {context}"),
+            },
             #[cfg(feature = "l2")]
             RpcErr::InvalidEthrexL2Message(reason) => RpcErrorMetadata {
                 code: -39000,
@@ -165,6 +173,8 @@ pub enum RpcNamespace {
     Net,
     #[cfg(feature = "l2")]
     EthrexL2,
+    #[cfg(feature = "based")]
+    Based,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,6 +205,8 @@ impl RpcRequest {
                 "net" => Ok(RpcNamespace::Net),
                 #[cfg(feature = "l2")]
                 "ethrex" => Ok(RpcNamespace::EthrexL2),
+                #[cfg(feature = "based")]
+                "based" => Ok(RpcNamespace::Based),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {
@@ -274,13 +286,13 @@ pub mod test_utils {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
-        sync::SyncManager,
+        sync_manager::SyncManager,
         types::{Node, NodeRecord},
     };
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
 
-    use crate::start_api;
+    use crate::rpc::start_api;
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
@@ -330,6 +342,7 @@ pub mod test_utils {
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
+            .await
             .expect("Failed to build test genesis");
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
@@ -355,6 +368,8 @@ pub mod test_utils {
             gateway_eth_client,
             #[cfg(feature = "based")]
             gateway_auth_client,
+            #[cfg(feature = "based")]
+            Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses,
             #[cfg(feature = "l2")]

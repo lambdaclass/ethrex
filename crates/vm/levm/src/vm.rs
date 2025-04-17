@@ -9,7 +9,7 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    hooks::{default_hook::DefaultHook, hook::Hook},
+    hooks::{default_hook::DefaultHook, hook::Hook, l2_hook::L2Hook},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
@@ -21,12 +21,12 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, TxKind,
+        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, Transaction, TxKind,
     },
     Address, H256, U256,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fmt::Debug,
     sync::Arc,
 };
@@ -36,7 +36,7 @@ pub type Storage = HashMap<U256, H256>;
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
-    pub touched_storage_slots: HashMap<Address, HashSet<H256>>,
+    pub touched_storage_slots: HashMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
 }
 
@@ -163,37 +163,38 @@ impl Default for EVMConfig {
     }
 }
 
-pub struct VM {
+pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
     /// Information that is acted upon immediately following the
     /// transaction.
     pub accrued_substate: Substate,
-    /// Mapping between addresses (160-bit identifiers) and account
-    /// states.
-    pub db: Arc<dyn Database>,
-    pub cache: CacheDB,
+    pub db: &'a mut GeneralizedDatabase,
     pub tx_kind: TxKind,
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
+    pub cache_backup: CacheDB, // Backup of the cache before executing the transaction
 }
 
-impl VM {
-    // TODO: Refactor this.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        to: TxKind,
-        env: Environment,
-        value: U256,
-        calldata: Bytes,
-        db: Arc<dyn Database>,
-        mut cache: CacheDB,
-        access_list: AccessList,
-        authorization_list: Option<AuthorizationList>,
-    ) -> Result<Self, VMError> {
-        // Maybe this decision should be made in an upper layer
+#[derive(Clone)]
+pub struct GeneralizedDatabase {
+    pub store: Arc<dyn Database>,
+    pub cache: CacheDB,
+}
 
+impl GeneralizedDatabase {
+    pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
+        Self { store, cache }
+    }
+}
+
+impl<'a> VM<'a> {
+    pub fn new(
+        env: Environment,
+        db: &'a mut GeneralizedDatabase,
+        tx: &Transaction,
+    ) -> Result<Self, VMError> {
         // Add sender and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
         let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
 
@@ -202,12 +203,12 @@ impl VM {
             default_touched_accounts.insert(env.coinbase);
         }
 
-        let mut default_touched_storage_slots: HashMap<Address, HashSet<H256>> = HashMap::new();
+        let mut default_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
 
         // Add access lists contents to cache
-        for (address, keys) in access_list.clone() {
+        for (address, keys) in tx.access_list() {
             default_touched_accounts.insert(address);
-            let mut warm_slots = HashSet::new();
+            let mut warm_slots = BTreeSet::new();
             for slot in keys {
                 warm_slots.insert(slot);
             }
@@ -215,7 +216,6 @@ impl VM {
         }
 
         // Add precompiled contracts addresses to cache.
-        // TODO: Use the addresses from precompiles.rs in a future
         let max_precompile_address = match env.config.fork {
             spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
             spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
@@ -226,9 +226,21 @@ impl VM {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let default_hook: Arc<dyn Hook> = Arc::new(DefaultHook);
-        let hooks = vec![default_hook];
-        match to {
+        // When instantiating a new vm the current value of the storage slots are actually the original values because it is a new transaction
+        for account in db.cache.values_mut() {
+            for storage_slot in account.storage.values_mut() {
+                storage_slot.original_value = storage_slot.current_value;
+            }
+        }
+
+        let hooks: Vec<Arc<dyn Hook>> = match tx {
+            Transaction::PrivilegedL2Transaction(privileged_tx) => vec![Arc::new(L2Hook {
+                recipient: privileged_tx.recipient,
+            })],
+            _ => vec![Arc::new(DefaultHook)],
+        };
+
+        match tx.to() {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
@@ -240,16 +252,15 @@ impl VM {
                 };
 
                 let (_is_delegation, _eip7702_gas_consumed, _code_address, bytecode) =
-                    eip7702_get_code(&mut cache, db.clone(), &mut substate, address_to)?;
+                    eip7702_get_code(db, &mut substate, address_to)?;
 
-                // CALL tx
                 let initial_call_frame = CallFrame::new(
                     env.origin,
                     address_to,
                     address_to,
                     bytecode,
-                    value,
-                    calldata,
+                    tx.value(),
+                    tx.data().clone(),
                     false,
                     env.gas_limit,
                     0,
@@ -257,22 +268,22 @@ impl VM {
                     false,
                 );
 
+                let cache_backup = db.cache.clone();
+
                 Ok(Self {
                     call_frames: vec![initial_call_frame],
-                    db,
                     env,
                     accrued_substate: substate,
-                    cache,
-                    tx_kind: to,
-                    access_list,
-                    authorization_list,
+                    db,
+                    tx_kind: TxKind::Call(address_to),
+                    access_list: tx.access_list(),
+                    authorization_list: tx.authorization_list(),
                     hooks,
+                    cache_backup,
                 })
             }
             TxKind::Create => {
-                // CREATE tx
-
-                let sender_nonce = get_account(&mut cache, db.clone(), env.origin).info.nonce;
+                let sender_nonce = get_account(db, env.origin)?.info.nonce;
                 let new_contract_address = calculate_create_address(env.origin, sender_nonce)
                     .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
@@ -283,8 +294,8 @@ impl VM {
                     new_contract_address,
                     new_contract_address,
                     Bytes::new(), // Bytecode is assigned after passing validations.
-                    value,
-                    calldata, // Calldata is removed after passing validations.
+                    tx.value(),
+                    tx.data().clone(), // Calldata is removed after passing validations.
                     false,
                     env.gas_limit,
                     0,
@@ -299,16 +310,18 @@ impl VM {
                     created_accounts: HashSet::from([new_contract_address]),
                 };
 
+                let cache_backup = db.cache.clone();
+
                 Ok(Self {
                     call_frames: vec![initial_call_frame],
-                    db,
                     env,
                     accrued_substate: substate,
-                    cache,
+                    db,
                     tx_kind: TxKind::Create,
-                    access_list,
-                    authorization_list,
+                    access_list: tx.access_list(),
+                    authorization_list: tx.authorization_list(),
                     hooks,
+                    cache_backup,
                 })
             }
         }
@@ -320,7 +333,7 @@ impl VM {
     ) -> Result<ExecutionReport, VMError> {
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let backup = StateBackup::new(
-            self.cache.clone(),
+            self.db.cache.clone(),
             self.accrued_substate.clone(),
             self.env.refunded_gas,
             self.env.transient_storage.clone(),
@@ -349,7 +362,7 @@ impl VM {
     }
 
     pub fn restore_state(&mut self, backup: StateBackup) {
-        self.cache = backup.cache;
+        self.db.cache = backup.cache;
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
@@ -359,7 +372,8 @@ impl VM {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    pub fn get_floor_gas_price(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
+    /// Calculates the minimum gas to be consumed in the transaction.
+    pub fn get_min_gas_used(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create() {
             &initial_call_frame.bytecode
@@ -376,31 +390,47 @@ impl VM {
             .checked_div(STANDARD_TOKEN_COST)
             .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
-        // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-        let mut floor_gas_price: u64 = tokens_in_calldata
+        // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+        let mut min_gas_used: u64 = tokens_in_calldata
             .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
             .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-        floor_gas_price = floor_gas_price
+        min_gas_used = min_gas_used
             .checked_add(TX_BASE_COST)
             .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-        Ok(floor_gas_price)
+        Ok(min_gas_used)
     }
 
+    /// Executes without making changes to the cache.
+    pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
+        let cache_backup = self.db.cache.clone();
+        let report = self.execute()?;
+        // Restore the cache to its original state
+        self.db.cache = cache_backup;
+        Ok(report)
+    }
+
+    /// Main function for executing an external transaction
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        self.cache_backup = self.db.cache.clone();
+
         let mut initial_call_frame = self
             .call_frames
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
-        self.prepare_execution(&mut initial_call_frame)?;
+        if let Err(e) = self.prepare_execution(&mut initial_call_frame) {
+            // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
+            self.db.cache = self.cache_backup.clone();
+            return Err(e);
+        }
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
             let new_contract_address = initial_call_frame.to;
-            let new_account = get_account(&mut self.cache, self.db.clone(), new_contract_address);
+            let new_account = get_account(self.db, new_contract_address)?;
 
             let value = initial_call_frame.msg_value;
             let balance = new_account
@@ -419,14 +449,12 @@ impl VM {
             } else {
                 Account::new(balance, Bytes::new(), 1, HashMap::new())
             };
-            cache::insert_account(&mut self.cache, new_contract_address, created_contract);
+            cache::insert_account(&mut self.db.cache, new_contract_address, created_contract);
         }
 
         let mut report = self.run_execution(&mut initial_call_frame)?;
 
         self.finalize_execution(&initial_call_frame, &mut report)?;
-
-        report.new_state.clone_from(&self.cache);
 
         Ok(report)
     }
@@ -456,11 +484,11 @@ impl VM {
                 .or_default()
                 .insert(key);
         }
-        let storage_slot = match cache::get_account(&self.cache, &address) {
+        let storage_slot = match cache::get_account(&self.db.cache, &address) {
             Some(account) => match account.storage.get(&key) {
                 Some(storage_slot) => storage_slot.clone(),
                 None => {
-                    let value = self.db.get_storage_slot(address, key);
+                    let value = self.db.store.get_storage_slot(address, key)?;
                     StorageSlot {
                         original_value: value,
                         current_value: value,
@@ -468,7 +496,7 @@ impl VM {
                 }
             },
             None => {
-                let value = self.db.get_storage_slot(address, key);
+                let value = self.db.store.get_storage_slot(address, key)?;
                 StorageSlot {
                     original_value: value,
                     current_value: value,
@@ -478,7 +506,7 @@ impl VM {
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
-        let account = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
+        let account = get_account_mut_vm(self.db, address)?;
         account.storage.insert(key, storage_slot.clone());
 
         Ok((storage_slot, storage_slot_was_cold))
@@ -490,7 +518,7 @@ impl VM {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
-        let account = get_account_mut_vm(&mut self.cache, self.db.clone(), address)?;
+        let account = get_account_mut_vm(self.db, address)?;
         let account_original_storage_slot_value = account
             .storage
             .get(&key)
@@ -512,13 +540,10 @@ impl VM {
             gas_used: self.env.gas_limit,
             gas_refunded: 0,
             logs: vec![],
-            new_state: HashMap::default(),
             output: Bytes::new(),
         };
 
         self.finalize_execution(initial_call_frame, &mut report)?;
-
-        report.new_state.clone_from(&self.cache);
 
         Ok(report)
     }
