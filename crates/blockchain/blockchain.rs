@@ -140,9 +140,10 @@ impl Blockchain {
         let since = Instant::now();
         let res = self.execute_block(block).await?;
         let executed = Instant::now();
-        result = self.store_block(block, res).await
+        let result = self.store_block(block, res).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
+        result
     }
 
     fn print_add_block_logs(block: &Block, since: Instant, executed: Instant, stored: Instant) {
