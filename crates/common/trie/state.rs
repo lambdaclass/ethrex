@@ -1,6 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Index};
 
-use crate::error::TrieError;
+use crate::{
+    cache::{CacheKey, StateCache},
+    error::TrieError,
+    PathRLP,
+};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
 use super::db::TrieDB;
@@ -11,7 +15,7 @@ use super::db::TrieDB;
 use super::{node::Node, node_hash::NodeHash};
 pub struct TrieState {
     db: Box<dyn TrieDB>,
-    cache: HashMap<NodeHash, Node>,
+    cache: StateCache,
 }
 
 impl TrieState {
@@ -19,7 +23,7 @@ impl TrieState {
     pub fn new(db: Box<dyn TrieDB>) -> TrieState {
         TrieState {
             db,
-            cache: Default::default(),
+            cache: StateCache::default(),
         }
     }
 
@@ -39,58 +43,54 @@ impl TrieState {
     }
 
     /// Inserts a node
-    pub fn insert_node(&mut self, node: Node, hash: NodeHash) {
-        // Don't insert the node if it is already inlined on the parent
-        if matches!(hash, NodeHash::Hashed(_)) {
-            self.cache.insert(hash, node);
-        }
+    pub fn insert_node(&mut self, path: PathRLP, value: Node) -> CacheKey {
+        self.cache.insert(path, value).0
     }
 
-    /// Commits cache changes to DB and clears it
-    /// Only writes nodes that follow the root's canonical trie
-    pub fn commit(&mut self, root: &NodeHash) -> Result<(), TrieError> {
-        self.commit_node(root)?;
-        self.cache.clear();
-        Ok(())
-    }
+    // /// Commits cache changes to DB and clears it
+    // /// Only writes nodes that follow the root's canonical trie
+    // pub fn commit(&mut self, root: &NodeHash) -> Result<(), TrieError> {
+    //     self.commit_node(root)?;
+    //     self.cache.clear();
+    //     Ok(())
+    // }
 
-    // Writes a node and its children into the DB
-    fn commit_node(&mut self, node_hash: &NodeHash) -> Result<(), TrieError> {
-        let mut to_commit = vec![];
-        self.commit_node_tail_recursive(node_hash, &mut to_commit)?;
+    // /// Writes a node and its children into the DB
+    // fn commit_node(&mut self, node_hash: &NodeHash) -> Result<(), TrieError> {
+    //     let mut to_commit = vec![];
+    //     self.commit_node_tail_recursive(node_hash, &mut to_commit)?;
+    //     self.db.put_batch(to_commit)?;
+    //     Ok(())
+    // }
 
-        self.db.put_batch(to_commit)?;
+    // /// Writes a node and its children into the DB
+    // // Note: Despite the name, it is not tail-recursive.
+    // fn commit_node_tail_recursive(
+    //     &mut self,
+    //     node_hash: &NodeHash,
+    //     acc: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    // ) -> Result<(), TrieError> {
+    //     let Some(node) = self.cache.remove(node_hash) else {
+    //         // If the node is not in the cache then it means it is already stored in the DB
+    //         return Ok(());
+    //     };
+    //     // Commit children (if any)
+    //     match &node {
+    //         Node::Branch(n) => {
+    //             for child in n.choices.iter() {
+    //                 if child.is_valid() {
+    //                     self.commit_node_tail_recursive(child, acc)?;
+    //                 }
+    //             }
+    //         }
+    //         Node::Extension(n) => self.commit_node_tail_recursive(&n.child, acc)?,
+    //         Node::Leaf(_) => {}
+    //     }
+    //     // Commit self
+    //     acc.push((node_hash.into(), node.encode_to_vec()));
 
-        Ok(())
-    }
-
-    // Writes a node and its children into the DB
-    fn commit_node_tail_recursive(
-        &mut self,
-        node_hash: &NodeHash,
-        acc: &mut Vec<(Vec<u8>, Vec<u8>)>,
-    ) -> Result<(), TrieError> {
-        let Some(node) = self.cache.remove(node_hash) else {
-            // If the node is not in the cache then it means it is already stored in the DB
-            return Ok(());
-        };
-        // Commit children (if any)
-        match &node {
-            Node::Branch(n) => {
-                for child in n.choices.iter() {
-                    if child.is_valid() {
-                        self.commit_node_tail_recursive(child, acc)?;
-                    }
-                }
-            }
-            Node::Extension(n) => self.commit_node_tail_recursive(&n.child, acc)?,
-            Node::Leaf(_) => {}
-        }
-        // Commit self
-        acc.push((node_hash.into(), node.encode_to_vec()));
-
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     /// Writes a node directly to the DB bypassing the cache
     pub fn write_node(&mut self, node: Node, hash: NodeHash) -> Result<(), TrieError> {
@@ -113,5 +113,13 @@ impl TrieState {
             .collect();
         self.db.put_batch(key_values)?;
         Ok(())
+    }
+}
+
+impl Index<CacheKey> for TrieState {
+    type Output = Node;
+
+    fn index(&self, index: CacheKey) -> &Self::Output {
+        &self.cache[index]
     }
 }

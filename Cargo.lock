@@ -3355,6 +3355,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
+ "slab",
  "smallvec",
  "tempdir",
  "thiserror 2.0.12",

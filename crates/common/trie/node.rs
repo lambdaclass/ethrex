@@ -10,7 +10,7 @@ use ethrex_rlp::{decode::decode_bytes, error::RLPDecodeError, structs::Decoder};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{error::TrieError, nibbles::Nibbles};
+use crate::{cache::CacheKey, error::TrieError, nibbles::Nibbles};
 
 use super::{node_hash::NodeHash, state::TrieState, ValueRLP};
 
@@ -94,7 +94,7 @@ impl Node {
         }
     }
 
-    pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
+    pub fn insert_self(self, state: &mut TrieState) -> CacheKey {
         match self {
             Node::Branch(n) => n.insert_self(state),
             Node::Extension(n) => n.insert_self(state),
@@ -103,10 +103,10 @@ impl Node {
     }
 
     /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
+    pub fn encode_raw(&self, state: &TrieState) -> Vec<u8> {
         match self {
-            Node::Branch(n) => n.encode_raw(),
-            Node::Extension(n) => n.encode_raw(),
+            Node::Branch(n) => n.encode_raw(state),
+            Node::Extension(n) => n.encode_raw(state),
             Node::Leaf(n) => n.encode_raw(),
         }
     }
@@ -153,7 +153,7 @@ impl Node {
                 let choices = array::from_fn(|i| decode_child(&rlp_items[i]));
                 let (value, _) = decode_bytes(&rlp_items[16])?;
                 BranchNode {
-                    choices: Box::new(choices),
+                    choices,
                     value: value.to_vec(),
                 }
                 .into()
@@ -167,10 +167,10 @@ impl Node {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self) -> NodeHash {
+    pub fn compute_hash(&self, state: &TrieState) -> NodeHash {
         match self {
-            Node::Branch(n) => n.compute_hash(),
-            Node::Extension(n) => n.compute_hash(),
+            Node::Branch(n) => n.compute_hash(state),
+            Node::Extension(n) => n.compute_hash(state),
             Node::Leaf(n) => n.compute_hash(),
         }
     }
