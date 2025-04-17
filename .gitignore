@@ -64,3 +64,8 @@ cmd/ef_tests/state/levm_perfgraphs
 prof_*.json
 prof.json
 profile.json.gz
+profile_*.json
+profile_*.json.gz
+
+logs.txt
+load_test_analysis.html

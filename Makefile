@@ -161,7 +161,13 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--datadir test_ethrex
 
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
-	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
+	rm -rf "~/Library/Application Support/ethrex"
+	cargo build --bin ethrex --release --features dev
+	./target/release/ethrex --network test_data/genesis-l2-ci.json --dev --http.port 1729 > logs.txt &
+	sleep 10
+	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers -n http://localhost:1729 -N 2000
+	pkill ethrex
+	python analyze_logs.py
 
 load-test-erc20:
 	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
