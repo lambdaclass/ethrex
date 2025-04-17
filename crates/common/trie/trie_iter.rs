@@ -1,9 +1,9 @@
-use crate::{nibbles::Nibbles, node::Node, node_hash::NodeHash, PathRLP, Trie, ValueRLP};
+use crate::{cache::CacheKey, nibbles::Nibbles, node::Node, PathRLP, Trie, ValueRLP};
 
 pub struct TrieIterator {
     trie: Trie,
     // The stack contains the current traversed path and the next node to be traversed
-    stack: Vec<(Nibbles, NodeHash)>,
+    stack: Vec<(Nibbles, CacheKey)>,
 }
 
 impl TrieIterator {
@@ -26,7 +26,7 @@ impl Iterator for TrieIterator {
         };
         // Fetch the last node in the stack
         let (mut path, next_node_hash) = self.stack.pop()?;
-        let next_node = self.trie.state.get_node(next_node_hash).ok()??;
+        let next_node = &self.trie.state[next_node_hash];
         match &next_node {
             Node::Branch(branch_node) => {
                 // Add all children to the stack (in reverse order so we process first child frist)
@@ -49,7 +49,7 @@ impl Iterator for TrieIterator {
                 path.extend(&leaf.partial);
             }
         }
-        Some((path, next_node))
+        Some((path, next_node.clone()))
     }
 }
 

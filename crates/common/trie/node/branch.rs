@@ -179,18 +179,18 @@ impl BranchNode {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(self.encode_raw())
+    pub fn compute_hash(&self, state: &TrieState) -> NodeHash {
+        NodeHash::from_encoded_raw(self.encode_raw(state))
     }
 
     /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
+    pub fn encode_raw(&self, state: &TrieState) -> Vec<u8> {
         let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf);
-        for child in self.choices.iter() {
-            match child {
+        for child in self.choices.iter().copied() {
+            match state[child].compute_hash(state) {
                 NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
-                NodeHash::Inline(raw) if !raw.is_empty() => encoder = encoder.encode_raw(raw),
+                NodeHash::Inline(data) if !data.is_empty() => encoder = encoder.encode_raw(&data),
                 _ => encoder = encoder.encode_bytes(&[]),
             }
         }
@@ -214,18 +214,16 @@ impl BranchNode {
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
-        let encoded = self.encode_raw();
+        let encoded = self.encode_raw(state);
         if encoded.len() >= 32 {
             node_path.push(encoded);
         };
         // Check the corresponding choice and delegate accordingly if present.
         if let Some(choice) = path.next_choice() {
             // Continue to child
-            let child_hash = &self.choices[choice];
+            let child_hash = self.choices[choice];
             if child_hash.is_valid() {
-                let child_node = state
-                    .get_node(child_hash.clone())?
-                    .ok_or(TrieError::InconsistentTree)?;
+                let child_node = &state[child_hash];
                 child_node.get_path(state, path, node_path)?;
             }
         }

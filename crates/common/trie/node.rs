@@ -103,10 +103,10 @@ impl Node {
     }
 
     /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
+    pub fn encode_raw(&self, state: &TrieState) -> Vec<u8> {
         match self {
-            Node::Branch(n) => n.encode_raw(),
-            Node::Extension(n) => n.encode_raw(),
+            Node::Branch(n) => n.encode_raw(state),
+            Node::Extension(n) => n.encode_raw(state),
             Node::Leaf(n) => n.encode_raw(),
         }
     }
@@ -167,10 +167,10 @@ impl Node {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self) -> NodeHash {
+    pub fn compute_hash(&self, state: &TrieState) -> NodeHash {
         match self {
-            Node::Branch(n) => n.compute_hash(),
-            Node::Extension(n) => n.compute_hash(),
+            Node::Branch(n) => n.compute_hash(state),
+            Node::Extension(n) => n.compute_hash(state),
             Node::Leaf(n) => n.compute_hash(),
         }
     }

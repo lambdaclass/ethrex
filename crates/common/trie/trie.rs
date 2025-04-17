@@ -180,7 +180,7 @@ impl Trie {
         // duplicates
         let node_path: HashSet<_> = node_path.drain(..).collect();
         let node_path = Vec::from_iter(node_path);
-        Ok((Some(root_node.encode_raw()), node_path))
+        Ok((Some(root_node.encode_raw(&self.state)), node_path))
     }
 
     /// Creates a cached Trie (with [NullTrieDB]) from a list of encoded nodes.
@@ -193,11 +193,12 @@ impl Trie {
 
         if let Some(root_node) = root_node {
             let root_node = Node::decode_raw(root_node)?;
-            trie.root = Some(root_node.insert_self(&mut trie.state)?);
+            trie.root = Some(root_node.insert_self(&mut trie.state));
         }
 
-        for node in other_nodes.iter().map(|node| Node::decode_raw(node)) {
-            node?.insert_self(&mut trie.state)?;
+        for node in other_nodes.iter() {
+            let node = Node::decode_raw(node)?;
+            node.insert_self(&mut trie.state);
         }
 
         Ok(trie)
@@ -270,17 +271,14 @@ impl Trie {
     fn get_node_inner(&self, node: Node, mut partial_path: Nibbles) -> Result<Vec<u8>, TrieError> {
         // If we reached the end of the partial path, return the current node
         if partial_path.is_empty() {
-            return Ok(node.encode_raw());
+            return Ok(node.encode_raw(&self.state));
         }
         match node {
             Node::Branch(branch_node) => match partial_path.next_choice() {
                 Some(idx) => {
                     let child_hash = &branch_node.choices[idx];
                     if child_hash.is_valid() {
-                        let child_node = self
-                            .state
-                            .get_node(child_hash.clone())?
-                            .ok_or(TrieError::InconsistentTree)?;
+                        let child_node = self.state[child_hash.clone()].clone();
                         self.get_node_inner(child_node, partial_path)
                     } else {
                         Ok(vec![])
@@ -292,10 +290,7 @@ impl Trie {
                 if partial_path.skip_prefix(&extension_node.prefix)
                     && extension_node.child.is_valid()
                 {
-                    let child_node = self
-                        .state
-                        .get_node(extension_node.child.clone())?
-                        .ok_or(TrieError::InconsistentTree)?;
+                    let child_node = self.state[extension_node.child.clone()].clone();
                     self.get_node_inner(child_node, partial_path)
                 } else {
                     Ok(vec![])

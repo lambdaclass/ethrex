@@ -133,17 +133,17 @@ impl ExtensionNode {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(self.encode_raw())
+    pub fn compute_hash(&self, state: &TrieState) -> NodeHash {
+        NodeHash::from_encoded_raw(self.encode_raw(state))
     }
 
     /// Encodes the node
-    pub fn encode_raw(&self) -> Vec<u8> {
+    pub fn encode_raw(&self, state: &TrieState) -> Vec<u8> {
         let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
-        match &self.child {
+        match state[self.child].compute_hash(state) {
             NodeHash::Inline(x) => {
-                encoder = encoder.encode_raw(x);
+                encoder = encoder.encode_raw(&x);
             }
             NodeHash::Hashed(x) => {
                 encoder = encoder.encode_bytes(&x.0);
@@ -168,15 +168,13 @@ impl ExtensionNode {
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         // Add self to node_path (if not inlined in parent)
-        let encoded = self.encode_raw();
+        let encoded = self.encode_raw(state);
         if encoded.len() >= 32 {
             node_path.push(encoded);
         };
         // Continue to child
         if path.skip_prefix(&self.prefix) {
-            let child_node = state
-                .get_node(self.child.clone())?
-                .ok_or(TrieError::InconsistentTree)?;
+            let child_node = &state[self.child];
             child_node.get_path(state, path, node_path)?;
         }
         Ok(())
