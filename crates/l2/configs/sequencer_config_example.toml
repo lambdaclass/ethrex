@@ -50,4 +50,3 @@ l1_private_key = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45
 listen_ip = "127.0.0.1"
 listen_port = 3900
 dev_mode = true
-dev_interval_ms = 5000

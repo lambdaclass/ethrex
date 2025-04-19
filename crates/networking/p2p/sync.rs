@@ -1,4 +1,5 @@
 mod bytecode_fetcher;
+mod fetcher_queue;
 mod state_healing;
 mod state_sync;
 mod storage_fetcher;
@@ -172,13 +173,13 @@ impl Syncer {
         // This applies only to snap sync—full sync always starts fetching headers
         // from the canonical block, which updates as new block headers are fetched.
         if matches!(sync_mode, SyncMode::Snap) {
-            if let Some(last_header) = store.get_header_download_checkpoint()? {
+            if let Some(last_header) = store.get_header_download_checkpoint().await? {
                 // Set latest downloaded header as current head for header fetching
                 current_head = last_header;
             }
         }
 
-        let pending_block = match store.get_pending_block(sync_head) {
+        let pending_block = match store.get_pending_block(sync_head).await {
             Ok(res) => res,
             Err(e) => return Err(e.into()),
         };
@@ -262,7 +263,7 @@ impl Syncer {
 
             // If the sync head is less than 64 blocks away from our current head switch to full-sync
             if sync_mode == SyncMode::Snap {
-                let latest_block_number = store.get_latest_block_number()?;
+                let latest_block_number = store.get_latest_block_number().await?;
                 if last_block_header.number.saturating_sub(latest_block_number)
                     < MIN_FULL_BLOCKS as u64
                 {
@@ -336,7 +337,8 @@ impl Syncer {
                 // For all blocks after the pivot: Process them fully
                 for hash in &all_block_hashes[pivot_idx + 1..] {
                     let block = store
-                        .get_block_by_hash(*hash)?
+                        .get_block_by_hash(*hash)
+                        .await?
                         .ok_or(SyncError::CorruptDB)?;
                     let block_number = block.header.number;
                     self.blockchain.add_block(&block).await?;
@@ -598,15 +600,18 @@ impl Syncer {
         // Spawn storage healer earlier so we can start healing stale storages
         // Create a cancellation token so we can end the storage healer when finished, make it a child so that it also ends upon shutdown
         let storage_healer_cancell_token = self.cancel_token.child_token();
+        // Create an AtomicBool to signal to the storage healer whether state healing has ended
+        let state_healing_ended = Arc::new(AtomicBool::new(false));
         let storage_healer_handler = tokio::spawn(storage_healer(
             state_root,
             self.peers.clone(),
             store.clone(),
             storage_healer_cancell_token.clone(),
+            state_healing_ended.clone(),
         ));
         // Perform state sync if it was not already completed on a previous cycle
         // Retrieve storage data to check which snap sync phase we are in
-        let key_checkpoints = store.get_state_trie_key_checkpoint()?;
+        let key_checkpoints = store.get_state_trie_key_checkpoint().await?;
         // If we have no key checkpoints or if the key checkpoints are lower than the segment boundaries we are in state sync phase
         if key_checkpoints.is_none()
             || key_checkpoints.is_some_and(|ch| {
@@ -649,7 +654,11 @@ impl Syncer {
         let state_heal_complete =
             heal_state_trie(state_root, store.clone(), self.peers.clone()).await?;
         // Wait for storage healer to end
-        storage_healer_cancell_token.cancel();
+        if state_heal_complete {
+            state_healing_ended.store(true, Ordering::Relaxed);
+        } else {
+            storage_healer_cancell_token.cancel();
+        }
         let storage_heal_complete = storage_healer_handler.await??;
         if !(state_heal_complete && storage_heal_complete) {
             warn!("Stale pivot, aborting healing");
