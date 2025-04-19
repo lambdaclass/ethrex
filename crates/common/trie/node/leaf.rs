@@ -16,7 +16,7 @@ pub struct LeafNode {
 
 impl LeafNode {
     /// Creates a new leaf node and stores the given (path, value) pair
-    pub fn new(partial: Nibbles, value: ValueRLP) -> Self {
+    pub const fn new(partial: Nibbles, value: ValueRLP) -> Self {
         Self { partial, value }
     }
 
@@ -64,7 +64,7 @@ impl LeafNode {
                 // Create a branch node with self as a child and store the value in the branch node
                 // Branch { [Self,...], Value }
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[self_choice_idx] = self.clone().insert_self(state)?;
+                choices[self_choice_idx] = self.insert_self(state)?;
                 BranchNode::new_with_value(Box::new(choices), value)
             } else {
                 // Create a new leaf node and store the path and value in it
@@ -73,7 +73,7 @@ impl LeafNode {
                 let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?;
-                choices[self_choice_idx] = self.clone().insert_self(state)?;
+                choices[self_choice_idx] = self.insert_self(state)?;
                 BranchNode::new(Box::new(choices))
             };
 

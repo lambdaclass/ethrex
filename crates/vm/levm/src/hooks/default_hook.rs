@@ -83,10 +83,8 @@ impl Hook for DefaultHook {
 
         // blob gas cost = max fee per blob gas * blob gas used
         // https://eips.ethereum.org/EIPS/eip-4844
-        let max_blob_gas_cost = get_max_blob_gas_price(
-            vm.env.tx_blob_hashes.clone(),
-            vm.env.tx_max_fee_per_blob_gas,
-        )?;
+        let max_blob_gas_cost =
+            get_max_blob_gas_price(&vm.env.tx_blob_hashes, vm.env.tx_max_fee_per_blob_gas)?;
 
         // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
         // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
@@ -115,7 +113,7 @@ impl Hook for DefaultHook {
         }
 
         let blob_gas_cost = get_blob_gas_price(
-            vm.env.tx_blob_hashes.clone(),
+            &vm.env.tx_blob_hashes,
             vm.env.block_excess_blob_gas,
             &vm.env.config,
         )?;
