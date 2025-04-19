@@ -488,7 +488,7 @@ impl<'a> VM<'a> {
             Some(account) => match account.storage.get(&key) {
                 Some(storage_slot) => storage_slot.clone(),
                 None => {
-                    let value = self.db.store.get_storage_slot(address, key)?;
+                    let value = self.db.store.get_storage(address, key)?;
                     StorageSlot {
                         original_value: value,
                         current_value: value,
@@ -496,7 +496,7 @@ impl<'a> VM<'a> {
                 }
             },
             None => {
-                let value = self.db.store.get_storage_slot(address, key)?;
+                let value = self.db.store.get_storage(address, key)?;
                 StorageSlot {
                     original_value: value,
                     current_value: value,

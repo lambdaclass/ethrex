@@ -12,7 +12,7 @@ pub mod error;
 
 pub trait Database: Send + Sync {
     fn get_account_info(&self, address: Address) -> Result<AccountInfo, DatabaseError>;
-    fn get_storage_slot(&self, address: Address, key: H256) -> Result<U256, DatabaseError>;
+    fn get_storage(&self, address: Address, key: H256) -> Result<U256, DatabaseError>;
     fn get_block_hash(&self, block_number: u64) -> Result<Option<H256>, DatabaseError>;
     fn account_exists(&self, address: Address) -> bool;
     fn get_chain_config(&self) -> ChainConfig;

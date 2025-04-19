@@ -192,7 +192,7 @@ impl LEVM {
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
             for (key, storage_slot) in &new_state_account.storage {
-                let storage_before_block = db.store.get_storage_slot(address, *key)?;
+                let storage_before_block = db.store.get_storage(address, *key)?;
                 if storage_slot.current_value != storage_before_block {
                     added_storage.insert(*key, storage_slot.current_value);
                     storage_updated = true;
