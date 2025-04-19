@@ -148,6 +148,7 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr 0.0.0.0 \
+	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--evm levm \
 	--datadir ${ethrex_L2_DEV_LIBMDBX}
