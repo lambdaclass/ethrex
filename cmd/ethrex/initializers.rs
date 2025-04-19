@@ -56,6 +56,11 @@ pub fn init_tracing(opts: &Options) {
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+    if !opts.metrics_enabled {
+        return;
+    }
+
+    tracing::info!("Starting metrics server on {}:{}", opts.metrics_addr, opts.metrics_port);
     let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
