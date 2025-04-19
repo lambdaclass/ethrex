@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1744840039841,
+  "lastUpdate": 1745057204767,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3295,6 +3295,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180360634406,
             "range": "± 362640567",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b5e339c6642f682d306fc4cd31766c1bf394ee34",
+          "message": "perf(core,levm): remove some unnecessary clones and make functions const (#2438)\n\n**Motivation**\n\nIncrease perfomance, improve code.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\nSome methods took Vec by value just to take it's length, requiring a\ncostly clone each time.\n\nSome methods could be made const, if the compiler can make use of this\nit may increase perfomance.\n\nChanged a drain to a into_iter, which is simpler and has better\nperfomance.\n\nAided by the following clippy command:\n```\ncargo clippy --all-features -- -D clippy::perfomance -D clippy::nursery -A clippy::use_self -A clippy::too_long_first_doc_paragraph -A clippy::derive_partial_eq_without_eq -A clippy::option_if_let_else\n```",
+          "timestamp": "2025-04-19T09:19:22Z",
+          "tree_id": "cd27b1fdd390a4fa1ca676105bb9766c2f41de3f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b5e339c6642f682d306fc4cd31766c1bf394ee34"
+        },
+        "date": 1745057202144,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180626848933,
+            "range": "± 1169250545",
             "unit": "ns/iter"
           }
         ]
