@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745261774830,
+  "lastUpdate": 1745266916240,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3535,6 +3535,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182465500438,
             "range": "± 466663760",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "da370653d49f9b1bfcf520b0f7cf5ba2cea089d7",
+          "message": "fix(l2): use Prague genesis file to fix prover (#2509)\n\n**Motivation**\nFix prover tests in CI\n\n**Description**\nhttps://github.com/lambdaclass/ethrex/pull/2481 broke the L2 tests since\nthey were using a Cancun genesis, and the block producer has switched to\nPrague",
+          "timestamp": "2025-04-21T19:33:53Z",
+          "tree_id": "9cadc7a7370a43edbcc5ba0b41fba2699b8a662a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/da370653d49f9b1bfcf520b0f7cf5ba2cea089d7"
+        },
+        "date": 1745266914345,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183444993601,
+            "range": "± 1109833066",
             "unit": "ns/iter"
           }
         ]
