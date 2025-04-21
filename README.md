@@ -336,7 +336,10 @@ INFO ethrex_p2p::sync::state_sync: Downloading state trie, completion rate: 68%,
 INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated time to finish: 1h5m45s
 ```
 
-
+If you want to restart the sync from the very start you can do so by wiping the database using the following command:
+```bash
+cargo run --bin ethrex -- removedb
+```
 
 # ethrex L2
 
