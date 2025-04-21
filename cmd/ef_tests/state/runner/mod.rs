@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fmt::{Display, Formatter},
+};
 
 use crate::{
     report::{self, format_duration_as_mm_ss, EFTestReport, TestReRunReport},
@@ -78,6 +81,30 @@ pub struct EFTestRunnerOptions {
     /// For running tests ONLY with revm
     #[arg(long, value_name = "REVM", default_value = "false")]
     pub revm: bool,
+}
+
+impl Display for EFTestRunnerOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "EFTestRunnerOptions {{
+    tests_forks: {:?},
+    tests: {:?},
+    specific_tests: {:?},
+    summary: {},
+    skip: {:?},
+    verbose: {},
+    revm: {}
+}}",
+            self.tests_forks,
+            self.tests,
+            self.specific_tests,
+            self.summary,
+            self.skip,
+            self.verbose,
+            self.revm
+        )
+    }
 }
 
 pub async fn run_ef_tests(

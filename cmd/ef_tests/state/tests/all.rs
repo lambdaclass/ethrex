@@ -8,7 +8,7 @@ use std::error::Error;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let opts = EFTestRunnerOptions::parse();
-    dbg!(&opts);
+    println!("Running tests with options: {:?}", opts);
     let ef_tests = parser::parse_ef_tests(&opts)?;
     runner::run_ef_tests(ef_tests, &opts).await?;
     Ok(())

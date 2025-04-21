@@ -329,7 +329,7 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
             ) | (
                 TransactionExpectedException::Other,
-                VMError::TxValidation(_) //TODO: Support these exception names...
+                VMError::TxValidation(_) //TODO: Decide whether to support specific errors, maybe this is enough.
             )
         )
     })

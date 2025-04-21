@@ -68,7 +68,7 @@ where
                 "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                     TransactionExpectedException::InsufficientMaxFeePerBlobGas
                 }
-                other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
+                _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
             })
             .collect();
 
