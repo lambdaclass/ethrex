@@ -16,11 +16,11 @@ pub struct DatabaseLogger {
     pub accounts_accessed: Arc<Mutex<Vec<CoreAddress>>>,
     pub storage_accessed: Arc<Mutex<HashMap<(CoreAddress, CoreH256), CoreU256>>>,
     pub code_accessed: Arc<Mutex<Vec<CoreH256>>>,
-    pub store: Arc<dyn LevmDatabase>,
+    pub store: Arc<Mutex<Box<dyn LevmDatabase>>>,
 }
 
 impl DatabaseLogger {
-    pub fn new(store: Arc<dyn LevmDatabase>) -> Self {
+    pub fn new(store: Arc<Mutex<Box<dyn LevmDatabase>>>) -> Self {
         Self {
             block_hashes_accessed: Arc::new(Mutex::new(HashMap::new())),
             accounts_accessed: Arc::new(Mutex::new(Vec::new())),
@@ -36,7 +36,11 @@ impl LevmDatabase for DatabaseLogger {
         &self,
         address: CoreAddress,
     ) -> Result<ethrex_levm::AccountInfo, DatabaseError> {
-        let acc_info = self.store.get_account_info(address)?;
+        let acc_info = self
+            .store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .get_account_info(address)?;
         self.accounts_accessed
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
@@ -45,7 +49,7 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
-        self.store.account_exists(address)
+        self.store.lock().unwrap().account_exists(address)
     }
 
     fn get_storage_slot(
@@ -53,7 +57,11 @@ impl LevmDatabase for DatabaseLogger {
         address: CoreAddress,
         key: CoreH256,
     ) -> Result<CoreU256, DatabaseError> {
-        let slot = self.store.get_storage_slot(address, key)?;
+        let slot = self
+            .store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .get_storage_slot(address, key)?;
         self.storage_accessed
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
@@ -62,7 +70,11 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
-        let block_hash = self.store.get_block_hash(block_number)?;
+        let block_hash = self
+            .store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .get_block_hash(block_number)?;
         if let Some(hash) = block_hash {
             self.block_hashes_accessed
                 .lock()
@@ -73,7 +85,7 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
-        self.store.get_chain_config()
+        self.store.lock().unwrap().get_chain_config()
     }
 
     fn get_account_info_by_hash(
@@ -81,7 +93,11 @@ impl LevmDatabase for DatabaseLogger {
         block_hash: ethrex_common::types::BlockHash,
         address: CoreAddress,
     ) -> Result<Option<AccountInfo>, DatabaseError> {
-        let account = self.store.get_account_info_by_hash(block_hash, address)?;
+        let account = self
+            .store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .get_account_info_by_hash(block_hash, address)?;
         {
             if let Some(acc) = account.clone() {
                 let mut code_accessed = self
@@ -103,7 +119,10 @@ impl LevmDatabase for DatabaseLogger {
                 .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
             code_accessed.push(code_hash);
         }
-        self.store.get_account_code(code_hash)
+        self.store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .get_account_code(code_hash)
     }
 }
 

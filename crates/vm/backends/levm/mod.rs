@@ -27,7 +27,7 @@ use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, TrieError};
 use std::cmp::min;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
@@ -397,25 +397,35 @@ impl LEVM {
             return Err(ExecutionDBError::Custom("Unable to get last block".into()));
         };
 
-        let logger = Arc::new(DatabaseLogger::new(Arc::new(StoreWrapper {
-            store: store.clone(),
-            block_hash: first_block_parent_hash,
-        })));
-        let logger_ref = Arc::clone(&logger);
-        let mut db = GeneralizedDatabase::new(logger, CacheDB::new());
+        let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
+            StoreWrapper {
+                store: store.clone(),
+                block_hash: first_block_parent_hash,
+            },
+        )))));
 
         let mut execution_updates = vec![];
         for block in blocks {
+            let mut db = GeneralizedDatabase::new(logger.clone(), CacheDB::new());
             // pre-execute and get all state changes
             execution_updates.extend(
                 Self::execute_block(block, &mut db)
                     .map_err(Box::new)?
                     .account_updates,
             );
+
+            // Update de block_hash for the next execution.
+            let new_store = StoreWrapper {
+                store: store.clone(),
+                block_hash: block.hash(),
+            };
+
+            // Replace the entire Arc (no need to lock since Arc is atomic)
+            *logger.store.lock().unwrap() = Box::new(new_store);
         }
 
         // index read and touched account addresses and storage keys
-        let account_accessed = logger_ref
+        let account_accessed = logger
             .accounts_accessed
             .lock()
             .map_err(|_| {
@@ -425,7 +435,7 @@ impl LEVM {
 
         let mut index = Vec::with_capacity(account_accessed.len());
         for address in account_accessed.iter() {
-            let storage_keys = logger_ref
+            let storage_keys = logger
                 .storage_accessed
                 .lock()
                 .map_err(|_| {
@@ -450,9 +460,8 @@ impl LEVM {
         let cache_accounts = account_accessed.iter().filter_map(|address| {
             // filter new accounts (accounts that didn't exist before) assuming our store is
             // correct (based on the success of the pre-execution).
-            if let Ok(Some(info)) = db
-                .store
-                .get_account_info_by_hash(first_block_parent_hash, *address)
+            if let Ok(Some(info)) =
+                store.get_account_info_by_hash(first_block_parent_hash, *address)
             {
                 Some((address, info))
             } else {
@@ -463,15 +472,13 @@ impl LEVM {
             .clone()
             .map(|(address, _)| {
                 // return error if account is missing
-                let account = match db
-                    .store
-                    .get_account_info_by_hash(first_block_parent_hash, *address)
-                {
-                    Ok(Some(some)) => Ok(some),
-                    Err(err) => Err(ExecutionDBError::Database(err)),
-                    Ok(None) => unreachable!(), // we are filtering out accounts that are not present
-                                                // in the store
-                };
+                let account =
+                    match store.get_account_info_by_hash(first_block_parent_hash, *address) {
+                        Ok(Some(some)) => Ok(some),
+                        Err(err) => Err(ExecutionDBError::Store(err)),
+                        Ok(None) => unreachable!(), // we are filtering out accounts that are not present
+                                                    // in the store
+                    };
                 Ok((*address, account?))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
@@ -483,7 +490,7 @@ impl LEVM {
                 let hash = update.info.clone().unwrap_or_default().code_hash;
                 Ok((
                     hash,
-                    db.store
+                    store
                         .get_account_code(hash)?
                         .ok_or(ExecutionDBError::NewMissingCode(hash))?,
                 ))
@@ -493,7 +500,7 @@ impl LEVM {
         let mut code_accessed = HashMap::new();
 
         {
-            let all_code_accessed = logger_ref.code_accessed.lock().map_err(|_| {
+            let all_code_accessed = logger.code_accessed.lock().map_err(|_| {
                 ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
             })?;
             for code_hash in all_code_accessed.iter() {
@@ -533,7 +540,7 @@ impl LEVM {
                 ))
             })
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let block_hashes = logger_ref
+        let block_hashes = logger
             .block_hashes_accessed
             .lock()
             .map_err(|_| {
