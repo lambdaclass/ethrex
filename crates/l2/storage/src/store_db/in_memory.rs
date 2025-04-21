@@ -88,7 +88,7 @@ impl StoreEngineL2 for Store {
     }
 
     /// Returns the block numbers for a given batch_number
-    async fn get_block_numbers_for_batch(
+    async fn get_block_numbers_by_batch(
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, StoreError> {

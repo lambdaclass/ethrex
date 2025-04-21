@@ -70,7 +70,7 @@ async fn setup() -> (ProgramInput, Block) {
         .unwrap();
 
     let input = ProgramInput {
-        block: block_to_prove.clone(),
+        blocks: block_to_prove.clone(),
         parent_block_header,
         db,
     };

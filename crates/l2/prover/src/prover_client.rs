@@ -18,7 +18,7 @@ pub async fn start_proof_data_client(config: ProverClientConfig) {
 }
 
 struct ProverData {
-    block_number: u64,
+    batch_number: u64,
     input: ProgramInput,
 }
 
@@ -45,7 +45,7 @@ impl ProverClient {
                     match prove(prover_data.input).and_then(to_calldata) {
                         Ok(proving_output) => {
                             if let Err(e) = self
-                                .submit_proof(prover_data.block_number, proving_output)
+                                .submit_proof(prover_data.batch_number, proving_output)
                                 .await
                             {
                                 // TODO: Retry?
@@ -65,7 +65,7 @@ impl ProverClient {
     }
 
     async fn request_new_input(&self) -> Result<ProverData, String> {
-        // Request the input with the correct block_number
+        // Request the input with the correct batch_number
         let request = ProofData::request();
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
             .await
@@ -73,15 +73,15 @@ impl ProverClient {
 
         match response {
             ProofData::Response {
-                batch_number: block_number,
+                batch_number,
                 input,
-            } => match (block_number, input) {
-                (Some(block_number), Some(input)) => {
-                    info!("Received Response for block_number: {block_number}");
+            } => match (batch_number, input) {
+                (Some(batch_number), Some(input)) => {
+                    info!("Received Response for batch_number: {batch_number}");
                     let prover_data = ProverData{
-                        block_number,
+                        batch_number,
                         input:  ProgramInput {
-                            block: input.block,
+                            blocks: input.blocks,
                             parent_block_header: input.parent_block_header,
                             db: input.db
                         }

@@ -36,16 +36,13 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
 
 fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
     let ProgramInput {
-        block,
+        blocks,
         parent_block_header,
         db,
     } = input;
-    // Validate the block
-    validate_block(&block, &parent_block_header, &db.chain_config)?;
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db.get_tries()?;
-
     // Validate the initial state
     let initial_state_hash = state_trie.hash_no_commit();
     if initial_state_hash != parent_block_header.state_root {
@@ -56,10 +53,19 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     };
 
     let mut vm = Evm::from_execution_db(db.clone());
-    let result = vm.execute_block(&block)?;
-    let receipts = result.receipts;
-    let account_updates = result.account_updates;
-    // validate_gas_used(&receipts, &block.header)?;
+
+    let mut account_updates = Vec::new();
+    let mut parent_header = parent_block_header;
+
+    for block in blocks {
+        // Validate the block
+        validate_block(&block, &parent_header, &db.chain_config)?;
+        let result = vm.execute_block(&block)?;
+        let receipts = result.receipts;
+        account_updates.extend(result.account_updates);
+        // validate_gas_used(&receipts, &block.header)?;
+        parent_header = block.header;
+    }
 
     // Update state trie
     update_tries(&mut state_trie, &mut storage_tries, &account_updates)?;
