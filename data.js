@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745251074335,
+  "lastUpdate": 1745251356203,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3355,6 +3355,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184169516668,
             "range": "± 667330299",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tomas.arjovsky@lambdaclass.com",
+            "name": "Tomás Arjovsky",
+            "username": "Arkenan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "775bc45e1ed11c1ae972060927d895f1f8729be2",
+          "message": "Add metrics for execution and storage times per block (#2302)\n\nThis PR adds logs for each imported block:\n- Transaction count\n- ms/Ggas for execution\n- ms/Ggas for storage\n- Percentage between execution and storage in an imported block",
+          "timestamp": "2025-04-21T15:13:37Z",
+          "tree_id": "af40ae7dd8fb62237eaf2dda9f443d91273f4ea9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/775bc45e1ed11c1ae972060927d895f1f8729be2"
+        },
+        "date": 1745251353422,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186567021368,
+            "range": "± 550643280",
             "unit": "ns/iter"
           }
         ]
