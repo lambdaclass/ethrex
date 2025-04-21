@@ -45,3 +45,7 @@ blst = ["ethrex-vm/blst"]
 [[test]]
 name = "all"
 harness = false
+
+[[bin]]
+name = "main"
+path = "./main.rs"

@@ -186,7 +186,7 @@ pub fn prepare_revm_for_tx<'state>(
         },
         value: RevmU256::from_limbs(tx.value.0),
         data: tx.data.to_vec().into(),
-        nonce: Some(tx.nonce.as_u64()),
+        nonce: Some(tx.nonce),
         chain_id: Some(chain_spec.chain_id), //TODO: See what to do with this... ChainId test fails IDK why.
         access_list: revm_access_list,
         gas_priority_fee: tx
@@ -373,7 +373,7 @@ pub async fn compare_levm_revm_account_updates(
             let account = Account::new(
                 pre_state_value.balance,
                 pre_state_value.code.clone(),
-                pre_state_value.nonce.as_u64(),
+                pre_state_value.nonce,
                 account_storage,
             );
             (*account_address, account)

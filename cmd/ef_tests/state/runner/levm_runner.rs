@@ -26,6 +26,8 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
         .or(test._info.hash)
         .unwrap_or_default();
 
+    // println!("Running EFTest: {}", test.name);
+
     let mut ef_test_report = EFTestReport::new(test.name.clone(), test.dir.clone(), hash);
     for fork in test.post.forks.keys() {
         let mut ef_test_report_fork = EFTestReportForkResult::new();
@@ -183,9 +185,7 @@ pub fn prepare_vm_for_tx<'a>(
             tx_max_priority_fee_per_gas: test_tx.max_priority_fee_per_gas,
             tx_max_fee_per_gas: test_tx.max_fee_per_gas,
             tx_max_fee_per_blob_gas: test_tx.max_fee_per_blob_gas,
-            tx_nonce: test_tx.nonce.try_into().map_err(|_| {
-                EFTestRunnerError::VMInitializationFailed("Nonce to large".to_string())
-            })?,
+            tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
             transient_storage: HashMap::new(),
         },
@@ -205,7 +205,7 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )))
         })?;
         ensure_pre_state_condition(
-            account.nonce == pre_value.nonce.as_u64(),
+            account.nonce == pre_value.nonce,
             format!(
                 "Nonce mismatch for account {:#x}: expected {}, got {}",
                 address, pre_value.nonce, account.nonce
