@@ -328,6 +328,16 @@ Aside from holesky, these steps can also be used to connect to other supported n
 
 If you have a running execution node that you want to connect to your ethrex node you can do so by passing its enode as a bootnode using the `--bootnodes` flag
 
+Once the node is up and running you will be able to see logs indicating the start of each sync cycle along with from which block hash to which block hash we are syncing. You will also get regular logs with the completion rate and estimated finish time for state sync and state rebuild processes during snap sync. This will look something like this:
+
+```bash
+INFO ethrex_p2p::sync: Syncing from current head 0xb5f7…bde4 to sync_head 0xce96…fa5e
+INFO ethrex_p2p::sync::state_sync: Downloading state trie, completion rate: 68%, estimated time to finish: 1h20m14s
+INFO ethrex_p2p::sync::trie_rebuild: State Trie Rebuild Progress: 68%, estimated time to finish: 1h5m45s
+```
+
+
+
 # ethrex L2
 
 In this mode, the ethrex code is repurposed to run a rollup that settles on Ethereum as the L1.
