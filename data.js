@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745266916240,
+  "lastUpdate": 1745269904492,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3565,6 +3565,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183444993601,
             "range": "± 1109833066",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "793227a9066bf4840c75194bd2513034486bd770",
+          "message": "chore(l2): report prover integration test failure to slack (#2503)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-21T20:24:23Z",
+          "tree_id": "4e5a9a14717ce9b8b647dd579a8d016ac6f34b30",
+          "url": "https://github.com/lambdaclass/ethrex/commit/793227a9066bf4840c75194bd2513034486bd770"
+        },
+        "date": 1745269901870,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182203817085,
+            "range": "± 822225260",
             "unit": "ns/iter"
           }
         ]
