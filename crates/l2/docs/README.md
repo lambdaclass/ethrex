@@ -13,7 +13,12 @@ For more detailed documentation on each part of the system:
 - [Prover](./prover.md)
 - [State Diffs](./state_diffs.md)
 - [Withdrawals](./withdrawals.md)
+  
+## Prerequisites
 
+- [Rust](https://www.rust-lang.org/tools/install)
+- [Solc 0.29](https://docs.soliditylang.org/en/latest/installing-solidity.html)
+  
 ## Quick HandsOn
 
 1. `cd crates/l2`
