@@ -309,7 +309,7 @@ fn exception_is_expected(
                 VMError::TxValidation(TxValidationError::Type4TxContractCreation)
             ) | (
                 TransactionExpectedException::Other,
-                VMError::TxValidation(_) //TODO: Decide whether to support specific errors, maybe this is enough.
+                VMError::TxValidation(_) //TODO: Decide whether to support more specific errors, I think this is enough.
             )
         )
     })
@@ -322,32 +322,17 @@ pub async fn ensure_post_state(
     fork: &Fork,
     db: &mut GeneralizedDatabase,
 ) -> Result<(), EFTestRunnerError> {
+    let cache = db.cache.clone();
     match levm_execution_result {
         Ok(execution_report) => {
             match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was successful but an exception was expected.
                 Some(expected_exceptions) => {
-                    // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
-                    // Here I use a match bc if there is no second position I just print the first one.
-                    let error_reason = match expected_exceptions.get(1) {
-                        Some(second_exception) => {
-                            format!(
-                                "Expected exception: {:?} or {:?}",
-                                expected_exceptions.first().unwrap(),
-                                second_exception
-                            )
-                        }
-                        None => {
-                            format!(
-                                "Expected exception: {:?}",
-                                expected_exceptions.first().unwrap()
-                            )
-                        }
-                    };
+                    let error_reason = format!("Expected exception: {:?}", expected_exceptions);
                     return Err(EFTestRunnerError::FailedToEnsurePostState(
                         execution_report.clone(),
                         error_reason,
-                        db.cache.clone(),
+                        cache,
                     ));
                 }
                 // Execution result was successful and no exception was expected.
@@ -359,17 +344,17 @@ pub async fn ensure_post_state(
                                     .to_owned(),
                             )
                         })?;
-                    let pos_state_root = post_state_root(&levm_account_updates, test).await;
+                    let post_state_root_hash = post_state_root(&levm_account_updates, test).await;
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
-                    if expected_post_state_root_hash != pos_state_root {
+                    if expected_post_state_root_hash != post_state_root_hash {
                         let error_reason = format!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
+                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {post_state_root_hash:#x}",
                         );
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             execution_report.clone(),
                             error_reason,
-                            db.cache.clone(),
+                            cache,
                         ));
                     }
                 }
@@ -379,28 +364,13 @@ pub async fn ensure_post_state(
             match test.post.vector_post_value(vector, *fork).expect_exception {
                 // Execution result was unsuccessful and an exception was expected.
                 Some(expected_exceptions) => {
-                    // Note: expected_exceptions is a vector because can only have 1 or 2 expected errors.
-                    // So in exception_is_expected we find out if the obtained error matches one of the expected
                     if !exception_is_expected(expected_exceptions.clone(), err.clone()) {
-                        let error_reason = match expected_exceptions.get(1) {
-                            Some(second_exception) => {
-                                format!(
-                                    "Returned exception is not the expected: Returned {:?} but expected {:?} or {:?}",
-                                    err,
-                                    expected_exceptions.first().unwrap(),
-                                    second_exception
-                                )
-                            }
-                            None => {
-                                format!(
-                                    "Returned exception is not the expected: Returned {:?} but expected {:?}",
-                                    err,
-                                    expected_exceptions.first().unwrap()
-                                )
-                            }
-                        };
+                        let error_reason = format!(
+                            "Returned exception {:?} does not match expected {:?}",
+                            err, expected_exceptions
+                        );
                         return Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
-                            format!("Post-state condition failed: {error_reason}"),
+                            error_reason,
                         ));
                     }
                 }
