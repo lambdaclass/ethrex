@@ -246,7 +246,6 @@ async fn handle_forkchoice(
     }
 
     if context.syncer.sync_mode() == SyncMode::Snap {
-        warn!("Snap sync in progress, setting new head optimistically");
         context.syncer.set_head(fork_choice_state.head_block_hash);
         return Ok((None, PayloadStatus::syncing().into()));
     }
