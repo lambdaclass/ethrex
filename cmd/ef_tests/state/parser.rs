@@ -157,7 +157,7 @@ pub fn parse_ef_test_dir(
         }
 
         // We only want to include tests that have post states from the specified forks in EFTestsRunnerOptions.
-        if let Some(forks) = &opts.tests_forks {
+        if let Some(forks) = &opts.forks {
             for test in tests.0.iter_mut() {
                 let test_forks_numbers: Vec<u8> = forks.iter().map(|fork| *fork as u8).collect();
 
