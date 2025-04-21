@@ -138,23 +138,43 @@ impl Blockchain {
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        // Easiest way to operate on the result of `execute_block` without
-        // having to add too much control flow or return early
-        // Async doesn't play well with `.and_then`
-        let inner = || async {
-            let res = self.execute_block(block).await?;
-            self.store_block(block, res).await
-        };
-
-        let result = inner().await;
-
-        let interval = Instant::now().duration_since(since).as_millis();
-        if interval != 0 {
-            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
-        }
+        let res = self.execute_block(block).await?;
+        let executed = Instant::now();
+        let result = self.store_block(block, res).await;
+        let stored = Instant::now();
+        Self::print_add_block_logs(block, since, executed, stored);
         result
+    }
+
+    fn print_add_block_logs(block: &Block, since: Instant, executed: Instant, stored: Instant) {
+        let interval = stored.duration_since(since).as_millis() as f64;
+        if interval != 0f64 {
+            let as_gigas = block.header.gas_used as f64 / 10_f64.powf(9_f64);
+            let throughput = as_gigas / interval * 1000_f64;
+            let execution_time = executed.duration_since(since).as_millis() as f64;
+            let storage_time = stored.duration_since(executed).as_millis() as f64;
+            let execution_fraction = (execution_time * 100_f64 / interval).round() as u64;
+            let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
+            let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
+            let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
+            let base_log =
+                format!(
+                "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
+                throughput, interval, block.body.transactions.len()
+            );
+            let extra_log = if as_gigas > 0.0 {
+                format!(
+                    " exec/Ggas: {} ms ({}%), st/Ggas: {} ms ({}%)",
+                    execution_time_per_gigagas,
+                    execution_fraction,
+                    storage_time_per_gigagas,
+                    storage_fraction
+                )
+            } else {
+                "".to_string()
+            };
+            info!("{}{}", base_log, extra_log);
+        }
     }
 
     /// Adds multiple blocks in a batch.
