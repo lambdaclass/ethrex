@@ -42,9 +42,9 @@ jobs:
       - name: Clippy
         run: |
           if [ "${{ matrix.backend }}" == "exec" ]; then
-            cargo clippy -p ethrex-prover --all-targets
+            cargo clippy -p ethrex-prover --all-targets -- -D warnings
           else
-            cargo clippy -p ethrex-prover --all-targets -F ${{ matrix.backend }}
+            cargo clippy -p ethrex-prover --all-targets -F ${{ matrix.backend }} -- -D warnings
           fi
 
   test:

@@ -43,6 +43,34 @@ jobs:
           name: buildx-cache
           path: /tmp/buildx-cache
 
+  lint:
+    # "Lint" is a required check, don't change the name
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run cargo check
+        run: cargo check --workspace
+
+      - name: Run cargo clippy
+        run: |
+          cargo clippy --workspace -- -D warnings
+          cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+
+      - name: Run cargo fmt
+        run: |
+          cargo fmt --all -- --check
+
   integration-test:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
@@ -97,7 +125,6 @@ jobs:
           make integration-test
 
   state-diff-test:
-    # "State Reconstruction Tests" is a required check, don't change the name
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
     needs: [docker-bake]
