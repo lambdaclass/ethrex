@@ -94,13 +94,29 @@ pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
 impl EthClient {
     pub fn new(url: &str) -> Self {
+        Self::new_with_config(
+            url,
+            MAX_NUMBER_OF_RETRIES,
+            BACKOFF_FACTOR,
+            MIN_RETRY_DELAY,
+            MAX_RETRY_DELAY,
+        )
+    }
+
+    pub fn new_with_config(
+        url: &str,
+        max_number_of_retries: u64,
+        backoff_factor: u64,
+        min_retry_delay: u64,
+        max_retry_delay: u64,
+    ) -> Self {
         Self {
             client: Client::new(),
             url: url.to_string(),
-            max_number_of_retries: MAX_NUMBER_OF_RETRIES,
-            backoff_factor: BACKOFF_FACTOR,
-            min_retry_delay: MIN_RETRY_DELAY,
-            max_retry_delay: MAX_RETRY_DELAY,
+            max_number_of_retries,
+            backoff_factor,
+            min_retry_delay,
+            max_retry_delay,
         }
     }
 
@@ -198,21 +214,22 @@ impl EthClient {
     ) -> Result<H256, EthClientError> {
         let mut number_of_retries = 0;
 
-        'outer: while number_of_retries < MAX_NUMBER_OF_RETRIES {
+        'outer: while number_of_retries < self.max_number_of_retries {
             let tx_hash = self
                 .send_wrapped_transaction(wrapped_tx, private_key)
                 .await?;
 
             if number_of_retries > 0 {
-                warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{MAX_NUMBER_OF_RETRIES}]\nTxHash: {tx_hash:#x}");
+                warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{}]\nTxHash: {tx_hash:#x}", self.max_number_of_retries);
             }
 
             let mut receipt = self.get_transaction_receipt(tx_hash).await?;
 
             let mut attempt = 1;
-            let attempts_to_wait_in_seconds = BACKOFF_FACTOR
+            let attempts_to_wait_in_seconds = self
+                .backoff_factor
                 .pow(number_of_retries as u32)
-                .clamp(MIN_RETRY_DELAY, MAX_RETRY_DELAY);
+                .clamp(self.min_retry_delay, self.max_retry_delay);
             while receipt.is_none() {
                 if attempt >= (attempts_to_wait_in_seconds / WAIT_TIME_FOR_RECEIPT_SECONDS) {
                     // We waited long enough for the receipt but did not find it, bump gas

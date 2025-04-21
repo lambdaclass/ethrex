@@ -65,7 +65,13 @@ impl Committer {
         execution_cache: Arc<ExecutionCache>,
     ) -> Self {
         Self {
-            eth_client: EthClient::new(&eth_config.rpc_url),
+            eth_client: EthClient::new_with_config(
+                &eth_config.rpc_url,
+                eth_config.max_number_of_retries,
+                eth_config.backoff_factor,
+                eth_config.min_retry_delay,
+                eth_config.max_retry_delay,
+            ),
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
             l1_address: committer_config.l1_address,
