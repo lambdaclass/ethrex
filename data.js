@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745270432300,
+  "lastUpdate": 1745275093922,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3625,6 +3625,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182360857225,
             "range": "± 501368925",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e7832a19f14dd87c537cfe35f85a890886fdf5cb",
+          "message": "refactor(levm): refactor execution into being non-recursive (#2473)\n\n**Motivation**\n\nIn #2445 a Stack Overflow was found with high call stacks. Turns out\neach level of recursion was adding ~4kB to the stack.\n\nSimply reducing the stack usage would've required extensive stack usage\nand hard to understand code.\n\n**Description**\n\nMakes code execution non-recursive, and instead uses call_stacks to save\nthe call stacks and return_data to save return parameters.\n\nFunctions that took the current frame by parameter now read it with a\nfunction.\n\nCloses #2445\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-04-21T21:50:45Z",
+          "tree_id": "6f6b4e98135b8bb37b1c408651818ae1108ae2c7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e7832a19f14dd87c537cfe35f85a890886fdf5cb"
+        },
+        "date": 1745275091792,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180265853102,
+            "range": "± 372516910",
             "unit": "ns/iter"
           }
         ]
