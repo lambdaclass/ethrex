@@ -149,11 +149,7 @@ impl Hook for DefaultHook {
         validate_sender(&sender_account)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
-        if vm.env.gas_limit > vm.env.block_gas_limit {
-            return Err(VMError::TxValidation(
-                TxValidationError::GasAllowanceExceeded,
-            ));
-        }
+        validate_gas_allowance(vm)?;
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if vm.env.tx_max_fee_per_blob_gas.is_some() {
@@ -492,6 +488,15 @@ pub fn validate_type_4_tx(
 pub fn validate_sender(sender_account: &Account) -> Result<(), VMError> {
     if sender_account.has_code() && !has_delegation(&sender_account.info)? {
         return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
+    }
+    Ok(())
+}
+
+pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), VMError> {
+    if vm.env.gas_limit > vm.env.block_gas_limit {
+        return Err(VMError::TxValidation(
+            TxValidationError::GasAllowanceExceeded,
+        ));
     }
     Ok(())
 }

@@ -78,11 +78,7 @@ impl Hook for L2Hook {
         }
 
         // (10) GAS_ALLOWANCE_EXCEEDED
-        if vm.env.gas_limit > vm.env.block_gas_limit {
-            return Err(VMError::TxValidation(
-                TxValidationError::GasAllowanceExceeded,
-            ));
-        }
+        default_hook::validate_gas_allowance(vm)?;
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if vm.env.tx_max_fee_per_blob_gas.is_some() {
