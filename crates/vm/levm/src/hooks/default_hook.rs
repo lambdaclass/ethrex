@@ -146,9 +146,7 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        if sender_account.has_code() && !has_delegation(&sender_account.info)? {
-            return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
-        }
+        validate_sender(&sender_account)?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         if vm.env.gas_limit > vm.env.block_gas_limit {
@@ -488,5 +486,12 @@ pub fn validate_type_4_tx(
         initial_call_frame,
     )?;
 
+    Ok(())
+}
+
+pub fn validate_sender(sender_account: &Account) -> Result<(), VMError> {
+    if sender_account.has_code() && !has_delegation(&sender_account.info)? {
+        return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
+    }
     Ok(())
 }
