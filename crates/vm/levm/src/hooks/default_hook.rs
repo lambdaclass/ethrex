@@ -10,7 +10,7 @@ use crate::{
     Account,
 };
 
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::{types::Fork, Address, U256};
 
 use std::cmp::max;
 
@@ -49,69 +49,20 @@ impl Hook for DefaultHook {
                 TxValidationError::GasLimitPriceProductOverflow,
             ))?;
 
-        // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
-        let value = initial_call_frame.msg_value;
-
-        // blob gas cost = max fee per blob gas * blob gas used
-        // https://eips.ethereum.org/EIPS/eip-4844
-        let max_blob_gas_cost =
-            get_max_blob_gas_price(&vm.env.tx_blob_hashes, vm.env.tx_max_fee_per_blob_gas)?;
-
-        // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
-        // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
-        let gas_fee_for_valid_tx = vm
-            .env
-            .tx_max_fee_per_gas
-            .unwrap_or(vm.env.gas_price)
-            .checked_mul(vm.env.gas_limit.into())
-            .ok_or(VMError::TxValidation(
-                TxValidationError::GasLimitPriceProductOverflow,
-            ))?;
-
-        let balance_for_valid_tx = gas_fee_for_valid_tx
-            .checked_add(value)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?
-            .checked_add(max_blob_gas_cost)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?;
-        if sender_account.info.balance < balance_for_valid_tx {
-            return Err(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ));
-        }
-
-        let blob_gas_cost = get_blob_gas_price(
-            &vm.env.tx_blob_hashes,
-            vm.env.block_excess_blob_gas,
-            &vm.env.config,
-        )?;
+        validate_sender_balance(vm, initial_call_frame, &sender_account)?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
             check_max_fee_per_blob_gas(vm, tx_max_fee_per_blob_gas)?;
         }
 
-        // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
-        let up_front_cost = gaslimit_price_product
-            .checked_add(value)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?
-            .checked_add(blob_gas_cost)
-            .ok_or(VMError::TxValidation(
-                TxValidationError::InsufficientAccountFunds,
-            ))?;
-        // There is no error specified for overflow in up_front_cost
-        // in ef_tests. We went for "InsufficientAccountFunds" simply
-        // because if the upfront cost is bigger than U256, then,
-        // technically, the sender will not be able to pay it.
-
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        decrease_account_balance(vm.db, sender_address, up_front_cost)
-            .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+        deduct_caller(
+            vm,
+            initial_call_frame,
+            gaslimit_price_product,
+            sender_address,
+        )?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
         validate_sufficient_max_fee_per_gas(vm)?;
@@ -498,5 +449,84 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), VMError> {
             TxValidationError::GasAllowanceExceeded,
         ));
     }
+    Ok(())
+}
+
+pub fn validate_sender_balance(
+    vm: &mut VM<'_>,
+    initial_call_frame: &CallFrame,
+    sender_account: &Account,
+) -> Result<(), VMError> {
+    // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
+    let value = initial_call_frame.msg_value;
+
+    // blob gas cost = max fee per blob gas * blob gas used
+    // https://eips.ethereum.org/EIPS/eip-4844
+    let max_blob_gas_cost =
+        get_max_blob_gas_price(&vm.env.tx_blob_hashes, vm.env.tx_max_fee_per_blob_gas)?;
+
+    // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
+    // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
+    let gas_fee_for_valid_tx = vm
+        .env
+        .tx_max_fee_per_gas
+        .unwrap_or(vm.env.gas_price)
+        .checked_mul(vm.env.gas_limit.into())
+        .ok_or(VMError::TxValidation(
+            TxValidationError::GasLimitPriceProductOverflow,
+        ))?;
+
+    let balance_for_valid_tx = gas_fee_for_valid_tx
+        .checked_add(value)
+        .ok_or(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ))?
+        .checked_add(max_blob_gas_cost)
+        .ok_or(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ))?;
+
+    if sender_account.info.balance < balance_for_valid_tx {
+        return Err(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn deduct_caller(
+    vm: &mut VM<'_>,
+    initial_call_frame: &CallFrame,
+    gas_limit_price_product: U256,
+    sender_address: Address,
+) -> Result<(), VMError> {
+    // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
+    let value = initial_call_frame.msg_value;
+
+    let blob_gas_cost = get_blob_gas_price(
+        &vm.env.tx_blob_hashes,
+        vm.env.block_excess_blob_gas,
+        &vm.env.config,
+    )?;
+
+    // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
+    let up_front_cost = gas_limit_price_product
+        .checked_add(value)
+        .ok_or(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ))?
+        .checked_add(blob_gas_cost)
+        .ok_or(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ))?;
+    // There is no error specified for overflow in up_front_cost
+    // in ef_tests. We went for "InsufficientAccountFunds" simply
+    // because if the upfront cost is bigger than U256, then,
+    // technically, the sender will not be able to pay it.
+
+    decrease_account_balance(vm.db, sender_address, up_front_cost)
+        .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+
     Ok(())
 }
