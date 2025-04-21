@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745251356203,
+  "lastUpdate": 1745252139625,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3385,6 +3385,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186567021368,
             "range": "± 550643280",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "bc9aafd01f72111d2e45fc46a42e811aaf1916cb",
+          "message": "chore(l1): standarize revm/levm behaviour when importing blocks. (#2452)\n\n**Description**\n- standarize revm/levm behaviour when importing blocks\n- Remove fork choice when importing blocks.\n- Move block importing out of blockchain module",
+          "timestamp": "2025-04-21T15:27:54Z",
+          "tree_id": "a2cadb20fceeeb4d23356a1971ee8c23cbcae128",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bc9aafd01f72111d2e45fc46a42e811aaf1916cb"
+        },
+        "date": 1745252136964,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181810883425,
+            "range": "± 1012161046",
             "unit": "ns/iter"
           }
         ]
