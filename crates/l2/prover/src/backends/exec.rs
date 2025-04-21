@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+
 use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_common::Address;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
+use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use tracing::warn;
 use zkvm_interface::{
@@ -38,7 +42,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     let ProgramInput {
         blocks,
         parent_block_header,
-        db,
+        mut db,
     } = input;
 
     // Tries used for validating initial and final state root
@@ -52,23 +56,32 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         return Err("invalid database".to_string().into());
     };
 
-    let mut vm = Evm::from_execution_db(db.clone());
-
-    let mut account_updates = Vec::new();
     let mut parent_header = parent_block_header;
+    let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
     for block in blocks {
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config)?;
+        let mut vm = Evm::from_execution_db(db.clone());
         let result = vm.execute_block(&block)?;
         let receipts = result.receipts;
-        account_updates.extend(result.account_updates);
+        db.apply_account_updates(&result.account_updates);
+        for account in result.account_updates {
+            let address = account.address;
+            if let Some(existing) = acc_account_updates.get_mut(&address) {
+                existing.merge(account);
+            } else {
+                acc_account_updates.insert(address, account);
+            }
+        }
         // validate_gas_used(&receipts, &block.header)?;
         parent_header = block.header;
     }
 
+    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
+
     // Update state trie
-    update_tries(&mut state_trie, &mut storage_tries, &account_updates)?;
+    update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)?;
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();

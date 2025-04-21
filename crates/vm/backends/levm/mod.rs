@@ -404,15 +404,19 @@ impl LEVM {
             },
         )))));
 
-        let mut execution_updates = vec![];
+        let mut execution_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         for block in blocks {
             let mut db = GeneralizedDatabase::new(logger.clone(), CacheDB::new());
             // pre-execute and get all state changes
-            execution_updates.extend(
-                Self::execute_block(block, &mut db)
-                    .map_err(Box::new)?
-                    .account_updates,
-            );
+            let account_updates = Self::execute_block(block, &mut db)
+                .map_err(Box::new)?
+                .account_updates;
+            for update in account_updates {
+                execution_updates
+                    .entry(update.address)
+                    .and_modify(|existing| existing.merge(update.clone()))
+                    .or_insert(update);
+            }
 
             // Update de block_hash for the next execution.
             let new_store = StoreWrapper {
@@ -436,7 +440,7 @@ impl LEVM {
         // fetch all read/written accounts from store
         let accounts = state_accessed
             .keys()
-            .chain(execution_updates.iter().map(|update| &update.address))
+            .chain(execution_updates.keys())
             .filter_map(|address| {
                 store
                     .get_account_info_by_hash(first_block_parent_hash, *address)
@@ -466,10 +470,10 @@ impl LEVM {
             .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
 
         // fetch all read/written storage from store
-        let added_storage = execution_updates.iter().filter_map(|update| {
+        let added_storage = execution_updates.iter().filter_map(|(address, update)| {
             if !update.added_storage.is_empty() {
                 let keys = update.added_storage.keys().cloned().collect::<Vec<_>>();
-                Some((update.address, keys))
+                Some((*address, keys))
             } else {
                 None
             }

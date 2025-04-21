@@ -39,7 +39,10 @@ impl LevmDatabase for DatabaseLogger {
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .or_default();
-        self.store.get_account_info(address)
+        self.store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .get_account_info(address)
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
@@ -57,7 +60,10 @@ impl LevmDatabase for DatabaseLogger {
             .entry(address)
             .and_modify(|keys| keys.push(key))
             .or_insert(vec![key]);
-        self.store.get_storage_slot(address, key)
+        self.store
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .get_storage_slot(address, key)
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
