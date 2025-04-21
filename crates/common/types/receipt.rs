@@ -6,7 +6,9 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
+use hex;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::types::TxType;
 pub type Index = u64;
@@ -182,11 +184,21 @@ impl RLPDecode for Receipt {
 }
 
 /// Data record produced during the execution of a transaction.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Log {
     pub address: Address,
     pub topics: Vec<H256>,
     pub data: Bytes,
+}
+
+impl fmt::Debug for Log {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Log")
+            .field("address", &self.address)
+            .field("topics", &self.topics)
+            .field("data", &hex::encode(&self.data))
+            .finish()
+    }
 }
 
 impl RLPEncode for Log {
