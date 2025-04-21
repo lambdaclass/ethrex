@@ -25,12 +25,48 @@ impl Hook for L2Hook {
         vm: &mut crate::vm::VM<'_>,
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
-        increase_account_balance(vm.db, self.recipient, initial_call_frame.msg_value)?;
+        // FIXME: L2Hook should behave like the DefaultHook but with extra or
+        // less steps. Currently it's not the case since it is hardcoded to
+        // always be used for Privilege txs, specifically deposit txs.
+        // This efforts will be done in two steps:
+        // 1. Refactoring L2Hook to be a DefaultHook with some extra steps.
+        // 2. Adding logic to detect privilege transactions since now it is not
+        // possible.
+        // As part of the first step we will continue using the L2Hook for
+        // privilege transactions, hence the hardcoded is_privilege_tx.
+        let is_privilege_tx = true;
 
-        initial_call_frame.msg_value = U256::from(0);
+        let sender_address = vm.env.origin;
+        let sender_account = get_account(vm.db, sender_address)?;
+
+        if is_privilege_tx {
+            increase_account_balance(vm.db, self.recipient, initial_call_frame.msg_value)?;
+            initial_call_frame.msg_value = U256::from(0);
+        }
 
         if vm.env.config.fork >= Fork::Prague {
             default_hook::check_min_gas_limit(vm, initial_call_frame)?;
+        }
+
+        if !is_privilege_tx {
+            // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
+            let gaslimit_price_product = vm
+                .env
+                .gas_price
+                .checked_mul(vm.env.gas_limit.into())
+                .ok_or(VMError::TxValidation(
+                    TxValidationError::GasLimitPriceProductOverflow,
+                ))?;
+
+            default_hook::validate_sender_balance(vm, initial_call_frame, &sender_account)?;
+
+            // (3) INSUFFICIENT_ACCOUNT_FUNDS
+            default_hook::deduct_caller(
+                vm,
+                initial_call_frame,
+                gaslimit_price_product,
+                sender_address,
+            )?;
         }
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
