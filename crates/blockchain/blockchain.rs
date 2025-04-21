@@ -334,17 +334,9 @@ impl Blockchain {
         }
         if let Some(last_block) = blocks.last() {
             let hash = last_block.hash();
-            match self.evm_engine {
-                EvmEngine::LEVM => {
-                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                    let _ = apply_fork_choice(&self.storage, hash, hash, hash).await;
-                }
-                EvmEngine::REVM => {
-                    apply_fork_choice(&self.storage, hash, hash, hash)
-                        .await
-                        .unwrap();
-                }
-            }
+            apply_fork_choice(&self.storage, hash, hash, hash)
+                .await
+                .unwrap();
         }
         info!("Added {size} blocks to blockchain");
     }
