@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745057204767,
+  "lastUpdate": 1745251074335,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3325,6 +3325,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180626848933,
             "range": "± 1169250545",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "tomas.arjovsky@lambdaclass.com",
+            "name": "Tomás Arjovsky",
+            "username": "Arkenan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6ef0ee92fe7139708075b6d99d9a1bcfb44b386e",
+          "message": "perf(l1,l2): use the new load test for the CI scripts (#2467)\n\nChanges:\n- Flamegraph Watcher srcript now:\n  - Uses the new load test.\n  - Fails if any line fails (e.g. the load test binary panics).\n- CI:\n  - The flamegraphs are now updated on push to main again.\n- Compilation and running is separated to delete the \"while not\ncompiled\" polling.\n- Reth version is pinned so it does not rely on 2024 features and can be\ncompiled again.\n- Load test:\n  - `make` targets now run in release mode.\n- now waits until all transactions are included before exciting. There's\na flag to set a timeout.\n- All ethrex_l2 references are deleted from CI and the watcher.\n\n\nCloses #2466",
+          "timestamp": "2025-04-21T15:09:03Z",
+          "tree_id": "5dfce79fcd2149e14c1625ffc07705c61a4d0762",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6ef0ee92fe7139708075b6d99d9a1bcfb44b386e"
+        },
+        "date": 1745251071658,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184169516668,
+            "range": "± 667330299",
             "unit": "ns/iter"
           }
         ]
