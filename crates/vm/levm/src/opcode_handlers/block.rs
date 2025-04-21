@@ -125,7 +125,8 @@ impl<'a> VM<'a> {
             return Err(VMError::InvalidOpcode);
         }
 
-        self.current_call_frame_mut()?.increase_consumed_gas(gas_cost::SELFBALANCE)?;
+        self.current_call_frame_mut()?
+            .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
         let balance = get_account(self.db, self.current_call_frame()?.to)?
             .info
@@ -190,7 +191,8 @@ impl<'a> VM<'a> {
             return Err(VMError::InvalidOpcode);
         }
 
-        self.current_call_frame_mut()?.increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
+        self.current_call_frame_mut()?
+            .increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
 
         let blob_base_fee =
             get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?;
