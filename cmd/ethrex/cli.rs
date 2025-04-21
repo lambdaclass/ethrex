@@ -5,6 +5,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
+use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
@@ -55,7 +56,7 @@ pub struct Options {
     )]
     pub datadir: String,
     #[arg(
-        long = "force", 
+        long = "force",
         help = "Force remove the database",
         long_help = "Delete the database without confirmation.",
         action = clap::ArgAction::SetTrue,
@@ -298,7 +299,7 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
 
     let store = init_store(&data_dir, network).await;
 
-    let blockchain = init_blockchain(evm, store);
+    let blockchain = init_blockchain(evm, store.clone());
 
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
@@ -317,5 +318,32 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-    blockchain.import_blocks(&blocks).await;
+
+    let size = blocks.len();
+
+    for block in &blocks {
+        let hash = block.hash();
+
+        info!(
+            "Adding block {} with hash {:#x}.",
+            block.header.number, hash
+        );
+
+        if let Err(error) = blockchain.add_block(block).await {
+            warn!(
+                "Failed to add block {} with hash {:#x}: {}.",
+                block.header.number, hash, error
+            );
+            return;
+        }
+    }
+
+    if let Some(last_block) = blocks.last() {
+        let hash = last_block.hash();
+        if let Err(error) = apply_fork_choice(&store, hash, hash, hash).await {
+            warn!("Failed to apply fork choice: {}", error);
+        }
+    }
+
+    info!("Added {size} blocks to blockchain");
 }
