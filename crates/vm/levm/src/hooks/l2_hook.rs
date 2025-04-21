@@ -10,7 +10,7 @@ use crate::{
     utils::{
         add_intrinsic_gas, eip7702_set_access_code, get_account, get_account_mut_vm,
         get_base_fee_per_blob_gas, get_intrinsic_gas, get_valid_jump_destinations, has_delegation,
-        increase_account_balance,
+        increase_account_balance, pay_coinbase_fee,
     },
     Account,
 };
@@ -272,24 +272,11 @@ impl Hook for L2Hook {
         }
 
         // 3. Pay coinbase fee
-        let coinbase_address = vm.env.coinbase;
-
         let gas_to_pay_coinbase = consumed_gas
             .checked_sub(refunded_gas)
             .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
 
-        let priority_fee_per_gas = vm
-            .env
-            .gas_price
-            .checked_sub(vm.env.base_fee_per_gas)
-            .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
-        let coinbase_fee = U256::from(gas_to_pay_coinbase)
-            .checked_mul(priority_fee_per_gas)
-            .ok_or(VMError::BalanceOverflow)?;
-
-        if coinbase_fee != U256::zero() {
-            increase_account_balance(vm.db, coinbase_address, coinbase_fee)?;
-        };
+        pay_coinbase_fee(vm, gas_to_pay_coinbase)?;
 
         // 4. Destruct addresses in vm.estruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction

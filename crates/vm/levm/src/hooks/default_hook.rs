@@ -409,20 +409,7 @@ impl Hook for DefaultHook {
         increase_account_balance(vm.db, sender_address, wei_return_amount)?;
 
         // 3. Pay coinbase fee
-        let coinbase_address = vm.env.coinbase;
-
-        let priority_fee_per_gas = vm
-            .env
-            .gas_price
-            .checked_sub(vm.env.base_fee_per_gas)
-            .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
-        let coinbase_fee = U256::from(actual_gas_used)
-            .checked_mul(priority_fee_per_gas)
-            .ok_or(VMError::BalanceOverflow)?;
-
-        if coinbase_fee != U256::zero() {
-            increase_account_balance(vm.db, coinbase_address, coinbase_fee)?;
-        };
+        pay_coinbase_fee(vm, actual_gas_used)?;
 
         // 4. Destruct addresses in vm.selfdestruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction

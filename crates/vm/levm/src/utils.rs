@@ -12,7 +12,7 @@ use crate::{
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    vm::{EVMConfig, GeneralizedDatabase, Substate},
+    vm::{EVMConfig, GeneralizedDatabase, Substate, VM},
     AccountInfo,
 };
 use bytes::Bytes;
@@ -717,4 +717,22 @@ pub fn eip7702_get_code(
     let authorized_bytecode = get_account_no_push_cache(db, auth_address)?.info.bytecode;
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
+}
+
+pub fn pay_coinbase_fee(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
+    let priority_fee_per_gas = vm
+        .env
+        .gas_price
+        .checked_sub(vm.env.base_fee_per_gas)
+        .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
+
+    let coinbase_fee = U256::from(gas_to_pay)
+        .checked_mul(priority_fee_per_gas)
+        .ok_or(VMError::BalanceOverflow)?;
+
+    if coinbase_fee != U256::zero() {
+        increase_account_balance(vm.db, vm.env.coinbase, coinbase_fee)?;
+    };
+
+    Ok(())
 }
