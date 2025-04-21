@@ -125,14 +125,13 @@ impl<'a> VM<'a> {
             return Err(VMError::InvalidOpcode);
         }
 
+        self.current_call_frame_mut()?.increase_consumed_gas(gas_cost::SELFBALANCE)?;
+
         let balance = get_account(self.db, self.current_call_frame()?.to)?
             .info
             .balance;
 
-        let current_call_frame = self.current_call_frame_mut()?;
-        current_call_frame.increase_consumed_gas(gas_cost::SELFBALANCE)?;
-
-        current_call_frame.stack.push(balance)?;
+        self.current_call_frame_mut()?.stack.push(balance)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
@@ -191,13 +190,12 @@ impl<'a> VM<'a> {
             return Err(VMError::InvalidOpcode);
         }
 
+        self.current_call_frame_mut()?.increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
+
         let blob_base_fee =
             get_base_fee_per_blob_gas(self.env.block_excess_blob_gas, &self.env.config)?;
 
-        let current_call_frame = self.current_call_frame_mut()?;
-        current_call_frame.increase_consumed_gas(gas_cost::BLOBBASEFEE)?;
-
-        current_call_frame.stack.push(blob_base_fee)?;
+        self.current_call_frame_mut()?.stack.push(blob_base_fee)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
