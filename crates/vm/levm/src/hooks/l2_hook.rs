@@ -1,16 +1,13 @@
-use std::cmp::max;
-
 use ethrex_common::{types::Fork, Address, U256};
 
 use crate::{
-    constants::{INIT_CODE_MAX_SIZE, TX_BASE_COST, VALID_BLOB_PREFIXES},
+    constants::{INIT_CODE_MAX_SIZE, VALID_BLOB_PREFIXES},
     db::cache::remove_account,
     errors::{InternalError, TxResult, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    hooks::default_hook,
     utils::{
-        add_intrinsic_gas, delete_self_destruct_accounts, eip7702_set_access_code, get_account,
-        get_base_fee_per_blob_gas, get_intrinsic_gas, get_valid_jump_destinations, has_delegation,
-        increase_account_balance, pay_coinbase_fee,
+        add_intrinsic_gas, eip7702_set_access_code, get_account, get_base_fee_per_blob_gas,
+        get_valid_jump_destinations, has_delegation, increase_account_balance,
     },
 };
 
@@ -34,37 +31,7 @@ impl Hook for L2Hook {
         initial_call_frame.msg_value = U256::from(0);
 
         if vm.env.config.fork >= Fork::Prague {
-            // check for gas limit is grater or equal than the minimum required
-            let intrinsic_gas: u64 = get_intrinsic_gas(
-                vm.is_create(),
-                vm.env.config.fork,
-                &vm.access_list,
-                &vm.authorization_list,
-                initial_call_frame,
-            )?;
-
-            // calldata_cost = tokens_in_calldata * 4
-            let calldata_cost: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, vm.env.config.fork)
-                    .map_err(VMError::OutOfGas)?;
-
-            // same as calculated in gas_used()
-            let tokens_in_calldata: u64 = calldata_cost
-                .checked_div(STANDARD_TOKEN_COST)
-                .ok_or(VMError::Internal(InternalError::DivisionError))?;
-
-            // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-            let floor_cost_by_tokens = tokens_in_calldata
-                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
-                .ok_or(VMError::Internal(InternalError::GasOverflow))?
-                .checked_add(TX_BASE_COST)
-                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-
-            let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
-
-            if initial_call_frame.gas_limit < min_gas_limit {
-                return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
-            }
+            default_hook::check_min_gas_limit(vm, initial_call_frame)?;
         }
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS

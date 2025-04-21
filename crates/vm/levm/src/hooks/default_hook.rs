@@ -7,6 +7,7 @@ use crate::{
     hooks::hook::Hook,
     utils::*,
     vm::VM,
+    Account,
 };
 
 use ethrex_common::{types::Fork, U256};
@@ -36,36 +37,7 @@ impl Hook for DefaultHook {
         let sender_account = get_account(vm.db, sender_address)?;
 
         if vm.env.config.fork >= Fork::Prague {
-            // check for gas limit is grater or equal than the minimum required
-            let intrinsic_gas: u64 = get_intrinsic_gas(
-                vm.is_create(),
-                vm.env.config.fork,
-                &vm.access_list,
-                &vm.authorization_list,
-                initial_call_frame,
-            )?;
-
-            // calldata_cost = tokens_in_calldata * 4
-            let calldata_cost: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, vm.env.config.fork)
-                    .map_err(VMError::OutOfGas)?;
-
-            // same as calculated in gas_used()
-            let tokens_in_calldata: u64 = calldata_cost
-                .checked_div(STANDARD_TOKEN_COST)
-                .ok_or(VMError::Internal(InternalError::DivisionError))?;
-
-            // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-            let floor_cost_by_tokens = tokens_in_calldata
-                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
-                .ok_or(VMError::Internal(InternalError::GasOverflow))?
-                .checked_add(TX_BASE_COST)
-                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-
-            let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
-            if initial_call_frame.gas_limit < min_gas_limit {
-                return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
-            }
+            check_min_gas_limit(vm, initial_call_frame)?;
         }
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
@@ -442,5 +414,44 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
         let account_to_remove = get_account_mut_vm(vm.db, address)?;
         *account_to_remove = Account::default();
     }
+    Ok(())
+}
+
+pub fn check_min_gas_limit(
+    vm: &mut VM<'_>,
+    initial_call_frame: &mut CallFrame,
+) -> Result<(), VMError> {
+    // check for gas limit is grater or equal than the minimum required
+    let intrinsic_gas: u64 = get_intrinsic_gas(
+        vm.is_create(),
+        vm.env.config.fork,
+        &vm.access_list,
+        &vm.authorization_list,
+        initial_call_frame,
+    )?;
+
+    // calldata_cost = tokens_in_calldata * 4
+    let calldata_cost: u64 =
+        gas_cost::tx_calldata(&initial_call_frame.calldata, vm.env.config.fork)
+            .map_err(VMError::OutOfGas)?;
+
+    // same as calculated in gas_used()
+    let tokens_in_calldata: u64 = calldata_cost
+        .checked_div(STANDARD_TOKEN_COST)
+        .ok_or(VMError::Internal(InternalError::DivisionError))?;
+
+    // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+    let floor_cost_by_tokens = tokens_in_calldata
+        .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+        .ok_or(VMError::Internal(InternalError::GasOverflow))?
+        .checked_add(TX_BASE_COST)
+        .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+    let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
+
+    if initial_call_frame.gas_limit < min_gas_limit {
+        return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
+    }
+
     Ok(())
 }
