@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745252139625,
+  "lastUpdate": 1745252328032,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3415,6 +3415,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181810883425,
             "range": "± 1012161046",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0674de0d2d0b2fda4b4ff27b0656782a300d69c6",
+          "message": "chore(core): replace LEVM channel with L1 channel (#2484)\n\n**Motivation**\n\nThe L1 slack channel is now used for LEVM development\n\n**Description**\n\nThis PR replaces the LEVM webhook with the L1 webhook.",
+          "timestamp": "2025-04-21T15:30:45Z",
+          "tree_id": "bde30ce237de3fc760fdc906aec00a8ff7b96adc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0674de0d2d0b2fda4b4ff27b0656782a300d69c6"
+        },
+        "date": 1745252325731,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182250042835,
+            "range": "± 760924532",
             "unit": "ns/iter"
           }
         ]
