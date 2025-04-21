@@ -46,6 +46,10 @@ impl Deployer {
 #[derive(Deserialize, Debug)]
 struct Eth {
     rpc_url: String,
+    max_number_of_retries: u64,
+    backoff_factor: u64,
+    min_retry_delay: u64,
+    max_retry_delay: u64,
 }
 
 impl Eth {
@@ -54,12 +58,19 @@ impl Eth {
         format!(
             "
 {prefix}_RPC_URL={}
+{prefix}_MAX_NUMBER_OF_RETRIES={}
+{prefix}_BACKOFF_FACTOR={}
+{prefix}_MIN_RETRY_DELAY={}
+{prefix}_MAX_RETRY_DELAY={}
 ",
             self.rpc_url,
+            self.max_number_of_retries,
+            self.backoff_factor,
+            self.min_retry_delay,
+            self.max_retry_delay
         )
     }
 }
-
 #[derive(Deserialize, Debug)]
 struct Watcher {
     bridge_address: String,

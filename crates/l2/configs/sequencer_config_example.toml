@@ -18,6 +18,10 @@ salt_is_zero = true
 
 [eth]
 rpc_url = "http://localhost:8545"
+max_number_of_retries = 10
+backoff_factor = 2
+min_retry_delay = 96
+max_retry_delay = 1800
 
 [watcher]
 bridge_address = "0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440"

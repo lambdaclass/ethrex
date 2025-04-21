@@ -44,6 +44,10 @@ pub enum RpcResponse {
 pub struct EthClient {
     client: Client,
     pub url: String,
+    pub max_number_of_retries: u64,
+    pub backoff_factor: u64,
+    pub min_retry_delay: u64,
+    pub max_retry_delay: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +97,10 @@ impl EthClient {
         Self {
             client: Client::new(),
             url: url.to_string(),
+            max_number_of_retries: MAX_NUMBER_OF_RETRIES,
+            backoff_factor: BACKOFF_FACTOR,
+            min_retry_delay: MIN_RETRY_DELAY,
+            max_retry_delay: MAX_RETRY_DELAY,
         }
     }
 
