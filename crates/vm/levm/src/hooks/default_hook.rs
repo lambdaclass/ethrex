@@ -114,11 +114,7 @@ impl Hook for DefaultHook {
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
-        if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas {
-            return Err(VMError::TxValidation(
-                TxValidationError::InsufficientMaxFeePerGas,
-            ));
-        }
+        validate_sufficient_max_fee_per_gas(vm)?;
 
         // (5) INITCODE_SIZE_EXCEEDED
         if vm.is_create() {
@@ -461,6 +457,15 @@ pub fn validate_init_code_size(
     {
         return Err(VMError::TxValidation(
             TxValidationError::InitcodeSizeExceeded,
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_sufficient_max_fee_per_gas(vm: &mut VM<'_>) -> Result<(), VMError> {
+    if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas {
+        return Err(VMError::TxValidation(
+            TxValidationError::InsufficientMaxFeePerGas,
         ));
     }
     Ok(())

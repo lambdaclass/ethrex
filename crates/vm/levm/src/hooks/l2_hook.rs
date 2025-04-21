@@ -1,7 +1,6 @@
 use ethrex_common::{types::Fork, Address, U256};
 
 use crate::{
-    constants::VALID_BLOB_PREFIXES,
     db::cache::remove_account,
     errors::{InternalError, TxResult, TxValidationError, VMError},
     hooks::default_hook,
@@ -40,11 +39,7 @@ impl Hook for L2Hook {
         }
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
-        if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas {
-            return Err(VMError::TxValidation(
-                TxValidationError::InsufficientMaxFeePerGas,
-            ));
-        }
+        default_hook::validate_sufficient_max_fee_per_gas(vm)?;
 
         // (5) INITCODE_SIZE_EXCEEDED
         if vm.is_create() {
