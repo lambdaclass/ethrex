@@ -9,7 +9,7 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    hooks::{default_hook::DefaultHook, hook::Hook},
+    hooks::{default_hook::DefaultHook, hook::Hook, l2_hook::L2Hook},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
@@ -21,7 +21,7 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, TxKind,
+        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, Transaction, TxKind,
     },
     Address, H256, U256,
 };
@@ -177,6 +177,7 @@ pub struct VM<'a> {
     pub cache_backup: CacheDB, // Backup of the cache before executing the transaction
 }
 
+#[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,
@@ -190,13 +191,9 @@ impl GeneralizedDatabase {
 
 impl<'a> VM<'a> {
     pub fn new(
-        to: TxKind,
         env: Environment,
-        value: U256,
-        calldata: Bytes,
         db: &'a mut GeneralizedDatabase,
-        access_list: AccessList,
-        authorization_list: Option<AuthorizationList>,
+        tx: &Transaction,
     ) -> Result<Self, VMError> {
         // Add sender and recipient (in the case of a Call) to cache [https://www.evm.codes/about#access_list]
         let mut default_touched_accounts = HashSet::from_iter([env.origin].iter().cloned());
@@ -209,7 +206,7 @@ impl<'a> VM<'a> {
         let mut default_touched_storage_slots: HashMap<Address, BTreeSet<H256>> = HashMap::new();
 
         // Add access lists contents to cache
-        for (address, keys) in access_list.clone() {
+        for (address, keys) in tx.access_list() {
             default_touched_accounts.insert(address);
             let mut warm_slots = BTreeSet::new();
             for slot in keys {
@@ -229,9 +226,6 @@ impl<'a> VM<'a> {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let default_hook: Arc<dyn Hook> = Arc::new(DefaultHook);
-        let hooks = vec![default_hook];
-
         // When instantiating a new vm the current value of the storage slots are actually the original values because it is a new transaction
         for account in db.cache.values_mut() {
             for storage_slot in account.storage.values_mut() {
@@ -239,7 +233,14 @@ impl<'a> VM<'a> {
             }
         }
 
-        match to {
+        let hooks: Vec<Arc<dyn Hook>> = match tx {
+            Transaction::PrivilegedL2Transaction(privileged_tx) => vec![Arc::new(L2Hook {
+                recipient: privileged_tx.recipient,
+            })],
+            _ => vec![Arc::new(DefaultHook)],
+        };
+
+        match tx.to() {
             TxKind::Call(address_to) => {
                 default_touched_accounts.insert(address_to);
 
@@ -258,8 +259,8 @@ impl<'a> VM<'a> {
                     address_to,
                     address_to,
                     bytecode,
-                    value,
-                    calldata,
+                    tx.value(),
+                    tx.data().clone(),
                     false,
                     env.gas_limit,
                     0,
@@ -274,9 +275,9 @@ impl<'a> VM<'a> {
                     env,
                     accrued_substate: substate,
                     db,
-                    tx_kind: to,
-                    access_list,
-                    authorization_list,
+                    tx_kind: TxKind::Call(address_to),
+                    access_list: tx.access_list(),
+                    authorization_list: tx.authorization_list(),
                     hooks,
                     cache_backup,
                 })
@@ -293,8 +294,8 @@ impl<'a> VM<'a> {
                     new_contract_address,
                     new_contract_address,
                     Bytes::new(), // Bytecode is assigned after passing validations.
-                    value,
-                    calldata, // Calldata is removed after passing validations.
+                    tx.value(),
+                    tx.data().clone(), // Calldata is removed after passing validations.
                     false,
                     env.gas_limit,
                     0,
@@ -317,8 +318,8 @@ impl<'a> VM<'a> {
                     accrued_substate: substate,
                     db,
                     tx_kind: TxKind::Create,
-                    access_list,
-                    authorization_list,
+                    access_list: tx.access_list(),
+                    authorization_list: tx.authorization_list(),
                     hooks,
                     cache_backup,
                 })
@@ -371,7 +372,8 @@ impl<'a> VM<'a> {
         matches!(self.tx_kind, TxKind::Create)
     }
 
-    pub fn get_floor_gas_price(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
+    /// Calculates the minimum gas to be consumed in the transaction.
+    pub fn get_min_gas_used(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create() {
             &initial_call_frame.bytecode
@@ -388,16 +390,16 @@ impl<'a> VM<'a> {
             .checked_div(STANDARD_TOKEN_COST)
             .ok_or(VMError::Internal(InternalError::DivisionError))?;
 
-        // floor_gas_price = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-        let mut floor_gas_price: u64 = tokens_in_calldata
+        // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+        let mut min_gas_used: u64 = tokens_in_calldata
             .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
             .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-        floor_gas_price = floor_gas_price
+        min_gas_used = min_gas_used
             .checked_add(TX_BASE_COST)
             .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
-        Ok(floor_gas_price)
+        Ok(min_gas_used)
     }
 
     /// Executes without making changes to the cache.
