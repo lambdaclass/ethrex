@@ -104,6 +104,7 @@ impl BlockProducer {
             withdrawals: Default::default(),
             beacon_root: Some(head_beacon_block_root),
             version,
+            elasticity_multiplier: self.elasticity_multiplier,
         };
         let payload = create_payload(&args, &store)?;
 

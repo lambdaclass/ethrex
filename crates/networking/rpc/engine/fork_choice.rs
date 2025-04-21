@@ -4,7 +4,7 @@ use ethrex_blockchain::{
     latest_canonical_block_hash,
     payload::{create_payload, BuildPayloadArgs},
 };
-use ethrex_common::types::BlockHeader;
+use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync_manager::SyncStatus;
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -425,6 +425,7 @@ async fn build_payload(
         withdrawals: attributes.withdrawals.clone(),
         beacon_root: attributes.parent_beacon_block_root,
         version,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
     };
     let payload_id = args.id();
     let payload = match create_payload(&args, &context.storage) {

@@ -432,6 +432,7 @@ pub fn calculate_base_fee_per_gas(
     parent_gas_limit: u64,
     parent_gas_used: u64,
     parent_base_fee_per_gas: u64,
+    elasticity_multiplier: u64,
 ) -> Option<u64> {
     // Check gas limit, if the check passes we can also rest assured that none of the
     // following divisions will have zero as a divider
@@ -439,7 +440,7 @@ pub fn calculate_base_fee_per_gas(
         return None;
     }
 
-    let parent_gas_target = parent_gas_limit / ELASTICITY_MULTIPLIER;
+    let parent_gas_target = parent_gas_limit / elasticity_multiplier;
 
     Some(match parent_gas_used.cmp(&parent_gas_target) {
         Ordering::Equal => parent_base_fee_per_gas,
@@ -523,6 +524,7 @@ pub fn validate_block_header(
         parent_header.gas_limit,
         parent_header.gas_used,
         parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+        ELASTICITY_MULTIPLIER,
     ) {
         base_fee
     } else {

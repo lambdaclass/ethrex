@@ -3,7 +3,7 @@ use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas, Block,
-        BlockHeader, Transaction,
+        BlockHeader, Transaction, ELASTICITY_MULTIPLIER,
     },
 };
 use serde::Serialize;
@@ -202,6 +202,7 @@ fn project_next_block_base_fee_values(
         header.gas_limit,
         header.gas_used,
         header.base_fee_per_gas.unwrap_or_default(),
+        ELASTICITY_MULTIPLIER,
     )
     .unwrap_or_default();
     let next_excess_blob_gas = calc_excess_blob_gas(
