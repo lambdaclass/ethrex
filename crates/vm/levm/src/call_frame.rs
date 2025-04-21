@@ -130,7 +130,7 @@ impl CallFrame {
         }
     }
 
-    pub fn next_opcode(&mut self) -> Opcode {
+    pub fn next_opcode(&self) -> Opcode {
         match self.bytecode.get(self.pc).copied().map(Opcode::from) {
             Some(opcode) => opcode,
             None => Opcode::STOP,
