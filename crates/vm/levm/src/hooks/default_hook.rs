@@ -164,42 +164,8 @@ impl Hook for DefaultHook {
 
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
         // Transaction is type 4 if authorization_list is Some
-        if let Some(auth_list) = &vm.authorization_list {
-            // (16) TYPE_4_TX_PRE_FORK
-            if vm.env.config.fork < Fork::Prague {
-                return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
-            }
-
-            // (17) TYPE_4_TX_CONTRACT_CREATION
-            // From the EIP docs: a null destination is not valid.
-            // NOTE: This will never happen, since the EIP-7702 tx (type 4) does not have a TxKind field
-            // only supports an Address which must be non-empty.
-            // If a type 4 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
-            // it won't reach this point.
-            // For more information, please check the following thread:
-            // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
-            if vm.is_create() {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type4TxContractCreation,
-                ));
-            }
-
-            // (18) TYPE_4_TX_LIST_EMPTY
-            // From the EIP docs: The transaction is considered invalid if the length of authorization_list is zero.
-            if auth_list.is_empty() {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type4TxAuthorizationListIsEmpty,
-                ));
-            }
-
-            vm.env.refunded_gas = eip7702_set_access_code(
-                vm.db,
-                vm.env.chain_id,
-                &mut vm.accrued_substate,
-                // TODO: avoid clone()
-                vm.authorization_list.clone(),
-                initial_call_frame,
-            )?;
+        if vm.authorization_list.is_some() {
+            validate_type_4_tx(vm, initial_call_frame)?;
         }
 
         if vm.is_create() {
@@ -473,6 +439,54 @@ pub fn validate_type_3_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
             TxValidationError::Type3TxContractCreation,
         ));
     }
+
+    Ok(())
+}
+
+pub fn validate_type_4_tx(
+    vm: &mut VM<'_>,
+    initial_call_frame: &mut CallFrame,
+) -> Result<(), VMError> {
+    let Some(auth_list) = &vm.authorization_list else {
+        // vm.authorization_list should be Some at this point.
+        return Err(VMError::Internal(InternalError::UndefinedState(-1)));
+    };
+
+    // (16) TYPE_4_TX_PRE_FORK
+    if vm.env.config.fork < Fork::Prague {
+        return Err(VMError::TxValidation(TxValidationError::Type4TxPreFork));
+    }
+
+    // (17) TYPE_4_TX_CONTRACT_CREATION
+    // From the EIP docs: a null destination is not valid.
+    // NOTE: This will never happen, since the EIP-7702 tx (type 4) does not have a TxKind field
+    // only supports an Address which must be non-empty.
+    // If a type 4 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
+    // it won't reach this point.
+    // For more information, please check the following thread:
+    // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
+    if vm.is_create() {
+        return Err(VMError::TxValidation(
+            TxValidationError::Type4TxContractCreation,
+        ));
+    }
+
+    // (18) TYPE_4_TX_LIST_EMPTY
+    // From the EIP docs: The transaction is considered invalid if the length of authorization_list is zero.
+    if auth_list.is_empty() {
+        return Err(VMError::TxValidation(
+            TxValidationError::Type4TxAuthorizationListIsEmpty,
+        ));
+    }
+
+    vm.env.refunded_gas = eip7702_set_access_code(
+        vm.db,
+        vm.env.chain_id,
+        &mut vm.accrued_substate,
+        // TODO: avoid clone()
+        vm.authorization_list.clone(),
+        initial_call_frame,
+    )?;
 
     Ok(())
 }
