@@ -72,6 +72,11 @@ impl Hook for L2Hook {
             }
         }
 
+        if !is_privilege_tx {
+            // (9) SENDER_NOT_EOA
+            default_hook::validate_sender(&sender_account)?;
+        }
+
         // (10) GAS_ALLOWANCE_EXCEEDED
         if vm.env.gas_limit > vm.env.block_gas_limit {
             return Err(VMError::TxValidation(
