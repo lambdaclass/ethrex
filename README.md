@@ -297,8 +297,8 @@ RPC options:
 As an example, we put the secret in a `secrets` directory in the home folder.
 
 ```bash
-sudo mkdir -p ~/secrets
-openssl rand -hex 32 | tr -d "\n" | sudo tee ~/secrets/jwt.hex
+mkdir -p ~/secrets
+openssl rand -hex 32 | tr -d "\n" | tee ~/secrets/jwt.hex
 ```
 
 We will pass this new file’s path as an argument for both clients.
