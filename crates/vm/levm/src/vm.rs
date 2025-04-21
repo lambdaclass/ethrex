@@ -342,9 +342,11 @@ impl<'a> VM<'a> {
             let precompile_result = execute_precompile(current_call_frame, self.env.config.fork);
             return self.handle_precompile_result(precompile_result, current_call_frame, backup);
         }
+        println!("Start run execution");
 
         loop {
             let opcode = current_call_frame.next_opcode();
+            println!("{:?}", opcode);
 
             let op_result = self.handle_current_opcode(opcode, current_call_frame);
 
@@ -412,6 +414,7 @@ impl<'a> VM<'a> {
 
     /// Main function for executing an external transaction
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        println!("DEBUG: Start executing new transaction");
         self.cache_backup = self.db.cache.clone();
 
         let mut initial_call_frame = self
@@ -454,6 +457,7 @@ impl<'a> VM<'a> {
         let mut report = self.run_execution(&mut initial_call_frame)?;
 
         self.finalize_execution(&initial_call_frame, &mut report)?;
+        println!("DEBUG: Finalize executing new transaction");
 
         Ok(report)
     }
