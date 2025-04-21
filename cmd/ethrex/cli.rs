@@ -36,8 +36,9 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and hoodi.",
-        help_heading = "Node options"
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.",
+        help_heading = "Node options",
+        env = "ETHREX_NETWORK"
     )]
     pub network: Option<String>,
     #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
@@ -49,7 +50,8 @@ pub struct Options {
         default_value = DEFAULT_DATADIR,
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_DATADIR"
     )]
     pub datadir: String,
     #[arg(
@@ -73,7 +75,8 @@ pub struct Options {
         long = "metrics.port",
         value_name = "PROMETHEUS_METRICS_PORT",
         default_value = "9090", // Default Prometheus port (https://prometheus.io/docs/tutorials/getting_started/#show-me-how-it-is-done).
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_METRICS_PORT"
     )]
     pub metrics_port: String,
     #[arg(
@@ -90,17 +93,24 @@ pub struct Options {
         value_name = "EVM_BACKEND",
         help = "Has to be `levm` or `revm`",
         value_parser = utils::parse_evm_engine,
-        help_heading = "Node options"
-    )]
+        help_heading = "Node options",
+        env = "ETHREX_EVM")]
     pub evm: EvmEngine,
-    #[arg(long = "log.level", default_value_t = Level::INFO, value_name = "LOG_LEVEL", help = "The verbosity level used for logs.", long_help = "Possible values: info, debug, trace, warn, error",help_heading = "Node options")]
+    #[arg(
+        long = "log.level",
+        default_value_t = Level::INFO,
+        value_name = "LOG_LEVEL",
+        help = "The verbosity level used for logs.",
+        long_help = "Possible values: info, debug, trace, warn, error",
+        help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
         long = "http.addr",
         default_value = "localhost",
         value_name = "ADDRESS",
         help = "Listening address for the http rpc server.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_HTTP_ADDR"
     )]
     pub http_addr: String,
     #[arg(
@@ -108,7 +118,8 @@ pub struct Options {
         default_value = "8545",
         value_name = "PORT",
         help = "Listening port for the http rpc server.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_HTTP_PORT"
     )]
     pub http_port: String,
     #[arg(
