@@ -306,9 +306,9 @@ mod blockchain_integration_test {
         // Create blockchain
         let blockchain = Blockchain::default_with_store(store.clone().clone());
 
-        let mut block = create_payload(&args, store).unwrap();
-        blockchain.build_payload(&mut block).await.unwrap();
-        block
+        let block = create_payload(&args, store).unwrap();
+        let result = blockchain.build_payload(block).await.unwrap();
+        result.payload
     }
 
     async fn test_store() -> Store {

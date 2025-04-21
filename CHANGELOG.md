@@ -4,6 +4,8 @@
 
 ### 2025-04-11
 
+- Removed some unnecessary clones and made some functions const: [2438](https://github.com/lambdaclass/ethrex/pull/2438)
+
 - Asyncify some DB read APIs, as well as its users [#2430](https://github.com/lambdaclass/ethrex/pull/2430)
 
 ### 2025-04-09
