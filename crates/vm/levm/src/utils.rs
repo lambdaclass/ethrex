@@ -736,3 +736,13 @@ pub fn pay_coinbase_fee(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError>
 
     Ok(())
 }
+
+// In Cancun the only addresses destroyed are contracts created in this transaction
+pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
+    let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
+    for address in selfdestruct_set {
+        let account_to_remove = get_account_mut_vm(vm.db, address)?;
+        *account_to_remove = Account::default();
+    }
+    Ok(())
+}

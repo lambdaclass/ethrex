@@ -8,11 +8,10 @@ use crate::{
     errors::{InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     utils::{
-        add_intrinsic_gas, eip7702_set_access_code, get_account, get_account_mut_vm,
+        add_intrinsic_gas, delete_self_destruct_accounts, eip7702_set_access_code, get_account,
         get_base_fee_per_blob_gas, get_intrinsic_gas, get_valid_jump_destinations, has_delegation,
         increase_account_balance, pay_coinbase_fee,
     },
-    Account,
 };
 
 use super::{
@@ -279,12 +278,7 @@ impl Hook for L2Hook {
         pay_coinbase_fee(vm, gas_to_pay_coinbase)?;
 
         // 4. Destruct addresses in vm.estruct set.
-        // In Cancun the only addresses destroyed are contracts created in this transaction
-        let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
-        for address in selfdestruct_set {
-            let account_to_remove = get_account_mut_vm(vm.db, address)?;
-            *account_to_remove = Account::default();
-        }
+        delete_self_destruct_accounts(vm)?;
 
         Ok(())
     }
