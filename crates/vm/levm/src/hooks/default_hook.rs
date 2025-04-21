@@ -416,3 +416,31 @@ impl Hook for DefaultHook {
         Ok(())
     }
 }
+
+pub fn pay_coinbase_fee(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
+    let priority_fee_per_gas = vm
+        .env
+        .gas_price
+        .checked_sub(vm.env.base_fee_per_gas)
+        .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
+
+    let coinbase_fee = U256::from(gas_to_pay)
+        .checked_mul(priority_fee_per_gas)
+        .ok_or(VMError::BalanceOverflow)?;
+
+    if coinbase_fee != U256::zero() {
+        increase_account_balance(vm.db, vm.env.coinbase, coinbase_fee)?;
+    };
+
+    Ok(())
+}
+
+// In Cancun the only addresses destroyed are contracts created in this transaction
+pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
+    let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
+    for address in selfdestruct_set {
+        let account_to_remove = get_account_mut_vm(vm.db, address)?;
+        *account_to_remove = Account::default();
+    }
+    Ok(())
+}

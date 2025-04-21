@@ -275,10 +275,10 @@ impl Hook for L2Hook {
             .checked_sub(refunded_gas)
             .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
 
-        pay_coinbase_fee(vm, gas_to_pay_coinbase)?;
+        default_hook::pay_coinbase_fee(vm, gas_to_pay_coinbase)?;
 
         // 4. Destruct addresses in vm.estruct set.
-        delete_self_destruct_accounts(vm)?;
+        default_hook::delete_self_destruct_accounts(vm)?;
 
         Ok(())
     }
