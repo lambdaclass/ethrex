@@ -85,11 +85,7 @@ pub fn encode_calldata(signature: &str, values: &[Value]) -> Result<Vec<u8>, Cal
     // Checks if params = [""]
     // that case happen when we have a function selector as follows: function name()
     let mut params = params;
-    if params
-        .first()
-        .ok_or(CalldataEncodeError::InternalError)?
-        .is_empty()
-    {
+    if params.is_empty() {
         params = vec![];
     }
 
@@ -393,4 +389,10 @@ fn correct_tuple_parsing() {
     let (name, params) = parse_signature(raw_function_signature).unwrap();
     assert_eq!(name, "my_function");
     assert_eq!(params, exepected_arguments);
+}
+
+#[test]
+fn empty_calldata() {
+    let calldata = encode_calldata("number()", &[]).unwrap();
+    assert_eq!(calldata, hex::decode("8381f58a").unwrap());
 }
