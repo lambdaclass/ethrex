@@ -70,50 +70,7 @@ impl Hook for L2Hook {
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if vm.env.tx_max_fee_per_blob_gas.is_some() {
-            // (11) TYPE_3_TX_PRE_FORK
-            if vm.env.config.fork < Fork::Cancun {
-                return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
-            }
-
-            let blob_hashes = &vm.env.tx_blob_hashes;
-
-            // (12) TYPE_3_TX_ZERO_BLOBS
-            if blob_hashes.is_empty() {
-                return Err(VMError::TxValidation(TxValidationError::Type3TxZeroBlobs));
-            }
-
-            // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
-            for blob_hash in blob_hashes {
-                let blob_hash = blob_hash.as_bytes();
-                if let Some(first_byte) = blob_hash.first() {
-                    if !VALID_BLOB_PREFIXES.contains(first_byte) {
-                        return Err(VMError::TxValidation(
-                            TxValidationError::Type3TxInvalidBlobVersionedHash,
-                        ));
-                    }
-                }
-            }
-
-            // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len()
-                > vm.env
-                    .config
-                    .blob_schedule
-                    .max
-                    .try_into()
-                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?
-            {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type3TxBlobCountExceeded,
-                ));
-            }
-
-            // (15) TYPE_3_TX_CONTRACT_CREATION
-            if vm.is_create() {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type3TxContractCreation,
-                ));
-            }
+            default_hook::validate_type_3_tx(vm)?;
         }
 
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702

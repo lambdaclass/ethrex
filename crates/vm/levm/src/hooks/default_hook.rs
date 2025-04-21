@@ -159,56 +159,7 @@ impl Hook for DefaultHook {
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if vm.env.tx_max_fee_per_blob_gas.is_some() {
-            // (11) TYPE_3_TX_PRE_FORK
-            if vm.env.config.fork < Fork::Cancun {
-                return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
-            }
-
-            let blob_hashes = &vm.env.tx_blob_hashes;
-
-            // (12) TYPE_3_TX_ZERO_BLOBS
-            if blob_hashes.is_empty() {
-                return Err(VMError::TxValidation(TxValidationError::Type3TxZeroBlobs));
-            }
-
-            // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
-            for blob_hash in blob_hashes {
-                let blob_hash = blob_hash.as_bytes();
-                if let Some(first_byte) = blob_hash.first() {
-                    if !VALID_BLOB_PREFIXES.contains(first_byte) {
-                        return Err(VMError::TxValidation(
-                            TxValidationError::Type3TxInvalidBlobVersionedHash,
-                        ));
-                    }
-                }
-            }
-
-            // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
-            if blob_hashes.len()
-                > vm.env
-                    .config
-                    .blob_schedule
-                    .max
-                    .try_into()
-                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?
-            {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type3TxBlobCountExceeded,
-                ));
-            }
-
-            // (15) TYPE_3_TX_CONTRACT_CREATION
-            // NOTE: This will never happen, since the EIP-4844 tx (type 3) does not have a TxKind field
-            // only supports an Address which must be non-empty.
-            // If a type 3 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
-            // it won't reach this point.
-            // For more information, please check the following thread:
-            // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
-            if vm.is_create() {
-                return Err(VMError::TxValidation(
-                    TxValidationError::Type3TxContractCreation,
-                ));
-            }
+            validate_type_3_tx(vm)?;
         }
 
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
@@ -468,5 +419,60 @@ pub fn validate_sufficient_max_fee_per_gas(vm: &mut VM<'_>) -> Result<(), VMErro
             TxValidationError::InsufficientMaxFeePerGas,
         ));
     }
+    Ok(())
+}
+
+pub fn validate_type_3_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
+    // (11) TYPE_3_TX_PRE_FORK
+    if vm.env.config.fork < Fork::Cancun {
+        return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
+    }
+
+    let blob_hashes = &vm.env.tx_blob_hashes;
+
+    // (12) TYPE_3_TX_ZERO_BLOBS
+    if blob_hashes.is_empty() {
+        return Err(VMError::TxValidation(TxValidationError::Type3TxZeroBlobs));
+    }
+
+    // (13) TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
+    for blob_hash in blob_hashes {
+        let blob_hash = blob_hash.as_bytes();
+        if let Some(first_byte) = blob_hash.first() {
+            if !VALID_BLOB_PREFIXES.contains(first_byte) {
+                return Err(VMError::TxValidation(
+                    TxValidationError::Type3TxInvalidBlobVersionedHash,
+                ));
+            }
+        }
+    }
+
+    // (14) TYPE_3_TX_BLOB_COUNT_EXCEEDED
+    if blob_hashes.len()
+        > vm.env
+            .config
+            .blob_schedule
+            .max
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?
+    {
+        return Err(VMError::TxValidation(
+            TxValidationError::Type3TxBlobCountExceeded,
+        ));
+    }
+
+    // (15) TYPE_3_TX_CONTRACT_CREATION
+    // NOTE: This will never happen, since the EIP-4844 tx (type 3) does not have a TxKind field
+    // only supports an Address which must be non-empty.
+    // If a type 3 tx has the field `to` as null (signaling create), it will raise an exception on RLP decoding,
+    // it won't reach this point.
+    // For more information, please check the following thread:
+    // - https://github.com/lambdaclass/ethrex/pull/2425/files/819825516dc633275df56b2886b921061c4d7681#r2035611105
+    if vm.is_create() {
+        return Err(VMError::TxValidation(
+            TxValidationError::Type3TxContractCreation,
+        ));
+    }
+
     Ok(())
 }
