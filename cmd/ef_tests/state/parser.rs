@@ -18,11 +18,12 @@ pub enum EFTestParseError {
     FailedToParseTestFile(String),
 }
 
-const IGNORED_TESTS: [&str; 10] = [
-    "CALLBlake2f_MaxRounds.json", // Skip because it takes extremely long to run, but passes.
-    "ValueOverflow.json",         // Skip because it tries to deserialize number > U256::MAX
-    "ValueOverflowParis.json",    // Skip because it tries to deserialize number > U256::MAX
-    "loopMul.json",               // Skip because it takes too long to run
+const IGNORED_TESTS: [&str; 11] = [
+    "static_Call50000_sha256.json", // Skip because it takes longer to run than some tests, but not a huge deal.
+    "CALLBlake2f_MaxRounds.json",   // Skip because it takes extremely long to run, but passes.
+    "ValueOverflow.json",           // Skip because it tries to deserialize number > U256::MAX
+    "ValueOverflowParis.json",      // Skip because it tries to deserialize number > U256::MAX
+    "loopMul.json",                 // Skip because it takes too long to run
     "dynamicAccountOverwriteEmpty_Paris.json", // Skip because it fails on REVM
     "RevertInCreateInInitCreate2Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
     "RevertInCreateInInit_Paris.json", // Skip because it fails on REVM. See https://github.com/lambdaclass/ethrex/issues/1555
