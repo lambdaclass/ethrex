@@ -11,7 +11,7 @@ make run-evm-ef-tests flags=<flags>
 ```
 or
 ```bash
-cargo test --package ef_tests-state --test all -- <flags>
+cargo test --package ef_tests-state --test all --release -- <flags>
 ```
 
 **Flags**
@@ -26,7 +26,7 @@ cargo test --package ef_tests-state --test all -- <flags>
 
 Example usage: 
 ```bash
-cargo test --package ef_tests-state --test all -- --forks Prague,Cancun --summary --tests push0.json,invalidAddr.json
+cargo test --package ef_tests-state --test all --release -- --forks Prague,Cancun --summary --tests push0.json,invalidAddr.json
 ```
 This runs 2 specific tests with LEVM just for Prague and Cancun. If they fail they are not re-run with REVM.
 
