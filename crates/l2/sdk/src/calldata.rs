@@ -271,10 +271,18 @@ fn encode_array(values: &[Value]) -> Result<Vec<u8>, CalldataEncodeError> {
 
 fn encode_bytes(values: &Bytes) -> Vec<u8> {
     let mut ret = vec![];
-    let to_copy = U256::from(values.len()).to_big_endian();
+
+    // the bytes has to be padded to 32 bytes
+    let padding = 32 - (values.len() % 32);
+    let mut padded_bytes = values.to_vec();
+    if padding != 32 {
+        padded_bytes.extend_from_slice(&vec![0; padding]);
+    }
+
+    let to_copy = U256::from(values.len()).to_big_endian(); // we write the length without padding
 
     ret.extend_from_slice(&to_copy);
-    ret.extend_from_slice(values);
+    ret.extend_from_slice(&padded_bytes);
 
     ret
 }
@@ -395,4 +403,15 @@ fn correct_tuple_parsing() {
 fn empty_calldata() {
     let calldata = encode_calldata("number()", &[]).unwrap();
     assert_eq!(calldata, hex::decode("8381f58a").unwrap());
+}
+
+#[test]
+fn bytes_has_padding() {
+    let raw_function_signature = "my_function(bytes)";
+    let bytes = Bytes::from_static(b"hello world");
+    let values = vec![Value::Bytes(bytes)];
+
+    let calldata = encode_calldata(raw_function_signature, &values).unwrap();
+
+    assert_eq!(calldata, hex::decode("f570899b0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000b68656c6c6f20776f726c64000000000000000000000000000000000000000000").unwrap());
 }
