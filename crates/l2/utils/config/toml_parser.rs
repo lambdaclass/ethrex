@@ -90,6 +90,7 @@ impl Watcher {
 struct Proposer {
     block_time_ms: u64,
     coinbase_address: String,
+    elasticity_multiplier: u64,
 }
 
 impl Proposer {
@@ -99,8 +100,9 @@ impl Proposer {
             "
 {prefix}_BLOCK_TIME_MS={}
 {prefix}_COINBASE_ADDRESS={}
+{prefix}_ELASTICITY_MULTIPLIER={}
 ",
-            self.block_time_ms, self.coinbase_address,
+            self.block_time_ms, self.coinbase_address, self.elasticity_multiplier
         )
     }
 }

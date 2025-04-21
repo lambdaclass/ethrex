@@ -24,6 +24,7 @@ use super::{errors::BlockProducerError, execution_cache::ExecutionCache};
 pub struct BlockProducer {
     block_time_ms: u64,
     coinbase_address: Address,
+    elasticity_multiplier: u64,
 }
 
 pub async fn start_block_producer(
@@ -45,10 +46,12 @@ impl BlockProducer {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            elasticity_multiplier,
         } = config;
         Ok(Self {
             block_time_ms,
             coinbase_address,
+            elasticity_multiplier,
         })
     }
 

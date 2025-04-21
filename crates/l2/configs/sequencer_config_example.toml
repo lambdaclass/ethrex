@@ -28,6 +28,7 @@ l2_proposer_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a
 [proposer]
 block_time_ms = 5000
 coinbase_address = "0x0007a881CD95B1484fca47615B64803dad620C8d"
+elasticity_multiplier = 2
 
 [committer]
 # Address of a funded account that the sequencer will use to send commit txs to the L1.
