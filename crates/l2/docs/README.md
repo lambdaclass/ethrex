@@ -18,8 +18,11 @@ For more detailed documentation on each part of the system:
 
 - [Rust](https://www.rust-lang.org/tools/install)
 - [Solc 0.29](https://docs.soliditylang.org/en/latest/installing-solidity.html)
+- [Docker](https://docs.docker.com/engine/install/)
   
 ## Quick HandsOn
+
+Make sure docker is running!
 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
