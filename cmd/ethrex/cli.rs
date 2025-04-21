@@ -6,12 +6,13 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_p2p::{sync::SyncMode, types::Node};
+use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
     initializers::{init_blockchain, init_store},
-    utils::{self, set_datadir},
+    utils::{self, write_storage_blocks_to_file, get_data_dir},
     DEFAULT_DATADIR,
 };
 
@@ -217,6 +218,16 @@ pub enum Subcommand {
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
+    #[command(name = "export", about = "Export blocks to a database file -- starting from block number 1")]
+    Export {
+        #[arg(
+            required = false,
+            value_name = "FILE_PATH/FOLDER",
+            help = "Path to store the RLP file",
+            default_value = "./blocks.rlp"
+        )]
+        path: String,
+    },
     #[cfg(any(feature = "l2", feature = "based"))]
     #[command(subcommand)]
     L2(l2::Command),
@@ -248,6 +259,16 @@ impl Subcommand {
 
                 import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
+            Subcommand::Export { path } => {
+                // let store = init_store(DEFAULT_DATADIR, network).await;
+                // FIXME:
+                // 1. Use data dir by param.
+                // 2. Properly choose the engine type.
+                let data_dir = get_data_dir(DEFAULT_DATADIR);
+                let store = Store::new(&data_dir, EngineType::Libmdbx).unwrap();
+                // FIXME: Remove unwrap
+                write_storage_blocks_to_file(None, &path, &store).await.unwrap();
+            }
             #[cfg(any(feature = "l2", feature = "based"))]
             Subcommand::L2(command) => command.run().await?,
         }
@@ -256,7 +277,7 @@ impl Subcommand {
 }
 
 pub fn remove_db(datadir: &str, force: bool) {
-    let data_dir = set_datadir(datadir);
+    let data_dir = get_data_dir(datadir);
     let path = Path::new(&data_dir);
 
     if path.exists() {
@@ -283,7 +304,7 @@ pub fn remove_db(datadir: &str, force: bool) {
 }
 
 pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
-    let data_dir = set_datadir(data_dir);
+    let data_dir = get_data_dir(data_dir);
 
     let store = init_store(&data_dir, network).await;
 

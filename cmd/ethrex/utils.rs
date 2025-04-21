@@ -3,14 +3,16 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::Store;
 use ethrex_vm::EvmEngine;
 use hex::FromHexError;
+use std::io::BufWriter;
 #[cfg(feature = "l2")]
 use secp256k1::SecretKey;
 use std::{
     fs::File,
-    io,
+    io::{self, Write},
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
     sync::Arc,
@@ -84,7 +86,7 @@ pub fn parse_socket_addr(addr: &str, port: &str) -> io::Result<SocketAddr> {
         ))
 }
 
-pub fn set_datadir(datadir: &str) -> String {
+pub fn get_data_dir(datadir: &str) -> String {
     let project_dir = ProjectDirs::from("", "", datadir).expect("Couldn't find home directory");
     project_dir
         .data_local_dir()
@@ -134,4 +136,33 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
         Some(s) => hex::decode(s).map(Into::into),
         None => hex::decode(s).map(Into::into),
     }
+}
+
+pub async fn write_storage_blocks_to_file(
+    up_to_block_number: Option<u64>,
+    path: &str,
+    store: &Store,
+) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    let file = std::fs::File::create(&path).map_err(|err| {
+        format!(
+            "Could not create file with path {}, got error: {}",
+            &path.display(),
+            err
+        )
+    })?;
+    let up_to = match up_to_block_number {
+        Some(limit) => limit,
+        None => store.get_latest_block_number().await.map_err(|err| { format!("Failed to fetch latest block number: {}", err) })?
+    };
+    let mut writer = BufWriter::new(file);
+    for i in 1..up_to {
+        let body = store.get_block_body(i).await.map_err(|err| format!("Failed to fetch {}-th block body: {}", i, err))?.ok_or_else(|| format!("Block header number {} not found", i))?;
+        let header = store.get_block_header(i).map_err(|err| format!("Failed to fetch {}-th block header: {}", i, err))?.ok_or_else(|| format!("Block body number {} not found", i))?;
+
+        let block = Block::new(header, body);
+        let vec = block.encode_to_vec();
+        writer.write(&vec).map_err(|err| format!("Failed to write encoded block to a file: {}", err))?;
+    }
+    Ok(())
 }
