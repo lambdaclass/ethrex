@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745252328032,
+  "lastUpdate": 1745253472652,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3445,6 +3445,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182250042835,
             "range": "± 760924532",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a6ea3695d81be0da11c476f2b5a706fa3ca3eda7",
+          "message": "fix(l1): fix `--dev` mode to work with Prague fork. (#2481)\n\n**Motivation**\nDev mode is currently broken.\n\n**Description**\n- Changed the block producer so use the `v4` methods that are used in\nPrague.\n- Improved error messages\n\nCloses #2376",
+          "timestamp": "2025-04-21T15:50:04Z",
+          "tree_id": "203e539848ec619eab90723c9e33fa5e271a92a1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a6ea3695d81be0da11c476f2b5a706fa3ca3eda7"
+        },
+        "date": 1745253470496,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182089076648,
+            "range": "± 715840275",
             "unit": "ns/iter"
           }
         ]
