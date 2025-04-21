@@ -89,37 +89,19 @@ pub async fn run_ef_test_tx(
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     let mut db = utils::load_initial_state_levm(test).await;
-    let mut levm = match prepare_vm_for_tx(vector, test, fork, &mut db) {
-        Ok(levm) => levm,
-        Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
-            let post = test
-                .post
-                .forks
-                .get(fork)
-                .unwrap()
-                .iter()
-                .find(|post| {
-                    post.indexes.get("data").unwrap().as_usize() == vector.0
-                        && post.indexes.get("gas").unwrap().as_usize() == vector.1
-                        && post.indexes.get("value").unwrap().as_usize() == vector.2
-                })
-                .unwrap();
-            if post.expect_exception.as_ref().is_some_and(|exceptions| {
-                exceptions
-                    .iter()
-                    .any(|e| matches!(e, TransactionExpectedException::Type4TxContractCreation))
-            }) {
-                return Ok(());
-            }
-            return Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
-                "error in tx type 4 being a create type, not  found in expected exceptions"
-                    .to_string(),
-            ));
+    let vm_creation_result = prepare_vm_for_tx(vector, test, fork, &mut db);
+    // For handling edge case in which there's a create in a Type 4 Transaction, that sadly is detected before actual execution of the vm, when building the "Transaction" for creating a new instance of vm.
+    let levm_execution_result = match vm_creation_result {
+        Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => Err(VMError::TxValidation(
+            TxValidationError::Type4TxContractCreation,
+        )),
+        Err(error) => return Err(error),
+        Ok(mut levm) => {
+            ensure_pre_state(&levm, test)?;
+            levm.execute()
         }
-        Err(e) => return Err(e),
     };
-    ensure_pre_state(&levm, test)?;
-    let levm_execution_result = levm.execute();
+
     ensure_post_state(&levm_execution_result, vector, test, fork, &mut db).await?;
     Ok(())
 }
