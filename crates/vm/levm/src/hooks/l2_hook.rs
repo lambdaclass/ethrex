@@ -6,8 +6,8 @@ use crate::{
     errors::{InternalError, TxResult, TxValidationError, VMError},
     hooks::default_hook,
     utils::{
-        add_intrinsic_gas, eip7702_set_access_code, get_account, get_base_fee_per_blob_gas,
-        get_valid_jump_destinations, has_delegation, increase_account_balance,
+        add_intrinsic_gas, eip7702_set_access_code, get_account, get_valid_jump_destinations,
+        has_delegation, increase_account_balance,
     },
 };
 
@@ -36,13 +36,7 @@ impl Hook for L2Hook {
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
-            if tx_max_fee_per_blob_gas
-                < get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?
-            {
-                return Err(VMError::TxValidation(
-                    TxValidationError::InsufficientMaxFeePerBlobGas,
-                ));
-            }
+            default_hook::check_max_fee_per_blob_gas(vm, tx_max_fee_per_blob_gas)?;
         }
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS

@@ -91,13 +91,7 @@ impl Hook for DefaultHook {
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
-            if tx_max_fee_per_blob_gas
-                < get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?
-            {
-                return Err(VMError::TxValidation(
-                    TxValidationError::InsufficientMaxFeePerBlobGas,
-                ));
-            }
+            check_max_fee_per_blob_gas(vm, tx_max_fee_per_blob_gas)?;
         }
 
         // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
@@ -453,5 +447,19 @@ pub fn check_min_gas_limit(
         return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
     }
 
+    Ok(())
+}
+
+pub fn check_max_fee_per_blob_gas(
+    vm: &mut VM<'_>,
+    tx_max_fee_per_blob_gas: U256,
+) -> Result<(), VMError> {
+    if tx_max_fee_per_blob_gas
+        < get_base_fee_per_blob_gas(vm.env.block_excess_blob_gas, &vm.env.config)?
+    {
+        return Err(VMError::TxValidation(
+            TxValidationError::InsufficientMaxFeePerBlobGas,
+        ));
+    }
     Ok(())
 }
