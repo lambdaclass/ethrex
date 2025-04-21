@@ -65,7 +65,8 @@ pub async fn re_run_failed_ef_test(
                 EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
                 EFTestRunnerError::VMInitializationFailed(_)
                 | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
-                | EFTestRunnerError::FailedToEnsurePreState(_) => continue,
+                | EFTestRunnerError::FailedToEnsurePreState(_)
+                | EFTestRunnerError::EIP7702ShouldNotBeCreateType => continue,
                 EFTestRunnerError::VMExecutionMismatch(reason) => return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
                     format!("VM execution mismatch errors should only happen when running with revm. This failed during levm's execution: {reason}"), re_run_report.clone()))),
                 EFTestRunnerError::Internal(reason) => return Err(EFTestRunnerError::Internal(reason.to_owned())),
@@ -463,6 +464,11 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                     return Err(EFTestRunnerError::Internal(InternalError::MainRunnerInternal(
                         "The ExpectedExceptionDoesNotMatchReceived error should only happen when executing Levm, the errors matching is not implemented in Revm"
                             .to_owned(),
+                    )));
+                }
+                Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
+                    return Err(EFTestRunnerError::Internal(InternalError::Custom(
+                        "This case should not happen".to_owned(),
                     )));
                 }
             }

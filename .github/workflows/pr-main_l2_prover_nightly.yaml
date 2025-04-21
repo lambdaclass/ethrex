@@ -7,6 +7,7 @@ on:
     branches: ["**"]
     paths:
       - "crates/l2/prover/**"
+      - "crates/vm/levm/**"
       - ".github/workflows/pr-main_l2_prover_nightly.yaml"
 
 concurrency:

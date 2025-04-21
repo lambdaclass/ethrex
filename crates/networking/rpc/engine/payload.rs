@@ -100,6 +100,63 @@ impl RpcHandler for NewPayloadV3Request {
         })
     }
 
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let block =
+            get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root), None)?;
+        validate_fork(&block, Fork::Cancun, &context)?;
+        validate_execution_payload_v3(&self.payload)?;
+        let payload_status = handle_new_payload_v3(
+            &self.payload,
+            context,
+            block,
+            self.expected_blob_versioned_hashes.clone(),
+        )
+        .await?;
+        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+pub struct NewPayloadV4Request {
+    pub payload: ExecutionPayload,
+    pub expected_blob_versioned_hashes: Vec<H256>,
+    pub parent_beacon_block_root: H256,
+    pub execution_requests: Vec<EncodedRequests>,
+}
+
+impl From<NewPayloadV4Request> for RpcRequest {
+    fn from(val: NewPayloadV4Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadV4".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.payload),
+                serde_json::json!(val.expected_blob_versioned_hashes),
+                serde_json::json!(val.parent_beacon_block_root),
+                serde_json::json!(val.execution_requests),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for NewPayloadV4Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 4 {
+            return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
+        }
+        Ok(NewPayloadV4Request {
+            payload: serde_json::from_value(params[0].clone())
+                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            execution_requests: serde_json::from_value(params[3].clone())
+                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+        })
+    }
+
     #[cfg(feature = "based")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
@@ -111,7 +168,7 @@ impl RpcHandler for NewPayloadV3Request {
 
         let gateway_auth_client = context.gateway_auth_client.clone();
 
-        let gateway_request = gateway_auth_client.engine_new_payload_v3(
+        let gateway_request = gateway_auth_client.engine_new_payload_v4(
             request.payload,
             request.expected_blob_versioned_hashes,
             request.parent_beacon_block_root,
@@ -137,48 +194,6 @@ impl RpcHandler for NewPayloadV3Request {
         }
 
         gateway_response.or(client_response)
-    }
-
-    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let block =
-            get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root), None)?;
-        validate_fork(&block, Fork::Cancun, &context)?;
-        validate_execution_payload_v3(&self.payload)?;
-        let payload_status = handle_new_payload_v3(
-            &self.payload,
-            context,
-            block,
-            self.expected_blob_versioned_hashes.clone(),
-        )
-        .await?;
-        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
-    }
-}
-pub struct NewPayloadV4Request {
-    pub payload: ExecutionPayload,
-    pub expected_blob_versioned_hashes: Vec<H256>,
-    pub parent_beacon_block_root: H256,
-    pub execution_requests: Vec<EncodedRequests>,
-}
-
-impl RpcHandler for NewPayloadV4Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 4 {
-            return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
-        }
-        Ok(NewPayloadV4Request {
-            payload: serde_json::from_value(params[0].clone())
-                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
-                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
-                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
-                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
-        })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -225,7 +240,7 @@ impl RpcHandler for GetPayloadV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context)?;
+        let payload = get_payload(self.payload_id, &context).await?;
         // NOTE: This validation is actually not required to run Hive tests. Not sure if it's
         // necessary
         validate_payload_v1_v2(&payload.block, &context)?;
@@ -248,7 +263,7 @@ impl RpcHandler for GetPayloadV2Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context)?;
+        let payload = get_payload(self.payload_id, &context).await?;
         validate_payload_v1_v2(&payload.block, &context)?;
         let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
@@ -284,43 +299,8 @@ impl RpcHandler for GetPayloadV3Request {
         Ok(Self { payload_id })
     }
 
-    #[cfg(feature = "based")]
-    async fn relay_to_gateway_or_fallback(
-        req: &RpcRequest,
-        context: RpcApiContext,
-    ) -> Result<Value, RpcErr> {
-        info!("Relaying engine_getPayloadV3 to gateway");
-
-        let request = Self::parse(&req.params)?;
-
-        let gateway_auth_client = context.gateway_auth_client.clone();
-
-        let gateway_request = gateway_auth_client.engine_get_payload_v3(request.payload_id);
-
-        let client_response = Self::call(req, context).await;
-
-        let gateway_response = gateway_request
-            .await
-            .map_err(|err| {
-                RpcErr::Internal(format!(
-                    "Could not relay engine_getPayloadV3 to gateway: {err}",
-                ))
-            })
-            .and_then(|response| {
-                serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
-            });
-
-        if gateway_response.is_err() {
-            warn!(error = ?gateway_response, "Gateway engine_getPayloadV3 failed, falling back to local node");
-        } else {
-            info!("Successfully relayed engine_getPayloadV3 to gateway");
-        }
-
-        gateway_response.or(client_response)
-    }
-
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context)?;
+        let payload = get_payload(self.payload_id, &context).await?;
         validate_fork(&payload.block, Fork::Cancun, &context)?;
         let payload_bundle = build_payload_if_necessary(self.payload_id, payload, context).await?;
 
@@ -356,8 +336,43 @@ impl RpcHandler for GetPayloadV4Request {
         Ok(Self { payload_id })
     }
 
+    #[cfg(feature = "based")]
+    async fn relay_to_gateway_or_fallback(
+        req: &RpcRequest,
+        context: RpcApiContext,
+    ) -> Result<Value, RpcErr> {
+        info!("Relaying engine_getPayloadV3 to gateway");
+
+        let request = Self::parse(&req.params)?;
+
+        let gateway_auth_client = context.gateway_auth_client.clone();
+
+        let gateway_request = gateway_auth_client.engine_get_payload_v4(request.payload_id);
+
+        let client_response = Self::call(req, context).await;
+
+        let gateway_response = gateway_request
+            .await
+            .map_err(|err| {
+                RpcErr::Internal(format!(
+                    "Could not relay engine_getPayloadV4 to gateway: {err}",
+                ))
+            })
+            .and_then(|response| {
+                serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+            });
+
+        if gateway_response.is_err() {
+            warn!(error = ?gateway_response, "Gateway engine_getPayloadV4 failed, falling back to local node");
+        } else {
+            info!("Successfully relayed engine_getPayloadV4 to gateway");
+        }
+
+        gateway_response.or(client_response)
+    }
+
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let payload = get_payload(self.payload_id, &context)?;
+        let payload = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config()?;
 
         if !chain_config.is_prague_activated(payload.block.header.timestamp) {
@@ -409,11 +424,10 @@ impl RpcHandler for GetPayloadBodiesByHashV1Request {
         if self.hashes.len() >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let bodies = self
-            .hashes
-            .iter()
-            .map(|hash| context.storage.get_block_body_by_hash(*hash))
-            .collect::<Result<Vec<Option<BlockBody>>, _>>()?;
+        let mut bodies = Vec::new();
+        for hash in self.hashes.iter() {
+            bodies.push(context.storage.get_block_body_by_hash(*hash).await?)
+        }
         build_payload_body_response(bodies)
     }
 }
@@ -446,12 +460,10 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         if self.count as usize >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number()?;
+        let latest_block_number = context.storage.get_latest_block_number().await?;
         let last = latest_block_number.min(self.start + self.count - 1);
-        let bodies = (self.start..=last)
-            .map(|block_num| context.storage.get_block_body(block_num))
-            .collect::<Result<Vec<Option<BlockBody>>, _>>()?;
-        build_payload_body_response(bodies)
+        let bodies = context.storage.get_block_bodies(self.start, last).await?;
+        build_payload_body_response(bodies.into_iter().map(Some).collect())
     }
 }
 
@@ -529,12 +541,16 @@ fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), 
 }
 
 // This function is used to make sure neither the current block nor its parent have been invalidated
-fn validate_ancestors(
+async fn validate_ancestors(
     block: &Block,
     context: &RpcApiContext,
 ) -> Result<Option<PayloadStatus>, RpcErr> {
     // Check if the block has already been invalidated
-    if let Some(latest_valid_hash) = context.storage.get_latest_valid_ancestor(block.hash())? {
+    if let Some(latest_valid_hash) = context
+        .storage
+        .get_latest_valid_ancestor(block.hash())
+        .await?
+    {
         return Ok(Some(PayloadStatus::invalid_with(
             latest_valid_hash,
             "Header has been previously invalidated.".into(),
@@ -544,7 +560,8 @@ fn validate_ancestors(
     // Check if the parent block has already been invalidated
     if let Some(latest_valid_hash) = context
         .storage
-        .get_latest_valid_ancestor(block.header.parent_hash)?
+        .get_latest_valid_ancestor(block.header.parent_hash)
+        .await?
     {
         return Ok(Some(PayloadStatus::invalid_with(
             latest_valid_hash,
@@ -578,7 +595,7 @@ async fn handle_new_payload_v1_v2(
     }
 
     // Check for invalid ancestors
-    if let Some(status) = validate_ancestors(&block, &context)? {
+    if let Some(status) = validate_ancestors(&block, &context).await? {
         return serde_json::to_value(status).map_err(|error| RpcErr::Internal(error.to_string()));
     }
 
@@ -606,7 +623,7 @@ async fn handle_new_payload_v3(
     }
 
     // Check for invalid ancestors
-    if let Some(status) = validate_ancestors(&block, &context)? {
+    if let Some(status) = validate_ancestors(&block, &context).await? {
         return Ok(status);
     }
 
@@ -675,19 +692,19 @@ async fn execute_payload(block: &Block, context: &RpcApiContext) -> Result<Paylo
     let block_hash = block.hash();
     let storage = &context.storage;
     // Return the valid message directly if we have it.
-    if storage.get_block_by_hash(block_hash)?.is_some() {
+    if storage.get_block_by_hash(block_hash).await?.is_some() {
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 
     // Execute and store the block
     info!("Executing payload with block hash: {block_hash:#x}");
-    let latest_valid_hash =
-        context
-            .storage
-            .get_latest_canonical_block_hash()?
-            .ok_or(RpcErr::Internal(
-                "Missing latest canonical block".to_owned(),
-            ))?;
+    let latest_valid_hash = context
+        .storage
+        .get_latest_canonical_block_hash()
+        .await?
+        .ok_or(RpcErr::Internal(
+            "Missing latest canonical block".to_owned(),
+        ))?;
 
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => Ok(PayloadStatus::syncing()),
@@ -760,9 +777,9 @@ fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr>
     Ok(payload_id)
 }
 
-fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
+async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
     info!("Requested payload with id: {:#018x}", payload_id);
-    let Some(payload) = context.storage.get_payload(payload_id)? else {
+    let Some(payload) = context.storage.get_payload(payload_id).await? else {
         return Err(RpcErr::UnknownPayload(format!(
             "Payload with id {:#018x} not found",
             payload_id
@@ -784,28 +801,29 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
 
 async fn build_payload_if_necessary(
     payload_id: u64,
-    mut payload: PayloadBundle,
+    payload: PayloadBundle,
     context: RpcApiContext,
 ) -> Result<PayloadBundle, RpcErr> {
     if payload.completed {
         Ok(payload)
     } else {
-        let (blobs_bundle, requests, block_value) = {
+        let (blobs_bundle, requests, block_value, block) = {
             let PayloadBuildResult {
                 blobs_bundle,
                 block_value,
                 requests,
+                payload,
                 ..
             } = context
                 .blockchain
-                .build_payload(&mut payload.block)
+                .build_payload(payload.block)
                 .await
                 .map_err(|err| RpcErr::Internal(err.to_string()))?;
-            (blobs_bundle, requests, block_value)
+            (blobs_bundle, requests, block_value, payload)
         };
 
         let new_payload = PayloadBundle {
-            block: payload.block,
+            block,
             block_value,
             blobs_bundle,
             requests,

@@ -30,6 +30,8 @@ pub enum EvmError {
 
 #[derive(Debug, Error)]
 pub enum ExecutionDBError {
+    #[error("Database error: {0}")]
+    Database(#[from] DatabaseError),
     #[error("Store error: {0}")]
     Store(#[from] StoreError),
     #[error("Evm error: {0}")]

@@ -96,7 +96,8 @@ jobs:
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          cp configs/sequencer_config_docker_example.toml configs/sequencer_config.toml
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
+          sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
           if [ "${{ matrix.validium }}" = "true" ]; then
             sed -i.bak 's/^validium = false$/validium = true/' configs/sequencer_config.toml && rm configs/sequencer_config.toml.bak
           fi
@@ -150,6 +151,7 @@ jobs:
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          cp configs/sequencer_config_docker_example.toml configs/sequencer_config.toml
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
+          sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
 
           make state-diff-test

@@ -1,11 +1,9 @@
-use std::collections::HashMap;
-
 use ethrex_common::{
-    types::{Block, BlockHash, ChainConfig},
+    types::{BlockHash, ChainConfig},
     Address as CoreAddress, H256 as CoreH256,
 };
-use ethrex_storage::{error::StoreError, hash_address, hash_key, Store};
-use ethrex_trie::{Node, NodeRLP, PathRLP, Trie, TrieError};
+use ethrex_storage::{error::StoreError, Store};
+use ethrex_trie::{Node, NodeRLP, PathRLP, Trie};
 use revm::{
     primitives::{
         AccountInfo as RevmAccountInfo, Address as RevmAddress, Bytecode as RevmBytecode,
@@ -14,8 +12,7 @@ use revm::{
     DatabaseRef,
 };
 
-use crate::db::{ExecutionDB, ToExecDB};
-use crate::helpers::spec_id;
+use crate::db::ExecutionDB;
 use crate::{
     db::StoreWrapper,
     errors::{EvmError, ExecutionDBError},
@@ -29,6 +26,28 @@ use crate::{
 pub enum EvmState {
     Store(revm::db::State<StoreWrapper>),
     Execution(Box<revm::db::CacheDB<ExecutionDB>>),
+}
+
+// Needed because revm::db::State is not cloneable and we need to
+// restore the previous EVM state after executing a transaction in L2 mode whose resulting state diff doesn't fit in a blob.
+impl Clone for EvmState {
+    fn clone(&self) -> Self {
+        match self {
+            EvmState::Store(state) => EvmState::Store(revm::db::State::<StoreWrapper> {
+                cache: state.cache.clone(),
+                database: state.database.clone(),
+                transition_state: state.transition_state.clone(),
+                bundle_state: state.bundle_state.clone(),
+                use_preloaded_bundle: state.use_preloaded_bundle,
+                block_hashes: state.block_hashes.clone(),
+            }),
+            EvmState::Execution(execution) => {
+                EvmState::Execution(Box::new(Into::<revm::db::CacheDB<ExecutionDB>>::into(
+                    *execution.clone(),
+                )))
+            }
+        }
+    }
 }
 
 impl EvmState {
@@ -214,186 +233,6 @@ impl revm::DatabaseRef for StoreWrapper {
     }
 }
 
-impl ToExecDB for StoreWrapper {
-    fn to_exec_db(&self, block: &Block) -> Result<ExecutionDB, ExecutionDBError> {
-        // TODO: Simplify this function and potentially merge with the implementation for
-        // RpcDB.
-
-        let parent_hash = block.header.parent_hash;
-        let chain_config = self.store.get_chain_config()?;
-
-        // pre-execute and get all state changes
-        let cache = ExecutionDB::pre_execute(
-            block,
-            chain_config.chain_id,
-            spec_id(&chain_config, block.header.timestamp),
-            self,
-        )
-        .map_err(|err| Box::new(EvmError::from(err)))?; // TODO: ugly error handling
-        let store_wrapper = cache.db;
-
-        // index read and touched account addresses and storage keys
-        let index = cache.accounts.iter().map(|(address, account)| {
-            let address = CoreAddress::from(address.0.as_ref());
-            let storage_keys: Vec<_> = account
-                .storage
-                .keys()
-                .map(|key| CoreH256::from_slice(&key.to_be_bytes_vec()))
-                .collect();
-            (address, storage_keys)
-        });
-
-        // fetch all read/written values from store
-        let cache_accounts = cache.accounts.iter().filter_map(|(address, account)| {
-            let address = CoreAddress::from(address.0.as_ref());
-            // filter new accounts (accounts that didn't exist before) assuming our store is
-            // correct (based on the success of the pre-execution).
-            if store_wrapper
-                .store
-                .get_account_info_by_hash(parent_hash, address)
-                .is_ok_and(|account| account.is_some())
-            {
-                Some((address, account))
-            } else {
-                None
-            }
-        });
-        let accounts = cache_accounts
-            .clone()
-            .map(|(address, _)| {
-                // return error if account is missing
-                let account = match store_wrapper
-                    .store
-                    .get_account_info_by_hash(parent_hash, address)
-                {
-                    Ok(Some(some)) => Ok(some),
-                    Err(err) => Err(ExecutionDBError::Store(err)),
-                    Ok(None) => unreachable!(), // we are filtering out accounts that are not present
-                                                // in the store
-                };
-                Ok((address, account?))
-            })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let code = cache_accounts
-            .clone()
-            .map(|(_, account)| {
-                // return error if code is missing
-                let hash = CoreH256::from(account.info.code_hash.0);
-                Ok((
-                    hash,
-                    store_wrapper
-                        .store
-                        .get_account_code(hash)?
-                        .ok_or(ExecutionDBError::NewMissingCode(hash))?,
-                ))
-            })
-            .collect::<Result<_, ExecutionDBError>>()?;
-        let storage = cache_accounts
-            .map(|(address, account)| {
-                // return error if storage is missing
-                Ok((
-                    address,
-                    account
-                        .storage
-                        .keys()
-                        .map(|key| {
-                            let key = CoreH256::from(key.to_be_bytes());
-                            let value = store_wrapper
-                                .store
-                                .get_storage_at_hash(parent_hash, address, key)
-                                .map_err(ExecutionDBError::Store)?
-                                .ok_or(ExecutionDBError::NewMissingStorage(address, key))?;
-                            Ok((key, value))
-                        })
-                        .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?,
-                ))
-            })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
-        let block_hashes = cache
-            .block_hashes
-            .into_iter()
-            .map(|(num, hash)| (num.try_into().unwrap(), CoreH256::from(hash.0)))
-            .collect();
-        // WARN: unwrapping because revm wraps a u64 as a U256
-
-        // get account proofs
-        let state_trie = self
-            .store
-            .state_trie(block.hash())?
-            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
-        let parent_state_trie = self
-            .store
-            .state_trie(parent_hash)?
-            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
-        let hashed_addresses: Vec<_> = index
-            .clone()
-            .map(|(address, _)| hash_address(&address))
-            .collect();
-        let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
-        let final_state_proofs: Vec<_> = hashed_addresses
-            .iter()
-            .map(|hashed_address| Ok((hashed_address, state_trie.get_proof(hashed_address)?)))
-            .collect::<Result<_, TrieError>>()?;
-        let potential_account_child_nodes = final_state_proofs
-            .iter()
-            .filter_map(|(hashed_address, proof)| get_potential_child_nodes(proof, hashed_address))
-            .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
-            .collect();
-        let state_proofs = (
-            initial_state_proofs.0,
-            [initial_state_proofs.1, potential_account_child_nodes].concat(),
-        );
-
-        // get storage proofs
-        let mut storage_proofs = HashMap::new();
-        let mut final_storage_proofs = HashMap::new();
-        for (address, storage_keys) in index {
-            let Some(parent_storage_trie) = self.store.storage_trie(parent_hash, address)? else {
-                // the storage of this account was empty or the account is newly created, either
-                // way the storage trie was initially empty so there aren't any proofs to add.
-                continue;
-            };
-            let storage_trie = self.store.storage_trie(block.hash(), address)?.ok_or(
-                ExecutionDBError::NewMissingStorageTrie(block.hash(), address),
-            )?;
-            let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
-
-            let initial_proofs = parent_storage_trie.get_proofs(&paths)?;
-            let final_proofs: Vec<(_, Vec<_>)> = storage_keys
-                .iter()
-                .map(|key| {
-                    let hashed_key = hash_key(key);
-                    let proof = storage_trie.get_proof(&hashed_key)?;
-                    Ok((hashed_key, proof))
-                })
-                .collect::<Result<_, TrieError>>()?;
-
-            let potential_child_nodes: Vec<NodeRLP> = final_proofs
-                .iter()
-                .filter_map(|(hashed_key, proof)| get_potential_child_nodes(proof, hashed_key))
-                .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
-                .collect();
-            let proofs = (
-                initial_proofs.0,
-                [initial_proofs.1, potential_child_nodes].concat(),
-            );
-
-            storage_proofs.insert(address, proofs);
-            final_storage_proofs.insert(address, final_proofs);
-        }
-
-        Ok(ExecutionDB {
-            accounts,
-            code,
-            storage,
-            block_hashes,
-            chain_config,
-            state_proofs,
-            storage_proofs,
-        })
-    }
-}
-
 /// Get all potential child nodes of a node whose value was deleted.
 ///
 /// After deleting a value from a (partial) trie it's possible that the node containing the value gets
@@ -401,7 +240,7 @@ impl ToExecDB for StoreWrapper {
 /// If we don't have this child node (because we're modifying a partial trie), then we can't
 /// perform the deletion. If we have the final proof of exclusion of the deleted value, we can
 /// calculate all posible child nodes.
-fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
+pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
     // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones.
     let trie = Trie::from_nodes(
         proof.first(),

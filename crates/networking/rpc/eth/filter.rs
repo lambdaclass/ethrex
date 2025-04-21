@@ -64,7 +64,7 @@ impl NewFilterRequest {
         })
     }
 
-    pub fn handle(
+    pub async fn handle(
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
@@ -72,19 +72,21 @@ impl NewFilterRequest {
         let from = self
             .request_data
             .from_block
-            .resolve_block_number(&storage)?
+            .resolve_block_number(&storage)
+            .await?
             .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
         let to = self
             .request_data
             .to_block
-            .resolve_block_number(&storage)?
+            .resolve_block_number(&storage)
+            .await?
             .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
 
         if (from..=to).is_empty() {
             return Err(RpcErr::BadParams("Invalid block range".to_string()));
         }
 
-        let last_block_number = storage.get_latest_block_number()?;
+        let last_block_number = storage.get_latest_block_number().await?;
         let id: u64 = rand::random();
         let timestamp = Instant::now();
         let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
@@ -107,13 +109,13 @@ impl NewFilterRequest {
         Ok(as_hex)
     }
 
-    pub fn stateful_call(
+    pub async fn stateful_call(
         req: &RpcRequest,
         storage: Store,
         state: ActiveFilters,
     ) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(storage, state)
+        request.handle(storage, state).await
     }
 }
 
@@ -179,18 +181,21 @@ impl FilterChangesRequest {
             None => Err(RpcErr::MissingParam("0".to_string())),
         }
     }
-    pub fn handle(
+    pub async fn handle(
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let latest_block_num = storage.get_latest_block_number()?;
-        let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
-            error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
-            **poisoned_guard.get_mut() = HashMap::new();
-            filters.clear_poison();
-            poisoned_guard.into_inner()
-        });
+        let latest_block_num = storage.get_latest_block_number().await?;
+        // Box needed to keep the future Sync
+        // https://github.com/rust-lang/rust/issues/128095
+        let mut active_filters_guard =
+            Box::new(filters.lock().unwrap_or_else(|mut poisoned_guard| {
+                error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
+                **poisoned_guard.get_mut() = HashMap::new();
+                filters.clear_poison();
+                poisoned_guard.into_inner()
+            }));
         if let Some((timestamp, filter)) = active_filters_guard.get_mut(&self.id) {
             // We'll only get changes for a filter that either has a block
             // range for upcoming blocks, or for the 'latest' tag.
@@ -216,7 +221,7 @@ impl FilterChangesRequest {
                 // Drop the lock early to process this filter's query
                 // and not keep the lock more than we should.
                 drop(active_filters_guard);
-                let logs = fetch_logs_with_filter(&filter.filter_data, storage)?;
+                let logs = fetch_logs_with_filter(&filter.filter_data, storage).await?;
                 serde_json::to_value(logs).map_err(|error| {
                     tracing::error!("Log filtering request failed with: {error}");
                     RpcErr::Internal("Failed to filter logs".to_string())
@@ -233,13 +238,13 @@ impl FilterChangesRequest {
             ))
         }
     }
-    pub fn stateful_call(
+    pub async fn stateful_call(
         req: &RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(storage, filters)
+        request.handle(storage, filters).await
     }
 }
 
