@@ -30,10 +30,10 @@ pub enum Value {
 
 fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEncodeError> {
     let sig = signature.trim().trim_start_matches("function ");
-    let (name, args) = sig
+    let (name, params) = sig
         .split_once('(')
         .ok_or(CalldataEncodeError::ParseError(signature.to_owned()))?;
-    let args = args.rsplit_once(')').map_or(args, |(left, _)| left);
+    let params = params.rsplit_once(')').map_or(params, |(left, _)| left);
 
     // We use this to only keep track of top level tuples
     // "address,(uint256,uint256)" -> "address" and "(uint256,uint256)"
@@ -42,7 +42,7 @@ fn parse_signature(signature: &str) -> Result<(String, Vec<String>), CalldataEnc
     let mut current_param = String::new();
     let mut parenthesis_depth = 0;
 
-    for ch in args.chars() {
+    for ch in params.chars() {
         match ch {
             '(' => {
                 parenthesis_depth += 1;
