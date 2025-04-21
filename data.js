@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745253472652,
+  "lastUpdate": 1745261755443,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3475,6 +3475,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182089076648,
             "range": "± 715840275",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "05c050893b5457dc640d1a9411b3124e54ad7e95",
+          "message": "fix(l2): fixes and cleanup of `to_execution_db()` (#2482)\n\n**Motivation**\n\nProver's execution was failing because of wrong data in the ExecutionDB.\nThere were also some cases where data was missing but the current tests\ndidn't catch it.\n\n**Description**\n\n- fixes saving final storage values instead of initial ones.\n- fixes saving only touched storage values, instead of read ones too.\n- removes unused `new_store`\n- simplifies code",
+          "timestamp": "2025-04-21T18:08:49Z",
+          "tree_id": "5c96fa446b6c39f51c14a0049416cc58fc37c394",
+          "url": "https://github.com/lambdaclass/ethrex/commit/05c050893b5457dc640d1a9411b3124e54ad7e95"
+        },
+        "date": 1745261752849,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180941567477,
+            "range": "± 563627713",
             "unit": "ns/iter"
           }
         ]
