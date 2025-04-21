@@ -122,14 +122,7 @@ impl Hook for DefaultHook {
 
         // (5) INITCODE_SIZE_EXCEEDED
         if vm.is_create() {
-            // [EIP-3860] - INITCODE_SIZE_EXCEEDED
-            if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
-                && vm.env.config.fork >= Fork::Shanghai
-            {
-                return Err(VMError::TxValidation(
-                    TxValidationError::InitcodeSizeExceeded,
-                ));
-            }
+            validate_init_code_size(vm, initial_call_frame)?;
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
@@ -459,6 +452,21 @@ pub fn check_max_fee_per_blob_gas(
     {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientMaxFeePerBlobGas,
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_init_code_size(
+    vm: &mut VM<'_>,
+    initial_call_frame: &CallFrame,
+) -> Result<(), VMError> {
+    // [EIP-3860] - INITCODE_SIZE_EXCEEDED
+    if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
+        && vm.env.config.fork >= Fork::Shanghai
+    {
+        return Err(VMError::TxValidation(
+            TxValidationError::InitcodeSizeExceeded,
         ));
     }
     Ok(())

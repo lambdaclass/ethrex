@@ -1,7 +1,7 @@
 use ethrex_common::{types::Fork, Address, U256};
 
 use crate::{
-    constants::{INIT_CODE_MAX_SIZE, VALID_BLOB_PREFIXES},
+    constants::VALID_BLOB_PREFIXES,
     db::cache::remove_account,
     errors::{InternalError, TxResult, TxValidationError, VMError},
     hooks::default_hook,
@@ -48,14 +48,7 @@ impl Hook for L2Hook {
 
         // (5) INITCODE_SIZE_EXCEEDED
         if vm.is_create() {
-            // [EIP-3860] - INITCODE_SIZE_EXCEEDED
-            if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
-                && vm.env.config.fork >= Fork::Shanghai
-            {
-                return Err(VMError::TxValidation(
-                    TxValidationError::InitcodeSizeExceeded,
-                ));
-            }
+            default_hook::validate_init_code_size(vm, initial_call_frame)?;
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
