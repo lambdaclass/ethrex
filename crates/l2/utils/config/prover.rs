@@ -3,12 +3,12 @@ use serde::Deserialize;
 use super::errors::ConfigError;
 
 #[derive(Deserialize, Debug)]
-pub struct ProverWorkerConfig {
+pub struct ProverConfig {
     pub prover_server_endpoint: String,
     pub proving_time_ms: u64,
 }
 
-impl ProverWorkerConfig {
+impl ProverConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         envy::prefixed("PROVER_CLIENT_")
             .from_env::<Self>()

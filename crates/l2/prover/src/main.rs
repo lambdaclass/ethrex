@@ -1,6 +1,5 @@
 use ethrex_l2::utils::config::{
-    prover_worker::ProverWorkerConfig, read_env_file_by_config, toml_parser::parse_configs,
-    ConfigMode,
+    prover::ProverConfig, read_env_file_by_config, toml_parser::parse_configs, ConfigMode,
 };
 use ethrex_prover_lib::init_client;
 use tracing::{self, debug, error, Level};
@@ -26,7 +25,7 @@ async fn main() {
         return;
     }
 
-    let Ok(config) = ProverWorkerConfig::from_env() else {
+    let Ok(config) = ProverConfig::from_env() else {
         error!("Failed to read ProverClientConfig from .env file. It is '.env.prover' by default");
         return;
     };

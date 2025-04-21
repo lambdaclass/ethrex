@@ -11,7 +11,7 @@ pub mod committer;
 pub mod eth;
 pub mod l1_watcher;
 pub mod proof_coordinator;
-pub mod prover_worker;
+pub mod prover;
 
 pub mod errors;
 pub mod toml_parser;
