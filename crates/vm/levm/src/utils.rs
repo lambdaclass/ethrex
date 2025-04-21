@@ -12,7 +12,7 @@ use crate::{
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    vm::{EVMConfig, GeneralizedDatabase, Substate},
+    vm::{EVMConfig, GeneralizedDatabase, Substate, VM},
     AccountInfo,
 };
 use bytes::Bytes;
@@ -319,19 +319,16 @@ pub fn get_intrinsic_gas(
 }
 
 pub fn add_intrinsic_gas(
-    is_create: bool,
-    fork: Fork,
+    vm: &mut VM<'_>,
     initial_call_frame: &mut CallFrame,
-    access_list: &AccessList,
-    authorization_list: &Option<AuthorizationList>,
 ) -> Result<(), VMError> {
     // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
     let intrinsic_gas = get_intrinsic_gas(
-        is_create,
-        fork,
-        access_list,
-        authorization_list,
+        vm.is_create(),
+        vm.env.config.fork,
+        &vm.access_list,
+        &vm.authorization_list,
         initial_call_frame,
     )?;
 

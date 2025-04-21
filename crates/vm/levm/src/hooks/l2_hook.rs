@@ -52,13 +52,7 @@ impl Hook for L2Hook {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        add_intrinsic_gas(
-            vm.is_create(),
-            vm.env.config.fork,
-            initial_call_frame,
-            &vm.access_list,
-            &vm.authorization_list,
-        )?;
+        add_intrinsic_gas(vm, initial_call_frame)?;
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (

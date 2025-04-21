@@ -126,13 +126,7 @@ impl Hook for DefaultHook {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        add_intrinsic_gas(
-            vm.is_create(),
-            vm.env.config.fork,
-            initial_call_frame,
-            &vm.access_list,
-            &vm.authorization_list,
-        )?;
+        add_intrinsic_gas(vm, initial_call_frame)?;
 
         // (7) NONCE_IS_MAX
         increment_account_nonce(vm.db, sender_address)
