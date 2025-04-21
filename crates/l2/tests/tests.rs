@@ -2,6 +2,7 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
+use ethrex_l2::utils::config::eth::EthConfig;
 use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{

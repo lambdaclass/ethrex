@@ -134,7 +134,13 @@ impl ProverServer {
         eth_config: EthConfig,
         store: Store,
     ) -> Result<Self, ConfigError> {
-        let eth_client = EthClient::new(&eth_config.rpc_url);
+        let eth_client = EthClient::new_with_config(
+            &eth_config.rpc_url,
+            eth_config.max_number_of_retries,
+            eth_config.backoff_factor,
+            eth_config.min_retry_delay,
+            eth_config.max_retry_delay,
+        );
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
         let verifier_contracts = EthClient::get_verifier_contracts(

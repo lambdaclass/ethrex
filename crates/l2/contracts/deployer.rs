@@ -3,6 +3,7 @@ use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
 use ethrex_common::U256;
 use ethrex_l2::utils::config::errors;
+use ethrex_l2::utils::config::eth::EthConfig;
 use ethrex_l2::utils::config::{
     read_env_as_lines_by_config, read_env_file_by_config, toml_parser::parse_configs,
     write_env_file_by_config, ConfigMode,
@@ -165,7 +166,14 @@ async fn main() -> Result<(), DeployError> {
 fn setup() -> Result<SetupResult, DeployError> {
     read_env_file_by_config(ConfigMode::Sequencer)?;
 
-    let eth_client = EthClient::new(&read_env_var("ETH_RPC_URL")?);
+    let eth_config = EthConfig::from_env().map_err(DeployError::ConfigError)?;
+    let eth_client = EthClient::new_with_config(
+        &eth_config.rpc_url,
+        eth_config.max_number_of_retries,
+        eth_config.backoff_factor,
+        eth_config.min_retry_delay,
+        eth_config.max_retry_delay,
+    );
 
     let deployer_address = parse_env_var("DEPLOYER_L1_ADDRESS")?;
     let deployer_private_key = SecretKey::from_slice(
