@@ -92,7 +92,7 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
-      - name: Prepare configuration
+      - name: Run test
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
@@ -101,10 +101,6 @@ jobs:
           if [ "${{ matrix.validium }}" = "true" ]; then
             sed -i.bak 's/^validium = false$/validium = true/' configs/sequencer_config.toml && rm configs/sequencer_config.toml.bak
           fi
-
-      - name: Run test
-        run: |
-          cd crates/l2
           make integration-test
 
   state-diff-test:
