@@ -232,7 +232,9 @@ pub enum Subcommand {
         #[arg(
             value_name = "source data dir",
             long = "data-dir",
-            short = 'd'
+            short = 'd',
+            value_name = "DATA DIR",
+            help = "Path to an existing data dir for ethrex, otherwise use the default one"
         )]
         data_dir: Option<String>
     },
