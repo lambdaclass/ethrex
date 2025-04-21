@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745261755443,
+  "lastUpdate": 1745261774830,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3505,6 +3505,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180941567477,
             "range": "± 563627713",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d637bb2f9e383b5e8cf7bcb3e63281026879e166",
+          "message": "feat(l1,l2): add ethereum metrics exporter and grafana support (#2434)\n\n**Motivation**\n\nAllows seeing the status of the test network.\n\n**Description**\n\n- Implements a net_peerCount dummy (required to enable several\nethereum-metrics-exporter modules)\n- Enables ethereum-metrics-exporter with a grafana dashboard in for the\nkurtosis localnet\n\nNote: prometheus v3 must be used since the prometheus kurtosis package\nadds fallback_scrape_protocol.\n\nCloses #2317",
+          "timestamp": "2025-04-21T18:08:15Z",
+          "tree_id": "6d32ef5b08de1a8430227a883b66cfb4e8f430ec",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d637bb2f9e383b5e8cf7bcb3e63281026879e166"
+        },
+        "date": 1745261771875,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182465500438,
+            "range": "± 466663760",
             "unit": "ns/iter"
           }
         ]
