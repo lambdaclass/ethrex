@@ -271,7 +271,6 @@ impl Subcommand {
             }
             Subcommand::Export { path, data_dir } => {
                 let data_dir = data_dir.unwrap_or_else(|| get_data_dir(DEFAULT_DATADIR).to_owned());
-                println!("{data_dir}");
                 let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Fatal: could not open db");
                 match write_storage_blocks_to_file(None, &path, &store).await {
                     Err(err) => tracing::error!("Could not write RLP file: {}", err),
