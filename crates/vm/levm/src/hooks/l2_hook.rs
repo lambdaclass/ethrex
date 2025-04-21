@@ -1,12 +1,12 @@
 use ethrex_common::{types::Fork, Address, U256};
 
 use crate::{
-    db::cache::remove_account,
+    db::cache::{insert_account, remove_account},
     errors::{InternalError, TxResult, TxValidationError, VMError},
     hooks::default_hook,
     utils::{
-        add_intrinsic_gas, get_account, get_valid_jump_destinations, has_delegation,
-        increase_account_balance,
+        add_intrinsic_gas, decrease_account_balance, get_account, get_valid_jump_destinations,
+        has_delegation, increase_account_balance, increment_account_nonce,
     },
 };
 
@@ -110,7 +110,19 @@ impl Hook for L2Hook {
         initial_call_frame: &crate::call_frame::CallFrame,
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
+        // FIXME: L2Hook should behave like the DefaultHook but with extra or
+        // less steps. Currently it's not the case since it is hardcoded to
+        // always be used for Privilege txs, specifically deposit txs.
+        // This efforts will be done in two steps:
+        // 1. Refactoring L2Hook to be a DefaultHook with some extra steps.
+        // 2. Adding logic to detect privilege transactions since now it is not
+        // possible.
+        // As part of the first step we will continue using the L2Hook for
+        // privilege transactions, hence the hardcoded is_privilege_tx.
+        let is_privilege_tx = true;
+
         // POST-EXECUTION Changes
+        let sender_address = initial_call_frame.msg_sender;
         let receiver_address = initial_call_frame.to;
 
         // 1. Undo value transfer if the transaction has reverted
@@ -127,9 +139,28 @@ impl Hook for L2Hook {
                 // If transaction execution results in failure (any
                 // exceptional condition or code reverting), setting
                 // delegation designations is not rolled back.
+                if !is_privilege_tx {
+                    decrease_account_balance(
+                        vm.db,
+                        receiver_address,
+                        initial_call_frame.msg_value,
+                    )?;
+                }
+            } else if !is_privilege_tx {
+                // If the receiver of the transaction was in the cache before the transaction we restore it's state,
+                // but if it wasn't then we remove the account from cache like nothing happened.
+                if let Some(receiver_account) = vm.cache_backup.get(&receiver_address) {
+                    insert_account(&mut vm.db.cache, receiver_address, receiver_account.clone());
+                } else {
+                    remove_account(&mut vm.db.cache, &receiver_address);
+                }
             } else {
                 // We remove the receiver account from the cache, like nothing changed in it's state.
                 remove_account(&mut vm.db.cache, &receiver_address);
+            }
+
+            if !is_privilege_tx {
+                increase_account_balance(vm.db, sender_address, initial_call_frame.msg_value)?;
             }
         }
 
