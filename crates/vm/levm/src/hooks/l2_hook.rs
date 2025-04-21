@@ -95,6 +95,10 @@ impl Hook for L2Hook {
             initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
             initial_call_frame.valid_jump_destinations =
                 get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
+        } else if !is_privilege_tx {
+            // Transfer value to receiver
+            // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
+            increase_account_balance(vm.db, initial_call_frame.to, initial_call_frame.msg_value)?;
         }
         Ok(())
     }
