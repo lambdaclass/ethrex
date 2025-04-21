@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745269904492,
+  "lastUpdate": 1745270432300,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3595,6 +3595,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182203817085,
             "range": "± 822225260",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0d08a2f7161918817cdd2de61bb6eaa766b2a3a8",
+          "message": "feat(levm): also check cache when querying if account exists (#2489)\n\n**Motivation**\n\nFixes 14 state ef-tests that rely on newly created accounts being\ntreated as existing.\n\n**Description**\n\nInstead of checking directly on the database, the cache is also queried\nwhen determining whether an account exists.",
+          "timestamp": "2025-04-21T20:32:51Z",
+          "tree_id": "d044cd229c13b8e2eab5e18614cd2c8e4606856c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0d08a2f7161918817cdd2de61bb6eaa766b2a3a8"
+        },
+        "date": 1745270430403,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182360857225,
+            "range": "± 501368925",
             "unit": "ns/iter"
           }
         ]
