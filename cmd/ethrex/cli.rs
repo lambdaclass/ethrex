@@ -222,11 +222,19 @@ pub enum Subcommand {
     Export {
         #[arg(
             required = false,
-            value_name = "FILE_PATH/FOLDER",
+            value_name = "EXISTING FOLDER",
             help = "Path to store the RLP file",
-            default_value = "./blocks.rlp"
+            default_value = "./",
+            short = 'o',
+            long = "output-dir"
         )]
         path: String,
+        #[arg(
+            value_name = "source data dir",
+            long = "data-dir",
+            short = 'd'
+        )]
+        data_dir: Option<String>
     },
     #[cfg(any(feature = "l2", feature = "based"))]
     #[command(subcommand)]
@@ -259,15 +267,14 @@ impl Subcommand {
 
                 import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
-            Subcommand::Export { path } => {
-                // let store = init_store(DEFAULT_DATADIR, network).await;
-                // FIXME:
-                // 1. Use data dir by param.
-                // 2. Properly choose the engine type.
-                let data_dir = get_data_dir(DEFAULT_DATADIR);
-                let store = Store::new(&data_dir, EngineType::Libmdbx).unwrap();
-                // FIXME: Remove unwrap
-                write_storage_blocks_to_file(None, &path, &store).await.unwrap();
+            Subcommand::Export { path, data_dir } => {
+                let data_dir = data_dir.unwrap_or_else(|| get_data_dir(DEFAULT_DATADIR).to_owned());
+                println!("{data_dir}");
+                let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Fatal: could not open db");
+                match write_storage_blocks_to_file(None, &path, &store).await {
+                    Err(err) => tracing::error!("Could not write RLP file: {}", err),
+                    Ok(ok) => tracing::info!("Block file written to {}", ok)
+                }
             }
             #[cfg(any(feature = "l2", feature = "based"))]
             Subcommand::L2(command) => command.run().await?,

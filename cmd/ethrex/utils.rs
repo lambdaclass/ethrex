@@ -142,9 +142,16 @@ pub async fn write_storage_blocks_to_file(
     up_to_block_number: Option<u64>,
     path: &str,
     store: &Store,
-) -> Result<(), String> {
-    let path = PathBuf::from(path);
-    let file = std::fs::File::create(&path).map_err(|err| {
+) -> Result<String, String> {
+    let mut path = PathBuf::from(path).canonicalize().map_err(|err| format!("Given path is not valid: {}", err))?;
+
+    if !path.is_dir() {
+       return Err(format!("Given path '{}' is not an existing directory", path.display()))
+    }
+
+    path.push("blocks.rlp");
+
+    let file = std::fs::File::create(path.clone()).map_err(|err| {
         format!(
             "Could not create file with path {}, got error: {}",
             &path.display(),
@@ -164,5 +171,5 @@ pub async fn write_storage_blocks_to_file(
         let vec = block.encode_to_vec();
         writer.write(&vec).map_err(|err| format!("Failed to write encoded block to a file: {}", err))?;
     }
-    Ok(())
+    Ok(path.display().to_string())
 }
