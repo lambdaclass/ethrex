@@ -229,7 +229,7 @@ An execution witness is created from a prior execution of the block. Before prov
 3. store each logged value in an in-memory key-value database (`ExecutionDB`, implemented just using hash maps).
 4. retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash.
 
-Steps 1-3 are straightforward. Step 4 involves more complex logic due to potential issues when reconstructing the state trie after value removals.
+Steps 1-3 are straightforward. Step 4 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections [initial state validation](step-1:-initial-state-validation) and [final state validation](step-3:-final-state-validation) we explain what are pruned tries and in which case they get restructured.
 
 If a value is removed during block execution (meaning it existed initially but not finally), two pathological cases can occur where the witness lacks sufficient information to update the trie structure correctly:
 
