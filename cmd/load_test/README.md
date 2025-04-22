@@ -10,8 +10,9 @@ Usage: load_test [OPTIONS] --pkeys <PKEYS>
 Options:
   -n, --node <NODE>            URL of the node being tested. [default: http://localhost:8545]
   -k, --pkeys <PKEYS>          Path to the file containing private keys.
-  -t, --test-type <TEST_TYPE>  Type of test to run. Can be eth_transfers or erc20. [default: erc20] [possible values: eth-transfers, erc20]
+  -t, --test-type <TEST_TYPE>  Type of test to run. Can be eth_transfers or erc20. [default: erc20] [possible values: eth-transfers, erc20, fibonacci, io-heavy]
   -N, --tx-amount <TX_AMOUNT>  Number of transactions to send for each account. [default: 1000]
+  -w, --wait <WAIT>            Timeout to wait for all transactions to be included. If 0 is specified, wait indefinitely. [default: 0]
   -h, --help                   Print help
 ```
 
