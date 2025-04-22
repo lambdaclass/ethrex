@@ -39,9 +39,10 @@ pub fn main() {
         panic!("invalid database")
     };
 
+    let fork = db.chain_config.fork(block.header.timestamp);
     let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
     let receipts = result.receipts;
-    let account_updates = result.account_updates;
+    let account_updates = evm.get_state_transitions(fork).expect("failed to get state transitions");
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
     // Output gas for measurement purposes
