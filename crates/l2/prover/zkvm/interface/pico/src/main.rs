@@ -46,12 +46,12 @@ pub fn main() {
         // Execute block
         let mut vm = Evm::from_execution_db(db.clone());
         let result = vm.execute_block(&block).expect("failed to execute block");
-        let receipts = result.receipts;
+        // let receipts = result.receipts;
 
-        cumulative_gas_used += receipts
-            .last()
-            .map(|last_receipt| last_receipt.cumulative_gas_used)
-            .unwrap_or_default();
+        // cumulative_gas_used += receipts
+        //     .last()
+        //     .map(|last_receipt| last_receipt.cumulative_gas_used)
+        //     .unwrap_or_default();
 
         // Update db for the next block
         db.apply_account_updates(&result.account_updates);
