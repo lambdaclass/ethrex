@@ -5,6 +5,8 @@ use super::errors::ConfigError;
 #[derive(Deserialize, Debug)]
 pub struct EthConfig {
     pub rpc_url: String,
+    pub max_fee_per_gas: u64,
+    pub max_fee_per_blob_gas: u64,
 }
 
 impl EthConfig {
