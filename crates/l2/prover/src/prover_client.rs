@@ -99,20 +99,18 @@ impl ProverClient {
 
     async fn submit_proof(
         &self,
-        block_number: u64,
+        batch_number: u64,
         proving_output: ProofCalldata,
     ) -> Result<(), String> {
-        let submit = ProofData::submit(block_number, proving_output);
+        let submit = ProofData::submit(batch_number, proving_output);
 
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
             .await
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;
 
         match submit_ack {
-            ProofData::SubmitAck {
-                batch_number: block_number,
-            } => {
-                info!("Received submit ack for block_number: {}", block_number);
+            ProofData::SubmitAck { batch_number } => {
+                info!("Received submit ack for batch_number: {}", batch_number);
                 Ok(())
             }
             _ => Err("Expecting ProofData::SubmitAck".to_owned()),
