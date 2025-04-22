@@ -385,14 +385,14 @@ impl Display for EFTestsReport {
                 if result.failed_vectors.is_empty() {
                     continue;
                 }
-                writeln!(f, "\n  Fork: {:?}", fork)?;
+                writeln!(f, "\tFork: {:?}", fork)?;
                 for (failed_vector, error) in &result.failed_vectors {
                     writeln!(
                         f,
-                        "   Failed Vector: (data_index: {}, gas_limit_index: {}, value_index: {})",
+                        "\t\tFailed Vector: (data_index: {}, gas_limit_index: {}, value_index: {})",
                         failed_vector.0, failed_vector.1, failed_vector.2
                     )?;
-                    writeln!(f, "      Error: {error}")?;
+                    writeln!(f, "\t\t\tError: {error}")?;
                     if let Some(re_run_report) = &report.re_run_report {
                         if let Some(execution_report) =
                             re_run_report.execution_report.get(&(*failed_vector, *fork))
@@ -402,7 +402,7 @@ impl Display for EFTestsReport {
                             {
                                 writeln!(
                                     f,
-                                    "      Execution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
+                                    "\t\t\tExecution result mismatch: LEVM: {levm_result:?}, REVM: {revm_result:?}",
                                 )?;
                             }
                             if let Some((levm_gas_used, revm_gas_used)) =
@@ -410,7 +410,7 @@ impl Display for EFTestsReport {
                             {
                                 writeln!(
                                     f,
-                                    "      Gas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
+                                    "\t\t\tGas used mismatch: LEVM: {levm_gas_used}, REVM: {revm_gas_used} (diff: {})",
                                     levm_gas_used.abs_diff(*revm_gas_used)
                                 )?;
                             }
@@ -419,7 +419,7 @@ impl Display for EFTestsReport {
                             {
                                 writeln!(
                                     f,
-                                    "      Gas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
+                                    "\t\t\tGas refunded mismatch: LEVM: {levm_gas_refunded}, REVM: {revm_gas_refunded} (diff: {})",
                                     levm_gas_refunded.abs_diff(*revm_gas_refunded)
                                 )?;
                             }
@@ -428,7 +428,7 @@ impl Display for EFTestsReport {
                             {
                                 writeln!(
                                     f,
-                                    "      Re-run error: LEVM: {levm_result:?}, REVM: {revm_error}",
+                                    "\t\t\tRe-run error: LEVM: {levm_result:?}, REVM: {revm_error}",
                                 )?;
                             }
                         }
@@ -437,12 +437,12 @@ impl Display for EFTestsReport {
                             .account_updates_report
                             .get(&(*failed_vector, *fork))
                         {
-                            writeln!(f, "      {}", &account_update.to_string())?;
+                            writeln!(f, "\t\t\t{}", &account_update.to_string())?;
                         } else {
-                            writeln!(f, "      No account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage.")?;
+                            writeln!(f, "\t\t\tNo account updates report found. Account update reports are only generated for tests that failed at the post-state validation stage.")?;
                         }
                     } else {
-                        writeln!(f, "      No re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage.")?;
+                        writeln!(f, "\t\t\tNo re-run report found. Re-run reports are only generated for tests that failed at the post-state validation stage.")?;
                     }
                     writeln!(f)?;
                 }
@@ -583,14 +583,14 @@ pub struct ComparisonReport {
 impl fmt::Display for ComparisonReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.revm_post_state_root != self.expected_post_state_root {
-            writeln!(f, "\n      WARNING: REVM fails this test\n")?;
+            writeln!(f, "\n\t\t\tWARNING: REVM fails this test")?;
             if self.levm_post_state_root != self.revm_post_state_root {
-                writeln!(f, "Post-state root mismatch between LEVM and REVM\n")?;
+                writeln!(f, "\t\t\tPost-state root mismatch between LEVM and REVM\n")?;
             } else {
-                writeln!(f, "Same Post-state root in LEVM and REVM\n")?;
+                writeln!(f, "\t\t\tSame Post-state root in LEVM and REVM\n")?;
             }
         } else {
-            writeln!(f, "\n      REVM passes this test")?;
+            writeln!(f, "\n\t\t\tREVM passes this test")?;
         }
 
         let all_updated_accounts = &(&self.levm_updated_accounts_only
@@ -598,11 +598,11 @@ impl fmt::Display for ComparisonReport {
             | &self.shared_updated_accounts;
 
         for address in all_updated_accounts {
-            writeln!(f, "\n      {address:#x}:")?;
+            writeln!(f, "\n\t\t\t{address:#x}:")?;
 
             let account_updates_for_address: Vec<(String, AccountUpdate)> =
                 if self.levm_updated_accounts_only.contains(&address) {
-                    writeln!(f, "      Was updated in LEVM but not in REVM")?;
+                    writeln!(f, "\t\t\t\tWas updated in LEVM but not in REVM")?;
                     self.levm_account_updates
                         .clone()
                         .iter()
@@ -610,7 +610,7 @@ impl fmt::Display for ComparisonReport {
                         .map(|account_update| ("LEVM".to_string(), account_update.clone()))
                         .collect()
                 } else if self.revm_updated_accounts_only.contains(&address) {
-                    writeln!(f, "      Was updated in REVM but not in LEVM")?;
+                    writeln!(f, "\t\t\t\tWas updated in REVM but not in LEVM")?;
                     self.revm_account_updates
                         .clone()
                         .iter()
@@ -618,7 +618,7 @@ impl fmt::Display for ComparisonReport {
                         .map(|account_update| ("REVM".to_string(), account_update.clone()))
                         .collect()
                 } else {
-                    writeln!(f, "      Was updated in both LEVM and REVM")?;
+                    writeln!(f, "\t\t\t\tWas updated in both LEVM and REVM")?;
                     [
                         self.revm_account_updates
                             .clone()
@@ -644,10 +644,10 @@ impl fmt::Display for ComparisonReport {
                 .unwrap_or_default();
 
             for (vm, account_update) in &account_updates_for_address {
-                writeln!(f, "      {vm} Account Update:")?;
+                writeln!(f, "\t\t\t\t{vm} Account Update:")?;
 
                 if account_update.removed {
-                    writeln!(f, "      Account was removed")?;
+                    writeln!(f, "\t\t\t\t\tAccount was removed")?;
                     continue;
                 }
 
@@ -655,19 +655,19 @@ impl fmt::Display for ComparisonReport {
                 if let Some(new_info) = &account_update.info {
                     writeln!(
                         f,
-                        "       Nonce: {} -> {}",
+                        "\t\t\t\t\tNonce: {} -> {}",
                         base_account.info.nonce, new_info.nonce
                     )?;
                     writeln!(
                         f,
-                        "       Balance: {} -> {}",
+                        "\t\t\t\t\tBalance: {} -> {}",
                         base_account.info.balance, new_info.balance
                     )?;
 
                     if base_account.info.bytecode_hash() != new_info.code_hash {
                         writeln!(
                             f,
-                            "       Code: {} -> {}",
+                            "\t\t\t\t\tCode: {} -> {}",
                             if base_account.info.bytecode.is_empty() {
                                 "empty".to_string()
                             } else {
@@ -690,7 +690,7 @@ impl fmt::Display for ComparisonReport {
                     let initial_value = base_account.storage.get(key).cloned().unwrap_or_default();
                     writeln!(
                         f,
-                        "       Storage slot: {key:#x}: {} -> {}",
+                        "\t\t\t\t\tStorage slot: {key:#x}: {} -> {}",
                         initial_value.original_value, value
                     )?;
                 }
@@ -709,14 +709,14 @@ impl fmt::Display for ComparisonReport {
                     .expect("REVM account update not found");
 
                 if levm_account_update == revm_account_update {
-                    writeln!(f, "      No differences between updates")?;
+                    writeln!(f, "\t\t\t\tNo differences between updates")?;
                     continue;
                 }
 
                 if levm_account_update.removed != revm_account_update.removed {
                     writeln!(
                         f,
-                        "      Account removal mismatch: LEVM: {}, REVM: {}",
+                        "\t\t\t\tAccount removal mismatch: LEVM: {}, REVM: {}",
                         levm_account_update.removed, revm_account_update.removed
                     )?;
                 }
@@ -727,14 +727,14 @@ impl fmt::Display for ComparisonReport {
                             if levm_info.nonce != revm_info.nonce {
                                 writeln!(
                                     f,
-                                    "      Nonce mismatch: LEVM: {}, REVM: {}",
+                                    "\t\t\t\tNonce mismatch: LEVM: {}, REVM: {}",
                                     levm_info.nonce, revm_info.nonce
                                 )?;
                             }
                             if levm_info.balance != revm_info.balance {
                                 writeln!(
                                     f,
-                                    "      Balance mismatch: LEVM: {}, REVM: {}",
+                                    "\t\t\t\tBalance mismatch: LEVM: {}, REVM: {}",
                                     levm_info.balance, revm_info.balance
                                 )?;
                             }
@@ -742,14 +742,14 @@ impl fmt::Display for ComparisonReport {
                         (Some(levm_info), None) => {
                             writeln!(
                                 f,
-                                "      LEVM has account info but REVM does not: Nonce: {}, Balance: {}",
+                                "\t\t\t\tLEVM has account info but REVM does not: Nonce: {}, Balance: {}",
                                 levm_info.nonce, levm_info.balance
                             )?;
                         }
                         (None, Some(revm_info)) => {
                             writeln!(
                                 f,
-                                "      REVM has account info but LEVM does not: Nonce: {}, Balance: {}",
+                                "\t\t\t\tREVM has account info but LEVM does not: Nonce: {}, Balance: {}",
                                 revm_info.nonce, revm_info.balance
                             )?;
                         }
@@ -781,7 +781,7 @@ impl fmt::Display for ComparisonReport {
                     if levm_value != revm_value {
                         writeln!(
                             f,
-                            "       Storage slot mismatch at key {key:#x}: LEVM: {}, REVM: {}",
+                            "\t\t\t\tStorage slot mismatch at key {key:#x}: LEVM: {}, REVM: {}",
                             levm_value, revm_value
                         )?;
                     }
