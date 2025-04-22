@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745275093922,
+  "lastUpdate": 1745338602673,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3655,6 +3655,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180265853102,
             "range": "± 372516910",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "755f7e370fbe465b851e0729d80ecab675893e43",
+          "message": "ci(l1): skip flaky snap test. (#2520)\n\n**Motivation**\nSnap test is flaky\n\n**Description**\nIssue created to reenable it:\nhttps://github.com/lambdaclass/ethrex/issues/2521",
+          "timestamp": "2025-04-22T15:28:48Z",
+          "tree_id": "206df44fbbd56c613281102a2751950433461487",
+          "url": "https://github.com/lambdaclass/ethrex/commit/755f7e370fbe465b851e0729d80ecab675893e43"
+        },
+        "date": 1745338600798,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181904331938,
+            "range": "± 814857140",
             "unit": "ns/iter"
           }
         ]
