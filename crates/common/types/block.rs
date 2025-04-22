@@ -20,7 +20,10 @@ use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
-use std::cmp::{max, Ordering};
+use std::{
+    cmp::{max, Ordering},
+    env::VarError,
+};
 
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
@@ -519,12 +522,21 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
     }
 
+    // This ENV variable is used for the L2 to set an arbitrary value
+    // if not present the constant value is used
+    let elasticity_multiplier = std::env::var("PROPOSER_ELASTICITY_MULTIPLIER")
+        .and_then(|str| {
+            str.parse::<u64>()
+                .map_err(|_| VarError::NotUnicode("cannot parse elasticity multiplier".into()))
+        })
+        .unwrap_or(ELASTICITY_MULTIPLIER);
+
     let expected_base_fee_per_gas = if let Some(base_fee) = calculate_base_fee_per_gas(
         header.gas_limit,
         parent_header.gas_limit,
         parent_header.gas_used,
         parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
-        ELASTICITY_MULTIPLIER,
+        elasticity_multiplier,
     ) {
         base_fee
     } else {
