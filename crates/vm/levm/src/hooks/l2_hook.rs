@@ -36,16 +36,16 @@ impl Hook for L2Hook {
         // privilege transactions, hence the hardcoded is_privilege_tx.
         let is_privilege_tx = true;
 
-        let sender_address = vm.env.origin;
-        let sender_account = get_account(vm.db, sender_address)?;
-
         if is_privilege_tx {
             increase_account_balance(vm.db, self.recipient, initial_call_frame.msg_value)?;
             initial_call_frame.msg_value = U256::from(0);
         }
 
+        let sender_address = vm.env.origin;
+        let sender_account = get_account(vm.db, sender_address)?;
+
         if vm.env.config.fork >= Fork::Prague {
-            default_hook::check_min_gas_limit(vm, initial_call_frame)?;
+            default_hook::validate_min_gas_limit(vm, initial_call_frame)?;
         }
 
         if !is_privilege_tx {
@@ -71,7 +71,7 @@ impl Hook for L2Hook {
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
-            default_hook::check_max_fee_per_blob_gas(vm, tx_max_fee_per_blob_gas)?;
+            default_hook::validate_max_fee_per_blob_gas(vm, tx_max_fee_per_blob_gas)?;
         }
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
@@ -203,14 +203,14 @@ impl Hook for L2Hook {
         // 2. Return unused gas + gas refunds to the sender.
         let mut consumed_gas = report.gas_used;
         // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        let quotient = if vm.env.config.fork < Fork::London {
+        let refund_quotient = if vm.env.config.fork < Fork::London {
             MAX_REFUND_QUOTIENT_PRE_LONDON
         } else {
             MAX_REFUND_QUOTIENT
         };
         let mut refunded_gas = report.gas_refunded.min(
             consumed_gas
-                .checked_div(quotient)
+                .checked_div(refund_quotient)
                 .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
         );
         // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"

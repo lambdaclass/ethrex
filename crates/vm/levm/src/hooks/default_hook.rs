@@ -37,7 +37,7 @@ impl Hook for DefaultHook {
         let sender_account = get_account(vm.db, sender_address)?;
 
         if vm.env.config.fork >= Fork::Prague {
-            check_min_gas_limit(vm, initial_call_frame)?;
+            validate_min_gas_limit(vm, initial_call_frame)?;
         }
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
@@ -53,7 +53,7 @@ impl Hook for DefaultHook {
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
-            check_max_fee_per_blob_gas(vm, tx_max_fee_per_blob_gas)?;
+            validate_max_fee_per_blob_gas(vm, tx_max_fee_per_blob_gas)?;
         }
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
