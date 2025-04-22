@@ -274,23 +274,7 @@ impl Blockchain {
             Err(err) => return Err((ChainError::EvmError(err), None)),
         };
         for account_update in account_updates {
-            let Some(cache) = all_account_updates.get_mut(&account_update.address) else {
-                all_account_updates.insert(account_update.address, account_update);
-                continue;
-            };
-
-            cache.removed = account_update.removed;
-            if let Some(code) = account_update.code {
-                cache.code = Some(code);
-            };
-
-            if let Some(info) = account_update.info {
-                cache.info = Some(info);
-            }
-
-            for (k, v) in account_update.added_storage.into_iter() {
-                cache.added_storage.insert(k, v);
-            }
+            all_account_updates.insert(account_update.address, account_update);
         }
 
         let Some(last_block) = blocks.last() else {
