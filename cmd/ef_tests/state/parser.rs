@@ -166,7 +166,7 @@ pub fn parse_ef_test_dir(
                     .forks
                     .iter()
                     .filter(|a| test_forks_numbers.contains(&(*a.0 as u8)))
-                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .map(|(k, v)| (*k, v.clone()))
                     .collect();
             }
 

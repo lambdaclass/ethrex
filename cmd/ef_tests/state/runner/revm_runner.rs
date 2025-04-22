@@ -516,7 +516,6 @@ pub async fn _ensure_post_state_revm(
                         test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {
                         println!("Post-state root mismatch",);
-                        let error_reason = format!("Post-state root mismatch",);
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             ExecutionReport {
                                 result: TxResult::Success,
@@ -526,7 +525,7 @@ pub async fn _ensure_post_state_revm(
                                 output: Bytes::new(),
                             },
                             //TODO: This is not a TransactionReport because it is REVM
-                            error_reason,
+                            "Post-state root mismatch".to_string(),
                             HashMap::new(),
                         ));
                     }
