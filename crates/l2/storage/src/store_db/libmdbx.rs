@@ -5,13 +5,17 @@ use std::{
 };
 
 use ethrex_common::{types::BlockNumber, H256};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use libmdbx::{
     orm::{Database, Table},
     table, table_info, DatabaseOptions, Mode, PageSize, ReadWriteOptions,
 };
 
-use crate::{api::StoreEngineL2, rlp::WithdrawalHashesRLP};
+use crate::{
+    api::StoreEngineL2,
+    rlp::{BlockNumbersRLP, WithdrawalHashesRLP},
+};
 
 pub struct Store {
     db: Arc<Database>,
@@ -60,6 +64,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
     let tables = [
         table_info!(BatchesByBlockNumber),
         table_info!(WithdrawalHashesByBatch),
+        table_info!(BlockNumbersByBatch),
     ]
     .into_iter()
     .collect();
@@ -118,6 +123,28 @@ impl StoreEngineL2 for Store {
         self.write::<WithdrawalHashesByBatch>(batch_number, withdrawals.into())
             .await
     }
+
+    async fn get_block_numbers_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        Ok(self
+            .read::<BlockNumbersByBatch>(batch_number)
+            .await?
+            .map(|numbers| numbers.to()))
+    }
+
+    async fn store_block_numbers_by_batch(
+        &self,
+        batch_number: u64,
+        block_numbers: Vec<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        self.write::<BlockNumbersByBatch>(
+            batch_number,
+            BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
+        )
+        .await
+    }
 }
 
 table!(
@@ -128,4 +155,9 @@ table!(
 table!(
     /// Withdrawals by batch number
     ( WithdrawalHashesByBatch ) u64 => WithdrawalHashesRLP
+);
+
+table!(
+    /// Block numbers by batch number
+    ( BlockNumbersByBatch ) u64 => BlockNumbersRLP
 );

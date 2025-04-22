@@ -53,6 +53,25 @@ impl Store {
         Ok(store)
     }
 
+    /// Stores the block numbers by a given batch_number
+    pub async fn store_block_numbers_by_batch(
+        &self,
+        batch_number: u64,
+        block_numbers: Vec<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_block_numbers_by_batch(batch_number, block_numbers)
+            .await
+    }
+
+    /// Returns the block numbers by a given batch_number
+    pub async fn get_block_numbers_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        self.engine.get_block_numbers_by_batch(batch_number).await
+    }
+
     pub async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,
@@ -95,10 +114,14 @@ impl Store {
         last_block_number: u64,
         withdrawal_hashes: Vec<H256>,
     ) -> Result<(), StoreError> {
-        for block_number in first_block_number..=last_block_number {
-            self.store_batch_number_by_block(block_number, batch_number)
+        let blocks: Vec<u64> = (first_block_number..=last_block_number).collect();
+
+        for block_number in blocks.iter() {
+            self.store_batch_number_by_block(*block_number, batch_number)
                 .await?;
         }
+        self.store_block_numbers_by_batch(batch_number, blocks)
+            .await?;
         self.store_withdrawal_hashes_by_batch(batch_number, withdrawal_hashes)
             .await?;
         Ok(())

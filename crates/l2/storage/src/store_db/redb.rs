@@ -1,16 +1,23 @@
 use std::{panic::RefUnwindSafe, sync::Arc};
 
 use ethrex_common::{types::BlockNumber, H256};
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::error::StoreError;
 use redb::{AccessGuard, Database, Key, TableDefinition, Value};
 
-use crate::{api::StoreEngineL2, rlp::WithdrawalHashesRLP};
+use crate::{
+    api::StoreEngineL2,
+    rlp::{BlockNumbersRLP, WithdrawalHashesRLP},
+};
 
 const BATCHES_BY_BLOCK_NUMBER_TABLE: TableDefinition<BlockNumber, u64> =
     TableDefinition::new("BatchesByBlockNumbers");
 
 const WITHDRAWALS_BY_BATCH: TableDefinition<u64, WithdrawalHashesRLP> =
     TableDefinition::new("WithdrawalHashesByBatch");
+
+const BLOCK_NUMBERS_BY_BATCH: TableDefinition<u64, BlockNumbersRLP> =
+    TableDefinition::new("BlockNumbersByBatch");
 
 #[derive(Debug)]
 pub struct RedBStoreL2 {
@@ -131,5 +138,28 @@ impl StoreEngineL2 for RedBStoreL2 {
             <Vec<H256> as Into<WithdrawalHashesRLP>>::into(withdrawals),
         )
         .await
+    }
+
+    async fn store_block_numbers_by_batch(
+        &self,
+        batch_number: u64,
+        block_numbers: Vec<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        self.write(
+            BLOCK_NUMBERS_BY_BATCH,
+            batch_number,
+            BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
+        )
+        .await
+    }
+
+    async fn get_block_numbers_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        Ok(self
+            .read(BLOCK_NUMBERS_BY_BATCH, batch_number)
+            .await?
+            .map(|rlp| rlp.value().to()))
     }
 }

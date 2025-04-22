@@ -260,8 +260,9 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Getting withdrawal proof");
 
+    // We need to wait for the tx to be included in a batch
     let withdrawal_proof = proposer_client
-        .wait_for_withdrawal_proof(withdraw_tx, 30)
+        .wait_for_withdrawal_proof(withdraw_tx, 1000)
         .await?;
 
     while u64::from_str_radix(

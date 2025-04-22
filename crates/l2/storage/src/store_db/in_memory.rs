@@ -18,6 +18,8 @@ struct StoreInner {
     batches_by_block: HashMap<BlockNumber, u64>,
     /// Map of withdrawals hashes by batch numbers
     withdrawal_hashes_by_batch: HashMap<u64, Vec<H256>>,
+    /// Map of batch number to block numbers
+    block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
 }
 
 impl Store {
@@ -71,6 +73,31 @@ impl StoreEngineL2 for Store {
             .withdrawal_hashes_by_batch
             .insert(batch_number, withdrawals);
         Ok(())
+    }
+
+    /// Returns the block numbers for a given batch_number
+    async fn store_block_numbers_by_batch(
+        &self,
+        batch_number: u64,
+        block_numbers: Vec<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        self.inner()?
+            .block_numbers_by_batch
+            .insert(batch_number, block_numbers);
+        Ok(())
+    }
+
+    /// Returns the block numbers for a given batch_number
+    async fn get_block_numbers_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        let block_numbers = self
+            .inner()?
+            .block_numbers_by_batch
+            .get(&batch_number)
+            .cloned();
+        Ok(block_numbers)
     }
 }
 

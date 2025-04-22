@@ -1,5 +1,4 @@
 use crate::sequencer::errors::ProverServerError;
-use crate::sequencer::utils::sleep_random;
 use crate::utils::{
     config::{
         committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
@@ -18,6 +17,7 @@ use ethrex_common::{
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient, WrappedTransaction};
 use ethrex_storage::Store;
+use ethrex_storage_l2::StoreL2;
 use ethrex_vm::{Evm, EvmError, ExecutionDB};
 use secp256k1::SecretKey;
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ const VERIFY_FUNCTION_SIGNATURE: &str =
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
-    pub block: Block,
+    pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
     pub db: ExecutionDB,
 }
@@ -58,6 +58,7 @@ struct ProverServer {
     l1_address: Address,
     l1_private_key: SecretKey,
     needed_proof_types: Vec<ProverType>,
+    l2_store: StoreL2,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -117,13 +118,18 @@ impl ProofData {
     }
 }
 
-pub async fn start_prover_server(store: Store) -> Result<(), ConfigError> {
+pub async fn start_prover_server(store: Store, l2_store: StoreL2) -> Result<(), ConfigError> {
     let server_config = ProverServerConfig::from_env()?;
     let eth_config = EthConfig::from_env()?;
     let proposer_config = CommitterConfig::from_env()?;
-    let mut prover_server =
-        ProverServer::new_from_config(server_config.clone(), &proposer_config, eth_config, store)
-            .await?;
+    let mut prover_server = ProverServer::new_from_config(
+        server_config.clone(),
+        &proposer_config,
+        eth_config,
+        store,
+        l2_store,
+    )
+    .await?;
     prover_server.run(&server_config).await;
     Ok(())
 }
@@ -134,6 +140,7 @@ impl ProverServer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
+        l2_store: StoreL2,
     ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
@@ -181,18 +188,13 @@ impl ProverServer {
             l1_address: config.l1_address,
             l1_private_key: config.l1_private_key,
             needed_proof_types,
+            l2_store,
         })
     }
 
     pub async fn run(&mut self, server_config: &ProverServerConfig) {
         loop {
-            let result = if server_config.dev_mode {
-                self.main_logic_dev().await
-            } else {
-                self.clone().main_logic().await
-            };
-
-            match result {
+            match self.clone().main_logic().await {
                 Ok(()) => {
                     if !server_config.dev_mode {
                         info!("Prover Server shutting down");
@@ -283,117 +285,21 @@ impl ProverServer {
         Ok(())
     }
 
-    pub async fn main_logic_dev(&self) -> Result<(), ProverServerError> {
-        loop {
-            let last_committed_batch = EthClient::get_last_committed_batch(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
-
-            let last_verified_batch = EthClient::get_last_verified_batch(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
-
-            if last_committed_batch == last_verified_batch {
-                debug!("No new blocks to prove");
-                continue;
-            }
-            info!("Last committed: {last_committed_batch} - Last verified: {last_verified_batch}");
-
-            let calldata_values = vec![
-                // batchNumber
-                Value::Uint(U256::from(last_verified_batch + 1)),
-                // risc0BlockProof
-                Value::Bytes(vec![].into()),
-                // risc0ImageId
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // risco0JournalDigest
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // sp1ProgramVKey
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // sp1PublicValues
-                Value::Bytes(vec![].into()),
-                // sp1Bytes
-                Value::Bytes(vec![].into()),
-                // picoRiscvVkey
-                Value::FixedBytes(H256::zero().as_bytes().to_vec().into()),
-                // picoPublicValues
-                Value::Bytes(vec![].into()),
-                // picoProof
-                Value::FixedArray(vec![Value::Uint(U256::zero()); 8]),
-            ];
-
-            let calldata = encode_calldata(VERIFY_FUNCTION_SIGNATURE, &calldata_values)?;
-
-            let gas_price = self
-                .eth_client
-                .get_gas_price_with_extra(20)
-                .await?
-                .try_into()
-                .map_err(|_| {
-                    ProverServerError::InternalError(
-                        "Failed to convert gas_price to a u64".to_owned(),
-                    )
-                })?;
-
-            let verify_tx = self
-                .eth_client
-                .build_eip1559_transaction(
-                    self.on_chain_proposer_address,
-                    self.l1_address,
-                    calldata.into(),
-                    Overrides {
-                        max_fee_per_gas: Some(gas_price),
-                        max_priority_fee_per_gas: Some(gas_price),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-
-            info!("Sending verify transaction.");
-
-            let mut tx = WrappedTransaction::EIP1559(verify_tx);
-            self.eth_client
-                .set_gas_for_wrapped_tx(&mut tx, self.l1_address)
-                .await?;
-
-            let verify_tx_hash = self
-                .eth_client
-                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
-                .await?;
-
-            info!(
-                "Sent proof for batch {}, with transaction hash {verify_tx_hash:#x}",
-                last_verified_batch + 1
-            );
-
-            info!(
-                "Mocked verify transaction sent for batch {}",
-                last_verified_batch + 1
-            );
-
-            sleep_random(5000).await;
-        }
-    }
-
     async fn handle_connection(&mut self, mut stream: TcpStream) -> Result<(), ProverServerError> {
         let mut buffer = Vec::new();
         stream.read_to_end(&mut buffer).await?;
 
-        let last_verified_block =
-            EthClient::get_last_verified_block(&self.eth_client, self.on_chain_proposer_address)
+        let last_verified_batch =
+            EthClient::get_last_verified_batch(&self.eth_client, self.on_chain_proposer_address)
                 .await?;
 
-        let block_to_verify = last_verified_block + 1;
+        let batch_to_verify = last_verified_batch + 1;
 
         let mut tx_submitted = false;
 
         // If we have all the proofs send a transaction to verify them on chain
         let send_tx =
-            match block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types) {
+            match batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types) {
                 Ok(has_all_proofs) => has_all_proofs,
                 Err(e) => {
                     if let SaveStateError::IOError(ref error) = e {
@@ -408,10 +314,10 @@ impl ProverServer {
             };
 
         if send_tx {
-            self.handle_proof_submission(block_to_verify).await?;
+            self.handle_proof_submission(batch_to_verify).await?;
 
-            // Remove the Proofs for that block_number
-            match prune_state(block_to_verify) {
+            // Remove the Proofs for that batch_number
+            match prune_state(batch_to_verify) {
                 Ok(_) => (),
                 Err(e) => {
                     if let SaveStateError::IOError(ref error) = e {
@@ -431,35 +337,35 @@ impl ProverServer {
         match data {
             Ok(ProofData::Request) => {
                 if let Err(e) = self
-                    .handle_request(&mut stream, block_to_verify, tx_submitted)
+                    .handle_request(&mut stream, batch_to_verify, tx_submitted)
                     .await
                 {
                     warn!("Failed to handle request: {e}");
                 }
             }
             Ok(ProofData::Submit {
-                batch_number: block_number,
+                batch_number,
                 calldata,
             }) => {
-                self.handle_submit(&mut stream, block_number).await?;
+                self.handle_submit(&mut stream, batch_number).await?;
 
-                // Avoid storing a proof of a future block_number
+                // Avoid storing a proof of a future batch_number
                 // CHECK: maybe we would like to store all the proofs given the case in which
                 // the provers generate them fast enough. In this way, we will avoid unneeded reexecution.
-                if block_number != block_to_verify {
-                    return Err(ProverServerError::Custom(format!("Prover Client submitted an invalid block_number: {block_number}. The last_proved_block is: {last_verified_block}")));
+                if batch_number != batch_to_verify {
+                    return Err(ProverServerError::Custom(format!("Prover Client submitted an invalid batch_number: {batch_number}. The last_proved_block is: {last_verified_batch}")));
                 }
 
-                // If the transaction was submitted for the block_to_verify
+                // If the transaction was submitted for the batch_to_verify
                 // avoid storing already used proofs.
                 if tx_submitted {
                     return Ok(());
                 }
 
                 // Check if we have the proof for that ProverType
-                let has_proof = match block_number_has_state_file(
+                let has_proof = match batch_number_has_state_file(
                     StateFileType::Proof(calldata.prover_type),
-                    block_number,
+                    batch_number,
                 ) {
                     Ok(has_proof) => has_proof,
                     Err(e) => {
@@ -472,11 +378,11 @@ impl ProverServer {
                 };
                 // If we don't have it, insert it.
                 if !has_proof {
-                    write_state(block_number, &StateType::Proof(calldata))?;
+                    write_state(batch_number, &StateType::Proof(calldata))?;
                 }
 
                 // Then if we have all the proofs, we send the transaction in the next `handle_connection` call.
-                self.handle_proof_submission(block_number).await?;
+                self.handle_proof_submission(batch_number).await?;
             }
             Err(e) => {
                 warn!("Failed to parse request: {e}");
@@ -493,25 +399,27 @@ impl ProverServer {
     async fn handle_request(
         &self,
         stream: &mut TcpStream,
-        block_number: u64,
+        batch_number: u64,
         tx_submitted: bool,
     ) -> Result<(), ProverServerError> {
         debug!("Request received");
 
-        let latest_block_number = self.store.get_latest_block_number().await?;
+        let lastest_commited_batch =
+            EthClient::get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
+                .await?;
 
-        let response = if block_number > latest_block_number {
+        let response = if batch_number > lastest_commited_batch {
             let response = ProofData::response(None, None);
             debug!("Didn't send response");
             response
         } else if tx_submitted {
             let response = ProofData::response(None, None);
-            debug!("Block: {block_number} has been submitted.");
+            debug!("Batch: {batch_number} has been submitted.");
             response
         } else {
-            let input = self.create_prover_input(block_number).await?;
-            let response = ProofData::response(Some(block_number), Some(input));
-            info!("Sent Response for block_number: {block_number}");
+            let input = self.create_prover_input(batch_number).await?;
+            let response = ProofData::response(Some(batch_number), Some(input));
+            info!("Sent Response for batch_number: {batch_number}");
             response
         };
 
@@ -526,11 +434,11 @@ impl ProverServer {
     async fn handle_submit(
         &self,
         stream: &mut TcpStream,
-        block_number: u64,
+        batch_number: u64,
     ) -> Result<(), ProverServerError> {
-        debug!("Submit received for BlockNumber: {block_number}");
+        debug!("Submit received for Batch Number: {batch_number}");
 
-        let response = ProofData::submit_ack(block_number);
+        let response = ProofData::submit_ack(batch_number);
 
         let buffer = serde_json::to_vec(&response)?;
         stream
@@ -542,22 +450,29 @@ impl ProverServer {
 
     async fn create_prover_input(
         &self,
-        block_number: u64,
+        batch_number: u64,
     ) -> Result<ProverInputData, ProverServerError> {
-        let header = self
-            .store
-            .get_block_header(block_number)?
-            .ok_or(ProverServerError::StorageDataIsNone)?;
-        let body = self
-            .store
-            .get_block_body(block_number)
+        let Some(block_numbers) = self
+            .l2_store
+            .get_block_numbers_by_batch(batch_number)
             .await?
-            .ok_or(ProverServerError::StorageDataIsNone)?;
+        else {
+            return Err(ProverServerError::ItemNotFoundInStore(format!(
+                "Batch number {batch_number} not found in store"
+            )));
+        };
 
-        let block = Block::new(header, body);
+        let blocks = self.fetch_blocks(block_numbers).await?;
 
-        let parent_hash = block.header.parent_hash;
-        let db = Evm::to_execution_db(&self.store.clone(), &block)
+        let parent_hash = blocks
+            .first()
+            .ok_or_else(|| {
+                ProverServerError::Custom("No blocks found for the given batch number".to_string())
+            })?
+            .header
+            .parent_hash;
+
+        let db = Evm::to_execution_db(&self.store.clone(), &blocks)
             .await
             .map_err(EvmError::ExecutionDB)?;
 
@@ -566,18 +481,35 @@ impl ProverServer {
             .get_block_header_by_hash(parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
-        debug!("Created prover input for block {block_number}");
+        debug!("Created prover input for batch {batch_number}");
 
         Ok(ProverInputData {
             db,
-            block,
+            blocks,
             parent_block_header,
         })
     }
 
+    async fn fetch_blocks(&self, block_numbers: Vec<u64>) -> Result<Vec<Block>, ProverServerError> {
+        let mut blocks = vec![];
+        for block_number in block_numbers {
+            let header = self
+                .store
+                .get_block_header(block_number)?
+                .ok_or(ProverServerError::StorageDataIsNone)?;
+            let body = self
+                .store
+                .get_block_body(block_number)
+                .await?
+                .ok_or(ProverServerError::StorageDataIsNone)?;
+            blocks.push(Block::new(header, body));
+        }
+        Ok(blocks)
+    }
+
     pub async fn handle_proof_submission(
         &self,
-        block_number: u64,
+        batch_number: u64,
     ) -> Result<H256, ProverServerError> {
         // TODO: change error
         // TODO: If the proof is not needed, a default calldata is used,
@@ -587,7 +519,7 @@ impl ProverServer {
         let risc0_proof = {
             if self.needed_proof_types.contains(&ProverType::RISC0) {
                 let risc0_proof =
-                    read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
+                    read_proof(batch_number, StateFileType::Proof(ProverType::RISC0))?;
                 if risc0_proof.prover_type != ProverType::RISC0 {
                     return Err(ProverServerError::Custom(
                         "RISC0 Proof isn't present".to_string(),
@@ -601,7 +533,7 @@ impl ProverServer {
 
         let sp1_proof = {
             if self.needed_proof_types.contains(&ProverType::SP1) {
-                let sp1_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
+                let sp1_proof = read_proof(batch_number, StateFileType::Proof(ProverType::SP1))?;
                 if sp1_proof.prover_type != ProverType::SP1 {
                     return Err(ProverServerError::Custom(
                         "SP1 Proof isn't present".to_string(),
@@ -615,7 +547,7 @@ impl ProverServer {
 
         let pico_proof = {
             if self.needed_proof_types.contains(&ProverType::Pico) {
-                let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::Pico))?;
+                let pico_proof = read_proof(batch_number, StateFileType::Proof(ProverType::Pico))?;
                 if pico_proof.prover_type != ProverType::Pico {
                     return Err(ProverServerError::Custom(
                         "Pico Proof isn't present".to_string(),
@@ -627,10 +559,10 @@ impl ProverServer {
             }
         };
 
-        debug!("Sending proof for block number: {block_number}");
+        debug!("Sending proof for block number: {batch_number}");
 
         let calldata_values = [
-            &[Value::Uint(U256::from(block_number))],
+            &[Value::Uint(U256::from(batch_number))],
             risc0_proof.as_slice(),
             sp1_proof.as_slice(),
             pico_proof.as_slice(),
@@ -669,7 +601,7 @@ impl ProverServer {
             .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
             .await?;
 
-        info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
+        info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
 
         Ok(verify_tx_hash)
     }
