@@ -97,12 +97,9 @@ impl REVM {
             }
         }
 
-        let account_updates = Self::get_state_transitions(state);
-
         Ok(BlockExecutionResult {
             receipts,
-            requests,
-            account_updates,
+            requests
         })
     }
 

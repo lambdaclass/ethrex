@@ -285,6 +285,5 @@ impl Evm {
 #[derive(Clone, Debug)]
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
-    pub requests: Vec<Requests>,
-    pub account_updates: Vec<AccountUpdate>,
+    pub requests: Vec<Requests>
 }

@@ -44,11 +44,11 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
     ) -> Result<BlockExecutionResult, EvmError> {
-        let chain_config = db.store.get_chain_config();
-        let block_header = &block.header;
-        let fork = chain_config.fork(block_header.timestamp);
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
+                let chain_config = db.store.get_chain_config();
+                let block_header = &block.header;
+                let fork = chain_config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     Self::beacon_root_contract_call(block_header, db)?;
                 }
@@ -90,12 +90,9 @@ impl LEVM {
             }
         }
 
-        let account_updates = Self::get_state_transitions(db, fork)?;
-
         Ok(BlockExecutionResult {
             receipts,
-            requests,
-            account_updates,
+            requests
         })
     }
 
@@ -391,6 +388,7 @@ impl LEVM {
     ) -> Result<ExecutionDB, ExecutionDBError> {
         let parent_hash = block.header.parent_hash;
         let chain_config = store.get_chain_config()?;
+        let fork = chain_config.fork(block.header.timestamp);
 
         let logger = Arc::new(DatabaseLogger::new(Arc::new(StoreWrapper {
             store: store.clone(),
@@ -400,9 +398,9 @@ impl LEVM {
         let mut db = GeneralizedDatabase::new(logger, CacheDB::new());
 
         // pre-execute and get all state changes
-        let execution_updates = Self::execute_block(block, &mut db)
-            .map_err(Box::new)?
-            .account_updates;
+        let _ = Self::execute_block(block, &mut db);
+        let execution_updates = Self::get_state_transitions(&mut db, fork)
+            .map_err(Box::new)?;
 
         // index accessed account addresses and storage keys
         let state_accessed = logger_ref

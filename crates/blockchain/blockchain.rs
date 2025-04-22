@@ -62,7 +62,7 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    async fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
+    async fn execute_block(&self, block: &Block) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -70,6 +70,7 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
         let chain_config = self.storage.get_chain_config()?;
+        let fork = chain_config.fork(block.header.timestamp);
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config)?;
@@ -80,13 +81,14 @@ impl Blockchain {
             block.header.parent_hash,
         );
         let execution_result = vm.execute_block(block)?;
+        let account_updates = vm.get_state_transitions(fork)?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
 
-        Ok(execution_result)
+        Ok((execution_result, account_updates))
     }
 
     /// Executes a block from a given vm instance an does not clear its state
@@ -114,11 +116,12 @@ impl Blockchain {
         &self,
         block: &Block,
         execution_result: BlockExecutionResult,
+        account_updates: &[AccountUpdate]
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(block.header.parent_hash, &execution_result.account_updates)
+            .apply_account_updates(block.header.parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
@@ -137,9 +140,9 @@ impl Blockchain {
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let res = self.execute_block(block).await?;
+        let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
-        let result = self.store_block(block, res).await;
+        let result = self.store_block(block, res, &updates).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
         result
@@ -230,7 +233,6 @@ impl Blockchain {
 
             let BlockExecutionResult {
                 receipts,
-                account_updates,
                 ..
             } = match self.execute_block_from_state(&parent_header, block, &chain_config, &mut vm) {
                 Ok(result) => result,
@@ -245,31 +247,39 @@ impl Blockchain {
                 }
             };
 
-            // Merge account updates
-            for account_update in account_updates {
-                let Some(cache) = all_account_updates.get_mut(&account_update.address) else {
-                    all_account_updates.insert(account_update.address, account_update);
-                    continue;
-                };
-
-                cache.removed = account_update.removed;
-                if let Some(code) = account_update.code {
-                    cache.code = Some(code);
-                };
-
-                if let Some(info) = account_update.info {
-                    cache.info = Some(info);
-                }
-
-                for (k, v) in account_update.added_storage.into_iter() {
-                    cache.added_storage.insert(k, v);
-                }
-            }
-
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
             all_receipts.insert(block.hash(), receipts);
+        }
+        // TODO: bail when crossing fork boundary
+        let fork = chain_config.fork(first_block_header.timestamp);
+
+        let account_updates = match vm.get_state_transitions(fork) {
+            Ok(v) => v,
+            Err(err) => return Err((
+                ChainError::EvmError(err),
+                None
+            ))
+        };
+        for account_update in account_updates {
+            let Some(cache) = all_account_updates.get_mut(&account_update.address) else {
+                all_account_updates.insert(account_update.address, account_update);
+                continue;
+            };
+
+            cache.removed = account_update.removed;
+            if let Some(code) = account_update.code {
+                cache.code = Some(code);
+            };
+
+            if let Some(info) = account_update.info {
+                cache.info = Some(info);
+            }
+
+            for (k, v) in account_update.added_storage.into_iter() {
+                cache.added_storage.insert(k, v);
+            }
         }
 
         let Some(last_block) = blocks.last() else {
