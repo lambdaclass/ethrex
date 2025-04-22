@@ -1,13 +1,15 @@
 use ethrex_common::{types::Fork, Address, U256};
 
 use crate::{
-    db::cache::{insert_account, remove_account},
-    errors::{InternalError, TxResult, TxValidationError, VMError},
+    call_frame::CallFrame,
+    db::cache::remove_account,
+    errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
     hooks::default_hook,
     utils::{
-        add_intrinsic_gas, decrease_account_balance, get_account, get_valid_jump_destinations,
-        has_delegation, increase_account_balance, increment_account_nonce,
+        add_intrinsic_gas, get_account, get_valid_jump_destinations, has_delegation,
+        increase_account_balance, increment_account_nonce,
     },
+    vm::VM,
 };
 
 use super::{
@@ -157,85 +159,75 @@ impl Hook for L2Hook {
         // privilege transactions, hence the hardcoded is_privilege_tx.
         let is_privilege_tx = true;
 
-        // POST-EXECUTION Changes
-        let sender_address = initial_call_frame.msg_sender;
-        let receiver_address = initial_call_frame.to;
-
-        // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            let existing_account = get_account(vm.db, receiver_address)?; //TO Account
-
-            // TODO: Improve these if statements.
-            if has_delegation(&existing_account.info)? {
-                // This is the case where the "to" address and the
-                // "signer" address are the same. We are setting the code
-                // and sending some balance to the "to"/"signer"
-                // address.
-                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
-
-                // If transaction execution results in failure (any
-                // exceptional condition or code reverting), setting
-                // delegation designations is not rolled back.
-                if !is_privilege_tx {
-                    decrease_account_balance(
-                        vm.db,
-                        receiver_address,
-                        initial_call_frame.msg_value,
-                    )?;
-                }
-            } else if !is_privilege_tx {
-                // If the receiver of the transaction was in the cache before the transaction we restore it's state,
-                // but if it wasn't then we remove the account from cache like nothing happened.
-                if let Some(receiver_account) = vm.cache_backup.get(&receiver_address) {
-                    insert_account(&mut vm.db.cache, receiver_address, receiver_account.clone());
-                } else {
-                    remove_account(&mut vm.db.cache, &receiver_address);
-                }
+            if is_privilege_tx {
+                undo_value_transfer(vm, initial_call_frame)?;
             } else {
-                // We remove the receiver account from the cache, like nothing changed in it's state.
-                remove_account(&mut vm.db.cache, &receiver_address);
-            }
-
-            if !is_privilege_tx {
-                increase_account_balance(vm.db, sender_address, initial_call_frame.msg_value)?;
+                default_hook::undo_value_transfer(vm, initial_call_frame)?;
             }
         }
 
-        // 2. Return unused gas + gas refunds to the sender.
-        let mut consumed_gas = report.gas_used;
-        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        let refund_quotient = if vm.env.config.fork < Fork::London {
-            MAX_REFUND_QUOTIENT_PRE_LONDON
-        } else {
-            MAX_REFUND_QUOTIENT
-        };
-        let mut refunded_gas = report.gas_refunded.min(
-            consumed_gas
-                .checked_div(refund_quotient)
-                .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
-        );
-        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
-        report.gas_refunded = refunded_gas;
+        let mut gas_consumed = report.gas_used;
+        let gas_refunded = refund_sender(vm, initial_call_frame, &mut gas_consumed, report)?;
 
-        if vm.env.config.fork >= Fork::Prague {
-            let floor_gas_price = vm.get_min_gas_used(initial_call_frame)?;
-            let execution_gas_used = consumed_gas.saturating_sub(refunded_gas);
-            if floor_gas_price > execution_gas_used {
-                consumed_gas = floor_gas_price;
-                refunded_gas = 0;
-            }
-        }
-
-        // 3. Pay coinbase fee
-        let gas_to_pay_coinbase = consumed_gas
-            .checked_sub(refunded_gas)
+        let gas_to_pay_coinbase = gas_consumed
+            .checked_sub(gas_refunded)
             .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
-
         default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
 
-        // 4. Destruct addresses in vm.estruct set.
         default_hook::delete_self_destruct_accounts(vm)?;
 
         Ok(())
     }
+}
+
+pub fn undo_value_transfer(vm: &mut VM<'_>, initial_call_frame: &CallFrame) -> Result<(), VMError> {
+    let receiver_address = initial_call_frame.to;
+    let existing_account = get_account(vm.db, receiver_address)?; //TO Account
+    if has_delegation(&existing_account.info)? {
+        // This is the case where the "to" address and the
+        // "signer" address are the same. We are setting the code
+        // and sending some balance to the "to"/"signer"
+        // address.
+        // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
+
+        // If transaction execution results in failure (any
+        // exceptional condition or code reverting), setting
+        // delegation designations is not rolled back.
+    } else {
+        // We remove the receiver account from the cache, like nothing changed in it's state.
+        remove_account(&mut vm.db.cache, &receiver_address);
+    }
+    Ok(())
+}
+
+pub fn refund_sender(
+    vm: &mut VM<'_>,
+    initial_call_frame: &CallFrame,
+    gas_consumed: &mut u64,
+    report: &mut ExecutionReport,
+) -> Result<u64, VMError> {
+    // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+    let refund_quotient = if vm.env.config.fork < Fork::London {
+        MAX_REFUND_QUOTIENT_PRE_LONDON
+    } else {
+        MAX_REFUND_QUOTIENT
+    };
+    let mut gas_refunded = report.gas_refunded.min(
+        gas_consumed
+            .checked_div(refund_quotient)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
+    );
+    // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+    report.gas_refunded = gas_refunded;
+
+    if vm.env.config.fork >= Fork::Prague {
+        let floor_gas_price = vm.get_min_gas_used(initial_call_frame)?;
+        let execution_gas_used = gas_consumed.saturating_sub(gas_refunded);
+        if floor_gas_price > execution_gas_used {
+            *gas_consumed = floor_gas_price;
+            gas_refunded = 0;
+        }
+    }
+    Ok(gas_refunded)
 }
