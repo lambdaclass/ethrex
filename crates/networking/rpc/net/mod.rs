@@ -11,3 +11,9 @@ pub fn version(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcEr
     let value = serde_json::to_value(format!("{}", chain_spec.chain_id))?;
     Ok(value)
 }
+
+// dummy function
+pub fn peer_count(_req: &RpcRequest, _context: RpcApiContext) -> Result<Value, RpcErr> {
+    let value = serde_json::to_value("0")?;
+    Ok(value)
+}
