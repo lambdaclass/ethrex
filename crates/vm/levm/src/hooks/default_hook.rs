@@ -137,98 +137,117 @@ impl Hook for DefaultHook {
         initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
-        // POST-EXECUTION Changes
-        let sender_address = initial_call_frame.msg_sender;
-        let receiver_address = initial_call_frame.to;
-
-        // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
-            let existing_account = get_account(vm.db, receiver_address)?; //TO Account
-
-            if has_delegation(&existing_account.info)? {
-                // This is the case where the "to" address and the
-                // "signer" address are the same. We are setting the code
-                // and sending some balance to the "to"/"signer"
-                // address.
-                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
-
-                // If transaction execution results in failure (any
-                // exceptional condition or code reverting), setting
-                // delegation designations is not rolled back.
-                decrease_account_balance(vm.db, receiver_address, initial_call_frame.msg_value)?;
-            } else {
-                // If the receiver of the transaction was in the cache before the transaction we restore it's state,
-                // but if it wasn't then we remove the account from cache like nothing happened.
-                if let Some(receiver_account) = vm.cache_backup.get(&receiver_address) {
-                    insert_account(&mut vm.db.cache, receiver_address, receiver_account.clone());
-                } else {
-                    remove_account(&mut vm.db.cache, &receiver_address);
-                }
-            }
-
-            increase_account_balance(vm.db, sender_address, initial_call_frame.msg_value)?;
+            undo_value_transfer(vm, initial_call_frame)?;
         }
 
-        // 2. Return unused gas + gas refunds to the sender.
+        let refunded_gas = compute_refunded_gas(vm, report)?;
+        let actual_gas_used =
+            compute_actual_gas_used(vm, initial_call_frame, refunded_gas, report.gas_used)?;
+        refund_sender(
+            vm,
+            initial_call_frame,
+            report,
+            refunded_gas,
+            actual_gas_used,
+        )?;
 
-        // a. Calculate refunded gas
-        let gas_used_without_refunds = report.gas_used;
+        pay_coinbase(vm, actual_gas_used)?;
 
-        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
-        let refund_quotient = if vm.env.config.fork < Fork::London {
-            MAX_REFUND_QUOTIENT_PRE_LONDON
-        } else {
-            MAX_REFUND_QUOTIENT
-        };
-        let refunded_gas = report.gas_refunded.min(
-            gas_used_without_refunds
-                .checked_div(refund_quotient)
-                .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
-        );
-
-        // b. Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
-        let exec_gas_consumed = gas_used_without_refunds
-            .checked_sub(refunded_gas)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
-
-        let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
-            let minimum_gas_consumed = vm.get_min_gas_used(initial_call_frame)?;
-            exec_gas_consumed.max(minimum_gas_consumed)
-        } else {
-            exec_gas_consumed
-        };
-
-        // c. Update gas used and refunded in the Execution Report.
-        report.gas_used = actual_gas_used;
-        report.gas_refunded = refunded_gas;
-
-        // d. Finally, return unspent gas to the sender.
-        let gas_to_return = vm
-            .env
-            .gas_limit
-            .checked_sub(actual_gas_used)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(0)))?;
-
-        let wei_return_amount = vm
-            .env
-            .gas_price
-            .checked_mul(U256::from(gas_to_return))
-            .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
-
-        increase_account_balance(vm.db, sender_address, wei_return_amount)?;
-
-        // 3. Pay coinbase fee
-        pay_coinbase_fee(vm, actual_gas_used)?;
-
-        // 4. Destruct addresses in vm.selfdestruct set.
         delete_self_destruct_accounts(vm)?;
 
         Ok(())
     }
 }
 
-pub fn pay_coinbase_fee(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
+pub fn undo_value_transfer(vm: &mut VM<'_>, initial_call_frame: &CallFrame) -> Result<(), VMError> {
+    let sender_address = initial_call_frame.msg_sender;
+    let receiver_address = initial_call_frame.to;
+    let existing_account = get_account(vm.db, receiver_address)?; //TO Account
+    if has_delegation(&existing_account.info)? {
+        // This is the case where the "to" address and the
+        // "signer" address are the same. We are setting the code
+        // and sending some balance to the "to"/"signer"
+        // address.
+        // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
+
+        // If transaction execution results in failure (any
+        // exceptional condition or code reverting), setting
+        // delegation designations is not rolled back.
+        decrease_account_balance(vm.db, receiver_address, initial_call_frame.msg_value)?;
+    } else {
+        // If the receiver of the transaction was in the cache before the transaction we restore it's state,
+        // but if it wasn't then we remove the account from cache like nothing happened.
+        if let Some(receiver_account) = vm.cache_backup.get(&receiver_address) {
+            insert_account(&mut vm.db.cache, receiver_address, receiver_account.clone());
+        } else {
+            remove_account(&mut vm.db.cache, &receiver_address);
+        }
+    }
+    increase_account_balance(vm.db, sender_address, initial_call_frame.msg_value)
+}
+
+pub fn refund_sender(
+    vm: &mut VM<'_>,
+    initial_call_frame: &CallFrame,
+    report: &mut ExecutionReport,
+    refunded_gas: u64,
+    actual_gas_used: u64,
+) -> Result<(), VMError> {
+    // c. Update gas used and refunded in the Execution Report.
+    report.gas_refunded = refunded_gas;
+    report.gas_used = actual_gas_used;
+
+    let gas_to_return = vm
+        .env
+        .gas_limit
+        .checked_sub(actual_gas_used)
+        .ok_or(VMError::Internal(InternalError::UndefinedState(0)))?;
+
+    let wei_return_amount = vm
+        .env
+        .gas_price
+        .checked_mul(U256::from(gas_to_return))
+        .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
+
+    increase_account_balance(vm.db, initial_call_frame.msg_sender, wei_return_amount)
+}
+
+pub fn compute_refunded_gas(vm: &mut VM<'_>, report: &ExecutionReport) -> Result<u64, VMError> {
+    // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+    // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+    let refund_quotient = if vm.env.config.fork < Fork::London {
+        MAX_REFUND_QUOTIENT_PRE_LONDON
+    } else {
+        MAX_REFUND_QUOTIENT
+    };
+    Ok(report.gas_refunded.min(
+        report
+            .gas_used
+            .checked_div(refund_quotient)
+            .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
+    ))
+}
+
+// Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
+pub fn compute_actual_gas_used(
+    vm: &mut VM<'_>,
+    initial_call_frame: &CallFrame,
+    refunded_gas: u64,
+    gas_used_without_refunds: u64,
+) -> Result<u64, VMError> {
+    let exec_gas_consumed = gas_used_without_refunds
+        .checked_sub(refunded_gas)
+        .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
+
+    if vm.env.config.fork >= Fork::Prague {
+        Ok(exec_gas_consumed.max(vm.get_min_gas_used(initial_call_frame)?))
+    } else {
+        Ok(exec_gas_consumed)
+    }
+}
+
+pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
     let priority_fee_per_gas = vm
         .env
         .gas_price
@@ -256,7 +275,7 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
-pub fn check_min_gas_limit(
+pub fn validate_min_gas_limit(
     vm: &mut VM<'_>,
     initial_call_frame: &mut CallFrame,
 ) -> Result<(), VMError> {
@@ -295,7 +314,7 @@ pub fn check_min_gas_limit(
     Ok(())
 }
 
-pub fn check_max_fee_per_blob_gas(
+pub fn validate_max_fee_per_blob_gas(
     vm: &mut VM<'_>,
     tx_max_fee_per_blob_gas: U256,
 ) -> Result<(), VMError> {
