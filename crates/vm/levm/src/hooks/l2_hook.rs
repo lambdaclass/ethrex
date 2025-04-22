@@ -167,13 +167,31 @@ impl Hook for L2Hook {
             }
         }
 
-        let mut gas_consumed = report.gas_used;
-        let gas_refunded = refund_sender(vm, initial_call_frame, &mut gas_consumed, report)?;
+        if is_privilege_tx {
+            let mut gas_consumed = report.gas_used;
+            let gas_refunded = refund_sender(vm, initial_call_frame, &mut gas_consumed, report)?;
+            let gas_to_pay_coinbase = gas_consumed
+                .checked_sub(gas_refunded)
+                .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
+            default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
+        } else {
+            let refunded_gas = default_hook::compute_refunded_gas(vm, report)?;
+            let actual_gas_used = default_hook::compute_actual_gas_used(
+                vm,
+                initial_call_frame,
+                refunded_gas,
+                report.gas_used,
+            )?;
+            default_hook::refund_sender(
+                vm,
+                initial_call_frame,
+                report,
+                refunded_gas,
+                actual_gas_used,
+            )?;
 
-        let gas_to_pay_coinbase = gas_consumed
-            .checked_sub(gas_refunded)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
-        default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
+            default_hook::pay_coinbase(vm, actual_gas_used)?;
+        }
 
         default_hook::delete_self_destruct_accounts(vm)?;
 
@@ -183,19 +201,8 @@ impl Hook for L2Hook {
 
 pub fn undo_value_transfer(vm: &mut VM<'_>, initial_call_frame: &CallFrame) -> Result<(), VMError> {
     let receiver_address = initial_call_frame.to;
-    let existing_account = get_account(vm.db, receiver_address)?; //TO Account
-    if has_delegation(&existing_account.info)? {
-        // This is the case where the "to" address and the
-        // "signer" address are the same. We are setting the code
-        // and sending some balance to the "to"/"signer"
-        // address.
-        // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
-
-        // If transaction execution results in failure (any
-        // exceptional condition or code reverting), setting
-        // delegation designations is not rolled back.
-    } else {
-        // We remove the receiver account from the cache, like nothing changed in it's state.
+    let existing_account = get_account(vm.db, receiver_address)?;
+    if !has_delegation(&existing_account.info)? {
         remove_account(&mut vm.db.cache, &receiver_address);
     }
     Ok(())
