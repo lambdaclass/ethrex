@@ -3,7 +3,6 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethrex_common::{Address, H256, U256};
-use ethrex_l2::utils::config::eth::EthConfig;
 use ethrex_rpc::{
     clients::{eth::BlockByNumber, Overrides},
     EthClient,
@@ -422,14 +421,7 @@ async fn test_state_reconstruct_latest_block() {
 }
 
 async fn connect() -> EthClient {
-    let eth_config = EthConfig::from_env().expect("Error loading config");
-    let client = EthClient::new_with_config(
-        &eth_config.rpc_url,
-        eth_config.max_number_of_retries,
-        eth_config.backoff_factor,
-        eth_config.min_retry_delay,
-        eth_config.max_retry_delay,
-    );
+    let client = EthClient::new(ETH_RPC_URL);
 
     let mut retries = 0;
     while retries < 20 {
