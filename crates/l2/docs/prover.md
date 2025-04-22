@@ -253,7 +253,7 @@ In this case, restructuring requires information about **branch/ext 2** (which c
 The solution is to fetch the missing node directly using a `debug` JSON-RPC method, like `debug_dbGet` (or `debug_accountRange` and `debug_storageRangeAt` if using a Geth node).
 
 > [!NOTE]
-> These problems arise when creating the execution witness solely from state proofs fetched via standard JSON-RPC. In the L2 context, where we control the sequencer, alternative protocols could potentially retrieve all necessary data more directly. However, the problems remain relevant when proving L1 blocks (e.g., for testing/benchmarking).
+> These problems arise when creating the execution witness solely from state proofs fetched via standard JSON-RPC. In the L2 context, where we control the sequencer, we could develop a protocol to easily retrieve all necessary data more directly. However, the problems remain relevant when proving L1 blocks (e.g., for testing/benchmarking).
 
 ### Block execution program
 The program leverages ethrex-common primitives and ethrex-vm methods. ethrex-prover implements a program that uses the existing execution logic and generates a proof of its execution using a zkVM. Some L2-specific logic and input validation are added on top of the basic block execution.
