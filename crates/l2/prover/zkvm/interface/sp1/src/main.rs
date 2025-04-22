@@ -16,7 +16,7 @@ pub fn main() {
     let ProgramInput {
         blocks,
         parent_block_header,
-        db,
+        mut db,
     } = sp1_zkvm::io::read::<ProgramInput>();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
