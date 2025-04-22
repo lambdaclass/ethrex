@@ -827,6 +827,7 @@ impl<'a> VM<'a> {
 
         println!("CALL DEBUG LOGS:");
 
+        let current_depth = current_call_frame.depth;
         let sender = hex::encode(msg_sender.as_bytes());
         let t = hex::encode(to.as_bytes());
         let code_addr = hex::encode(code_address.as_bytes());
@@ -835,6 +836,7 @@ impl<'a> VM<'a> {
         let success = report.is_success();
         let out = hex::encode(&report.output);
 
+        println!("Current depth: {:?}", current_depth);
         println!("Sender: {:?}", sender);
         println!("To: {:?}", t);
         println!("Code Address: {:?}", code_addr);
