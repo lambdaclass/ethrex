@@ -64,6 +64,8 @@ impl LEVM {
         let mut cumulative_gas_used = 0;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender() {
+            let hash = hex::encode(tx.compute_hash());
+            println!("Starting to execute tx {:?}", hash);
             let report =
                 Self::execute_tx(tx, tx_sender, &block.header, db).map_err(EvmError::from)?;
 
