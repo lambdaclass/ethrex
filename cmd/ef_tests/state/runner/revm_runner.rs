@@ -187,7 +187,7 @@ pub fn prepare_revm_for_tx<'state>(
         value: RevmU256::from_limbs(tx.value.0),
         data: tx.data.to_vec().into(),
         nonce: Some(tx.nonce),
-        chain_id: Some(chain_spec.chain_id), //TODO: See what to do with this... ChainId test fails IDK why.
+        chain_id: Some(1),
         access_list: revm_access_list,
         gas_priority_fee: tx
             .max_priority_fee_per_gas
