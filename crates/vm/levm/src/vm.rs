@@ -9,7 +9,7 @@ use crate::{
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    hooks::{default_hook::DefaultHook, hook::Hook, l2_hook::L2Hook},
+    hooks::hook::Hook,
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
@@ -30,6 +30,12 @@ use std::{
     fmt::Debug,
     sync::Arc,
 };
+
+#[cfg(not(feature = "l2"))]
+use crate::hooks::DefaultHook;
+#[cfg(feature = "l2")]
+use crate::hooks::L2Hook;
+
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
@@ -233,12 +239,12 @@ impl<'a> VM<'a> {
             }
         }
 
-        let hooks: Vec<Arc<dyn Hook>> = match tx {
-            Transaction::PrivilegedL2Transaction(privileged_tx) => vec![Arc::new(L2Hook {
-                recipient: privileged_tx.recipient,
-            })],
-            _ => vec![Arc::new(DefaultHook)],
-        };
+        #[cfg(not(feature = "l2"))]
+        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
+        #[cfg(feature = "l2")]
+        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(L2Hook {
+            recipient: env.origin,
+        })];
 
         match tx.to() {
             TxKind::Call(address_to) => {

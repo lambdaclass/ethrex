@@ -27,18 +27,7 @@ impl Hook for L2Hook {
         vm: &mut crate::vm::VM<'_>,
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
-        // FIXME: L2Hook should behave like the DefaultHook but with extra or
-        // less steps. Currently it's not the case since it is hardcoded to
-        // always be used for Privilege txs, specifically deposit txs.
-        // This efforts will be done in two steps:
-        // 1. Refactoring L2Hook to be a DefaultHook with some extra steps.
-        // 2. Adding logic to detect privilege transactions since now it is not
-        // possible.
-        // As part of the first step we will continue using the L2Hook for
-        // privilege transactions, hence the hardcoded is_privilege_tx.
-        let is_privilege_tx = true;
-
-        if is_privilege_tx {
+        if vm.env.is_privilege {
             increase_account_balance(vm.db, self.recipient, initial_call_frame.msg_value)?;
             initial_call_frame.msg_value = U256::from(0);
         }
@@ -50,7 +39,7 @@ impl Hook for L2Hook {
             default_hook::validate_min_gas_limit(vm, initial_call_frame)?;
         }
 
-        if !is_privilege_tx {
+        if !vm.env.is_privilege {
             // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
             let gaslimit_price_product = vm
                 .env
@@ -130,7 +119,7 @@ impl Hook for L2Hook {
             initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
             initial_call_frame.valid_jump_destinations =
                 get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
-        } else if !is_privilege_tx {
+        } else if !vm.env.is_privilege {
             // Transfer value to receiver
             // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
             increase_account_balance(vm.db, initial_call_frame.to, initial_call_frame.msg_value)?;
@@ -144,26 +133,15 @@ impl Hook for L2Hook {
         initial_call_frame: &crate::call_frame::CallFrame,
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
-        // FIXME: L2Hook should behave like the DefaultHook but with extra or
-        // less steps. Currently it's not the case since it is hardcoded to
-        // always be used for Privilege txs, specifically deposit txs.
-        // This efforts will be done in two steps:
-        // 1. Refactoring L2Hook to be a DefaultHook with some extra steps.
-        // 2. Adding logic to detect privilege transactions since now it is not
-        // possible.
-        // As part of the first step we will continue using the L2Hook for
-        // privilege transactions, hence the hardcoded is_privilege_tx.
-        let is_privilege_tx = true;
-
         if let TxResult::Revert(_) = report.result {
-            if is_privilege_tx {
+            if vm.env.is_privilege {
                 undo_value_transfer(vm, initial_call_frame)?;
             } else {
                 default_hook::undo_value_transfer(vm, initial_call_frame)?;
             }
         }
 
-        if is_privilege_tx {
+        if vm.env.is_privilege {
             let mut gas_consumed = report.gas_used;
             let gas_refunded = refund_sender(vm, initial_call_frame, &mut gas_consumed, report)?;
             let gas_to_pay_coinbase = gas_consumed
