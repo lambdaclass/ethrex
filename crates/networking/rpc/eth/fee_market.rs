@@ -197,12 +197,21 @@ fn project_next_block_base_fee_values(
     // Geth performs a validation for this case:
     // -> https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go#L93
     let next_gas_limit = calc_gas_limit(header.gas_limit);
+    // This ENV variable is used for the L2 to set an arbitrary value
+    // if not present the constant value is used
+    let elasticity_multiplier = std::env::var("PROPOSER_ELASTICITY_MULTIPLIER")
+        .and_then(|str| {
+            str.parse::<u64>().map_err(|_| {
+                std::env::VarError::NotUnicode("cannot parse elasticity multiplier".into())
+            })
+        })
+        .unwrap_or(ELASTICITY_MULTIPLIER);
     let base_fee_per_gas = calculate_base_fee_per_gas(
         next_gas_limit,
         header.gas_limit,
         header.gas_used,
         header.base_fee_per_gas.unwrap_or_default(),
-        ELASTICITY_MULTIPLIER,
+        elasticity_multiplier,
     )
     .unwrap_or_default();
     let next_excess_blob_gas = calc_excess_blob_gas(
