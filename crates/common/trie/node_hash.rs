@@ -35,6 +35,20 @@ impl NodeHash {
         }
     }
 
+    pub fn len(&self) -> usize {
+        match self {
+            NodeHash::Hashed(h256) => h256.as_bytes().len(),
+            NodeHash::Inline(value) => value.1 as usize,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            NodeHash::Hashed(h256) => h256.as_bytes().is_empty(),
+            NodeHash::Inline(value) => value.1 == 0,
+        }
+    }
+
     pub(crate) fn inline_from_slice(slice: &[u8]) -> NodeHash {
         assert!(slice.len() < 32, "Slice must have a len < 32 to be inlined");
         let mut buffer = [0; 31];
