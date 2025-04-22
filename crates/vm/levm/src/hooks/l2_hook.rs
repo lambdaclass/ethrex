@@ -69,6 +69,18 @@ impl Hook for L2Hook {
                 gaslimit_price_product,
                 sender_address,
             )?;
+
+            // (7) NONCE_IS_MAX
+            increment_account_nonce(vm.db, sender_address)
+                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
+
+            // check for nonce mismatch
+            if sender_account.info.nonce != vm.env.tx_nonce {
+                return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
+            }
+
+            // (9) SENDER_NOT_EOA
+            default_hook::validate_sender(&sender_account)?;
         }
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
@@ -87,17 +99,6 @@ impl Hook for L2Hook {
         // (6) INTRINSIC_GAS_TOO_LOW
         add_intrinsic_gas(vm, initial_call_frame)?;
 
-        // (7) NONCE_IS_MAX
-        if !is_privilege_tx {
-            increment_account_nonce(vm.db, sender_address)
-                .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
-
-            // check for nonce mismatch
-            if sender_account.info.nonce != vm.env.tx_nonce {
-                return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
-            }
-        }
-
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
             vm.env.tx_max_priority_fee_per_gas,
@@ -108,11 +109,6 @@ impl Hook for L2Hook {
                     TxValidationError::PriorityGreaterThanMaxFeePerGas,
                 ));
             }
-        }
-
-        if !is_privilege_tx {
-            // (9) SENDER_NOT_EOA
-            default_hook::validate_sender(&sender_account)?;
         }
 
         // (10) GAS_ALLOWANCE_EXCEEDED
