@@ -1,7 +1,10 @@
 #![no_main]
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_common::Address;
+use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
+use std::collections::HashMap;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
