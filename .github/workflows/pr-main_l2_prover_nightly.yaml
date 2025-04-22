@@ -8,6 +8,7 @@ on:
     paths:
       - "crates/l2/prover/**"
       - "test_data/**"
+      - "crates/blockchain/dev/**"
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_l2_prover_nightly.yaml"
 
