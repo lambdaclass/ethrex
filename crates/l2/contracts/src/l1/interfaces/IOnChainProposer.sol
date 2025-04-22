@@ -14,10 +14,6 @@ interface IOnChainProposer {
     /// @return The latest verified batch number as a uint256.
     function lastVerifiedBatch() external view returns (uint256);
 
-    /// @notice The latest committed block number.
-    /// @return The latest committed block number as a uint256.
-    function lastCommittedBlock() external view returns (uint256);
-
     /// @notice A batch has been committed.
     /// @dev Event emitted when a batch is committed.
     event BatchCommitted(bytes32 indexed currentBatchCommitment);
@@ -44,16 +40,12 @@ interface IOnChainProposer {
     /// @dev Committing to an L2 batch means to store the batch's commitment
     /// and to publish withdrawals if any.
     /// @param batchNumber the number of the batch to be committed.
-    /// @param firstBlockNumber the first block number of the batch to be committed.
-    /// @param lastBlockNumber the last block number of the batch to be committed.
     /// @param commitment of the batch to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
     /// @param depositLogs the deposit logs of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
-        uint256 firstBlockNumber,
-        uint256 lastBlockNumber,
         bytes32 commitment,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 depositLogs

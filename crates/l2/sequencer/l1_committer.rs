@@ -35,8 +35,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
-const COMMIT_FUNCTION_SIGNATURE: &str =
-    "commitBatch(uint256,uint256,uint256,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -101,15 +100,23 @@ impl Committer {
     }
 
     async fn main_logic(&mut self) -> Result<(), CommitterError> {
+        // Get the batch to commit
         let last_committed_batch_number =
             EthClient::get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
                 .await?;
         let batch_to_commit = last_committed_batch_number + 1;
-        let last_committed_block_number =
-            EthClient::get_last_committed_block(&self.eth_client, self.on_chain_proposer_address)
-                .await?;
+
+        // Get the last committed block_number
+        let last_committed_blocks: Vec<BlockNumber> = self
+            .l2_store
+            .get_block_numbers_by_batch(last_committed_batch_number)
+            .await?
+            .unwrap_or_default();
+        let last_committed_block_number = *last_committed_blocks.last().unwrap_or(&0);
+
         let first_block_to_commit = last_committed_block_number + 1;
 
+        // Try to prepare batch
         let (blobs_bundle, withdrawal_hashes, deposit_logs_hash, last_block_of_batch) = self
             .prepare_batch_from_block(last_committed_block_number)
             .await?;
@@ -122,11 +129,11 @@ impl Committer {
         let withdrawal_logs_merkle_root =
             self.get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
 
+        info!("Sending commitment for batch {batch_to_commit}. first_block: {first_block_to_commit}, last_block: {last_block_of_batch}");
+
         match self
             .send_commitment(
                 batch_to_commit,
-                first_block_to_commit,
-                last_block_of_batch,
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
@@ -135,7 +142,7 @@ impl Committer {
         {
             Ok(commit_tx_hash) => {
                 info!(
-                    "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}. first_block: {first_block_to_commit}, last_block {last_block_of_batch}.",
+                    "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
                 );
                 self.l2_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
                 Ok(())
@@ -404,19 +411,13 @@ impl Committer {
     async fn send_commitment(
         &self,
         batch_number: u64,
-        first_block_number: u64,
-        last_block_number: u64,
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, CommitterError> {
-        info!("Sending commitment for batch {batch_number}. first_block: {first_block_number}, last_block: {last_block_number}");
-
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
         let calldata_values = vec![
             Value::Uint(U256::from(batch_number)),
-            Value::Uint(U256::from(first_block_number)),
-            Value::Uint(U256::from(last_block_number)),
             Value::FixedBytes(
                 blob_versioned_hashes
                     .first()

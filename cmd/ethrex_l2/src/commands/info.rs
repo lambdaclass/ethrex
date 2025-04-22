@@ -49,22 +49,22 @@ impl Command {
         let on_chain_proposer_address = cfg.contracts.on_chain_proposer;
         match self {
             Command::LatestBlocks => {
-                let last_committed_block =
-                    EthClient::get_last_committed_block(&eth_client, on_chain_proposer_address)
+                let last_committed_batch =
+                    EthClient::get_last_committed_batch(&eth_client, on_chain_proposer_address)
                         .await?;
 
-                let last_verified_block =
-                    EthClient::get_last_verified_block(&eth_client, on_chain_proposer_address)
+                let last_verified_batch =
+                    EthClient::get_last_verified_batch(&eth_client, on_chain_proposer_address)
                         .await?;
 
                 println!(
-                    "latestCommittedBlock: {}",
-                    format!("{last_committed_block}").bright_cyan()
+                    "latestCommittedBatch: {}",
+                    format!("{last_committed_batch}").bright_cyan()
                 );
 
                 println!(
-                    "latestVerifiedBlock:  {}",
-                    format!("{last_verified_block}").bright_cyan()
+                    "latestVerifiedBatch:  {}",
+                    format!("{last_verified_batch}").bright_cyan()
                 );
             }
             Command::BlockNumber { l2, l1 } => {
