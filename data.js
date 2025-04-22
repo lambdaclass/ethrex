@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745338602673,
+  "lastUpdate": 1745358715347,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3685,6 +3685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181904331938,
             "range": "± 814857140",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "10e78b77ae57c69a7a233e3ee100a726568abc79",
+          "message": "fix(levm): read chain_id from chain config, not from transaction (#2531)\n\n**Motivation**\n\nAt block 576991 the sync with holesky would fail due to an incorrect\nstate calculation.\n\n**Description**\n\nAs per [EIP-1344](https://eips.ethereum.org/EIPS/eip-1344) the chain ID\nshould be read from the chain configuration and not the transaction.\nThis is because transactions may not have replay protection configured.",
+          "timestamp": "2025-04-22T21:03:04Z",
+          "tree_id": "7af2cc43bb9e641b34ca6ad3067c047670821fc6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/10e78b77ae57c69a7a233e3ee100a726568abc79"
+        },
+        "date": 1745358713434,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184484398938,
+            "range": "± 1291788460",
             "unit": "ns/iter"
           }
         ]
