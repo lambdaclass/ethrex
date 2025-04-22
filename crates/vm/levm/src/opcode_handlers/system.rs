@@ -11,6 +11,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{types::Fork, Address, U256};
+use hex;
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -787,7 +788,7 @@ impl<'a> VM<'a> {
             code_address,
             bytecode,
             value,
-            calldata.into(),
+            calldata.clone().into(),
             is_static,
             gas_limit,
             0,
@@ -802,6 +803,7 @@ impl<'a> VM<'a> {
         }
 
         let tx_report = self.run_execution(&mut new_call_frame)?;
+        let report = tx_report.clone();
 
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = new_call_frame
@@ -822,6 +824,24 @@ impl<'a> VM<'a> {
             &tx_report.output,
         )?;
         current_call_frame.sub_return_data = tx_report.output;
+
+        println!("CALL DEBUG LOGS:");
+
+        let sender = hex::encode(msg_sender.as_bytes());
+        let t = hex::encode(to.as_bytes());
+        let code_addr = hex::encode(code_address.as_bytes());
+        let vlue = value;
+        let cldata = hex::encode(&calldata);
+        let success = report.is_success();
+        let out = hex::encode(&report.output);
+
+        println!("Sender: {:?}", sender);
+        println!("To: {:?}", t);
+        println!("Code Address: {:?}", code_addr);
+        println!("Value: {:?}", vlue);
+        println!("Calldata: {:?}", cldata);
+        println!("Success : {:?}", success);
+        println!("Output : {:?}", out);
 
         // What to do, depending on TxResult
         match tx_report.result {
