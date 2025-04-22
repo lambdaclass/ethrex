@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-04-22
+
+- Avoid calculating state transitions after every block in bulk mode https://github.com/lambdaclass/ethrex/pull/2519
+
 ### 2025-04-11
 
 - Removed some unnecessary clones and made some functions const: [2438](https://github.com/lambdaclass/ethrex/pull/2438)
