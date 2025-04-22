@@ -207,9 +207,12 @@ Node options:
       --network <GENESIS_FILE_PATH>
           Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.
 
+          [env: ETHREX_NETWORK=]
+
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
 
+          [env: ETHREX_DATADIR=]
           [default: ethrex]
 
       --force
@@ -219,14 +222,16 @@ Node options:
           [default: 0.0.0.0]
 
       --metrics.port <PROMETHEUS_METRICS_PORT>
+          [env: ETHREX_METRICS_PORT=]
           [default: 9090]
-
+gs
       --dev
           If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
 
       --evm <EVM_BACKEND>
           Has to be `levm` or `revm`
 
+          [env: ETHREX_EVM=]
           [default: revm]
 
       --log.level <LOG_LEVEL>
@@ -266,11 +271,13 @@ RPC options:
       --http.addr <ADDRESS>
           Listening address for the http rpc server.
 
+          [env: ETHREX_HTTP_ADDR=]
           [default: localhost]
 
       --http.port <PORT>
           Listening port for the http rpc server.
 
+          [env: ETHREX_HTTP_PORT=]
           [default: 8545]
 
       --authrpc.addr <ADDRESS>
