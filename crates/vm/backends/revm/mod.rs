@@ -97,10 +97,7 @@ impl REVM {
             }
         }
 
-        Ok(BlockExecutionResult {
-            receipts,
-            requests
-        })
+        Ok(BlockExecutionResult { receipts, requests })
     }
 
     pub fn execute_tx(

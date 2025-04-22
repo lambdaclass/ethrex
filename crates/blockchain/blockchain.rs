@@ -62,7 +62,10 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    async fn execute_block(&self, block: &Block) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
+    async fn execute_block(
+        &self,
+        block: &Block,
+    ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -116,7 +119,7 @@ impl Blockchain {
         &self,
         block: &Block,
         execution_result: BlockExecutionResult,
-        account_updates: &[AccountUpdate]
+        account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
@@ -200,6 +203,8 @@ impl Blockchain {
             .storage
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
+        let fork = chain_config.fork(first_block_header.timestamp);
+
         let mut vm = Evm::new(
             self.evm_engine,
             self.storage.clone(),
@@ -214,6 +219,15 @@ impl Blockchain {
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
+            if chain_config.fork(block.header.timestamp) != fork {
+                return Err((
+                    ChainError::Custom("Crossing fork boundary in bulk mode".into()),
+                    Some(BatchBlockProcessingFailure {
+                        last_valid_hash: last_valid_hash,
+                        failed_block_hash: block.hash(),
+                    }),
+                ));
+            }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
                 let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
@@ -231,10 +245,12 @@ impl Blockchain {
                 blocks[i - 1].header.clone()
             };
 
-            let BlockExecutionResult {
-                receipts,
-                ..
-            } = match self.execute_block_from_state(&parent_header, block, &chain_config, &mut vm) {
+            let BlockExecutionResult { receipts, .. } = match self.execute_block_from_state(
+                &parent_header,
+                block,
+                &chain_config,
+                &mut vm,
+            ) {
                 Ok(result) => result,
                 Err(err) => {
                     return Err((
@@ -252,15 +268,10 @@ impl Blockchain {
             transactions_count += block.body.transactions.len();
             all_receipts.insert(block.hash(), receipts);
         }
-        // TODO: bail when crossing fork boundary
-        let fork = chain_config.fork(first_block_header.timestamp);
 
         let account_updates = match vm.get_state_transitions(fork) {
             Ok(v) => v,
-            Err(err) => return Err((
-                ChainError::EvmError(err),
-                None
-            ))
+            Err(err) => return Err((ChainError::EvmError(err), None)),
         };
         for account_update in account_updates {
             let Some(cache) = all_account_updates.get_mut(&account_update.address) else {

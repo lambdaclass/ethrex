@@ -120,7 +120,7 @@ impl BlockProducer {
 
         let execution_result = BlockExecutionResult {
             receipts: payload_build_result.receipts,
-            requests: Vec::new()
+            requests: Vec::new(),
         };
 
         blockchain

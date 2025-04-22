@@ -90,10 +90,7 @@ impl LEVM {
             }
         }
 
-        Ok(BlockExecutionResult {
-            receipts,
-            requests
-        })
+        Ok(BlockExecutionResult { receipts, requests })
     }
 
     pub fn execute_tx(
@@ -399,8 +396,7 @@ impl LEVM {
 
         // pre-execute and get all state changes
         let _ = Self::execute_block(block, &mut db);
-        let execution_updates = Self::get_state_transitions(&mut db, fork)
-            .map_err(Box::new)?;
+        let execution_updates = Self::get_state_transitions(&mut db, fork).map_err(Box::new)?;
 
         // index accessed account addresses and storage keys
         let state_accessed = logger_ref
