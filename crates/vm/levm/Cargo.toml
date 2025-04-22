@@ -15,6 +15,7 @@ thiserror.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 
+hex = "0.4.3"
 sha3 = "0.10.8"
 datatest-stable = "0.2.9"
 walkdir = "2.5.0"
