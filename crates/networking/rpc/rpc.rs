@@ -397,16 +397,16 @@ pub async fn map_engine_requests(
                 }
             }
         }
-        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
-        "engine_newPayloadV3" => {
+        "engine_newPayloadV4" => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "based")] {
-                    NewPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
+                    NewPayloadV4Request::relay_to_gateway_or_fallback(req, context).await
                 } else {
-                    NewPayloadV3Request::call(req, context).await
+                    NewPayloadV4Request::call(req, context).await
                 }
             }
         }
+        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
         "engine_exchangeTransitionConfigurationV1" => {
@@ -455,6 +455,7 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
+        "net_peerCount" => net::peer_count(req, contex),
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
 }

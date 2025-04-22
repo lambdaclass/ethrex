@@ -90,8 +90,7 @@ impl Trie {
             .flatten()
         {
             // If the trie is not empty, call the root node's insertion logic
-            let root_node =
-                root_node.insert(&mut self.state, Nibbles::from_bytes(&path), value.clone())?;
+            let root_node = root_node.insert(&mut self.state, Nibbles::from_bytes(&path), value)?;
             self.root = Some(root_node.insert_self(&mut self.state)?)
         } else {
             // If the trie is empty, just add a leaf.
@@ -195,7 +194,7 @@ impl Trie {
         // dedup
         // TODO: really inefficient, by making the traversing smarter we can avoid having
         // duplicates
-        let node_path: HashSet<_> = node_path.drain(..).collect();
+        let node_path: HashSet<_> = node_path.into_iter().collect();
         let node_path = Vec::from_iter(node_path);
         Ok((Some(root_node.encode_raw()), node_path))
     }

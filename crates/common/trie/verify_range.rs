@@ -202,7 +202,7 @@ fn has_right_element_inner(
     mut path: Nibbles,
     trie_state: &TrieState,
 ) -> Result<bool, TrieError> {
-    let Ok(Some(node)) = trie_state.get_node(node_hash.clone()) else {
+    let Ok(Some(node)) = trie_state.get_node(node_hash) else {
         return Ok(false);
     };
     match node {

@@ -53,7 +53,7 @@ pub async fn start_block_producer(
         let payload_id = fork_choice_response
             .payload_id
             .expect("Failed to produce block: payload_id is None in ForkChoiceResponse");
-        let execution_payload_response = match engine_client.engine_get_payload_v3(payload_id).await
+        let execution_payload_response = match engine_client.engine_get_payload_v4(payload_id).await
         {
             Ok(response) => {
                 tracing::debug!("GetPayloadV3 response: {response:?}");
@@ -68,7 +68,7 @@ pub async fn start_block_producer(
             }
         };
         let payload_status = match engine_client
-            .engine_new_payload_v3(
+            .engine_new_payload_v4(
                 execution_payload_response.execution_payload,
                 execution_payload_response
                     .blobs_bundle

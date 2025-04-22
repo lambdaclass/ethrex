@@ -1,3 +1,4 @@
+mod payload_builder;
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -12,6 +13,7 @@ use ethrex_common::Address;
 use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
+use payload_builder::build_payload;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
@@ -100,31 +102,35 @@ impl BlockProducer {
             beacon_root: Some(head_beacon_block_root),
             version,
         };
-        let mut payload = create_payload(&args, &store)?;
+        let payload = create_payload(&args, &store)?;
 
         // Blockchain builds the payload from mempool txs and executes them
-        let payload_build_result = blockchain.build_payload(&mut payload).await?;
-        info!("Built payload for new block {}", payload.header.number);
+        let payload_build_result = build_payload(blockchain.clone(), payload, &store).await?;
+        info!(
+            "Built payload for new block {}",
+            payload_build_result.payload.header.number
+        );
 
         // Blockchain stores block
-        let block = payload;
+        let block = payload_build_result.payload;
         let chain_config = store.get_chain_config()?;
         validate_block(&block, &head_header, &chain_config)?;
 
+        let account_updates = payload_build_result.account_updates;
+
         let execution_result = BlockExecutionResult {
-            account_updates: payload_build_result.account_updates,
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
         };
 
         blockchain
-            .store_block(&block, execution_result.clone())
+            .store_block(&block, execution_result.clone(), &account_updates)
             .await?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         // Cache execution result
-        execution_cache.push(block.hash(), execution_result.account_updates)?;
+        execution_cache.push(block.hash(), account_updates)?;
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
