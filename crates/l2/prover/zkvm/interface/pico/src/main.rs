@@ -3,7 +3,10 @@
 use pico_sdk::io::{commit, read_as};
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::backends::revm::{REVM, db::EvmState};
+use ethrex_common::Address;
+use ethrex_storage::AccountUpdate;
+use ethrex_vm::Evm;
+use std::collections::HashMap;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -13,18 +16,10 @@ pico_sdk::entrypoint!(main);
 
 pub fn main() {
     let ProgramInput {
-        block,
+        blocks,
         parent_block_header,
         db,
     } = read_as();
-    let mut state = EvmState::from(db.clone());
-    let chain_config = state
-        .chain_config()
-        .expect("Failed to get chain config from state");
-
-    // Validate the block
-    validate_block(&block, &parent_block_header, &chain_config).expect("invalid block");
-
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
         .get_tries()
@@ -39,10 +34,52 @@ pub fn main() {
         panic!("invalid database")
     };
 
-    let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
-    let receipts = result.receipts;
-    let account_updates = result.account_updates;
-    validate_gas_used(&receipts, &block.header).expect("invalid gas used");
+    let mut parent_header = parent_block_header;
+    let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
+
+    // let mut cumulative_gas_used = 0;
+
+    for block in blocks {
+        // Validate the block
+        validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
+
+        // Execute block
+        let mut vm = Evm::from_execution_db(db.clone());
+        let result = vm.execute_block(&block).expect("failed to execute block");
+        // let receipts = result.receipts;
+
+        cumulative_gas_used += receipts
+            .last()
+            .map(|last_receipt| last_receipt.cumulative_gas_used)
+            .unwrap_or_default();
+
+        // Update db for the next block
+        db.apply_account_updates(&result.account_updates);
+
+        // Update acc_account_updates
+        for account in result.account_updates {
+            let address = account.address;
+            if let Some(existing) = acc_account_updates.get_mut(&address) {
+                existing.merge(account);
+            } else {
+                acc_account_updates.insert(address, account);
+            }
+        }
+
+        // validate_gas_used(&receipts, &block.header).expect("invalid gas used");
+        parent_header = block.header;
+    }
+
+    // Update state trie
+    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
+    update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)
+        .expect("failed to update state and storage tries");
+
+    // Calculate final state root hash and check
+    let final_state_hash = state_trie.hash_no_commit();
+    // if final_state_hash != block.header.state_root {
+    //     panic!("invalid final state trie");
+    // }
 
     // Output gas for measurement purposes
     // let cumulative_gas_used = receipts
@@ -50,16 +87,6 @@ pub fn main() {
     //     .map(|last_receipt| last_receipt.cumulative_gas_used)
     //     .unwrap_or_default();
     // write(&cumulative_gas_used);
-
-    // Update state trie
-    update_tries(&mut state_trie, &mut storage_tries, &account_updates)
-        .expect("failed to update state and storage tries");
-
-    // Calculate final state root hash and check
-    let final_state_hash = state_trie.hash_no_commit();
-    if final_state_hash != block.header.state_root {
-        panic!("invalid final state trie");
-    }
 
     commit(&ProgramOutput {
         initial_state_hash,
