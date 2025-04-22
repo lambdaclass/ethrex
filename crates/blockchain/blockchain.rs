@@ -223,7 +223,7 @@ impl Blockchain {
                 return Err((
                     ChainError::Custom("Crossing fork boundary in bulk mode".into()),
                     Some(BatchBlockProcessingFailure {
-                        last_valid_hash: last_valid_hash,
+                        last_valid_hash,
                         failed_block_hash: block.hash(),
                     }),
                 ));
