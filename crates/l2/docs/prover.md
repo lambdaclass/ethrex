@@ -4,16 +4,27 @@
 
 - [ethrex L2 Prover](#ethrex-l2-prover)
   - [ToC](#toc)
-  - [What](#what)
-  - [Workflow](#workflow)
-  - [How](#how)
-    - [Quick Test](#quick-test)
+  - [Usage](#usage)
+    - [Dependencies](#dependencies)
+    - [Test](#test)
     - [Dev Mode](#dev-mode)
       - [Run the whole system with the prover - In one Machine](#run-the-whole-system-with-the-prover---in-one-machine)
     - [GPU mode](#gpu-mode)
       - [Proving Process Test](#proving-process-test)
       - [Run the whole system with a GPU Prover](#run-the-whole-system-with-a-gpu-prover)
   - [Configuration](#configuration)
+  - [How it works](#how-it-works)
+    - [Program inputs](#program-inputs)
+      - [Execution witness](#execution-witness)
+    - [Block execution program](#block-execution-program)
+      - [Prelude 1: state trie basics](#prelude-1-state-trie-basics)
+      - [Prelude 2: deposits, withdrawals and state diffs](#prelude-2-deposits-withdrawals-and-state-diffs)
+      - [Step 1: initial state validation](#step-1-initial-state-validation)
+      - [Step 2: block execution](#step-2-block-execution)
+      - [Step 3: final state validation](#step-3-final-state-validation)
+      - [Step 4: deposit hash calculation](#step-4-deposit-hash-calculation)
+      - [Step 5: withdrawals Merkle root calculation](#step-5-withdrawals-merkle-root-calculation)
+      - [Step 6: state diff calculation and commitment](#step-6-state-diff-calculation-and-commitment)
 
 > [!NOTE]
 > The shipping/deploying process and the `Prover` itself are under development.
@@ -183,7 +194,7 @@ The following environment variables are used by the ProverServer:
 
 ## How it works
 
-The prover's sole purpose is to generate a block execution proof. For this, ethrex-prover implements a block execution program and generates a proof of it with different RISC-V zkVMs. 
+The prover's sole purpose is to generate a block execution proof. For this, ethrex-prover implements a block execution program and generates a proof of it using different RISC-V zkVMs (Pico, SP1, Risc0).
 
 ### Program inputs
 
@@ -191,77 +202,103 @@ The inputs for the block execution program (also called program inputs or prover
 - the block to prove (header and body)
 - the block's parent header
 - an execution witness
-and the L2 specific ones are:
+- the block's deposits hash
+- the block's withdrawals Merkle root
+- the block's state diff hash
+
+The last three inputs are L2 specific.
+
+These inputs are required for proof generation, but not all of them are committed as public inputs, which are needed for proof verification. The proof's public inputs (also called program outputs) will be:
+
+- the initial state hash (from the parent block header)
+- the final state hash (from the current block header)
 - the block's deposits hash
 - the block's withdrawals Merkle root
 - the block's state diff hash
 
 #### Execution witness
-the purpose of the execution witness is to allow executing a block without having access to the whole Ethereum state, as it can't fit in a zkVM program. So it contains only each state value needed during the execution.
+The purpose of the execution witness is to allow executing a block without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.
 
-an execution witness (represented by the `ExecutionDB` type) contains:
-1. all the initial state values that will be read or written to during the block's execution (accounts, code, storage and block hashes).
-2. Merkle Patricia Trie (MPT) proofs that prove the inclusion or exclusion of each initial value in the initial world trie.
+An execution witness (represented by the `ExecutionDB` type) contains:
+1. all the initial state values (accounts, code, storage, block hashes) that will be read or written to during the block's execution.
+2. Merkle Patricia Trie (MPT) proofs that prove the inclusion or exclusion of each initial value in the initial world state trie.
 
-an execution witness is created from a past execution of the block, meaning that before proving we need to:
+An execution witness is created from a prior execution of the block. Before proving, we need to:
 1. execute the block (also called "pre-execution").
-2. log every initial state value that is accessed or updated during this execution.
-3. store each logged value in an in-memory kv database (we just use hash maps as fields for the `ExecutionDB`).
-4. retrieve a proof for each value, each proof links a value (or it's non-existence) into a trie root hash.
+2. log every initial state value accessed or updated during this execution.
+3. store each logged value in an in-memory key-value database (`ExecutionDB`, implemented just using hash maps).
+4. retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash.
 
-the first three steps are straightforward, step 4 contains more complex logic given the problem introduced in section [Final state validation](#Final state validation).
+Steps 1-3 are straightforward. Step 4 involves more complex logic due to potential issues when reconstructing the state trie after value removals.
 
-if during block execution a value is removed (which means that it existed in the initial state but doesn't in the final) then the leaf node containing this value will be removed, and there is two pathological cases where we don't have sufficient information to complete the removal:
+If a value is removed during block execution (meaning it existed initially but not finally), two pathological cases can occur where the witness lacks sufficient information to update the trie structure correctly:
 
 **Case 1**
 ![](img/execw_case1.png)
 
-Here only the value contained in **leaf 1** is part of the execution witness, and so we don't have a proof for **leaf 2**, therefore we don't have that node. After removing **leaf 1** then there's no use to the **branch 1** node, so during the reestructuring step it's removed and replaced by **leaf 3**, which contains the value and path of **leaf 2**, but adding a nibble prefix to the path, which will  be the index of the choice of **branch 1**.
+Here, only **leaf 1** is part of the execution witness, so we lack the proof (and thus the node data) for **leaf 2**. After removing **leaf 1**, **branch 1** becomes redundant. During trie restructuring, it's replaced by **leaf 3**, whose path is the path of **leaf 2** concatenated with a prefix nibble (`k`) representing the choice taken at the original **branch 1**, and keeping **leaf 2**'s value.
 
 ```
-branch1 = {c_1, c_2, c_3, .., c_k, .., c_16} 
-  where c_i is empty for i != k
-  and c_k = hash(leaf2)
+branch1 = {c_1, c_2, ..., c_k, ..., c_16} # Only c_k = hash(leaf2) is non-empty
 leaf2 = {value, path}
-leaf3 = {value, concat(k, path)}
+leaf3 = {value, concat(k, path)} # New leaf replacing branch1 and leaf2
 ```
 
-Because we don't have **leaf 2** we can't know how to construct **leaf 3** to complete the reestructure. The solution here is simple: we will fetch the *final* state proof for the key of **leaf 2**, which will yield an exclusion proof containing **leaf 3**. Then we can just remove the prefix `k` and voilá, we have **leaf 2**.
-
-This situation might be repeated in an upper level of the trie, in which case the final proof leaf has many choice nibbles appended as prefix, we can't be sure how many nibbles there are so we can store each possible leaf variant by removing one nibble at a time, until `path = empty`
+Without **leaf 2**'s data, we cannot construct **leaf 3**. The solution is to fetch the *final* state proof for the key of **leaf 2**. This yields an exclusion proof containing **leaf 3**. By removing the prefix nibble `k`, we can reconstruct the original path and value of **leaf 2**. This process might need to be repeated if similar restructuring occurred at higher levels of the trie.
 
 **Case 2**
 ![](img/execw_case2.png)
-In this case we need **branch/ext 2** which can be both of type branch or extension. Here one could say that by checking the final **extension** node we can deduce **branch/ext 2**, which is correct in the simple case presented, but doesn't work if we have the same situation in an upper level of the trie and more removals.
+In this case, restructuring requires information about **branch/ext 2** (which could be a branch or extension node), but this node might not be in the witness. Checking the final **extension** node might seem sufficient to deduce **branch/ext 2** in simple scenarios. However, this fails if similar restructuring occurred at higher trie levels involving more removals, as the final **extension** node might combine paths from multiple original branches, making it ambiguous to reconstruct the specific missing **branch/ext 2** node.
 
-The solution is to fetch the missing node using a `debug` RPC-API method, like `debug_dbGet` or `debug_accountRange` and `debug_storageRangeAt` if using a geth node.
+The solution is to fetch the missing node directly using a `debug` JSON-RPC method, like `debug_dbGet` (or `debug_accountRange` and `debug_storageRangeAt` if using a Geth node).
+
+> [!NOTE]
+> These problems arise when creating the execution witness solely from state proofs fetched via standard JSON-RPC. In the L2 context, where we control the sequencer, alternative protocols could potentially retrieve all necessary data more directly. However, the problems remain relevant when proving L1 blocks (e.g., for testing/benchmarking).
 
 ### Block execution program
-The program leverages ethrex-common primitives and ethrex-vm methods. ethrex-prover just takes the already existing execution logic and creates a proof of it via a zkVM. 
+The program leverages ethrex-common primitives and ethrex-vm methods. ethrex-prover implements a program that uses the existing execution logic and generates a proof of its execution using a zkVM. Some L2-specific logic and input validation are added on top of the basic block execution.
 
-Some L2 specific logic is added on top of basic block execution. 
+The following sections outline the steps taken by the execution program.
 
-#### State trie basics
-<TODO add link to a MPT resource>
-for each executed block there is an initial and final state (the Ethereum state before and after execution respectively). State values are stored in MPTs, specifically:
-1. for each account there's a Storage Trie that contains all its storage values.
-2. the World State Trie contains all accounts info, which include their storage root hash (so we can link a storage trie for each account in the world trie).
+#### Prelude 1: state trie basics
+We recommend learning about Merkle Patricia Tries (MPTs) to better understand this section.
 
-the way to identify a particular Ethereum state is to hash the root node of the world state trie. This hash is known as "state hash" as it summarizes a state. 
+Each executed block transitions the Ethereum state from an initial state to a final state. State values are stored in MPTs:
+1. Each account has a Storage Trie containing its storage values.
+2. The World State Trie contains all account information, including each account's storage root hash (linking storage tries to the world trie).
+
+Hashing the root node of the world state trie generates a unique identifier for a particular Ethereum state, known as the "state hash".
 
 There are two kinds of MPT proofs:
-1. inclusion proofs prove that `k: v` is a valid entry in the MPT with root hash `h`.
-2. exclusion proofs proof that `k` is not a valid key in the MPT with root hash `h`.  
-this way we can verify that some value is a valid value in a state, or that a key doesn't exists in a state.
+1. Inclusion proofs: Prove that `key: value` is a valid entry in the MPT with root hash `h`.
+2. Exclusion proofs: Prove that `key` does not exist in the MPT with root hash `h`.
+These proofs allow verifying that a value is included (or its key doesn't exist) in a specific state.
 
-#### Initial state validation
-We must validate that an `ExecutionDB` contains valid data by iterating over each state value and verifying each proof, knowing beforehand the initial state hash. We also must validate that, after execution, the final state values are all correct. This is done in a different way than for the initial state.
+#### Prelude 2: deposits, withdrawals and state diffs
+These three components are specific additions for ethrex's L2 protocol, layered on top of standard Ethereum execution logic. They each require specific validation steps within the program.
 
-Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a subset of the world state trie and storage tries: the set of "pruned tries" that are relevant to this particular execution. This means we can operate over these pruned tries (add, remove, modify values).
+For more details, refer to [Overview](overview.md), [Withdrawals](withdrawals.md), and [State diffs](state_diffs.md).
 
-#### Final state validation
-During execution, state values are updated (modified, created or removed). After executing a block we can obtain a list of all state updates. Then the final state is calculated by applying state updates to the initial state.
+#### Step 1: initial state validation
+The program validates the `ExecutionDB` by iterating over each provided state value and verifying its MPT proof against the initial state hash (obtained from the parent block header input).
 
-We can apply state updates to the relevant pruned tries, which will result in a new world state root node. By hashing it we retrieve the final state hash. After this we can check that this calculated hash is the one we expected, thus validating the final state.
+Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries – a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.
 
-There is a problem in this process: in the case of removed values we may not have the necessary information for updating the pruned tries, because the removal may invoke a subtrie reestructure for which we need nodes beyond the ones included in our set.
+#### Step 2: block execution
+After validating the initial state, the program executes the block. This leverages the existing ethrex execution logic used by the L2 client itself.
+
+#### Step 3: final state validation
+During execution, state values are updated (modified, created, or removed). After execution, the program calculates the final state by applying these state updates to the initial pruned tries.
+
+Applying the updates results in a new world state root node for the pruned tries. Hashing this node yields the calculated final state hash. The program then verifies that this calculated hash matches the expected final state hash (from the block header), thus validating the final state.
+
+As mentioned earlier, removing values can sometimes require information not present in the initial witness to correctly restructure the pruned tries. The [Execution witness](#execution-witness) section details this problem and its solution.
+
+#### Step 4: deposit hash calculation
+After execution and final state validation, the program calculates a hash encompassing all deposits made within the block (extracting deposit info from `PrivilegedL2Transaction` type transactions). This hash is committed as a public input, required for verification on the L1 bridge contract.
+
+#### Step 5: withdrawals Merkle root calculation
+Similarly, the program constructs a binary Merkle tree of all withdrawals initiated in the block and calculates its root hash. This hash is also committed as a public input. Later, L1 accounts can claim their withdrawals by providing a Merkle proof of inclusion that validates against this root hash on the L1 bridge contract.
+
+#### Step 6: state diff calculation and commitment
+Finally, the program calculates the state diffs (changes between initial and final state) intended for publication to L1 as blob data. It creates a commitment to this data (a Merkle root hash), which is committed as a public input. Using proof of equivalence logic within the L1 bridge contract, this Merkle commitment can be verified against the KZG commitment of the corresponding blob data.
