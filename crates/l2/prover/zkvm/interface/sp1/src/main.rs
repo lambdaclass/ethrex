@@ -11,13 +11,10 @@ sp1_zkvm::entrypoint!(main);
 
 pub fn main() {
     let ProgramInput {
-        block,
+        blocks,
         parent_block_header,
         db,
     } = sp1_zkvm::io::read::<ProgramInput>();
-    // Validate the block
-    validate_block(&block, &parent_block_header, &db.chain_config).expect("invalid block");
-
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
         .get_tries()
@@ -32,21 +29,39 @@ pub fn main() {
         panic!("invalid database")
     };
 
-    let mut evm = Evm::from_execution_db(db.clone());
-    let result = evm.execute_block(&block).expect("failed to execute block");
-    let receipts = result.receipts;
-    let account_updates = result.account_updates;
-    // validate_gas_used(&receipts, &block.header).expect("invalid gas used");
+    let mut parent_header = parent_block_header;
+    let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
-    // Output gas for measurement purposes
-    let cumulative_gas_used = receipts
-        .last()
-        .map(|last_receipt| last_receipt.cumulative_gas_used)
-        .unwrap_or_default();
-    sp1_zkvm::io::commit(&cumulative_gas_used);
+    let mut cumulative_gas_used = 0;
+
+    for block in blocks {
+        // Validate the block
+        validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
+
+        let mut vm = Evm::from_execution_db(db.clone());
+        let result = vm.execute_block(&block).expect("failed to execute block");
+        let receipts = result.receipts;
+        cumulative_gas_used += receipts
+            .last()
+            .map(|last_receipt| last_receipt.cumulative_gas_used)
+            .unwrap_or_default();
+        db.apply_account_updates(&result.account_updates);
+        for account in result.account_updates {
+            let address = account.address;
+            if let Some(existing) = acc_account_updates.get_mut(&address) {
+                existing.merge(account);
+            } else {
+                acc_account_updates.insert(address, account);
+            }
+        }
+        // validate_gas_used(&receipts, &block.header).expect("invalid gas used");
+        parent_header = block.header;
+    }
+
+    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
 
     // Update state trie
-    update_tries(&mut state_trie, &mut storage_tries, &account_updates)
+    update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)
         .expect("failed to update state and storage tries");
 
     // Calculate final state root hash and check
@@ -54,6 +69,9 @@ pub fn main() {
     // if final_state_hash != block.header.state_root {
     //     panic!("invalid final state trie");
     // }
+
+    // Output gas for measurement purposes
+    sp1_zkvm::io::commit(&cumulative_gas_used);
 
     sp1_zkvm::io::commit(&ProgramOutput {
         initial_state_hash,
