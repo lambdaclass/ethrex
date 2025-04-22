@@ -224,7 +224,7 @@ Node options:
       --metrics.port <PROMETHEUS_METRICS_PORT>
           [env: ETHREX_METRICS_PORT=]
           [default: 9090]
-gs
+
       --dev
           If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
 
