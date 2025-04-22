@@ -586,24 +586,16 @@ impl fmt::Display for ComparisonReport {
         if self.revm_post_state_root != self.expected_post_state_root {
             writeln!(
                 f,
-                "================ WARNING: REVM *fails* this tests ==================="
-            )?
-        }
-        if self.levm_post_state_root != self.revm_post_state_root {
-            writeln!(
-                f,
-                "Post-state roots mismatch: LEVM: {levm_post_state_root:#x}, REVM: {revm_post_state_root:#x}",
-                levm_post_state_root = self.levm_post_state_root,
-                revm_post_state_root = self.revm_post_state_root
+                "================ WARNING: REVM fails these tests ===================\n"
             )?;
-        } else {
-            writeln!(
-                f,
-                "Post-state roots match to: {levm_post_state_root:#x}",
-                levm_post_state_root = self.levm_post_state_root
-            )?;
+            if self.levm_post_state_root != self.revm_post_state_root {
+                writeln!(f, "Post-state roots mismatch between LEVM and REVM\n")?;
+            } else {
+                writeln!(f, "Same Post-state root in LEVM and REVM\n")?;
+            }
         }
-        writeln!(f, "Account Updates:")?;
+
+        writeln!(f, "Account Updates:\n")?;
         for levm_updated_account_only in self.levm_updated_accounts_only.iter() {
             writeln!(f, "  {levm_updated_account_only:#x}:")?;
             writeln!(f, "    Was updated in LEVM but not in REVM")?;
@@ -612,12 +604,12 @@ impl fmt::Display for ComparisonReport {
                 .get(levm_updated_account_only)
                 .cloned()
                 .unwrap_or_default();
-            let updated_account_update = self
+            let account_update = self
                 .levm_account_updates
                 .iter()
                 .find(|account_update| &account_update.address == levm_updated_account_only)
                 .unwrap();
-            let updated_account_storage = updated_account_update
+            let updated_account_storage = account_update
                 .added_storage
                 .iter()
                 .map(|(key, value)| {
@@ -633,10 +625,10 @@ impl fmt::Display for ComparisonReport {
                     (*key, storage_slot)
                 })
                 .collect();
-            let updated_account_info = updated_account_update.info.clone().unwrap();
+            let updated_account_info = account_update.info.clone().unwrap();
             let updated_account = Account::new(
                 updated_account_info.balance,
-                updated_account_update.code.clone().unwrap_or_default(),
+                account_update.code.clone().unwrap_or_default(),
                 updated_account_info.nonce,
                 updated_account_storage,
             );

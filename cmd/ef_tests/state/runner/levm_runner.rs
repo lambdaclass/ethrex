@@ -348,9 +348,7 @@ pub async fn ensure_post_state(
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != post_state_root_hash {
-                        let error_reason = format!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {post_state_root_hash:#x}",
-                        );
+                        let error_reason = format!("Post-state root mismatch",);
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             execution_report.clone(),
                             error_reason,

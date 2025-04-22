@@ -382,14 +382,11 @@ pub async fn compare_levm_revm_account_updates(
     initial_accounts
         .entry(test.env.current_coinbase)
         .or_default();
-    let levm_updated_accounts = levm_account_updates
-        .iter()
-        .map(|account_update| account_update.address)
-        .collect::<HashSet<Address>>();
-    let revm_updated_accounts = revm_account_updates
-        .iter()
-        .map(|account_update| account_update.address)
-        .collect::<HashSet<Address>>();
+
+    let (levm_updated_accounts, revm_updated_accounts): (HashSet<_>, HashSet<_>) = (
+        levm_account_updates.iter().map(|u| u.address).collect(),
+        revm_account_updates.iter().map(|u| u.address).collect(),
+    );
 
     ComparisonReport {
         levm_post_state_root,
@@ -398,18 +395,9 @@ pub async fn compare_levm_revm_account_updates(
         expected_post_state_root: test.post.vector_post_value(vector, *fork).hash,
         levm_account_updates: levm_account_updates.to_vec(),
         revm_account_updates: revm_account_updates.to_vec(),
-        levm_updated_accounts_only: levm_updated_accounts
-            .difference(&revm_updated_accounts)
-            .cloned()
-            .collect::<HashSet<Address>>(),
-        revm_updated_accounts_only: revm_updated_accounts
-            .difference(&levm_updated_accounts)
-            .cloned()
-            .collect::<HashSet<Address>>(),
-        shared_updated_accounts: levm_updated_accounts
-            .intersection(&revm_updated_accounts)
-            .cloned()
-            .collect::<HashSet<Address>>(),
+        levm_updated_accounts_only: &levm_updated_accounts - &revm_updated_accounts,
+        revm_updated_accounts_only: &revm_updated_accounts - &levm_updated_accounts,
+        shared_updated_accounts: &levm_updated_accounts & &revm_updated_accounts,
     }
 }
 
@@ -527,12 +515,8 @@ pub async fn _ensure_post_state_revm(
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {
-                        println!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-                        );
-                        let error_reason = format!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-                        );
+                        println!("Post-state root mismatch",);
+                        let error_reason = format!("Post-state root mismatch",);
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             ExecutionReport {
                                 result: TxResult::Success,
