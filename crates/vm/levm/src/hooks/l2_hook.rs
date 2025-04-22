@@ -165,6 +165,7 @@ impl Hook for L2Hook {
         if let TxResult::Revert(_) = report.result {
             let existing_account = get_account(vm.db, receiver_address)?; //TO Account
 
+            // TODO: Improve these if statements.
             if has_delegation(&existing_account.info)? {
                 // This is the case where the "to" address and the
                 // "signer" address are the same. We are setting the code
@@ -230,7 +231,7 @@ impl Hook for L2Hook {
             .checked_sub(refunded_gas)
             .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
 
-        default_hook::pay_coinbase_fee(vm, gas_to_pay_coinbase)?;
+        default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
 
         // 4. Destruct addresses in vm.estruct set.
         default_hook::delete_self_destruct_accounts(vm)?;
