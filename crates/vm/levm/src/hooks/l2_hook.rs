@@ -1,10 +1,8 @@
-use ethrex_common::{types::Fork, Address, U256};
-
 use crate::{
     call_frame::CallFrame,
     db::cache::remove_account,
     errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
-    hooks::default_hook,
+    hooks::{default_hook, hook::Hook},
     utils::{
         add_intrinsic_gas, get_account, get_valid_jump_destinations, has_delegation,
         increase_account_balance, increment_account_nonce,
@@ -12,10 +10,7 @@ use crate::{
     vm::VM,
 };
 
-use super::{
-    default_hook::{MAX_REFUND_QUOTIENT, MAX_REFUND_QUOTIENT_PRE_LONDON},
-    hook::Hook,
-};
+use ethrex_common::{types::Fork, Address, U256};
 
 pub struct L2Hook {
     pub recipient: Address,
@@ -142,28 +137,23 @@ impl Hook for L2Hook {
         }
 
         if vm.env.is_privilege {
-            let mut gas_consumed = report.gas_used;
-            let gas_refunded = refund_sender(vm, initial_call_frame, &mut gas_consumed, report)?;
-            let gas_to_pay_coinbase = gas_consumed
-                .checked_sub(gas_refunded)
-                .ok_or(VMError::Internal(InternalError::UndefinedState(2)))?;
+            let gas_to_pay_coinbase = compute_coinbase_fee(vm, initial_call_frame, report)?;
             default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
         } else {
-            let refunded_gas = default_hook::compute_refunded_gas(vm, report)?;
+            let gas_refunded = default_hook::compute_gas_refunded(vm, report)?;
             let actual_gas_used = default_hook::compute_actual_gas_used(
                 vm,
                 initial_call_frame,
-                refunded_gas,
+                gas_refunded,
                 report.gas_used,
             )?;
             default_hook::refund_sender(
                 vm,
                 initial_call_frame,
                 report,
-                refunded_gas,
+                gas_refunded,
                 actual_gas_used,
             )?;
-
             default_hook::pay_coinbase(vm, actual_gas_used)?;
         }
 
@@ -182,33 +172,26 @@ pub fn undo_value_transfer(vm: &mut VM<'_>, initial_call_frame: &CallFrame) -> R
     Ok(())
 }
 
-pub fn refund_sender(
+pub fn compute_coinbase_fee(
     vm: &mut VM<'_>,
     initial_call_frame: &CallFrame,
-    gas_consumed: &mut u64,
     report: &mut ExecutionReport,
 ) -> Result<u64, VMError> {
-    // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-    let refund_quotient = if vm.env.config.fork < Fork::London {
-        MAX_REFUND_QUOTIENT_PRE_LONDON
-    } else {
-        MAX_REFUND_QUOTIENT
-    };
-    let mut gas_refunded = report.gas_refunded.min(
-        gas_consumed
-            .checked_div(refund_quotient)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
-    );
-    // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+    let mut gas_refunded = default_hook::compute_gas_refunded(vm, report)?;
+    let mut gas_consumed = report.gas_used;
+
     report.gas_refunded = gas_refunded;
 
     if vm.env.config.fork >= Fork::Prague {
         let floor_gas_price = vm.get_min_gas_used(initial_call_frame)?;
         let execution_gas_used = gas_consumed.saturating_sub(gas_refunded);
         if floor_gas_price > execution_gas_used {
-            *gas_consumed = floor_gas_price;
+            gas_consumed = floor_gas_price;
             gas_refunded = 0;
         }
     }
-    Ok(gas_refunded)
+
+    gas_consumed
+        .checked_sub(gas_refunded)
+        .ok_or(VMError::Internal(InternalError::UndefinedState(2)))
 }

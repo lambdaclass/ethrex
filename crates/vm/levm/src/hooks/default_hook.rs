@@ -141,14 +141,14 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm, initial_call_frame)?;
         }
 
-        let refunded_gas = compute_refunded_gas(vm, report)?;
+        let gas_refunded: u64 = compute_gas_refunded(vm, report)?;
         let actual_gas_used =
-            compute_actual_gas_used(vm, initial_call_frame, refunded_gas, report.gas_used)?;
+            compute_actual_gas_used(vm, initial_call_frame, gas_refunded, report.gas_used)?;
         refund_sender(
             vm,
             initial_call_frame,
             report,
-            refunded_gas,
+            gas_refunded,
             actual_gas_used,
         )?;
 
@@ -213,9 +213,8 @@ pub fn refund_sender(
     increase_account_balance(vm.db, initial_call_frame.msg_sender, wei_return_amount)
 }
 
-pub fn compute_refunded_gas(vm: &mut VM<'_>, report: &ExecutionReport) -> Result<u64, VMError> {
-    // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-    // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+// [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+pub fn compute_gas_refunded(vm: &mut VM<'_>, report: &ExecutionReport) -> Result<u64, VMError> {
     let refund_quotient = if vm.env.config.fork < Fork::London {
         MAX_REFUND_QUOTIENT_PRE_LONDON
     } else {
