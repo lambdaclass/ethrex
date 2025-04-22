@@ -3,7 +3,7 @@ use colored::Colorize;
 use ethrex_common::{types::Fork, Address, H256};
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
-    Account, StorageSlot,
+    Account,
 };
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use itertools::Itertools;
@@ -595,281 +595,202 @@ impl fmt::Display for ComparisonReport {
             }
         }
 
-        writeln!(f, "Account Updates:\n")?;
-        for levm_updated_account_only in self.levm_updated_accounts_only.iter() {
-            writeln!(f, "  {levm_updated_account_only:#x}:")?;
-            writeln!(f, "    Was updated in LEVM but not in REVM")?;
-            let initial_account = self
-                .initial_accounts
-                .get(levm_updated_account_only)
-                .cloned()
-                .unwrap_or_default();
-            let account_update = self
-                .levm_account_updates
-                .iter()
-                .find(|account_update| &account_update.address == levm_updated_account_only)
-                .unwrap();
-            let updated_account_storage = account_update
-                .added_storage
-                .iter()
-                .map(|(key, value)| {
-                    let storage_slot = StorageSlot {
-                        original_value: initial_account
-                            .storage
-                            .get(key)
-                            .cloned()
-                            .unwrap_or_default()
-                            .original_value,
-                        current_value: *value,
-                    };
-                    (*key, storage_slot)
-                })
-                .collect();
-            let updated_account_info = account_update.info.clone().unwrap();
-            let updated_account = Account::new(
-                updated_account_info.balance,
-                account_update.code.clone().unwrap_or_default(),
-                updated_account_info.nonce,
-                updated_account_storage,
-            );
-            let mut updates = 0;
-            if initial_account.info.balance != updated_account.info.balance {
-                writeln!(
-                    f,
-                    "      Balance updated: {initial_balance} -> {updated_balance}",
-                    initial_balance = initial_account.info.balance,
-                    updated_balance = updated_account.info.balance
-                )?;
-                updates += 1;
-            }
-            if initial_account.info.nonce != updated_account.info.nonce {
-                writeln!(
-                    f,
-                    "      Nonce updated: {initial_nonce} -> {updated_nonce}",
-                    initial_nonce = initial_account.info.nonce,
-                    updated_nonce = updated_account.info.nonce
-                )?;
-                updates += 1;
-            }
-            if initial_account.info.bytecode != updated_account.info.bytecode {
-                writeln!(
-                    f,
-                    "      Code updated: {initial_code}, {updated_code}",
-                    initial_code = if initial_account.info.bytecode.is_empty() {
-                        "was empty".to_string()
-                    } else {
-                        hex::encode(&initial_account.info.bytecode)
-                    },
-                    updated_code = hex::encode(&updated_account.info.bytecode)
-                )?;
-                updates += 1;
-            }
-            for (added_storage_address, added_storage_slot) in updated_account.storage.iter() {
-                writeln!(
-                    f,
-                    "      Storage slot added: {added_storage_address}: {} -> {}",
-                    added_storage_slot.original_value, added_storage_slot.current_value
-                )?;
-                updates += 1;
-            }
-            if updates == 0 {
-                writeln!(f, "      No changes")?;
-            }
-        }
-        for revm_updated_account_only in self.revm_updated_accounts_only.iter() {
-            writeln!(f, "  {revm_updated_account_only:#x}:")?;
-            writeln!(f, "    Was updated in REVM but not in LEVM")?;
-            let initial_account = self
-                .initial_accounts
-                .get(revm_updated_account_only)
-                .cloned()
-                .unwrap_or_default();
-            let updated_account_update = self
-                .revm_account_updates
-                .iter()
-                .find(|account_update| &account_update.address == revm_updated_account_only)
-                .unwrap();
-            let updated_account_storage = updated_account_update
-                .added_storage
-                .iter()
-                .map(|(key, value)| {
-                    let storage_slot = StorageSlot {
-                        original_value: initial_account
-                            .storage
-                            .get(key)
-                            .cloned()
-                            .unwrap_or_default()
-                            .original_value,
-                        current_value: *value,
-                    };
-                    (*key, storage_slot)
-                })
-                .collect();
-            let Some(updated_account_info) = updated_account_update.info.clone() else {
-                continue;
-            };
-            let updated_account = Account::new(
-                updated_account_info.balance,
-                updated_account_update.code.clone().unwrap_or_default(),
-                updated_account_info.nonce,
-                updated_account_storage,
-            );
-            let mut updates = 0;
-            if initial_account.info.balance != updated_account.info.balance {
-                writeln!(
-                    f,
-                    "      Balance updated: {initial_balance} -> {updated_balance}",
-                    initial_balance = initial_account.info.balance,
-                    updated_balance = updated_account.info.balance
-                )?;
-                updates += 1;
-            }
-            if initial_account.info.nonce != updated_account.info.nonce {
-                writeln!(
-                    f,
-                    "      Nonce updated: {initial_nonce} -> {updated_nonce}",
-                    initial_nonce = initial_account.info.nonce,
-                    updated_nonce = updated_account.info.nonce
-                )?;
-                updates += 1;
-            }
-            if initial_account.info.bytecode != updated_account.info.bytecode {
-                writeln!(
-                    f,
-                    "      Code updated: {initial_code}, {updated_code}",
-                    initial_code = if initial_account.info.bytecode.is_empty() {
-                        "was empty".to_string()
-                    } else {
-                        hex::encode(&initial_account.info.bytecode)
-                    },
-                    updated_code = hex::encode(&updated_account.info.bytecode)
-                )?;
-                updates += 1;
-            }
-            for (added_storage_address, added_storage_slot) in updated_account.storage.iter() {
-                writeln!(
-                    f,
-                    "      Storage slot added: {added_storage_address}: {} -> {}",
-                    added_storage_slot.original_value, added_storage_slot.current_value
-                )?;
-                updates += 1;
-            }
-            if updates == 0 {
-                writeln!(f, "      No changes")?;
-            }
-        }
-        for shared_updated_account in self.shared_updated_accounts.iter() {
-            writeln!(f, "  {shared_updated_account:#x}:")?;
+        let all_updated_accounts = &(&self.levm_updated_accounts_only
+            | &self.revm_updated_accounts_only)
+            | &self.shared_updated_accounts;
 
-            writeln!(f, "    Was updated in both LEVM and REVM")?;
+        for address in all_updated_accounts {
+            writeln!(f, "\n  {address:#x}:")?;
 
-            let levm_updated_account = self
-                .levm_account_updates
-                .iter()
-                .find(|account_update| &account_update.address == shared_updated_account)
-                .unwrap();
-            let revm_updated_account = self
-                .revm_account_updates
-                .iter()
-                .find(|account_update| &account_update.address == shared_updated_account)
-                .unwrap();
-
-            let mut diffs = 0;
-            match (levm_updated_account.removed, revm_updated_account.removed) {
-                (true, false) => {
-                    writeln!(f, "      Removed in LEVM but not in REVM")?;
-                    diffs += 1;
-                }
-                (false, true) => {
-                    writeln!(f, "      Removed in REVM but not in LEVM")?;
-                    diffs += 1;
-                }
-                // Account was removed in both VMs.
-                (false, false) | (true, true) => {}
-            }
-
-            match (&levm_updated_account.code, &revm_updated_account.code) {
-                (None, Some(revm_account_code)) => {
-                    if **revm_account_code != *b"" {
-                        writeln!(f, "      Has code in REVM but not in LEVM")?;
-                        writeln!(f, "      REVM code: {}", hex::encode(revm_account_code))?;
-                        diffs += 1;
-                    }
-                }
-                (Some(levm_account_code), None) => {
-                    if **levm_account_code != *b"" {
-                        writeln!(f, "      Has code in LEVM but not in REVM")?;
-                        writeln!(f, "      LEVM code: {}", hex::encode(levm_account_code))?;
-                        diffs += 1;
-                    }
-                }
-                (Some(levm_account_code), Some(revm_account_code)) => {
-                    if levm_account_code != revm_account_code {
-                        writeln!(f,
-                            "      Code mismatch: LEVM: {levm_account_code}, REVM: {revm_account_code}",
-                            levm_account_code = hex::encode(levm_account_code),
-                            revm_account_code = hex::encode(revm_account_code)
-                        )?;
-                    }
-                }
-                (None, None) => {}
-            }
-
-            match (&levm_updated_account.info, &revm_updated_account.info) {
-                (None, Some(_)) => {
-                    writeln!(
-                        f,
-                        "      Account {shared_updated_account:#x} has info in REVM but not in LEVM"
-                    )?;
-                    diffs += 1;
-                }
-                (Some(levm_account_info), Some(revm_account_info)) => {
-                    if levm_account_info.balance != revm_account_info.balance {
-                        writeln!(f,
-                            "      Balance mismatch: LEVM: {levm_account_balance}, REVM: {revm_account_balance}",
-                            levm_account_balance = levm_account_info.balance,
-                            revm_account_balance = revm_account_info.balance
-                        )?;
-                        diffs += 1;
-                    }
-                    if levm_account_info.nonce != revm_account_info.nonce {
-                        writeln!(f,
-                                "      Nonce mismatch: LEVM: {levm_account_nonce}, REVM: {revm_account_nonce}",
-                                levm_account_nonce = levm_account_info.nonce,
-                                revm_account_nonce = revm_account_info.nonce
-                        )?;
-                        diffs += 1;
-                    }
-                }
-                // We ignore the case (Some(_), None) because we always add the account info to the account update.
-                (Some(_), None) | (None, None) => {}
-            }
-
-            for (levm_key, levm_value) in levm_updated_account.added_storage.iter() {
-                if let Some(revm_value) = revm_updated_account.added_storage.get(levm_key) {
-                    if revm_value != levm_value {
-                        writeln!(f, "      Storage slot added {levm_key} -> value mismatch REVM: {revm_value} LEVM: {levm_value}")?;
-                        diffs += 1;
-                    }
+            let account_updates_for_address: Vec<(String, AccountUpdate)> =
+                if self.levm_updated_accounts_only.contains(&address) {
+                    writeln!(f, "    Was updated in LEVM but not in REVM")?;
+                    self.levm_account_updates
+                        .clone()
+                        .iter()
+                        .filter(|account_update| account_update.address == address)
+                        .map(|account_update| ("LEVM".to_string(), account_update.clone()))
+                        .collect()
+                } else if self.revm_updated_accounts_only.contains(&address) {
+                    writeln!(f, "    Was updated in REVM but not in LEVM")?;
+                    self.revm_account_updates
+                        .clone()
+                        .iter()
+                        .filter(|account_update| account_update.address == address)
+                        .map(|account_update| ("REVM".to_string(), account_update.clone()))
+                        .collect()
                 } else {
-                    writeln!(f, "      Storage slot added key is in LEVM but not in REVM {levm_key} -> {levm_value}")?;
-                    diffs += 1;
+                    writeln!(f, "    Was updated in both LEVM and REVM")?;
+                    [
+                        self.revm_account_updates
+                            .clone()
+                            .iter()
+                            .filter(|account_update| account_update.address == address)
+                            .map(|account_update| ("REVM".to_string(), account_update.clone()))
+                            .collect::<Vec<_>>(),
+                        self.levm_account_updates
+                            .clone()
+                            .iter()
+                            .filter(|account_update| account_update.address == address)
+                            .map(|account_update| ("LEVM".to_string(), account_update.clone()))
+                            .collect::<Vec<_>>(),
+                    ]
+                    .concat()
+                };
+
+            // Account before Tx execution
+            let base_account = self
+                .initial_accounts
+                .get(&address)
+                .cloned()
+                .unwrap_or_default();
+
+            for (vm, account_update) in &account_updates_for_address {
+                writeln!(f, "    {vm} Account Update:")?;
+
+                if account_update.removed {
+                    writeln!(f, "    Account was removed")?;
+                    continue;
                 }
-            }
-            for (revm_key, revm_value) in revm_updated_account.added_storage.iter() {
-                if !levm_updated_account.added_storage.contains_key(revm_key) {
+
+                // Display changes in Account Info
+                if let Some(new_info) = &account_update.info {
                     writeln!(
                         f,
-                        "      Storage slot added key is in REVM but not in LEVM: {revm_key} -> {revm_value}"
+                        "     Nonce: {} -> {}",
+                        base_account.info.nonce, new_info.nonce
                     )?;
-                    diffs += 1;
+                    writeln!(
+                        f,
+                        "     Balance: {} -> {}",
+                        base_account.info.balance, new_info.balance
+                    )?;
+
+                    if base_account.info.bytecode_hash() != new_info.code_hash {
+                        writeln!(
+                            f,
+                            "     Code: {} -> {}",
+                            if base_account.info.bytecode.is_empty() {
+                                "empty".to_string()
+                            } else {
+                                hex::encode(&base_account.info.bytecode)
+                            },
+                            account_update
+                                .code
+                                .as_ref()
+                                .map(|code| if code.is_empty() {
+                                    "empty".to_string()
+                                } else {
+                                    hex::encode(code)
+                                })
+                                .expect("If code hash changed then 'code' shouldn't be None.")
+                        )?;
+                    }
+                }
+
+                for (key, value) in &account_update.added_storage {
+                    let initial_value = base_account.storage.get(key).cloned().unwrap_or_default();
+                    writeln!(
+                        f,
+                        "     Storage slot: {key:#x}: {} -> {}",
+                        initial_value.original_value, value
+                    )?;
                 }
             }
 
-            if diffs == 0 {
-                writeln!(f, "      Same changes")?;
+            if self.shared_updated_accounts.contains(&address) {
+                let levm_account_update = account_updates_for_address
+                    .iter()
+                    .find(|(vm, _)| vm == "LEVM")
+                    .map(|(_, update)| update)
+                    .expect("LEVM account update not found");
+                let revm_account_update = account_updates_for_address
+                    .iter()
+                    .find(|(vm, _)| vm == "REVM")
+                    .map(|(_, update)| update)
+                    .expect("REVM account update not found");
+
+                if levm_account_update == revm_account_update {
+                    writeln!(f, "     No differences between updates")?;
+                    continue;
+                }
+
+                if levm_account_update.removed != revm_account_update.removed {
+                    writeln!(
+                        f,
+                        "     Account removal mismatch: LEVM: {}, REVM: {}",
+                        levm_account_update.removed, revm_account_update.removed
+                    )?;
+                }
+
+                if levm_account_update.info != revm_account_update.info {
+                    match (&levm_account_update.info, &revm_account_update.info) {
+                        (Some(levm_info), Some(revm_info)) => {
+                            if levm_info.nonce != revm_info.nonce {
+                                writeln!(
+                                    f,
+                                    "     Nonce mismatch: LEVM: {}, REVM: {}",
+                                    levm_info.nonce, revm_info.nonce
+                                )?;
+                            }
+                            if levm_info.balance != revm_info.balance {
+                                writeln!(
+                                    f,
+                                    "     Balance mismatch: LEVM: {}, REVM: {}",
+                                    levm_info.balance, revm_info.balance
+                                )?;
+                            }
+                        }
+                        (Some(levm_info), None) => {
+                            writeln!(
+                                f,
+                                "     LEVM has account info but REVM does not: Nonce: {}, Balance: {}",
+                                levm_info.nonce, levm_info.balance
+                            )?;
+                        }
+                        (None, Some(revm_info)) => {
+                            writeln!(
+                                f,
+                                "     REVM has account info but LEVM does not: Nonce: {}, Balance: {}",
+                                revm_info.nonce, revm_info.balance
+                            )?;
+                        }
+                        (None, None) => {
+                            // No account info in either LEVM or REVM, nothing to report.
+                        }
+                    }
+                }
+
+                // Compare all storage changes between LEVM and REVM.
+                let all_keys: HashSet<_> = levm_account_update
+                    .added_storage
+                    .keys()
+                    .chain(revm_account_update.added_storage.keys())
+                    .collect();
+
+                for key in all_keys {
+                    let levm_value = levm_account_update
+                        .added_storage
+                        .get(key)
+                        .cloned()
+                        .unwrap_or_default();
+                    let revm_value = revm_account_update
+                        .added_storage
+                        .get(key)
+                        .cloned()
+                        .unwrap_or_default();
+
+                    if levm_value != revm_value {
+                        writeln!(
+                            f,
+                            "     Storage slot mismatch at key {key:#x}: LEVM: {}, REVM: {}",
+                            levm_value, revm_value
+                        )?;
+                    }
+                }
             }
         }
+
         Ok(())
     }
 }
