@@ -41,14 +41,20 @@ pub fn main() {
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
 
+        // Execute block
         let mut vm = Evm::from_execution_db(db.clone());
         let result = vm.execute_block(&block).expect("failed to execute block");
         let receipts = result.receipts;
+
         cumulative_gas_used += receipts
             .last()
             .map(|last_receipt| last_receipt.cumulative_gas_used)
             .unwrap_or_default();
+
+        // Update db for the next block
         db.apply_account_updates(&result.account_updates);
+
+        // Update acc_account_updates
         for account in result.account_updates {
             let address = account.address;
             if let Some(existing) = acc_account_updates.get_mut(&address) {
@@ -57,13 +63,13 @@ pub fn main() {
                 acc_account_updates.insert(address, account);
             }
         }
+
         // validate_gas_used(&receipts, &block.header).expect("invalid gas used");
         parent_header = block.header;
     }
 
-    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
-
     // Update state trie
+    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
     update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)
         .expect("failed to update state and storage tries");
 

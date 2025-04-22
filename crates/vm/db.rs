@@ -73,7 +73,7 @@ impl ExecutionDB {
             if update.removed {
                 self.accounts.remove(&update.address);
             } else {
-                // Add or update AccountState
+                // Add or update AccountInfo
                 // Fetch current account_info or create a new one to be inserted
                 let mut account_info = match self.accounts.get(&update.address) {
                     Some(account_info) => account_info.clone(),
@@ -83,12 +83,15 @@ impl ExecutionDB {
                     account_info.nonce = info.nonce;
                     account_info.balance = info.balance;
                     account_info.code_hash = info.code_hash;
+
                     // Store updated code
                     if let Some(code) = &update.code {
                         self.code.insert(info.code_hash, code.clone());
                     }
                 }
+                // Insert new AccountInfo
                 self.accounts.insert(update.address, account_info);
+
                 // Store the added storage
                 if !update.added_storage.is_empty() {
                     let mut storage = match self.storage.get(&update.address) {

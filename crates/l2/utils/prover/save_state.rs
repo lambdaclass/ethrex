@@ -74,30 +74,30 @@ impl From<&StateType> for StateFileType {
 }
 
 #[inline(always)]
-fn get_proof_file_name_from_prover_type(prover_type: &ProverType, block_number: u64) -> String {
+fn get_proof_file_name_from_prover_type(prover_type: &ProverType, batch_number: u64) -> String {
     match prover_type {
-        ProverType::Exec => format!("proof_exec_{block_number}.json"),
-        ProverType::RISC0 => format!("proof_risc0_{block_number}.json"),
-        ProverType::SP1 => format!("proof_sp1_{block_number}.json").to_owned(),
-        ProverType::Pico => format!("proof_pico_{block_number}.json").to_owned(),
+        ProverType::Exec => format!("proof_exec_{batch_number}.json"),
+        ProverType::RISC0 => format!("proof_risc0_{batch_number}.json"),
+        ProverType::SP1 => format!("proof_sp1_{batch_number}.json").to_owned(),
+        ProverType::Pico => format!("proof_pico_{batch_number}.json").to_owned(),
     }
 }
 
 #[inline(always)]
-fn get_block_number_from_path(path_buf: &Path) -> Result<u64, SaveStateError> {
-    let block_number = path_buf
+fn get_batch_number_from_path(path_buf: &Path) -> Result<u64, SaveStateError> {
+    let batch_number = path_buf
         .file_name()
         .ok_or_else(|| SaveStateError::Custom("Error: No file_name()".to_string()))?
         .to_string_lossy();
 
-    let block_number = block_number.parse::<u64>()?;
-    Ok(block_number)
+    let batch_number = batch_number.parse::<u64>()?;
+    Ok(batch_number)
 }
 
 #[inline(always)]
-fn get_state_dir_for_block(block_number: u64) -> Result<PathBuf, SaveStateError> {
+fn get_state_dir_for_batch(batch_number: u64) -> Result<PathBuf, SaveStateError> {
     let mut path_buf = default_datadir()?;
-    path_buf.push(block_number.to_string());
+    path_buf.push(batch_number.to_string());
 
     Ok(path_buf)
 }
@@ -107,7 +107,7 @@ fn get_state_file_name(batch_number: u64, state_file_type: &StateFileType) -> St
     match state_file_type {
         StateFileType::AccountUpdates => format!("account_updates_{batch_number}.json"),
         // If we have more proving systems we have to match them an create a file name with the following structure:
-        // proof_<ProverType>_<block_number>.json
+        // proof_<ProverType>_<batch_number>.json
         StateFileType::Proof(prover_type) => {
             get_proof_file_name_from_prover_type(prover_type, batch_number)
         }
@@ -117,20 +117,20 @@ fn get_state_file_name(batch_number: u64, state_file_type: &StateFileType) -> St
 #[inline(always)]
 fn get_state_file_path(
     path_buf: &Path,
-    block_number: u64,
+    batch_number: u64,
     state_file_type: &StateFileType,
 ) -> PathBuf {
-    let file_name = get_state_file_name(block_number, state_file_type);
+    let file_name = get_state_file_name(batch_number, state_file_type);
     path_buf.join(file_name)
 }
 
-/// CREATE the state_file given the block_number
-/// This function will create the following file_path: ../../../<block_number>/state_file_type
-fn create_state_file_for_block_number(
-    block_number: u64,
+/// CREATE the state_file given the batch_number
+/// This function will create the following file_path: ../../../<batch_number>/state_file_type
+fn create_state_file_for_batch_number(
+    batch_number: u64,
     state_file_type: StateFileType,
 ) -> Result<File, SaveStateError> {
-    let path_buf = get_state_dir_for_block(block_number)?;
+    let path_buf = get_state_dir_for_batch(batch_number)?;
     if let Some(parent) = path_buf.parent() {
         if let Err(e) = create_dir_all(parent) {
             if e.kind() != std::io::ErrorKind::AlreadyExists {
@@ -139,9 +139,9 @@ fn create_state_file_for_block_number(
         }
     }
 
-    let block_number = get_block_number_from_path(&path_buf)?;
+    let batch_number = get_batch_number_from_path(&path_buf)?;
 
-    let file_path: PathBuf = get_state_file_path(&path_buf, block_number, &state_file_type);
+    let file_path: PathBuf = get_state_file_path(&path_buf, batch_number, &state_file_type);
 
     if let Err(e) = create_dir(&path_buf) {
         if e.kind() != std::io::ErrorKind::AlreadyExists {
@@ -152,11 +152,11 @@ fn create_state_file_for_block_number(
     File::create(file_path).map_err(Into::into)
 }
 
-/// WRITE to the state_file given the block number and the state_type
+/// WRITE to the state_file given the batch number and the state_type
 /// It also creates the file, if it already exists it will overwrite the file
-/// This function will create and write to the following file_path: ../../../<block_number>/state_file_type
-pub fn write_state(block_number: u64, state_type: &StateType) -> Result<(), SaveStateError> {
-    let inner = create_state_file_for_block_number(block_number, state_type.into())?;
+/// This function will create and write to the following file_path: ../../../<batch_number>/state_file_type
+pub fn write_state(batch_number: u64, state_type: &StateType) -> Result<(), SaveStateError> {
+    let inner = create_state_file_for_batch_number(batch_number, state_type.into())?;
 
     match state_type {
         StateType::Proof(value) => {
@@ -255,20 +255,20 @@ pub fn read_proof(
 }
 
 /// READ the latest state given the [StateFileType].
-/// latest means the state for the highest block_number available.
+/// latest means the state for the highest batch_number available.
 pub fn read_latest_state(state_file_type: StateFileType) -> Result<StateType, SaveStateError> {
-    let (latest_block_state_number, _) = get_latest_batch_number_and_path()?;
-    let state = read_state(latest_block_state_number, state_file_type)?;
+    let (latest_batch_state_number, _) = get_latest_batch_number_and_path()?;
+    let state = read_state(latest_batch_state_number, state_file_type)?;
     Ok(state)
 }
 
-/// DELETE the [StateFileType] for the given block_number
+/// DELETE the [StateFileType] for the given block_nbatch_numberumber
 pub fn delete_state_file(
-    block_number: u64,
+    batch_number: u64,
     state_file_type: StateFileType,
 ) -> Result<(), SaveStateError> {
-    let block_state_path = get_batch_state_path(block_number)?;
-    let file_path: PathBuf = get_state_file_path(&block_state_path, block_number, &state_file_type);
+    let batch_state_path = get_batch_state_path(batch_number)?;
+    let file_path: PathBuf = get_state_file_path(&batch_state_path, batch_number, &state_file_type);
     std::fs::remove_file(file_path)?;
 
     Ok(())
@@ -297,7 +297,7 @@ pub fn prune_state(batch_number: u64) -> Result<(), SaveStateError> {
 }
 
 /// PRUNE all the files
-/// latest means the state for the highest block_number available.
+/// latest means the state for the highest batch_number available.
 pub fn prune_latest_state() -> Result<(), SaveStateError> {
     let (latest_block_state_number, _) = get_latest_batch_number_and_path()?;
     let latest_block_state_path = get_batch_state_path(latest_block_state_number)?;
@@ -306,14 +306,14 @@ pub fn prune_latest_state() -> Result<(), SaveStateError> {
 }
 
 /// CHECK if the given path has the given [StateFileType]
-/// This function will check if the path: ../../../<block_number>/ contains the state_file_type
+/// This function will check if the path: ../../../<batch_number>/ contains the state_file_type
 pub fn path_has_state_file(
     state_file_type: StateFileType,
     path_buf: &Path,
 ) -> Result<bool, SaveStateError> {
-    // Get the block_number from the path
-    let block_number = get_block_number_from_path(path_buf)?;
-    let file_name_to_seek: OsString = get_state_file_name(block_number, &state_file_type).into();
+    // Get the batch_number from the path
+    let batch_number = get_batch_number_from_path(path_buf)?;
+    let file_name_to_seek: OsString = get_state_file_name(batch_number, &state_file_type).into();
 
     for entry in std::fs::read_dir(path_buf)? {
         let entry = entry?;
@@ -382,189 +382,190 @@ pub fn batch_number_has_all_needed_proofs(
 }
 
 // TODO: Update this test to work with batches
-// #[cfg(test)]
-// #[allow(clippy::expect_used)]
-// mod tests {
-//     use ethrex_blockchain::Blockchain;
-//     use ethrex_storage::{EngineType, Store};
-//     use ethrex_vm::{
-//         backends::levm::{CacheDB, LEVM},
-//         StoreWrapper,
-//     };
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use ethrex_blockchain::Blockchain;
+    use ethrex_storage::{EngineType, Store};
+    use ethrex_vm::{
+        backends::levm::{CacheDB, LEVM},
+        StoreWrapper,
+    };
 
-//     use super::*;
-//     use crate::utils::test_data_io;
-//     use ethrex_levm::vm::GeneralizedDatabase;
-//     use std::{
-//         fs::{self},
-//         sync::Arc,
-//     };
+    use super::*;
+    use crate::utils::test_data_io;
+    use ethrex_levm::vm::GeneralizedDatabase;
+    use std::{
+        fs::{self},
+        sync::Arc,
+    };
 
-// #[tokio::test]
-// async fn test_state_file_integration() -> Result<(), Box<dyn std::error::Error>> {
-//     if let Err(e) = fs::remove_dir_all(default_datadir()?) {
-//         if e.kind() != std::io::ErrorKind::NotFound {
-//             eprintln!("Directory NotFound: {:?}", default_datadir()?);
-//         }
-//     }
+    #[tokio::test]
+    async fn test_state_file_integration() -> Result<(), Box<dyn std::error::Error>> {
+        if let Err(e) = fs::remove_dir_all(default_datadir()?) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Directory NotFound: {:?}", default_datadir()?);
+            }
+        }
 
-//     let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_data"));
+        let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_data"));
 
-//     let chain_file_path = path.join("l2-loadtest.rlp");
-//     let genesis_file_path = path.join("genesis-l2-ci.json");
+        let chain_file_path = path.join("l2-loadtest.rlp");
+        let genesis_file_path = path.join("genesis-l2-ci.json");
 
-//     // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
-//     let in_memory_db =
-//         Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
+        // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
+        let in_memory_db =
+            Store::new("memory", EngineType::InMemory).expect("Failed to create Store");
 
-//     let genesis = test_data_io::read_genesis_file(genesis_file_path.to_str().unwrap());
-//     in_memory_db
-//         .add_initial_state(genesis.clone())
-//         .await
-//         .unwrap();
+        let genesis = test_data_io::read_genesis_file(genesis_file_path.to_str().unwrap());
+        in_memory_db
+            .add_initial_state(genesis.clone())
+            .await
+            .unwrap();
 
-//     let blocks = test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
-//     // create blockchain
-//     let blockchain = Blockchain::default_with_store(in_memory_db.clone());
-//     for block in &blocks {
-//         blockchain.add_block(block).await.unwrap();
-//     }
+        let blocks = test_data_io::read_chain_file(chain_file_path.to_str().unwrap());
+        // create blockchain
+        let blockchain = Blockchain::default_with_store(in_memory_db.clone());
+        for block in &blocks {
+            blockchain.add_block(block).await.unwrap();
+        }
 
-//     let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
+        let mut account_updates_vec: Vec<Vec<AccountUpdate>> = Vec::new();
 
-//     let exec_calldata = ProofCalldata {
-//         prover_type: ProverType::Exec,
-//         calldata: Vec::new(),
-//     };
-//     let risc0_calldata = ProofCalldata {
-//         prover_type: ProverType::RISC0,
-//         calldata: Vec::new(),
-//     };
-//     let sp1_calldata = ProofCalldata {
-//         prover_type: ProverType::SP1,
-//         calldata: Vec::new(),
-//     };
-//     let pico_calldata = ProofCalldata {
-//         prover_type: ProverType::Pico,
-//         calldata: Vec::new(),
-//     };
+        let exec_calldata = ProofCalldata {
+            prover_type: ProverType::Exec,
+            calldata: Vec::new(),
+        };
+        let risc0_calldata = ProofCalldata {
+            prover_type: ProverType::RISC0,
+            calldata: Vec::new(),
+        };
+        let sp1_calldata = ProofCalldata {
+            prover_type: ProverType::SP1,
+            calldata: Vec::new(),
+        };
+        let pico_calldata = ProofCalldata {
+            prover_type: ProverType::Pico,
+            calldata: Vec::new(),
+        };
 
-//     // Write all the account_updates and proofs for each block
-//     for block in &blocks {
-//         let store = StoreWrapper {
-//             store: in_memory_db.clone(),
-//             block_hash: block.hash(),
-//         };
-//         let mut db = GeneralizedDatabase::new(Arc::new(store.clone()), CacheDB::new());
-//         let account_updates = LEVM::execute_block(blocks.last().unwrap(), &mut db)
-//             .unwrap()
-//             .account_updates;
+        // Write all the account_updates and proofs for each block
+        // TODO: Update. We are executing only the last block and using the block_number as batch_number
+        for block in &blocks {
+            let store = StoreWrapper {
+                store: in_memory_db.clone(),
+                block_hash: block.hash(),
+            };
+            let mut db = GeneralizedDatabase::new(Arc::new(store.clone()), CacheDB::new());
+            let account_updates = LEVM::execute_block(blocks.last().unwrap(), &mut db)
+                .unwrap()
+                .account_updates;
 
-//         account_updates_vec.push(account_updates.clone());
+            account_updates_vec.push(account_updates.clone());
 
-//         write_state(
-//             block.header.number,
-//             &StateType::AccountUpdates(account_updates),
-//         )?;
+            write_state(
+                block.header.number,
+                &StateType::AccountUpdates(account_updates),
+            )?;
 
-//         write_state(
-//             block.header.number,
-//             &StateType::Proof(exec_calldata.clone()),
-//         )?;
+            write_state(
+                block.header.number,
+                &StateType::Proof(exec_calldata.clone()),
+            )?;
 
-//         write_state(
-//             block.header.number,
-//             &StateType::Proof(risc0_calldata.clone()),
-//         )?;
+            write_state(
+                block.header.number,
+                &StateType::Proof(risc0_calldata.clone()),
+            )?;
 
-//         write_state(block.header.number, &StateType::Proof(sp1_calldata.clone()))?;
+            write_state(block.header.number, &StateType::Proof(sp1_calldata.clone()))?;
 
-//         write_state(
-//             block.header.number,
-//             &StateType::Proof(pico_calldata.clone()),
-//         )?;
-//     }
+            write_state(
+                block.header.number,
+                &StateType::Proof(pico_calldata.clone()),
+            )?;
+        }
 
-//     // Check if the latest block_number saved matches the latest block in the chain.rlp
-//     let (latest_block_state_number, _) = get_latest_batch_number_and_path()?;
+        // Check if the latest batch_number saved matches the latest block in the chain.rlp
+        let (latest_batch_state_number, _) = get_latest_batch_number_and_path()?;
 
-//     assert_eq!(
-//         latest_block_state_number,
-//         blocks.last().unwrap().header.number
-//     );
+        assert_eq!(
+            latest_batch_state_number,
+            blocks.last().unwrap().header.number
+        );
 
-//     // Delete account_updates file
-//     let (_, latest_path) = get_latest_batch_number_and_path()?;
+        // Delete account_updates file
+        let (_, latest_path) = get_latest_batch_number_and_path()?;
 
-//     assert!(path_has_state_file(
-//         StateFileType::AccountUpdates,
-//         &latest_path
-//     )?);
+        assert!(path_has_state_file(
+            StateFileType::AccountUpdates,
+            &latest_path
+        )?);
 
-//     assert!(batch_number_has_state_file(
-//         StateFileType::AccountUpdates,
-//         latest_block_state_number
-//     )?);
+        assert!(batch_number_has_state_file(
+            StateFileType::AccountUpdates,
+            latest_batch_state_number
+        )?);
 
-//     delete_latest_state_file(StateFileType::AccountUpdates)?;
+        delete_latest_state_file(StateFileType::AccountUpdates)?;
 
-//     assert!(!path_has_state_file(
-//         StateFileType::AccountUpdates,
-//         &latest_path
-//     )?);
+        assert!(!path_has_state_file(
+            StateFileType::AccountUpdates,
+            &latest_path
+        )?);
 
-//     assert!(!batch_number_has_state_file(
-//         StateFileType::AccountUpdates,
-//         latest_block_state_number
-//     )?);
+        assert!(!batch_number_has_state_file(
+            StateFileType::AccountUpdates,
+            latest_batch_state_number
+        )?);
 
-//     // Delete latest path
-//     prune_latest_state()?;
-//     let (latest_batch_state_number, _) = get_latest_batch_number_and_path()?;
-//     assert_eq!(
-//         latest_batch_state_number,
-//         blocks.last().unwrap().header.number - 1
-//     );
+        // Delete latest path
+        prune_latest_state()?;
+        let (latest_batch_state_number, _) = get_latest_batch_number_and_path()?;
+        assert_eq!(
+            latest_batch_state_number,
+            blocks.last().unwrap().header.number - 1
+        );
 
-//     // Read account_updates back
-//     let read_account_updates_blk2 = match read_state(2, StateFileType::AccountUpdates)? {
-//         StateType::Proof(_) => unimplemented!(),
-//         StateType::AccountUpdates(a) => a,
-//     };
+        // Read account_updates back
+        let read_account_updates_blk2 = match read_state(2, StateFileType::AccountUpdates)? {
+            StateType::Proof(_) => unimplemented!(),
+            StateType::AccountUpdates(a) => a,
+        };
 
-//     let og_account_updates_blk2 = account_updates_vec.get(2).unwrap();
+        let og_account_updates_blk2 = account_updates_vec.get(2).unwrap();
 
-//     for og_au in og_account_updates_blk2 {
-//         // The read_account_updates aren't sorted in the same way as the og_account_updates.
-//         let r_au = read_account_updates_blk2
-//             .iter()
-//             .find(|au| au.address == og_au.address)
-//             .unwrap();
+        for og_au in og_account_updates_blk2 {
+            // The read_account_updates aren't sorted in the same way as the og_account_updates.
+            let r_au = read_account_updates_blk2
+                .iter()
+                .find(|au| au.address == og_au.address)
+                .unwrap();
 
-//         assert_eq!(og_au.added_storage, r_au.added_storage);
-//         assert_eq!(og_au.address, r_au.address);
-//         assert_eq!(og_au.info, r_au.info);
-//         assert_eq!(og_au.code, r_au.code);
-//     }
+            assert_eq!(og_au.added_storage, r_au.added_storage);
+            assert_eq!(og_au.address, r_au.address);
+            assert_eq!(og_au.info, r_au.info);
+            assert_eq!(og_au.code, r_au.code);
+        }
 
-//     // Read Exec Proof back
-//     let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Exec))?;
-//     assert_eq!(read_proof_updates_blk2, exec_calldata);
+        // Read Exec Proof back
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Exec))?;
+        assert_eq!(read_proof_updates_blk2, exec_calldata);
 
-//     // Read RISC0 Proof back
-//     let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::RISC0))?;
-//     assert_eq!(read_proof_updates_blk2, risc0_calldata);
+        // Read RISC0 Proof back
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::RISC0))?;
+        assert_eq!(read_proof_updates_blk2, risc0_calldata);
 
-//     // Read SP1 Proof back
-//     let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::SP1))?;
-//     assert_eq!(read_proof_updates_blk2, sp1_calldata);
+        // Read SP1 Proof back
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::SP1))?;
+        assert_eq!(read_proof_updates_blk2, sp1_calldata);
 
-//     // Read Pico Proof back
-//     let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Pico))?;
-//     assert_eq!(read_proof_updates_blk2, pico_calldata);
+        // Read Pico Proof back
+        let read_proof_updates_blk2 = read_proof(2, StateFileType::Proof(ProverType::Pico))?;
+        assert_eq!(read_proof_updates_blk2, pico_calldata);
 
-//     fs::remove_dir_all(default_datadir()?)?;
+        fs::remove_dir_all(default_datadir()?)?;
 
-//     Ok(())
-// }
-// }
+        Ok(())
+    }
+}
