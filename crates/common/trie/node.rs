@@ -179,7 +179,7 @@ impl Node {
 fn decode_child(rlp: &[u8]) -> NodeHash {
     match decode_bytes(rlp) {
         Ok((hash, &[])) if hash.len() == 32 => NodeHash::Hashed(H256::from_slice(hash)),
-        Ok((&[], &[])) => NodeHash::Inline(vec![]),
-        _ => NodeHash::Inline(rlp.to_vec()),
+        Ok((&[], &[])) => NodeHash::default(),
+        _ => NodeHash::inline_from_slice(rlp),
     }
 }
