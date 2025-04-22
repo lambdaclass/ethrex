@@ -35,6 +35,8 @@ jobs:
 
       - name: Install solc
         uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
 
       - name: Run PR benchmarks
         run: |
@@ -89,6 +91,8 @@ jobs:
 
       - name: Install solc
         uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
 
       - name: Run main benchmarks
         run: |
