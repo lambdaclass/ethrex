@@ -456,6 +456,7 @@ impl Syncer {
 
         if let Err((error, failure)) = res {
             warn!("Failed to add block during FullSync: {error}");
+            //panic!("aborting");
             if let Some(BatchBlockProcessingFailure {
                 failed_block_hash,
                 last_valid_hash,

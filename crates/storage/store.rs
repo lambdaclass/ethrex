@@ -44,7 +44,7 @@ pub enum EngineType {
     RedB,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountUpdate {
     pub address: Address,
     pub removed: bool,
@@ -53,6 +53,13 @@ pub struct AccountUpdate {
     pub added_storage: HashMap<H256, U256>,
     // Matches TODO in code
     // removed_storage_keys: Vec<H256>,
+}
+
+impl Debug for AccountUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let added_storage = BTreeMap::from_iter(self.added_storage.iter());
+        f.debug_struct("AccountUpdate").field("address", &self.address).field("removed", &self.removed).field("info", &self.info).field("added_storage", &added_storage).finish()
+    }
 }
 
 impl AccountUpdate {

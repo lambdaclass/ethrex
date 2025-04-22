@@ -653,7 +653,7 @@ fn get_block_from_payload(
     requests_hash: Option<H256>,
 ) -> Result<Block, RpcErr> {
     let block_hash = payload.block_hash;
-    info!(
+    debug!(
         "Received new payload with block hash: {block_hash:#x} and number {:?}",
         payload.block_number
     );

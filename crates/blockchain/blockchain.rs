@@ -191,6 +191,13 @@ impl Blockchain {
             self.storage.clone(),
             first_block_header.parent_hash,
         );
+        // Check if parent block's trie is complete
+        info!("Checking that the parent block for the first block's parent is complete!");
+        let trie = self.storage.state_trie(first_block_header.parent_hash).unwrap().unwrap();
+        let nodes = trie.into_iter().count();
+        info!("Healthy first parent with {nodes} nodes");
+
+
 
         let blocks_len = blocks.len();
         let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
