@@ -15,7 +15,7 @@ pub struct Nibbles {
 
 impl Nibbles {
     /// Create `Nibbles` from  hex-encoded nibbles
-    pub fn from_hex(hex: Vec<u8>) -> Self {
+    pub const fn from_hex(hex: Vec<u8>) -> Self {
         Self { data: hex }
     }
 
