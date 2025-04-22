@@ -6,6 +6,8 @@ on:
     branches: ["**"]
     paths:
       - "crates/l2/prover/**"
+      - "test_data/**"
+      - "crates/blockchain/dev/**"
       - ".github/workflows/pr-main_l2_prover.yaml"
 
 concurrency:
