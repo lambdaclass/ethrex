@@ -1,6 +1,6 @@
 use super::{
-    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, ELASTICITY_MULTIPLIER,
-    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
+    ChainConfig, BASE_FEE_MAX_CHANGE_DENOMINATOR, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM,
+    INITIAL_BASE_FEE,
 };
 use crate::{
     constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
@@ -20,10 +20,7 @@ use keccak_hash::keccak;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
-use std::{
-    cmp::{max, Ordering},
-    env::VarError,
-};
+use std::cmp::{max, Ordering};
 
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
@@ -517,19 +514,11 @@ pub enum InvalidBlockHeaderError {
 pub fn validate_block_header(
     header: &BlockHeader,
     parent_header: &BlockHeader,
+    elasticity_multiplier: u64,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.gas_used > header.gas_limit {
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
     }
-
-    // This ENV variable is used for the L2 to set an arbitrary value
-    // if not present the constant value is used
-    let elasticity_multiplier = std::env::var("PROPOSER_ELASTICITY_MULTIPLIER")
-        .and_then(|str| {
-            str.parse::<u64>()
-                .map_err(|_| VarError::NotUnicode("cannot parse elasticity multiplier".into()))
-        })
-        .unwrap_or(ELASTICITY_MULTIPLIER);
 
     let expected_base_fee_per_gas = if let Some(base_fee) = calculate_base_fee_per_gas(
         header.gas_limit,
@@ -683,7 +672,7 @@ pub fn calc_excess_blob_gas(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::types::EMPTY_KECCACK_HASH;
+    use crate::types::{ELASTICITY_MULTIPLIER, EMPTY_KECCACK_HASH};
     use ethereum_types::H160;
     use hex_literal::hex;
     use std::str::FromStr;
@@ -801,7 +790,7 @@ mod test {
             parent_beacon_block_root: Some(H256::zero()),
             requests_hash: Some(*EMPTY_KECCACK_HASH),
         };
-        assert!(validate_block_header(&block, &parent_block).is_ok())
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok())
     }
 
     #[test]

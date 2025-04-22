@@ -118,7 +118,12 @@ impl BlockProducer {
         // Blockchain stores block
         let block = payload_build_result.payload;
         let chain_config = store.get_chain_config()?;
-        validate_block(&block, &head_header, &chain_config)?;
+        validate_block(
+            &block,
+            &head_header,
+            &chain_config,
+            self.elasticity_multiplier,
+        )?;
 
         let execution_result = BlockExecutionResult {
             account_updates: payload_build_result.account_updates,

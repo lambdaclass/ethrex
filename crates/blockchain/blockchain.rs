@@ -10,13 +10,13 @@ use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
-use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
+use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
 
 use ethrex_common::{Address, H160, H256};
 use mempool::Mempool;
@@ -73,7 +73,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config()?;
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config)?;
+        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let mut vm = Evm::new(
             self.evm_engine,
@@ -99,7 +99,7 @@ impl Blockchain {
         vm: &mut Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
-        validate_block(block, parent_header, chain_config)?;
+        validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
 
         let execution_result = vm.execute_block(block)?;
 
@@ -599,9 +599,11 @@ pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
     chain_config: &ChainConfig,
+    elasticity_multiplier: u64,
 ) -> Result<(), ChainError> {
     // Verify initial header validity against parent
-    validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
+    validate_block_header(&block.header, parent_header, elasticity_multiplier)
+        .map_err(InvalidBlockError::from)?;
 
     if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)

@@ -1,4 +1,5 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::Evm;
@@ -40,8 +41,24 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_block_header,
         db,
     } = input;
+
+    // This ENV variable is used for the L2 to set an arbitrary value
+    // if not present the constant value is used
+    let elasticity_multiplier = std::env::var("PROPOSER_ELASTICITY_MULTIPLIER")
+        .and_then(|str| {
+            str.parse::<u64>().map_err(|_| {
+                std::env::VarError::NotUnicode("cannot parse elasticity multiplier".into())
+            })
+        })
+        .unwrap_or(ELASTICITY_MULTIPLIER);
+
     // Validate the block
-    validate_block(&block, &parent_block_header, &db.chain_config)?;
+    validate_block(
+        &block,
+        &parent_block_header,
+        &db.chain_config,
+        elasticity_multiplier,
+    )?;
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db.get_tries()?;
