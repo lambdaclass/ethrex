@@ -1,5 +1,4 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::Evm;
@@ -42,15 +41,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         db,
     } = input;
 
-    // This ENV variable is used for the L2 to set an arbitrary value
-    // if not present the constant value is used
-    let elasticity_multiplier = std::env::var("PROPOSER_ELASTICITY_MULTIPLIER")
-        .and_then(|str| {
-            str.parse::<u64>().map_err(|_| {
-                std::env::VarError::NotUnicode("cannot parse elasticity multiplier".into())
-            })
-        })
-        .unwrap_or(ELASTICITY_MULTIPLIER);
+    let elasticity_multiplier =
+        std::env::var("PROVER_CLIENT_ELASTICITY_MULTIPLIER")?.parse::<u64>()?;
 
     // Validate the block
     validate_block(
@@ -74,7 +66,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
     let mut vm = Evm::from_execution_db(db.clone());
     let result = vm.execute_block(&block)?;
-    let receipts = result.receipts;
+    let _receipts = result.receipts;
     let account_updates = result.account_updates;
     // validate_gas_used(&receipts, &block.header)?;
 

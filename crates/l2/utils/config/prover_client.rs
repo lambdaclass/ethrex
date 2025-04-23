@@ -6,6 +6,7 @@ use super::errors::ConfigError;
 pub struct ProverClientConfig {
     pub prover_server_endpoint: String,
     pub proving_time_ms: u64,
+    pub elasticity_multiplier: u64,
 }
 
 impl ProverClientConfig {
