@@ -21,33 +21,28 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
-      matrix:
-        # backend: ["sp1", "risc0", "exec"] # TODO: fix Risc0 (https://github.com/lambdaclass/ethrex/issues/2145)
-        backend: ["sp1", "exec"]
+      # backend: ["sp1", "risc0", "exec"] # TODO: fix Risc0 (https://github.com/lambdaclass/ethrex/issues/2145)
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: RISC-V SP1 toolchain install
-        if: ${{ matrix.backend == 'sp1' }}
         run: |
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 4.1.0
-      - name: Check
+      - name: Check sp1
         run: |
-          if [ "${{ matrix.backend }}" == "exec" ]; then
-            cargo check -p ethrex-prover
-          else
-            cargo check -p ethrex-prover -F ${{ matrix.backend }}
-          fi
+            cargo check -p ethrex-prover -F sp1
       - name: Clippy
         run: |
-          if [ "${{ matrix.backend }}" == "exec" ]; then
+            cargo clippy -p ethrex-prover --all-targets -F sp1
+      - name: Check exec
+        run: |
+            cargo check -p ethrex-prover
+      - name: Clippy exec
+        run: |
             cargo clippy -p ethrex-prover --all-targets
-          else
-            cargo clippy -p ethrex-prover --all-targets -F ${{ matrix.backend }}
-          fi
 
   test:
     # "Test" is a required check, don't change the name
