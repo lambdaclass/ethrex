@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745425796990,
+  "lastUpdate": 1745435238353,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3925,6 +3925,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178363269347,
             "range": "± 553866422",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1694e0a06911e139edbcef7c7d96c4c641d8c00b",
+          "message": "chore(l2): temporarily disable pico job (#2549)\n\n**Motivation**\n\nIn #2397, we are having issues with Pico dependencies. Since we are not\nusing it at the moment, we prefer to temporarily disable the job until\nwe focus on it later.\n\n**Description**\n\n- Disable pico job renaming `pr-main_l2_prover_nightly.yaml` to\n`.github/workflows/pr-main_l2_prover_nightly.yaml.disabled`.\n- Create #2550.\n\nCloses None",
+          "timestamp": "2025-04-23T18:20:08Z",
+          "tree_id": "cacb973c16a7f2e8442651f7263fe6a233f833fd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1694e0a06911e139edbcef7c7d96c4c641d8c00b"
+        },
+        "date": 1745435235867,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178477293548,
+            "range": "± 717683689",
             "unit": "ns/iter"
           }
         ]
