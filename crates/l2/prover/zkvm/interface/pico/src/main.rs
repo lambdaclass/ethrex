@@ -18,7 +18,7 @@ pub fn main() {
     let ProgramInput {
         blocks,
         parent_block_header,
-        db,
+        mut db,
     } = read_as();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
