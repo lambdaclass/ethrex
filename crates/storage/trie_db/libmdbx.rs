@@ -59,14 +59,6 @@ mod test {
     use std::sync::Arc;
     use tempdir::TempDir;
 
-    pub const HELLO_NODEHASH: NodeHash = NodeHash::Inline((
-        [
-            104, 101, 108, 108, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0,
-        ],
-        2,
-    ));
-
     #[test]
     fn simple_addition() {
         table!(
@@ -74,10 +66,11 @@ mod test {
             ( Nodes )  NodeHash => Vec<u8>
         );
         let inner_db = new_db::<Nodes>();
+        let key = NodeHash::from_encoded_raw(b"hello");
         let db = LibmdbxTrieDB::<Nodes>::new(inner_db);
-        assert_eq!(db.get(HELLO_NODEHASH).unwrap(), None);
-        db.put(HELLO_NODEHASH, "value".into()).unwrap();
-        assert_eq!(db.get(HELLO_NODEHASH).unwrap(), Some("value".into()));
+        assert_eq!(db.get(key).unwrap(), None);
+        db.put(key, "value".into()).unwrap();
+        assert_eq!(db.get(key).unwrap(), Some("value".into()));
     }
 
     #[test]
@@ -97,8 +90,9 @@ mod test {
         let inner_db = Arc::new(Database::create(None, &tables).unwrap());
         let db_a = LibmdbxTrieDB::<TableA>::new(inner_db.clone());
         let db_b = LibmdbxTrieDB::<TableB>::new(inner_db.clone());
-        db_a.put(HELLO_NODEHASH, "value".into()).unwrap();
-        assert_eq!(db_b.get(HELLO_NODEHASH).unwrap(), None);
+        let key = NodeHash::from_encoded_raw(b"hello");
+        db_a.put(key, "value".into()).unwrap();
+        assert_eq!(db_b.get(key).unwrap(), None);
     }
 
     #[test]
