@@ -143,8 +143,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [docker_build, setup-hive]
     if: ${{ github.event_name != 'merge_group' }}
-    env:
+    run: |
       EEST_FIXTURES=$(cat ../cmd/ef_tests/blockchain/.fixtures_url)
+      echo "EEST_FIXTURES=$EEST_FIXTURES" >> $GITHUB_ENV
     strategy:
       matrix:
         include:
