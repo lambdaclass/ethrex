@@ -6,7 +6,7 @@ use crate::{
 };
 use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
 use ethrex_common::types::{
-    Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
+    Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader, EMPTY_KECCACK_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
@@ -177,16 +177,19 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
         );
         // Check code
         let code_hash = expected_account.info.code_hash;
-        let db_account_code = db
-            .get_account_code(code_hash)
-            .expect("Failed to read from DB")
-            .unwrap_or_else(|| {
-                panic!("Account code for code hash {code_hash} not found in DB test:{test_key}")
-            });
-        assert_eq!(
-            db_account_code, expected_account.code,
-            "Mismatched account code for code hash {code_hash} test:{test_key}"
-        );
+        if code_hash != *EMPTY_KECCACK_HASH {
+            // We don't want to get account code if there's no code.
+            let db_account_code = db
+                .get_account_code(code_hash)
+                .expect("Failed to read from DB")
+                .unwrap_or_else(|| {
+                    panic!("Account code for code hash {code_hash} not found in DB test:{test_key}")
+                });
+            assert_eq!(
+                db_account_code, expected_account.code,
+                "Mismatched account code for code hash {code_hash} test:{test_key}"
+            );
+        }
         // Check storage
         for (key, value) in expected_account.storage {
             let db_storage_value = db
