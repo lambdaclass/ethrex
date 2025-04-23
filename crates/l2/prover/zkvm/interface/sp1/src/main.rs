@@ -51,9 +51,9 @@ pub fn main() {
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
-    // if final_state_hash != block.header.state_root {
-    //     panic!("invalid final state trie");
-    // }
+    if final_state_hash != block.header.state_root {
+        panic!("invalid final state trie");
+    }
 
     sp1_zkvm::io::commit(&ProgramOutput {
         initial_state_hash,
