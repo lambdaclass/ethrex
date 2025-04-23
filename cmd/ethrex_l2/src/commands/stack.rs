@@ -193,6 +193,7 @@ impl Command {
                 store_path,
                 coinbase,
             } => {
+                // Init stores
                 let store = Store::new_from_genesis(
                     store_path.to_str().expect("Invalid store path"),
                     EngineType::Libmdbx,
@@ -207,16 +208,19 @@ impl Command {
                     EngineTypeL2::Libmdbx,
                 )?;
 
+                // Get genesis
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");
                 let genesis_block_hash = genesis_header.compute_block_hash();
 
                 let mut new_trie = store
                     .state_trie(genesis_block_hash)?
                     .expect("Cannot open state trie");
+
                 let mut last_block_number = 0;
                 let mut last_hash = genesis_block_hash;
                 let mut last_state_root = genesis_header.state_root;
 
+                // Iterate over each blob
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
                 for (batch_number, file) in files
                     .into_iter()
@@ -229,9 +233,18 @@ impl Command {
                         panic!("Invalid blob size");
                     }
 
+                    // Decode state diff from blob
                     let blob = bytes_from_blob(blob.into());
                     let state_diff = StateDiff::decode(&blob)?;
+
+                    // Apply all account updates to trie
                     let account_updates = state_diff.to_account_updates(&new_trie)?;
+                    new_trie = store
+                        .apply_account_updates_from_trie(new_trie, &account_updates)
+                        .await
+                        .expect("Error applying account updates");
+
+                    // Get withdrawal hashes
                     let withdrawal_hashes = state_diff
                         .withdrawal_logs
                         .iter()
@@ -246,14 +259,13 @@ impl Command {
                             )
                         })
                         .collect();
+
+                    // Get the first block of the batch
                     let first_block_number = last_block_number + 1;
 
-                    new_trie = store
-                        .apply_account_updates_from_trie(new_trie, &account_updates)
-                        .await
-                        .expect("Error applying account updates");
-
+                    // Iterate over all blocks in the batch except the last one
                     while last_block_number + 1 < state_diff.last_header.number {
+                        // Build header of current block
                         let new_block = BlockHeader {
                             coinbase,
                             number: last_block_number + 1,
@@ -263,6 +275,7 @@ impl Command {
                         };
                         let new_block_hash = new_block.compute_block_hash();
 
+                        // Store current block
                         store.add_block_header(new_block_hash, new_block).await?;
                         store
                             .add_block_number(new_block_hash, last_block_number + 1)
@@ -279,6 +292,9 @@ impl Command {
                         last_block_number += 1;
                         last_hash = new_block_hash;
                     }
+
+                    // Build the header of the last block.
+                    // Note that its state_root is the root of new_trie.
                     let new_block = BlockHeader {
                         coinbase,
                         parent_hash: last_hash,
@@ -288,8 +304,8 @@ impl Command {
 
                     assert!(state_diff.last_header.state_root == new_block.state_root);
 
+                    // Store last block.
                     let new_block_hash = new_block.compute_block_hash();
-
                     store.add_block_header(new_block_hash, new_block).await?;
                     store
                         .add_block_number(new_block_hash, state_diff.last_header.number)
@@ -306,7 +322,7 @@ impl Command {
                     last_hash = new_block_hash;
                     last_state_root = state_diff.last_header.state_root;
 
-                    // Store batch in L2 storage
+                    // Store batch info in L2 storage
                     l2_store
                         .store_batch(
                             batch_number as u64,
