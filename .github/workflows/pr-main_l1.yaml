@@ -102,8 +102,8 @@ jobs:
           path: hive
       - name: Set eest fixture file env var
         run: |
-        EEST_FIXTURES=$(cat ../cmd/ef_tests/blockchain/.fixtures_url)
-        echo "EEST_FIXTURES=$EEST_FIXTURES" >> $GITHUB_ENV
+          EEST_FIXTURES=$(cat ../cmd/ef_tests/blockchain/.fixtures_url)
+          echo "EEST_FIXTURES=$EEST_FIXTURES" >> $GITHUB_ENV
 
   run-assertoor:
     name: Assertoor - ${{ matrix.name }}
