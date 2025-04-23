@@ -677,13 +677,13 @@ fn node_missing_children(
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && trie_state.get_node(child.clone())?.is_none() {
+                if child.is_valid() && trie_state.get_node(*child)?.is_none() {
                     paths.push(parent_path.append_new(index as u8));
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && trie_state.get_node(node.child.clone())?.is_none() {
+            if node.child.is_valid() && trie_state.get_node(node.child)?.is_none() {
                 paths.push(parent_path.concat(node.prefix.clone()));
             }
         }
