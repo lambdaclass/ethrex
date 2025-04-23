@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745406840091,
+  "lastUpdate": 1745418320429,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3745,6 +3745,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180950429351,
             "range": "± 867364898",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aqdrgg19@gmail.com",
+            "name": "VolodymyrBg",
+            "username": "VolodymyrBg"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cbcaef7226599de6598fc7d73e9108265468c803",
+          "message": "Add --metrics flag to enable/disable metrics collection (#2497)\n\n**Motivation**\n\nCurrently, metrics are always initialized in the application, even if\nthey're not needed. This can cause unnecessary resource usage and\npotential overhead. By making metrics optional through a command-line\nflag, users can have more control over their node's resource consumption\nand behavior.\n\n**Description**\n\nThis PR adds a new --metrics command-line flag that allows users to\nexplicitly enable or disable metrics collection and exposition. When\nmetrics are disabled, the metrics server is not started, saving\nresources.\n\nKey changes:\n- Add a new metrics_enabled boolean flag to the Options struct\n- Update the init_metrics function to check this flag before starting\nthe metrics server\n- Modify both the main ethrex command and the L2 command to\nconditionally initialize metrics\n- Update the L2 Makefile to explicitly enable metrics\n- Update documentation to include information about the new flag",
+          "timestamp": "2025-04-23T13:36:34Z",
+          "tree_id": "95cd1917af6b0b3367de556fd233325ad03531e7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cbcaef7226599de6598fc7d73e9108265468c803"
+        },
+        "date": 1745418317227,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182542421832,
+            "range": "± 560350561",
             "unit": "ns/iter"
           }
         ]
