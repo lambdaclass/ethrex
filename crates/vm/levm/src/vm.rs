@@ -1,11 +1,17 @@
 use crate::{
     account::StorageSlot,
-    call_frame::{CacheBackup, CallFrame},
+    call_frame::CallFrame,
     constants::*,
     db::{cache, gen_db::GeneralizedDatabase},
     environment::Environment,
-    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    errors::{
+        ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, TxValidationError,
+        VMError,
+    },
+    gas_cost::{
+        self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, CREATE_BASE_COST,
+        STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN,
+    },
     hooks::{default_hook::DefaultHook, hook::Hook, l2_hook::L2Hook},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
@@ -376,11 +382,12 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn restore_state(&mut self, backup: StateBackup, cache_backup: &mut CacheBackup) {
-        self.restore_cache_state(cache_backup);
+    pub fn restore_state(&mut self, backup: StateBackup) -> Result<(), VMError> {
+        self.restore_cache_state()?;
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
+        Ok(())
     }
 
     pub fn is_create(&self) -> bool {
@@ -428,14 +435,9 @@ impl<'a> VM<'a> {
 
     /// Main function for executing an external transaction
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        let mut initial_call_frame = self
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-
-        if let Err(e) = self.prepare_execution(&mut initial_call_frame) {
+        if let Err(e) = self.prepare_execution() {
             // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
-            self.restore_cache_state(&initial_call_frame.cache_backup);
+            self.restore_cache_state()?;
             return Err(e);
         }
 
@@ -443,20 +445,22 @@ impl<'a> VM<'a> {
         // revert the changes it made.
         // Even if the transaction reverts we want to apply these kind of changes!
         // These are: Incrementing sender nonce, transferring value to a delegate account, decreasing sender account balance
-        initial_call_frame.cache_backup = HashMap::new();
+        self.current_call_frame_mut()?.cache_backup = HashMap::new();
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
         if self.is_create() {
-            let new_contract_address = initial_call_frame.to;
+            let new_contract_address = self.current_call_frame()?.to;
             let new_account = self.get_account_mut(new_contract_address)?;
 
             if new_account.has_code_or_nonce() {
-                self.call_frames.push(initial_call_frame);
                 return self.handle_create_non_empty_account();
             }
 
-            self.increase_account_balance(new_contract_address, initial_call_frame.msg_value)?;
+            self.increase_account_balance(
+                new_contract_address,
+                self.current_call_frame()?.msg_value,
+            )?;
 
             // https://eips.ethereum.org/EIPS/eip-161
             if self.env.config.fork >= Fork::SpuriousDragon {
@@ -464,7 +468,6 @@ impl<'a> VM<'a> {
             };
         }
 
-        self.call_frames.push(initial_call_frame);
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let backup = StateBackup::new(
             self.accrued_substate.clone(),
@@ -571,12 +574,12 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    fn prepare_execution(&mut self, initial_call_frame: &mut CallFrame) -> Result<(), VMError> {
+    fn prepare_execution(&mut self) -> Result<(), VMError> {
         // NOTE: ATTOW the default hook is created in VM::new(), so
         // (in theory) _at least_ the default prepare execution should
         // run
         for hook in self.hooks.clone() {
-            hook.prepare_execution(self, initial_call_frame)?;
+            hook.prepare_execution(self)?;
         }
 
         Ok(())
@@ -599,16 +602,17 @@ impl<'a> VM<'a> {
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
-    fn restore_cache_state(&mut self, backup: &CacheBackup) {
-        for (address, account_opt) in backup {
+    fn restore_cache_state(&mut self) -> Result<(), VMError> {
+        for (address, account_opt) in self.current_call_frame()?.cache_backup.clone() {
             if let Some(account) = account_opt {
                 // restore the account to the state before the call
-                cache::insert_account(&mut self.db.cache, *address, account.clone());
+                cache::insert_account(&mut self.db.cache, address, account.clone());
             } else {
                 // remove from cache if it wasn't there before
-                cache::remove_account(&mut self.db.cache, address);
+                cache::remove_account(&mut self.db.cache, &address);
             }
         }
+        Ok(())
     }
 
     /// Sets the account code as the EIP7702 determines.
@@ -712,7 +716,105 @@ impl<'a> VM<'a> {
             get_valid_jump_destinations(&self.current_call_frame()?.bytecode).unwrap_or_default();
 
         self.env.refunded_gas = refunded_gas;
-        
+
         Ok(())
+    }
+
+    pub fn add_intrinsic_gas(&mut self) -> Result<(), VMError> {
+        // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
+
+        let intrinsic_gas = self.get_intrinsic_gas()?;
+
+        self.current_call_frame_mut()?
+            .increase_consumed_gas(intrinsic_gas)
+            .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
+
+        Ok(())
+    }
+
+    // ==================== Gas related functions =======================
+    pub fn get_intrinsic_gas(&self) -> Result<u64, VMError> {
+        // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
+        let mut intrinsic_gas: u64 = 0;
+
+        // Calldata Cost
+        // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
+        let calldata_cost =
+            gas_cost::tx_calldata(&self.current_call_frame()?.calldata, self.env.config.fork)
+                .map_err(VMError::OutOfGas)?;
+
+        intrinsic_gas = intrinsic_gas
+            .checked_add(calldata_cost)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+        // Base Cost
+        intrinsic_gas = intrinsic_gas
+            .checked_add(TX_BASE_COST)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+        // Create Cost
+        if self.is_create() {
+            // https://eips.ethereum.org/EIPS/eip-2#specification
+            if self.env.config.fork >= Fork::Homestead {
+                intrinsic_gas = intrinsic_gas
+                    .checked_add(CREATE_BASE_COST)
+                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            }
+
+            // https://eips.ethereum.org/EIPS/eip-3860
+            if self.env.config.fork >= Fork::Shanghai {
+                let number_of_words = &self
+                    .current_call_frame()?
+                    .calldata
+                    .len()
+                    .div_ceil(WORD_SIZE);
+                let double_number_of_words: u64 = number_of_words
+                    .checked_mul(2)
+                    .ok_or(OutOfGasError::ConsumedGasOverflow)?
+                    .try_into()
+                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+
+                intrinsic_gas = intrinsic_gas
+                    .checked_add(double_number_of_words)
+                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            }
+        }
+
+        // Access List Cost
+        let mut access_lists_cost: u64 = 0;
+        for (_, keys) in &self.access_list {
+            access_lists_cost = access_lists_cost
+                .checked_add(ACCESS_LIST_ADDRESS_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            for _ in keys {
+                access_lists_cost = access_lists_cost
+                    .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
+                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            }
+        }
+
+        intrinsic_gas = intrinsic_gas
+            .checked_add(access_lists_cost)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+        // Authorization List Cost
+        // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
+        // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
+        let amount_of_auth_tuples: u64 = self
+            .authorization_list
+            .clone()
+            .unwrap_or_default()
+            .len()
+            .try_into()
+            .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+        let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
+            .checked_mul(amount_of_auth_tuples)
+            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+        intrinsic_gas = intrinsic_gas
+            .checked_add(authorization_list_cost)
+            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+
+        Ok(intrinsic_gas)
     }
 }

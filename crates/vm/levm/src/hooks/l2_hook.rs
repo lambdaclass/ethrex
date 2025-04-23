@@ -4,13 +4,9 @@ use ethrex_common::{types::Fork, Address, U256};
 
 use crate::{
     constants::{INIT_CODE_MAX_SIZE, TX_BASE_COST, VALID_BLOB_PREFIXES},
-    db::cache::remove_account,
-    errors::{InternalError, TxResult, TxValidationError, VMError},
+    errors::{InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
-    utils::{
-        add_intrinsic_gas, get_base_fee_per_blob_gas, get_intrinsic_gas,
-        get_valid_jump_destinations, has_delegation,
-    },
+    utils::{get_base_fee_per_blob_gas, get_valid_jump_destinations},
     Account,
 };
 
@@ -24,28 +20,18 @@ pub struct L2Hook {
 }
 
 impl Hook for L2Hook {
-    fn prepare_execution(
-        &self,
-        vm: &mut crate::vm::VM<'_>,
-        initial_call_frame: &mut crate::call_frame::CallFrame,
-    ) -> Result<(), crate::errors::VMError> {
-        vm.increase_account_balance(self.recipient, initial_call_frame.msg_value)?;
+    fn prepare_execution(&self, vm: &mut crate::vm::VM<'_>) -> Result<(), crate::errors::VMError> {
+        vm.increase_account_balance(self.recipient, vm.current_call_frame()?.msg_value)?;
 
-        initial_call_frame.msg_value = U256::from(0);
+        vm.current_call_frame_mut()?.msg_value = U256::from(0);
 
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
-            let intrinsic_gas: u64 = get_intrinsic_gas(
-                vm.is_create(),
-                vm.env.config.fork,
-                &vm.access_list,
-                &vm.authorization_list,
-                initial_call_frame,
-            )?;
+            let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
             // calldata_cost = tokens_in_calldata * 4
             let calldata_cost: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, vm.env.config.fork)
+                gas_cost::tx_calldata(&vm.current_call_frame()?.calldata, vm.env.config.fork)
                     .map_err(VMError::OutOfGas)?;
 
             // same as calculated in gas_used()
@@ -62,7 +48,7 @@ impl Hook for L2Hook {
 
             let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
 
-            if initial_call_frame.gas_limit < min_gas_limit {
+            if vm.current_call_frame()?.gas_limit < min_gas_limit {
                 return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
             }
         }
@@ -88,7 +74,7 @@ impl Hook for L2Hook {
         // (5) INITCODE_SIZE_EXCEEDED
         if vm.is_create() {
             // [EIP-3860] - INITCODE_SIZE_EXCEEDED
-            if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
+            if vm.current_call_frame()?.calldata.len() > INIT_CODE_MAX_SIZE
                 && vm.env.config.fork >= Fork::Shanghai
             {
                 return Err(VMError::TxValidation(
@@ -98,13 +84,7 @@ impl Hook for L2Hook {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        add_intrinsic_gas(
-            vm.is_create(),
-            vm.env.config.fork,
-            initial_call_frame,
-            &vm.access_list,
-            &vm.authorization_list,
-        )?;
+        vm.add_intrinsic_gas()?;
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (
@@ -202,9 +182,10 @@ impl Hook for L2Hook {
 
         if vm.is_create() {
             // Assign bytecode to context and empty calldata
-            initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
-            initial_call_frame.valid_jump_destinations =
-                get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
+            vm.current_call_frame_mut()?.bytecode =
+                std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
+            vm.current_call_frame_mut()?.valid_jump_destinations =
+                get_valid_jump_destinations(&vm.current_call_frame()?.bytecode).unwrap_or_default();
         }
         Ok(())
     }
@@ -216,26 +197,16 @@ impl Hook for L2Hook {
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
         // POST-EXECUTION Changes
-        let receiver_address = initial_call_frame.to;
+        let sender_address = initial_call_frame.msg_sender;
 
-        // 1. Undo value transfer if the transaction has reverted
-        if let TxResult::Revert(_) = report.result {
-            let existing_account = vm.db.get_account(receiver_address)?; //TO Account
-
-            if has_delegation(&existing_account.info)? {
-                // This is the case where the "to" address and the
-                // "signer" address are the same. We are setting the code
-                // and sending some balance to the "to"/"signer"
-                // address.
-                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
-
-                // If transaction execution results in failure (any
-                // exceptional condition or code reverting), setting
-                // delegation designations is not rolled back.
-            } else {
-                // We remove the receiver account from the cache, like nothing changed in it's state.
-                remove_account(&mut vm.db.cache, &receiver_address);
+        // 1. Undo value transfer if Tx reverted
+        if !report.is_success() {
+            // In a create if Tx was reverted the account won't even exist by this point.
+            if !vm.is_create() {
+                vm.decrease_account_balance(initial_call_frame.to, initial_call_frame.msg_value)?;
             }
+
+            vm.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.

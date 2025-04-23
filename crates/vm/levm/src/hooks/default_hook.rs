@@ -27,28 +27,18 @@ impl Hook for DefaultHook {
     /// - It adds value to receiver balance.
     /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
     ///   See 'docs' for more information about validations.
-    fn prepare_execution(
-        &self,
-        vm: &mut VM<'_>,
-        initial_call_frame: &mut CallFrame,
-    ) -> Result<(), VMError> {
+    fn prepare_execution(&self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
         let sender_account = vm.db.get_account(sender_address)?;
 
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
-            let intrinsic_gas: u64 = get_intrinsic_gas(
-                vm.is_create(),
-                vm.env.config.fork,
-                &vm.access_list,
-                &vm.authorization_list,
-                initial_call_frame,
-            )?;
+            let calldata = vm.current_call_frame()?.calldata.clone();
+            let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
             // calldata_cost = tokens_in_calldata * 4
             let calldata_cost: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, vm.env.config.fork)
-                    .map_err(VMError::OutOfGas)?;
+                gas_cost::tx_calldata(&calldata, vm.env.config.fork).map_err(VMError::OutOfGas)?;
 
             // same as calculated in gas_used()
             let tokens_in_calldata: u64 = calldata_cost
@@ -63,7 +53,7 @@ impl Hook for DefaultHook {
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
             let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
-            if initial_call_frame.gas_limit < min_gas_limit {
+            if vm.current_call_frame()?.gas_limit < min_gas_limit {
                 return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
             }
         }
@@ -78,7 +68,7 @@ impl Hook for DefaultHook {
             ))?;
 
         // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
-        let value = initial_call_frame.msg_value;
+        let value = vm.current_call_frame()?.msg_value;
 
         // blob gas cost = max fee per blob gas * blob gas used
         // https://eips.ethereum.org/EIPS/eip-4844
@@ -157,7 +147,7 @@ impl Hook for DefaultHook {
         // (5) INITCODE_SIZE_EXCEEDED
         if vm.is_create() {
             // [EIP-3860] - INITCODE_SIZE_EXCEEDED
-            if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
+            if vm.current_call_frame()?.calldata.len() > INIT_CODE_MAX_SIZE
                 && vm.env.config.fork >= Fork::Shanghai
             {
                 return Err(VMError::TxValidation(
@@ -167,13 +157,7 @@ impl Hook for DefaultHook {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        add_intrinsic_gas(
-            vm.is_create(),
-            vm.env.config.fork,
-            initial_call_frame,
-            &vm.access_list,
-            &vm.authorization_list,
-        )?;
+        vm.add_intrinsic_gas()?;
 
         // (7) NONCE_IS_MAX
         vm.increment_account_nonce(sender_address)
@@ -297,13 +281,17 @@ impl Hook for DefaultHook {
 
         if vm.is_create() {
             // Assign bytecode to context and empty calldata
-            initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
-            initial_call_frame.valid_jump_destinations =
-                get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
+            vm.current_call_frame_mut()?.bytecode =
+                std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
+            vm.current_call_frame_mut()?.valid_jump_destinations =
+                get_valid_jump_destinations(&vm.current_call_frame()?.bytecode).unwrap_or_default();
         } else {
             // Transfer value to receiver
             // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            vm.increase_account_balance(initial_call_frame.to, initial_call_frame.msg_value)?;
+            vm.increase_account_balance(
+                vm.current_call_frame()?.to,
+                vm.current_call_frame()?.msg_value,
+            )?;
         }
         Ok(())
     }

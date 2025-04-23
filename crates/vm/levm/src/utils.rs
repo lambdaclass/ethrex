@@ -1,24 +1,19 @@
 use crate::{
-    call_frame::CallFrame,
     constants::*,
     db::{
         cache::{self},
         gen_db::GeneralizedDatabase,
     },
-    errors::{InternalError, OutOfGasError, TxValidationError, VMError},
+    errors::{InternalError, VMError},
     gas_cost::{
-        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
+        fake_exponential, BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
     vm::{EVMConfig, Substate},
     AccountInfo,
 };
 use bytes::Bytes;
-use ethrex_common::{
-    types::{tx_fields::*, Fork},
-    Address, H256, U256,
-};
+use ethrex_common::{types::tx_fields::*, Address, H256, U256};
 use ethrex_rlp;
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
@@ -120,116 +115,6 @@ pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMErr
     }
 
     Ok(valid_jump_destinations)
-}
-
-// ==================== Gas related functions =======================
-pub fn get_intrinsic_gas(
-    is_create: bool,
-    fork: Fork,
-    access_list: &AccessList,
-    authorization_list: &Option<AuthorizationList>,
-    initial_call_frame: &CallFrame,
-) -> Result<u64, VMError> {
-    // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
-    let mut intrinsic_gas: u64 = 0;
-
-    // Calldata Cost
-    // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-    let calldata_cost =
-        gas_cost::tx_calldata(&initial_call_frame.calldata, fork).map_err(VMError::OutOfGas)?;
-
-    intrinsic_gas = intrinsic_gas
-        .checked_add(calldata_cost)
-        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-    // Base Cost
-    intrinsic_gas = intrinsic_gas
-        .checked_add(TX_BASE_COST)
-        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-    // Create Cost
-    if is_create {
-        // https://eips.ethereum.org/EIPS/eip-2#specification
-        if fork >= Fork::Homestead {
-            intrinsic_gas = intrinsic_gas
-                .checked_add(CREATE_BASE_COST)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        }
-
-        // https://eips.ethereum.org/EIPS/eip-3860
-        if fork >= Fork::Shanghai {
-            let number_of_words = initial_call_frame.calldata.len().div_ceil(WORD_SIZE);
-            let double_number_of_words: u64 = number_of_words
-                .checked_mul(2)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?
-                .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-
-            intrinsic_gas = intrinsic_gas
-                .checked_add(double_number_of_words)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        }
-    }
-
-    // Access List Cost
-    let mut access_lists_cost: u64 = 0;
-    for (_, keys) in access_list {
-        access_lists_cost = access_lists_cost
-            .checked_add(ACCESS_LIST_ADDRESS_COST)
-            .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        for _ in keys {
-            access_lists_cost = access_lists_cost
-                .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
-                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-        }
-    }
-
-    intrinsic_gas = intrinsic_gas
-        .checked_add(access_lists_cost)
-        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-    // Authorization List Cost
-    // `unwrap_or_default` will return an empty vec when the `authorization_list` field is None.
-    // If the vec is empty, the len will be 0, thus the authorization_list_cost is 0.
-    let amount_of_auth_tuples: u64 = authorization_list
-        .clone()
-        .unwrap_or_default()
-        .len()
-        .try_into()
-        .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
-    let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
-        .checked_mul(amount_of_auth_tuples)
-        .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-
-    intrinsic_gas = intrinsic_gas
-        .checked_add(authorization_list_cost)
-        .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-
-    Ok(intrinsic_gas)
-}
-
-pub fn add_intrinsic_gas(
-    is_create: bool,
-    fork: Fork,
-    initial_call_frame: &mut CallFrame,
-    access_list: &AccessList,
-    authorization_list: &Option<AuthorizationList>,
-) -> Result<(), VMError> {
-    // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
-
-    let intrinsic_gas = get_intrinsic_gas(
-        is_create,
-        fork,
-        access_list,
-        authorization_list,
-        initial_call_frame,
-    )?;
-
-    initial_call_frame
-        .increase_consumed_gas(intrinsic_gas)
-        .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
-
-    Ok(())
 }
 
 // ================= Blob hash related functions =====================
