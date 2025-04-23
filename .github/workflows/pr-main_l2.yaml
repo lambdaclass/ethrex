@@ -167,7 +167,7 @@ jobs:
       - name: Check if any job failed
         run: |
           if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "Job Integration Tests"
+            echo "Job Integration Tests failed"
             exit 1
           fi
 
