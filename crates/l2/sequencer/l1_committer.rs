@@ -337,17 +337,16 @@ impl Committer {
         info!("Sending commitment for block {block_number}");
 
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let state_diff_kzg_versioned_hash = blob_versioned_hashes
+            .first()
+            .ok_or(BlobsBundleError::BlobBundleEmptyError)
+            .map_err(CommitterError::from)?
+            .as_fixed_bytes();
+
         let calldata_values = vec![
             Value::Uint(U256::from(block_number)),
-            Value::FixedBytes(
-                blob_versioned_hashes
-                    .first()
-                    .ok_or(BlobsBundleError::BlobBundleEmptyError)
-                    .map_err(CommitterError::from)?
-                    .as_fixed_bytes()
-                    .to_vec()
-                    .into(),
-            ),
+            Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
         ];

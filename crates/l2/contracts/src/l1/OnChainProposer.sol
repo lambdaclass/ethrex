@@ -14,7 +14,7 @@ import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 /// @author LambdaClass
 contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     struct BlockCommitmentInfo {
-        bytes32 commitmentHash;
+        bytes32 stateDiffKZGVersionedHash;
         bytes32 depositLogs;
     }
 
@@ -137,7 +137,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @inheritdoc IOnChainProposer
     function commit(
         uint256 blockNumber,
-        bytes32 commitment,
+        bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 depositLogs
     ) external override onlySequencer {
@@ -145,10 +145,15 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             blockNumber == lastCommittedBlock + 1,
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
+        // TODO: We are using the state diff KZG versioned hash to figure out
+        // whether a block was committed or not. Ideally, we should use the new
+        // state root hash instead.
         require(
-            blockCommitments[blockNumber].commitmentHash == bytes32(0),
+            blockCommitments[blockNumber].stateDiffKZGVersionedHash ==
+                bytes32(0),
             "OnChainProposer: block already committed"
         );
+
         // Check if commitment is equivalent to blob's KZG commitment.
 
         if (depositLogs != bytes32(0)) {
@@ -166,11 +171,11 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
         }
         blockCommitments[blockNumber] = BlockCommitmentInfo(
-            commitment,
+            stateDiffKZGVersionedHash,
             depositLogs
         );
         lastCommittedBlock = blockNumber;
-        emit BlockCommitted(commitment);
+        emit BlockCommitted(stateDiffKZGVersionedHash);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -202,7 +207,8 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         );
 
         require(
-            blockCommitments[blockNumber].commitmentHash != bytes32(0),
+            blockCommitments[blockNumber].stateDiffKZGVersionedHash !=
+                bytes32(0),
             "OnChainProposer: block not committed"
         );
 
