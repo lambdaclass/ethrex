@@ -31,29 +31,22 @@ impl NodeHash {
             let hash = Keccak256::new_with_prefix(encoded).finalize();
             NodeHash::Hashed(H256::from_slice(hash.as_slice()))
         } else {
-            NodeHash::inline_from_slice(encoded)
+            NodeHash::from_slice(encoded)
         }
     }
 
-    pub fn len(&self) -> usize {
-        match self {
-            NodeHash::Hashed(h256) => h256.as_bytes().len(),
-            NodeHash::Inline(value) => value.1 as usize,
+    /// Converts a slice of an already hashed data (in case it's not inlineable) to a NodeHash.
+    ///
+    /// If you need to hash it in case its len >= 32 see `from_encoded_raw`
+    pub(crate) fn from_slice(slice: &[u8]) -> NodeHash {
+        match slice.len() {
+            0..32 => {
+                let mut buffer = [0; 31];
+                buffer[0..slice.len()].copy_from_slice(slice);
+                NodeHash::Inline((buffer, slice.len() as u8))
+            }
+            _ => NodeHash::Hashed(H256::from_slice(slice)),
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        match self {
-            NodeHash::Hashed(h256) => h256.as_bytes().is_empty(),
-            NodeHash::Inline(value) => value.1 == 0,
-        }
-    }
-
-    pub(crate) fn inline_from_slice(slice: &[u8]) -> NodeHash {
-        assert!(slice.len() < 32, "Slice must have a len < 32 to be inlined");
-        let mut buffer = [0; 31];
-        buffer[0..slice.len()].copy_from_slice(slice);
-        NodeHash::Inline((buffer, slice.len() as u8))
     }
 
     /// Returns the finalized hash
@@ -94,14 +87,25 @@ impl NodeHash {
         }
         encoder
     }
+
+    pub fn len(&self) -> usize {
+        match self {
+            NodeHash::Hashed(h256) => h256.as_bytes().len(),
+            NodeHash::Inline(value) => value.1 as usize,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            NodeHash::Hashed(h256) => h256.as_bytes().is_empty(),
+            NodeHash::Inline(value) => value.1 == 0,
+        }
+    }
 }
 
 impl From<Vec<u8>> for NodeHash {
     fn from(value: Vec<u8>) -> Self {
-        match value.len() {
-            32 => NodeHash::Hashed(H256::from_slice(&value)),
-            _ => NodeHash::inline_from_slice(&value),
-        }
+        NodeHash::from_slice(&value)
     }
 }
 
@@ -135,10 +139,7 @@ impl Encodable for NodeHash {
 #[cfg(feature = "libmdbx")]
 impl Decodable for NodeHash {
     fn decode(b: &[u8]) -> anyhow::Result<Self> {
-        Ok(match b.len() {
-            32 => NodeHash::Hashed(H256::from_slice(b)),
-            _ => NodeHash::inline_from_slice(b),
-        })
+        Ok(NodeHash::from_slice(b))
     }
 }
 
