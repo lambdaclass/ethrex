@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745424001644,
+  "lastUpdate": 1745425796990,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3895,6 +3895,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179706822635,
             "range": "± 903113760",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "125112044+cypherpepe@users.noreply.github.com",
+            "name": "Cypher Pepe",
+            "username": "cypherpepe"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f4478d799bd295abc4221114e1928c26945b658d",
+          "message": "docs(l2): remove `proposer` in README.md (#2470)\n\n**Motivation**\n\nThe `proposer.md` file was renamed to `sequencer.md`, and the old link\nin the docs index became obsolete.\n\n**Description**\n\nHi! I removed the outdated reference to `proposer.md` in\n`crates/l2/docs/README.md` since it's now covered under `sequencer.md`.\nref:\nhttps://github.com/lambdaclass/ethrex/pull/2269/files#diff-95ad85cd4c72b932973f93785a8a1f365b56757d2972fe671ff33221b7bd0546\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-04-23T15:42:54Z",
+          "tree_id": "8a30102721c5d479e217e1fa614fdba954934913",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f4478d799bd295abc4221114e1928c26945b658d"
+        },
+        "date": 1745425793708,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178363269347,
+            "range": "± 553866422",
             "unit": "ns/iter"
           }
         ]
