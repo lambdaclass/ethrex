@@ -100,6 +100,10 @@ jobs:
         with:
           name: hive
           path: hive
+      - name: Set eest fixture file env var
+        run: |
+        EEST_FIXTURES=$(cat ../cmd/ef_tests/blockchain/.fixtures_url)
+        echo "EEST_FIXTURES=$EEST_FIXTURES" >> $GITHUB_ENV
 
   run-assertoor:
     name: Assertoor - ${{ matrix.name }}
@@ -143,9 +147,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [docker_build, setup-hive]
     if: ${{ github.event_name != 'merge_group' }}
-    run: |
-      EEST_FIXTURES=$(cat ../cmd/ef_tests/blockchain/.fixtures_url)
-      echo "EEST_FIXTURES=$EEST_FIXTURES" >> $GITHUB_ENV
     strategy:
       matrix:
         include:
