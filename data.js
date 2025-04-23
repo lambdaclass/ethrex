@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745358715347,
+  "lastUpdate": 1745406840091,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3715,6 +3715,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184484398938,
             "range": "± 1291788460",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "81d0efd6128c97408976748d433ea52b78aec746",
+          "message": "perf(core): transform the inline variant of NodeHash to a const sized array (#2516)\n\n**Motivation**\n\nTransforms the inline variant of NodeHash to a fixed size array,\nallowing it to be copy and avoiding expensive Vec clones.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses [#2444](https://github.com/lambdaclass/ethrex/issues/2444)",
+          "timestamp": "2025-04-23T10:26:26Z",
+          "tree_id": "3074530a72744b5954f9a07cee17e075024e0c72",
+          "url": "https://github.com/lambdaclass/ethrex/commit/81d0efd6128c97408976748d433ea52b78aec746"
+        },
+        "date": 1745406837978,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180950429351,
+            "range": "± 867364898",
             "unit": "ns/iter"
           }
         ]
