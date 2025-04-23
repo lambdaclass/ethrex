@@ -94,10 +94,13 @@ impl<'a> VM<'a> {
         let backup_account = cache::get_account(&self.db.cache, &address)
             .ok_or(VMError::Internal(InternalError::AccountNotFound))?
             .clone();
-        self.current_call_frame_mut()?
-            .cache_backup
-            .entry(address)
-            .or_insert_with(|| Some(backup_account));
+
+        if let Ok(frame) = self.current_call_frame_mut() {
+            frame
+                .cache_backup
+                .entry(address)
+                .or_insert_with(|| Some(backup_account));
+        }
 
         let account = cache::get_account_mut(&mut self.db.cache, &address)
             .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
@@ -169,10 +172,12 @@ impl<'a> VM<'a> {
     pub fn insert_account(&mut self, address: Address, account: Account) -> Result<(), VMError> {
         let previous_account = cache::insert_account(&mut self.db.cache, address, account);
 
-        self.current_call_frame_mut()?
-            .cache_backup
-            .entry(address)
-            .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
+        if let Ok(frame) = self.current_call_frame_mut() {
+            frame
+                .cache_backup
+                .entry(address)
+                .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
+        }
 
         Ok(())
     }
@@ -181,10 +186,12 @@ impl<'a> VM<'a> {
     pub fn remove_account(&mut self, address: Address) -> Result<(), VMError> {
         let previous_account = cache::remove_account(&mut self.db.cache, &address);
 
-        self.current_call_frame_mut()?
-            .cache_backup
-            .entry(address)
-            .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
+        if let Ok(frame) = self.current_call_frame_mut() {
+            frame
+                .cache_backup
+                .entry(address)
+                .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
+        }
 
         Ok(())
     }
