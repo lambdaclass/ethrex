@@ -46,7 +46,7 @@ pub fn main() {
         // Execute block
         let mut vm = Evm::from_execution_db(db.clone());
         let result = vm.execute_block(&block).expect("failed to execute block");
-        // let receipts = result.receipts;
+        let receipts = result.receipts;
 
         // cumulative_gas_used += receipts
         //     .last()
