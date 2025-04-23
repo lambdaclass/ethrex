@@ -82,10 +82,8 @@ impl Hook for DefaultHook {
 
         // blob gas cost = max fee per blob gas * blob gas used
         // https://eips.ethereum.org/EIPS/eip-4844
-        let max_blob_gas_cost = get_max_blob_gas_price(
-            vm.env.tx_blob_hashes.clone(),
-            vm.env.tx_max_fee_per_blob_gas,
-        )?;
+        let max_blob_gas_cost =
+            get_max_blob_gas_price(&vm.env.tx_blob_hashes, vm.env.tx_max_fee_per_blob_gas)?;
 
         // For the transaction to be valid the sender account has to have a balance >= gas_price * gas_limit + value if tx is type 0 and 1
         // balance >= max_fee_per_gas * gas_limit + value + blob_gas_cost if tx is type 2 or 3
@@ -114,7 +112,7 @@ impl Hook for DefaultHook {
         }
 
         let blob_gas_cost = get_blob_gas_price(
-            vm.env.tx_blob_hashes.clone(),
+            &vm.env.tx_blob_hashes,
             vm.env.block_excess_blob_gas,
             &vm.env.config,
         )?;
@@ -146,12 +144,7 @@ impl Hook for DefaultHook {
         // technically, the sender will not be able to pay it.
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        vm.db
-            .decrease_account_balance(
-                sender_address,
-                up_front_cost,
-                Some(&mut initial_call_frame.cache_backup),
-            )
+        vm.decrease_account_balance(sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
@@ -183,8 +176,7 @@ impl Hook for DefaultHook {
         )?;
 
         // (7) NONCE_IS_MAX
-        vm.db
-            .increment_account_nonce(sender_address, Some(&mut initial_call_frame.cache_backup))
+        vm.increment_account_nonce(sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
@@ -300,14 +292,7 @@ impl Hook for DefaultHook {
                 ));
             }
 
-            vm.env.refunded_gas = eip7702_set_access_code(
-                vm.db,
-                vm.env.chain_id,
-                &mut vm.accrued_substate,
-                // TODO: avoid clone()
-                vm.authorization_list.clone(),
-                initial_call_frame,
-            )?;
+            vm.eip7702_set_access_code()?;
         }
 
         if vm.is_create() {
@@ -318,11 +303,7 @@ impl Hook for DefaultHook {
         } else {
             // Transfer value to receiver
             // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            vm.db.increase_account_balance(
-                initial_call_frame.to,
-                initial_call_frame.msg_value,
-                Some(&mut initial_call_frame.cache_backup),
-            )?;
+            vm.increase_account_balance(initial_call_frame.to, initial_call_frame.msg_value)?;
         }
         Ok(())
     }
@@ -344,15 +325,10 @@ impl Hook for DefaultHook {
         if !report.is_success() {
             // In a create if Tx was reverted the account won't even exist by this point.
             if !vm.is_create() {
-                vm.db.decrease_account_balance(
-                    initial_call_frame.to,
-                    initial_call_frame.msg_value,
-                    None,
-                )?;
+                vm.decrease_account_balance(initial_call_frame.to, initial_call_frame.msg_value)?;
             }
 
-            vm.db
-                .increase_account_balance(sender_address, initial_call_frame.msg_value, None)?;
+            vm.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
@@ -402,8 +378,7 @@ impl Hook for DefaultHook {
             .checked_mul(U256::from(gas_to_return))
             .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
-        vm.db
-            .increase_account_balance(sender_address, wei_return_amount, None)?;
+        vm.increase_account_balance(sender_address, wei_return_amount)?;
 
         // 3. Pay coinbase fee
         let coinbase_address = vm.env.coinbase;
@@ -417,14 +392,13 @@ impl Hook for DefaultHook {
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
-        vm.db
-            .increase_account_balance(coinbase_address, coinbase_fee, None)?;
+        vm.increase_account_balance(coinbase_address, coinbase_fee)?;
 
         // 4. Destruct addresses in vm.selfdestruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = vm.db.get_account_mut(address, None)?;
+            let account_to_remove = vm.get_account_mut(address)?;
             *account_to_remove = Account::default();
         }
 

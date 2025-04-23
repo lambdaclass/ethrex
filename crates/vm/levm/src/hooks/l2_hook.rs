@@ -8,7 +8,7 @@ use crate::{
     errors::{InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     utils::{
-        add_intrinsic_gas, eip7702_set_access_code, get_base_fee_per_blob_gas, get_intrinsic_gas,
+        add_intrinsic_gas, get_base_fee_per_blob_gas, get_intrinsic_gas,
         get_valid_jump_destinations, has_delegation,
     },
     Account,
@@ -29,8 +29,7 @@ impl Hook for L2Hook {
         vm: &mut crate::vm::VM<'_>,
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
-        vm.db
-            .increase_account_balance(self.recipient, initial_call_frame.msg_value, None)?;
+        vm.increase_account_balance(self.recipient, initial_call_frame.msg_value)?;
 
         initial_call_frame.msg_value = U256::from(0);
 
@@ -198,14 +197,7 @@ impl Hook for L2Hook {
                 ));
             }
 
-            vm.env.refunded_gas = eip7702_set_access_code(
-                vm.db,
-                vm.env.chain_id,
-                &mut vm.accrued_substate,
-                // TODO: avoid clone()
-                vm.authorization_list.clone(),
-                initial_call_frame,
-            )?;
+            vm.eip7702_set_access_code()?;
         }
 
         if vm.is_create() {
@@ -292,14 +284,13 @@ impl Hook for L2Hook {
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
-        vm.db
-            .increase_account_balance(coinbase_address, coinbase_fee, None)?;
+        vm.increase_account_balance(coinbase_address, coinbase_fee)?;
 
         // 4. Destruct addresses in vm.estruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = vm.db.get_account_mut(address, None)?;
+            let account_to_remove = vm.get_account_mut(address)?;
             *account_to_remove = Account::default();
         }
 

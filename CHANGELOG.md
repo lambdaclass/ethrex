@@ -2,7 +2,13 @@
 
 ## Perf
 
+### 2025-04-22
+
+- Transform the inlined variant of NodeHash to a constant sized array [2516](https://github.com/lambdaclass/ethrex/pull/2516)
+
 ### 2025-04-11
+
+- Removed some unnecessary clones and made some functions const: [2438](https://github.com/lambdaclass/ethrex/pull/2438)
 
 - Asyncify some DB read APIs, as well as its users [#2430](https://github.com/lambdaclass/ethrex/pull/2430)
 
