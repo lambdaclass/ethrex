@@ -15,7 +15,8 @@ pub fn main() {
         parent_block_header,
         db,
     } = sp1_zkvm::io::read::<ProgramInput>();
-    let elasticity_multiplier = std::env::var("PROVER_CLIENT_ELASTICITY_MULTIPLIER")?
+    let elasticity_multiplier = std::env::var("PROVER_CLIENT_ELASTICITY_MULTIPLIER")
+        .unwrap()
         .parse::<u64>()
         .unwrap();
     // Validate the block
