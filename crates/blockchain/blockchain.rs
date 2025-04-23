@@ -26,8 +26,7 @@ use std::{ops::Div, time::Instant};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::{BlockExecutionResult, Evm, EvmEngine};
-use fork_choice::apply_fork_choice;
-use tracing::{error, info, warn};
+use tracing::info;
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
@@ -138,23 +137,43 @@ impl Blockchain {
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        // Easiest way to operate on the result of `execute_block` without
-        // having to add too much control flow or return early
-        // Async doesn't play well with `.and_then`
-        let inner = || async {
-            let res = self.execute_block(block).await?;
-            self.store_block(block, res).await
-        };
-
-        let result = inner().await;
-
-        let interval = Instant::now().duration_since(since).as_millis();
-        if interval != 0 {
-            let as_gigas = (block.header.gas_used as f64).div(10_f64.powf(9_f64));
-            let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            info!("[METRIC] BLOCK EXECUTION THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs");
-        }
+        let res = self.execute_block(block).await?;
+        let executed = Instant::now();
+        let result = self.store_block(block, res).await;
+        let stored = Instant::now();
+        Self::print_add_block_logs(block, since, executed, stored);
         result
+    }
+
+    fn print_add_block_logs(block: &Block, since: Instant, executed: Instant, stored: Instant) {
+        let interval = stored.duration_since(since).as_millis() as f64;
+        if interval != 0f64 {
+            let as_gigas = block.header.gas_used as f64 / 10_f64.powf(9_f64);
+            let throughput = as_gigas / interval * 1000_f64;
+            let execution_time = executed.duration_since(since).as_millis() as f64;
+            let storage_time = stored.duration_since(executed).as_millis() as f64;
+            let execution_fraction = (execution_time * 100_f64 / interval).round() as u64;
+            let storage_fraction = (storage_time * 100_f64 / interval).round() as u64;
+            let execution_time_per_gigagas = (execution_time / as_gigas).round() as u64;
+            let storage_time_per_gigagas = (storage_time / as_gigas).round() as u64;
+            let base_log =
+                format!(
+                "[METRIC] BLOCK EXECUTION THROUGHPUT: {:.2} Ggas/s TIME SPENT: {:.0} ms. #Txs: {}.",
+                throughput, interval, block.body.transactions.len()
+            );
+            let extra_log = if as_gigas > 0.0 {
+                format!(
+                    " exec/Ggas: {} ms ({}%), st/Ggas: {} ms ({}%)",
+                    execution_time_per_gigagas,
+                    execution_fraction,
+                    storage_time_per_gigagas,
+                    storage_fraction
+                )
+            } else {
+                "".to_string()
+            };
+            info!("{}{}", base_log, extra_log);
+        }
     }
 
     /// Adds multiple blocks in a batch.
@@ -293,60 +312,6 @@ impl Blockchain {
         );
 
         Ok(())
-    }
-
-    //TODO: Forkchoice Update shouldn't be part of this function
-    pub async fn import_blocks(&self, blocks: &[Block]) {
-        let size = blocks.len();
-        for block in blocks {
-            let hash = block.hash();
-            info!(
-                "Adding block {} with hash {:#x}.",
-                block.header.number, hash
-            );
-            if let Err(error) = self.add_block(block).await {
-                warn!(
-                    "Failed to add block {} with hash {:#x}: {}.",
-                    block.header.number, hash, error
-                );
-            }
-            if self
-                .storage
-                .update_latest_block_number(block.header.number)
-                .await
-                .is_err()
-            {
-                error!("Fatal: added block {} but could not update the block number -- aborting block import", block.header.number);
-                break;
-            };
-            if self
-                .storage
-                .set_canonical_block(block.header.number, hash)
-                .await
-                .is_err()
-            {
-                error!(
-                    "Fatal: added block {} but could not set it as canonical -- aborting block import",
-                    block.header.number
-                );
-                break;
-            };
-        }
-        if let Some(last_block) = blocks.last() {
-            let hash = last_block.hash();
-            match self.evm_engine {
-                EvmEngine::LEVM => {
-                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
-                    let _ = apply_fork_choice(&self.storage, hash, hash, hash).await;
-                }
-                EvmEngine::REVM => {
-                    apply_fork_choice(&self.storage, hash, hash, hash)
-                        .await
-                        .unwrap();
-                }
-            }
-        }
-        info!("Added {size} blocks to blockchain");
     }
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid

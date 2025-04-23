@@ -5,7 +5,7 @@ use ethrex_blockchain::{
     payload::{create_payload, BuildPayloadArgs},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
-use ethrex_p2p::sync_manager::SyncStatus;
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
@@ -211,63 +211,53 @@ async fn handle_forkchoice(
         fork_choice_state.finalized_block_hash
     );
 
-    // Update fcu head in syncer
-    context.syncer.set_head(fork_choice_state.head_block_hash);
-
-    let fork_choice_res = if let Some(latest_valid_hash) = context
+    if let Some(latest_valid_hash) = context
         .storage
         .get_latest_valid_ancestor(fork_choice_state.head_block_hash)
         .await?
     {
-        warn!(
-            "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
-            latest_valid_hash
-        );
-        Err(InvalidForkChoice::InvalidAncestor(latest_valid_hash))
-    } else {
-        // Check parent block hash in invalid_ancestors (if head block exists)
-        let head_block = context
+        return Ok((
+            None,
+            ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                latest_valid_hash,
+                InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string(),
+            )),
+        ));
+    }
+
+    // Check parent block hash in invalid_ancestors (if head block exists)
+    if let Some(head_block) = context
+        .storage
+        .get_block_header_by_hash(fork_choice_state.head_block_hash)?
+    {
+        if let Some(latest_valid_hash) = context
             .storage
-            .get_block_header_by_hash(fork_choice_state.head_block_hash)?;
-        let check_parent = if let Some(head_block) = head_block {
-            debug!(
-                "Checking parent for invalid ancestor {}",
-                head_block.parent_hash
-            );
-            context
-                .storage
-                .get_latest_valid_ancestor(head_block.parent_hash)
-                .await
-                .ok()
-                .flatten()
-        } else {
-            None
-        };
-
-        // Check head block hash in invalid_ancestors
-        if let Some(latest_valid_hash) = check_parent {
-            Err(InvalidForkChoice::InvalidAncestor(latest_valid_hash))
-        } else {
-            // Check if there is an ongoing sync before applying the forkchoice
-            match context.syncer.status()? {
-                // Apply current fork choice
-                SyncStatus::Inactive => {
-                    // All checks passed, apply fork choice
-                    apply_fork_choice(
-                        &context.storage,
-                        fork_choice_state.head_block_hash,
-                        fork_choice_state.safe_block_hash,
-                        fork_choice_state.finalized_block_hash,
-                    )
-                    .await
-                }
-                // Restart sync if needed
-                _ => Err(InvalidForkChoice::Syncing),
-            }
+            .get_latest_valid_ancestor(head_block.parent_hash)
+            .await?
+        {
+            return Ok((
+                None,
+                ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                    latest_valid_hash,
+                    InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string(),
+                )),
+            ));
         }
-    };
+    }
 
-    match fork_choice_res {
+    if context.syncer.sync_mode() == SyncMode::Snap {
+        context.syncer.set_head(fork_choice_state.head_block_hash);
+        return Ok((None, PayloadStatus::syncing().into()));
+    }
+
+    match apply_fork_choice(
+        &context.storage,
+        fork_choice_state.head_block_hash,
+        fork_choice_state.safe_block_hash,
+        fork_choice_state.finalized_block_hash,
+    )
+    .await
+    {
         Ok(head) => {
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
@@ -318,7 +308,8 @@ async fn handle_forkchoice(
                         .update_sync_status(false)
                         .await
                         .map_err(|e| RpcErr::Internal(e.to_string()))?;
-                    context.syncer.start_sync().await;
+                    context.syncer.set_head(fork_choice_state.head_block_hash);
+                    context.syncer.start_sync();
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
