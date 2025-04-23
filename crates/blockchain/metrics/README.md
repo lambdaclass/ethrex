@@ -5,8 +5,9 @@ If a new dashboard is designed just for the L1 or L2, it can be mounted only in 
 
 To run the node with metrics, the next steps should be followed:
 1. Build the `ethrex` binary with the `metrics` feature enabled.
-2. Set the `--metrics.port` cli arg of the ethrex binary to match the port defined in `metrics/provisioning/prometheus/prometheus*.yaml`
-3. Run the docker containers, example with the L2:
+2. Enable metrics by using the `--metrics` flag when starting the node.
+3. Set the `--metrics.port` cli arg of the ethrex binary to match the port defined in `metrics/provisioning/prometheus/prometheus*.yaml`
+4. Run the docker containers, example with the L2:
 
 ```sh
 docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l2.override.yaml up

@@ -58,7 +58,9 @@ async fn main() -> eyre::Result<()> {
     )
     .await;
 
-    init_metrics(&opts, tracker.clone());
+    if opts.metrics_enabled {
+        init_metrics(&opts, tracker.clone());
+    }
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "dev")] {
