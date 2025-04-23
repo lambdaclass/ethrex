@@ -10,13 +10,13 @@ use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
-use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
+use ethrex_common::types::{BlobsBundle, Fork};
 
 use ethrex_common::{Address, H160, H256};
 use mempool::Mempool;
@@ -219,7 +219,7 @@ impl Blockchain {
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
-            if chain_config.fork(block.header.timestamp) != fork {
+            if is_crossing_spuriousdragon(fork, chain_config.fork(block.header.timestamp)) {
                 return Err((
                     ChainError::Custom("Crossing fork boundary in bulk mode".into()),
                     Some(BatchBlockProcessingFailure {
@@ -655,6 +655,16 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 /// Calculates the blob gas required by a transaction
 fn get_total_blob_gas(tx: &EIP4844Transaction) -> u64 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u64
+}
+
+fn is_crossing_spuriousdragon(from: Fork, to: Fork) -> bool {
+    if from >= Fork::SpuriousDragon {
+        return false;
+    }
+    if to < Fork::SpuriousDragon {
+        return false;
+    }
+    from != to
 }
 
 #[cfg(test)]
