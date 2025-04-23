@@ -17,13 +17,15 @@ use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError, ExecutionDB};
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, net::IpAddr, time::Duration};
+use std::{fmt::Debug, net::IpAddr};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::TryAcquireError,
 };
 use tracing::{debug, error, info, warn};
+
+use super::utils::sleep_random;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProverInputData {
@@ -109,7 +111,7 @@ pub async fn start_proof_coordinator(store: Store) -> Result<(), ConfigError> {
         store,
     )
     .await?;
-    prover_server.run(&server_config).await;
+    prover_server.run().await;
 
     Ok(())
 }
@@ -133,32 +135,17 @@ impl ProofCoordinator {
         })
     }
 
-    pub async fn run(&self, server_config: &ProofCoordinatorConfig) {
+    pub async fn run(&self) {
         loop {
-            let result = self.clone().main_logic().await;
-
-            match result {
-                Ok(()) => {
-                    if !server_config.dev_mode {
-                        info!("Prover Server shutting down");
-                        break;
-                    }
-                }
-                Err(e) => {
-                    let error_message = if !server_config.dev_mode {
-                        format!("Prover Server, severe Error, trying to restart the main_logic function: {e}")
-                    } else {
-                        format!("Prover Server Dev Error: {e}")
-                    };
-                    error!(error_message);
-                }
+            if let Err(err) = self.main_logic().await {
+                error!("L1 Proof Coordinator Error: {}", err);
             }
 
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            sleep_random(200).await;
         }
     }
 
-    async fn main_logic(self) -> Result<(), ProverServerError> {
+    async fn main_logic(&self) -> Result<(), ProverServerError> {
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
         tokio::task::spawn(async move {
             if let Err(e) = tokio::signal::ctrl_c().await {
