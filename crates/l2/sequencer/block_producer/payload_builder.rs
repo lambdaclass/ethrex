@@ -76,7 +76,7 @@ pub async fn build_payload(
     Ok(context.into())
 }
 
-/// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size  
+/// Same as `blockchain::fill_transactions` but enforces that the `StateDiff` size
 /// stays within the blob size limit after processing each transaction.
 pub async fn fill_transactions(
     blockchain: Arc<Blockchain>,
@@ -151,7 +151,7 @@ pub async fn fill_transactions(
             // Pull transaction from the mempool
             debug!("Ignoring replay-protected transaction: {}", tx_hash);
             txs.pop();
-            blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+            blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash());
             continue;
         }
 
@@ -188,7 +188,7 @@ pub async fn fill_transactions(
                 }
                 txs.shift()?;
                 // Pull transaction from the mempool
-                blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+                blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash());
 
                 metrics!(METRICS_TX.inc_tx_with_status_and_type(
                     MetricsTxStatus::Succeeded,

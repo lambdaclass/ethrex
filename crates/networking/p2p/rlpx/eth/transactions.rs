@@ -94,7 +94,7 @@ impl NewPooledTransactionHashes {
                 Transaction::EIP4844Transaction(eip4844_tx) => {
                     let tx_blobs_bundle = blockchain
                         .mempool
-                        .get_blobs_bundle(transaction_hash)?
+                        .get_blobs_bundle(transaction_hash)
                         .unwrap_or(BlobsBundle::empty());
                     eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle)
                 }
@@ -208,7 +208,7 @@ impl GetPooledTransactions {
             Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
             Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
             Transaction::EIP4844Transaction(itx) => {
-                let Some(bundle) = blockchain.mempool.get_blobs_bundle(*hash)? else {
+                let Some(bundle) = blockchain.mempool.get_blobs_bundle(*hash) else {
                     return Err(StoreError::Custom(format!(
                         "Blob transaction present without its bundle: hash {}",
                         hash

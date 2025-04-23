@@ -3034,6 +3034,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "cfg-if",
+ "dashmap 6.1.0",
  "ethrex-common",
  "ethrex-metrics",
  "ethrex-rlp",

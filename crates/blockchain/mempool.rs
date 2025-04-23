@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Mutex, RwLock},
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     constants::{
@@ -11,6 +8,7 @@ use crate::{
     },
     error::MempoolError,
 };
+use dashmap::DashMap;
 use ethrex_common::{
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
     Address, H256, U256,
@@ -19,8 +17,8 @@ use ethrex_storage::error::StoreError;
 
 #[derive(Debug, Default)]
 pub struct Mempool {
-    transaction_pool: RwLock<HashMap<H256, MempoolTransaction>>,
-    blobs_bundle_pool: Mutex<HashMap<H256, BlobsBundle>>,
+    transaction_pool: DashMap<H256, MempoolTransaction>,
+    blobs_bundle_pool: DashMap<H256, BlobsBundle>,
 }
 impl Mempool {
     pub fn new() -> Self {
@@ -28,61 +26,30 @@ impl Mempool {
     }
 
     /// Add transaction to the pool without doing validity checks
-    pub fn add_transaction(
-        &self,
-        hash: H256,
-        transaction: MempoolTransaction,
-    ) -> Result<(), StoreError> {
-        let mut tx_pool = self
-            .transaction_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        tx_pool.insert(hash, transaction);
-
-        Ok(())
+    pub fn add_transaction(&self, hash: H256, transaction: MempoolTransaction) {
+        self.transaction_pool.insert(hash, transaction);
     }
 
     /// Add a blobs bundle to the pool by its blob transaction hash
-    pub fn add_blobs_bundle(
-        &self,
-        tx_hash: H256,
-        blobs_bundle: BlobsBundle,
-    ) -> Result<(), StoreError> {
-        self.blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
-            .insert(tx_hash, blobs_bundle);
-        Ok(())
+    pub fn add_blobs_bundle(&self, tx_hash: H256, blobs_bundle: BlobsBundle) {
+        self.blobs_bundle_pool.insert(tx_hash, blobs_bundle);
     }
 
     /// Get a blobs bundle to the pool given its blob transaction hash
-    pub fn get_blobs_bundle(&self, tx_hash: H256) -> Result<Option<BlobsBundle>, StoreError> {
-        Ok(self
-            .blobs_bundle_pool
-            .lock()
-            .map_err(|error| StoreError::Custom(error.to_string()))?
-            .get(&tx_hash)
-            .cloned())
+    pub fn get_blobs_bundle(&self, tx_hash: H256) -> Option<BlobsBundle> {
+        self.blobs_bundle_pool.get(&tx_hash).as_deref().cloned()
     }
 
     /// Remove a transaction from the pool
-    pub fn remove_transaction(&self, hash: &H256) -> Result<(), StoreError> {
-        let mut tx_pool = self
-            .transaction_pool
-            .write()
-            .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
-        if let Some(tx) = tx_pool.get(hash) {
+    pub fn remove_transaction(&self, hash: &H256) {
+        if let Some(tx) = self.transaction_pool.get(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
-                self.blobs_bundle_pool
-                    .lock()
-                    .map_err(|error| StoreError::Custom(error.to_string()))?
-                    .remove(&tx.compute_hash());
+                self.blobs_bundle_pool.remove(&tx.compute_hash());
             }
 
-            tx_pool.remove(hash);
+            drop(tx); // need to drop ref to tx before remove to avoid deadlock.
+            self.transaction_pool.remove(hash);
         };
-
-        Ok(())
     }
 
     /// Applies the filter and returns a set of suitable transactions from the mempool.
@@ -90,7 +57,7 @@ impl Mempool {
     pub fn filter_transactions(
         &self,
         filter: &PendingTxFilter,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+    ) -> HashMap<Address, Vec<MempoolTransaction>> {
         let filter_tx = |tx: &Transaction| -> bool {
             // Filter by tx type
             let is_blob_tx = matches!(tx, Transaction::EIP4844Transaction(_));
@@ -129,14 +96,11 @@ impl Mempool {
     pub fn filter_transactions_with_filter_fn(
         &self,
         filter: &dyn Fn(&Transaction) -> bool,
-    ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
+    ) -> HashMap<Address, Vec<MempoolTransaction>> {
         let mut txs_by_sender: HashMap<Address, Vec<MempoolTransaction>> = HashMap::new();
-        let tx_pool = self
-            .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
 
-        for (_, tx) in tx_pool.iter() {
+        for item in self.transaction_pool.iter() {
+            let tx = item.value();
             if filter(tx) {
                 txs_by_sender
                     .entry(tx.sender())
@@ -146,7 +110,7 @@ impl Mempool {
         }
 
         txs_by_sender.iter_mut().for_each(|(_, txs)| txs.sort());
-        Ok(txs_by_sender)
+        txs_by_sender
     }
 
     /// Gets hashes from possible_hashes that are not already known in the mempool.
@@ -154,12 +118,11 @@ impl Mempool {
         &self,
         possible_hashes: &[H256],
     ) -> Result<Vec<H256>, StoreError> {
-        let tx_pool = self
+        let tx_set: HashSet<_> = self
             .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?;
-
-        let tx_set: HashSet<_> = tx_pool.iter().map(|(hash, _)| hash).collect();
+            .iter()
+            .map(|item| *item.key())
+            .collect();
         Ok(possible_hashes
             .iter()
             .filter(|hash| !tx_set.contains(hash))
@@ -173,10 +136,8 @@ impl Mempool {
     ) -> Result<Option<Transaction>, StoreError> {
         let tx = self
             .transaction_pool
-            .read()
-            .map_err(|error| StoreError::MempoolReadLock(error.to_string()))?
             .get(&transaction_hash)
-            .map(|e| e.clone().into());
+            .map(|e| e.value().clone().into());
 
         Ok(tx)
     }
@@ -190,7 +151,7 @@ impl Mempool {
             only_blob_txs: false,
         };
 
-        let pending_txs = self.filter_transactions(&pending_filter)?;
+        let pending_txs = self.filter_transactions(&pending_filter);
         let nonce = match pending_txs.get(address) {
             Some(txs) => txs.last().map(|tx| tx.nonce() + 1),
             None => None,
@@ -647,11 +608,9 @@ mod tests {
         let mempool = Mempool::new();
         let filter =
             |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
-        mempool
-            .add_transaction(blob_tx_hash, blob_tx.clone())
-            .unwrap();
-        mempool.add_transaction(plain_tx_hash, plain_tx).unwrap();
-        let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
+        mempool.add_transaction(blob_tx_hash, blob_tx.clone());
+        mempool.add_transaction(plain_tx_hash, plain_tx);
+        let txs = mempool.filter_transactions_with_filter_fn(&filter);
         assert_eq!(txs, HashMap::from([(blob_tx.sender(), vec![blob_tx])]));
     }
 
@@ -669,7 +628,7 @@ mod tests {
                 commitments: commitments.to_vec(),
                 proofs: proofs.to_vec(),
             };
-            mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
+            mempool.add_blobs_bundle(H256::random(), bundle);
         }
     }
 }

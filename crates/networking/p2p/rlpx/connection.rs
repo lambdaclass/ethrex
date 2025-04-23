@@ -394,7 +394,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             let txs: Vec<MempoolTransaction> = self
                 .blockchain
                 .mempool
-                .filter_transactions_with_filter_fn(&filter)?
+                .filter_transactions_with_filter_fn(&filter)
                 .into_values()
                 .flatten()
                 .collect();
