@@ -220,11 +220,11 @@ impl Hook for L2Hook {
     fn finalize_execution(
         &self,
         vm: &mut crate::vm::VM<'_>,
-        initial_call_frame: &crate::call_frame::CallFrame,
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
+
         // POST-EXECUTION Changes
-        let receiver_address = initial_call_frame.to;
+        let receiver_address = vm.current_call_frame()?.to;
 
         // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
@@ -263,7 +263,7 @@ impl Hook for L2Hook {
         report.gas_refunded = refunded_gas;
 
         if vm.env.config.fork >= Fork::Prague {
-            let floor_gas_price = vm.get_min_gas_used(initial_call_frame)?;
+            let floor_gas_price = vm.get_min_gas_used(vm.current_call_frame()?)?;
             let execution_gas_used = consumed_gas.saturating_sub(refunded_gas);
             if floor_gas_price > execution_gas_used {
                 consumed_gas = floor_gas_price;

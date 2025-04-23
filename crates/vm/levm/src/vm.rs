@@ -413,7 +413,8 @@ impl<'a> VM<'a> {
     }
 
     /// Calculates the minimum gas to be consumed in the transaction.
-    pub fn get_min_gas_used(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
+    pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
+        let initial_call_frame = self.current_call_frame()?;
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create() {
             &initial_call_frame.bytecode
@@ -616,15 +617,9 @@ impl<'a> VM<'a> {
         // NOTE: ATTOW the default hook is created in VM::new(), so
         // (in theory) _at least_ the default finalize execution should
         // run
-        let call_frame = self
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         for hook in self.hooks.clone() {
-            hook.finalize_execution(self, &call_frame, report)?;
+            hook.finalize_execution(self, report)?;
         }
-        self.call_frames.push(call_frame);
-
         Ok(())
     }
 }

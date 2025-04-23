@@ -324,12 +324,11 @@ impl Hook for DefaultHook {
     fn finalize_execution(
         &self,
         vm: &mut VM<'_>,
-        initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
-        // POST-EXECUTION Changes
-        let sender_address = initial_call_frame.msg_sender;
-        let receiver_address = initial_call_frame.to;
+
+        let sender_address = vm.current_call_frame()?.msg_sender;
+        let receiver_address = vm.current_call_frame()?.to;
 
         // 1. Undo value transfer if the transaction has reverted
         if let TxResult::Revert(_) = report.result {
@@ -345,7 +344,7 @@ impl Hook for DefaultHook {
                 // If transaction execution results in failure (any
                 // exceptional condition or code reverting), setting
                 // delegation designations is not rolled back.
-                decrease_account_balance(vm.db, receiver_address, initial_call_frame.msg_value)?;
+                decrease_account_balance(vm.db, receiver_address, vm.current_call_frame()?.msg_value)?;
             } else {
                 // If the receiver of the transaction was in the cache before the transaction we restore it's state,
                 // but if it wasn't then we remove the account from cache like nothing happened.
@@ -356,7 +355,7 @@ impl Hook for DefaultHook {
                 }
             }
 
-            increase_account_balance(vm.db, sender_address, initial_call_frame.msg_value)?;
+            increase_account_balance(vm.db, sender_address, vm.current_call_frame()?.msg_value)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
@@ -383,7 +382,7 @@ impl Hook for DefaultHook {
             .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
 
         let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
-            let minimum_gas_consumed = vm.get_min_gas_used(initial_call_frame)?;
+            let minimum_gas_consumed = vm.get_min_gas_used(vm.current_call_frame()?)?;
             exec_gas_consumed.max(minimum_gas_consumed)
         } else {
             exec_gas_consumed

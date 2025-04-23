@@ -905,6 +905,7 @@ impl<'a> VM<'a> {
         call_frame: &CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<bool, VMError> {
+        
         if call_frame.depth == 0 {
             self.call_frames.push(call_frame.clone());
             return Ok(false);
