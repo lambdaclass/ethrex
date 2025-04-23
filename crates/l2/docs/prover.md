@@ -35,11 +35,11 @@ sequenceDiagram
     participant ProverClient
     participant ProverServer
     ProverClient->>+ProverServer: ProofData::Request
-    ProverServer-->>-ProverClient: ProofData::Response(block_number, ProverInputs)
+    ProverServer-->>-ProverClient: ProofData::Response(batch_number, ProverInputs)
     ProverClient->>+zkVM: Prove(ProverInputs)
     zkVM-->>-ProverClient: Creates zkProof
-    ProverClient->>+ProverServer: ProofData::Submit(block_number, zkProof)
-    ProverServer-->>-ProverClient: ProofData::SubmitAck(block_number)
+    ProverClient->>+ProverServer: ProofData::Submit(batch_number, zkProof)
+    ProverServer-->>-ProverClient: ProofData::SubmitAck(batch_number)
 ```
 
 ## How
