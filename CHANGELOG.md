@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-04-23
+
+- Make TrieDb trait use NodeHash as key [2517](https://github.com/lambdaclass/ethrex/pull/2517)
+
 ### 2025-04-22
 
 - Transform the inlined variant of NodeHash to a constant sized array [2516](https://github.com/lambdaclass/ethrex/pull/2516)
