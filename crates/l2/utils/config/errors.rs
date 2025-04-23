@@ -19,8 +19,6 @@ pub enum ConfigError {
     HexParsingError(String),
     #[error("{0}")]
     Custom(String),
-    #[error("Internal error: {0}")]
-    InternalError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

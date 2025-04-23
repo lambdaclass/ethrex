@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
@@ -131,50 +131,31 @@ impl L1ProofSender {
         // the structure has to match the one defined in the OnChainProposer.sol contract.
         // It may cause some issues, but the ethrex_prover_lib cannot be imported,
         // this approach is straight-forward for now.
-        let risc0_proof = {
-            if self.needed_proof_types.contains(&ProverType::RISC0) {
-                let risc0_proof =
-                    read_proof(block_number, StateFileType::Proof(ProverType::RISC0))?;
-                if risc0_proof.prover_type != ProverType::RISC0 {
-                    return Err(ProofSenderError::ProofNotPresent(ProverType::RISC0));
-                }
-                risc0_proof.calldata
-            } else {
-                ProverType::RISC0.empty_calldata()
+        let mut proofs = HashMap::with_capacity(self.needed_proof_types.len());
+        for prover_type in self.needed_proof_types.iter() {
+            let proof = read_proof(block_number, StateFileType::Proof(*prover_type))?;
+            if proof.prover_type != *prover_type {
+                return Err(ProofSenderError::ProofNotPresent(*prover_type));
             }
-        };
-
-        let sp1_proof = {
-            if self.needed_proof_types.contains(&ProverType::SP1) {
-                let sp1_proof = read_proof(block_number, StateFileType::Proof(ProverType::SP1))?;
-                if sp1_proof.prover_type != ProverType::SP1 {
-                    return Err(ProofSenderError::ProofNotPresent(ProverType::SP1));
-                }
-                sp1_proof.calldata
-            } else {
-                ProverType::SP1.empty_calldata()
-            }
-        };
-
-        let pico_proof = {
-            if self.needed_proof_types.contains(&ProverType::Pico) {
-                let pico_proof = read_proof(block_number, StateFileType::Proof(ProverType::Pico))?;
-                if pico_proof.prover_type != ProverType::Pico {
-                    return Err(ProofSenderError::ProofNotPresent(ProverType::Pico));
-                }
-                pico_proof.calldata
-            } else {
-                ProverType::Pico.empty_calldata()
-            }
-        };
+            proofs.insert(prover_type, proof.calldata);
+        }
 
         debug!("Sending proof for block number: {block_number}");
 
         let calldata_values = [
             &[Value::Uint(U256::from(block_number))],
-            risc0_proof.as_slice(),
-            sp1_proof.as_slice(),
-            pico_proof.as_slice(),
+            proofs
+                .get(&ProverType::RISC0)
+                .unwrap_or(&ProverType::RISC0.empty_calldata())
+                .as_slice(),
+            proofs
+                .get(&ProverType::SP1)
+                .unwrap_or(&ProverType::SP1.empty_calldata())
+                .as_slice(),
+            proofs
+                .get(&ProverType::Pico)
+                .unwrap_or(&ProverType::Pico.empty_calldata())
+                .as_slice(),
         ]
         .concat();
 
