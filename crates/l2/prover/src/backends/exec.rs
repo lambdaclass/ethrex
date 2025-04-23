@@ -1,7 +1,4 @@
-use std::collections::HashMap;
-
-use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_common::Address;
+use ethrex_blockchain::validate_block;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_storage::AccountUpdate;
@@ -56,6 +53,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     if !verify_db(&db, &state_trie, &storage_tries)? {
         return Err("invalid database".to_string().into());
     };
+    let fork = db.chain_config.fork(block.header.timestamp);
 
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
@@ -66,14 +64,15 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
         // Execute block
         let mut vm = Evm::from_execution_db(db.clone());
-        let result = vm.execute_block(&block)?;
-        let receipts = result.receipts;
+        let _result = vm.execute_block(&block)?;
+        // let receipts = result.receipts;
+        let account_updates = vm.get_state_transitions(fork)?;
 
         // Update db for the next block
-        db.apply_account_updates(&result.account_updates);
+        db.apply_account_updates(&account_updates);
 
         // Update acc_account_updates
-        for account in result.account_updates {
+        for account in account_updates {
             let address = account.address;
             if let Some(existing) = acc_account_updates.get_mut(&address) {
                 existing.merge(account);

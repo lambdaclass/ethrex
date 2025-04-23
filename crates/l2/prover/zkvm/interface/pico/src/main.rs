@@ -47,6 +47,7 @@ pub fn main() {
         let mut vm = Evm::from_execution_db(db.clone());
         let result = vm.execute_block(&block).expect("failed to execute block");
         let receipts = result.receipts;
+        let account_updates = vm.get_state_transitions(fork)?;
 
         // cumulative_gas_used += receipts
         //     .last()
@@ -54,10 +55,10 @@ pub fn main() {
         //     .unwrap_or_default();
 
         // Update db for the next block
-        db.apply_account_updates(&result.account_updates);
+        db.apply_account_updates(&account_updates);
 
         // Update acc_account_updates
-        for account in result.account_updates {
+        for account in account_updates {
             let address = account.address;
             if let Some(existing) = acc_account_updates.get_mut(&address) {
                 existing.merge(account);
@@ -77,16 +78,9 @@ pub fn main() {
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
-    // if final_state_hash != block.header.state_root {
-    //     panic!("invalid final state trie");
-    // }
-
-    // Output gas for measurement purposes
-    // let cumulative_gas_used = receipts
-    //     .last()
-    //     .map(|last_receipt| last_receipt.cumulative_gas_used)
-    //     .unwrap_or_default();
-    // write(&cumulative_gas_used);
+    if final_state_hash != block.header.state_root {
+        panic!("invalid final state trie");
+    }
 
     commit(&ProgramOutput {
         initial_state_hash,

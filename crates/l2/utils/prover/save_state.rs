@@ -456,9 +456,9 @@ mod tests {
                 block_hash: block.hash(),
             };
             let mut db = GeneralizedDatabase::new(Arc::new(store.clone()), CacheDB::new());
-            let account_updates = LEVM::execute_block(blocks.last().unwrap(), &mut db)
-                .unwrap()
-                .account_updates;
+            LEVM::execute_block(blocks.last().unwrap(), &mut db)?;
+            let fork = db.store.get_chain_config().fork(block.header.timestamp);
+            let account_updates = LEVM::get_state_transitions(&mut db, fork)?;
 
             account_updates_vec.push(account_updates.clone());
 
