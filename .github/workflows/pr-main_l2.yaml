@@ -45,15 +45,16 @@ jobs:
           name: buildx-cache
           path: /tmp/buildx-cache
 
-  integration-test:
-    # "Integration Test" is a required check, don't change the name
-    name: Integration Test
+  test:
+    name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        validium:
-          - false
-          - true
+        include:
+          - name: "Validium"
+            validium: true
+          - name: "Vanilla"
+            validium: false
     needs: [docker-bake]
     steps:
       - name: Checkout sources
@@ -153,3 +154,24 @@ jobs:
           sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
 
           make state-diff-test
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  all-tests:
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [test, state-diff-test]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ always() && needs.test.result != 'skipped' && needs.state-diff-test.result != 'skipped' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "Job Integration Tests"
+            exit 1
+          fi
+
+          if [ "${{ needs.state-diff-test.result }}" != "success" ]; then
+            echo "Job State Reconstruction Tests failed"
+            exit 1
+          fi
