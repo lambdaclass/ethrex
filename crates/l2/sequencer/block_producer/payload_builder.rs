@@ -24,9 +24,10 @@ use crate::{
     utils::helpers::{is_deposit_l2, is_withdrawal_l2},
 };
 
-// transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64) + base_fee_per_gas(u64).
-// 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes
-const HEADER_FIELDS_SIZE: usize = 96;
+// transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64)
+// block_number(u64) + base_fee_per_gas(u64) + state_root(H256).
+// 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes + 8bytes + 32bytes
+const LAST_HEADER_FIELDS_SIZE: usize = 136;
 
 // address(H160) + amount(U256) + tx_hash(H256).
 // 20bytes + 32bytes + 32bytes.
@@ -251,7 +252,7 @@ async fn update_state_diff_size(
     }
     let modified_accounts_size = calc_modified_accounts_size(context, accounts_info_cache).await?;
 
-    let current_state_diff_size = 1 /* version (u8) */ + HEADER_FIELDS_SIZE + *acc_withdrawals_size + *acc_deposits_size + modified_accounts_size;
+    let current_state_diff_size = 1 /* version (u8) */ + LAST_HEADER_FIELDS_SIZE + *acc_withdrawals_size + *acc_deposits_size + modified_accounts_size;
 
     if current_state_diff_size > SAFE_BYTES_PER_BLOB {
         // Restore the withdrawals and deposits counters.
