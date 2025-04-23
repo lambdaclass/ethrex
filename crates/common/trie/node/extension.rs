@@ -28,7 +28,7 @@ impl ExtensionNode {
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
             let child_node = state
-                .get_node(self.child.clone())?
+                .get_node(self.child)?
                 .ok_or(TrieError::InconsistentTree)?;
 
             child_node.get(state, path)
@@ -144,21 +144,14 @@ impl ExtensionNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(self.encode_raw())
+        NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
         let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
-        match &self.child {
-            NodeHash::Inline(x) => {
-                encoder = encoder.encode_raw(x);
-            }
-            NodeHash::Hashed(x) => {
-                encoder = encoder.encode_bytes(&x.0);
-            }
-        }
+        encoder = self.child.encode(encoder);
         encoder.finish();
         buf
     }
@@ -166,7 +159,7 @@ impl ExtensionNode {
     /// Inserts the node into the state and returns its hash
     pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
         let hash = self.compute_hash();
-        state.insert_node(self.into(), hash.clone());
+        state.insert_node(self.into(), hash);
         Ok(hash)
     }
 
@@ -187,7 +180,7 @@ impl ExtensionNode {
         // Continue to child
         if path.skip_prefix(&self.prefix) {
             let child_node = state
-                .get_node(self.child.clone())?
+                .get_node(self.child)?
                 .ok_or(TrieError::InconsistentTree)?;
             child_node.get_path(state, path, node_path)?;
         }
