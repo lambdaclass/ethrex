@@ -1028,11 +1028,11 @@ impl StoreEngine for RedBStore {
         }
     }
 
-    async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
         self.write(
             CHAIN_DATA_TABLE,
             ChainDataIndex::IsSynced,
-            status.encode_to_vec(),
+            is_synced.encode_to_vec(),
         )
         .await
     }
