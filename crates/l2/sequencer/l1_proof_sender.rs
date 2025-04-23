@@ -108,18 +108,8 @@ impl L1ProofSender {
     }
 
     async fn run(&self) {
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
-        tokio::task::spawn(async move {
-            if let Err(e) = tokio::signal::ctrl_c().await {
-                error!("Error handling ctrl_c: {e}");
-            };
-            if let Err(e) = shutdown_tx.send(0) {
-                error!("Error sending shutdown message through the oneshot::channel {e}");
-            };
-        });
-
         loop {
-            match self.main_logic(&mut shutdown_rx).await {
+            match self.main_logic().await {
                 Ok(()) => {
                     info!("Proof sender finished. Shutting down");
                     break;
@@ -133,13 +123,8 @@ impl L1ProofSender {
         }
     }
 
-    async fn main_logic(&self, shutdown_rx: &mut Receiver<i32>) -> Result<(), ProofSenderError> {
+    async fn main_logic(&self) -> Result<(), ProofSenderError> {
         loop {
-            if shutdown_rx.try_recv().is_ok() {
-                debug!("Received shutdown signal");
-                break;
-            }
-
             let block_to_verify = 1 + EthClient::get_last_verified_block(
                 &self.eth_client,
                 self.on_chain_proposer_address,
@@ -152,8 +137,6 @@ impl L1ProofSender {
                 self.send_proof(block_to_verify).await?;
             }
         }
-
-        Ok(())
     }
 
     pub async fn send_proof(&self, block_number: u64) -> Result<H256, ProofSenderError> {
