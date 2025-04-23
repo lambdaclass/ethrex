@@ -209,9 +209,11 @@ Node options:
           
           [env: ETHREX_NETWORK=]
 
+          [env: ETHREX_NETWORK=]
+
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
-          
+
           [env: ETHREX_DATADIR=]
           [default: ethrex]
 
@@ -225,12 +227,15 @@ Node options:
           [env: ETHREX_METRICS_PORT=]
           [default: 9090]
 
+      --metrics
+          Enable metrics collection and exposition
+
       --dev
           If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
 
       --evm <EVM_BACKEND>
           Has to be `levm` or `revm`
-          
+
           [env: ETHREX_EVM=]
           [default: revm]
 
@@ -270,13 +275,13 @@ P2P options:
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the http rpc server.
-          
+
           [env: ETHREX_HTTP_ADDR=]
           [default: localhost]
 
       --http.port <PORT>
           Listening port for the http rpc server.
-          
+
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
 
