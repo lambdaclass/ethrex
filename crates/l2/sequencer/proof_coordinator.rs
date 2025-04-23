@@ -277,12 +277,11 @@ impl ProofCoordinator {
         info!("ProofSubmit received for block number: {block_number}");
 
         // Check if we have the proof for that ProverType
-        match block_number_has_state_file(StateFileType::Proof(calldata.prover_type), block_number)
-        {
-            Ok(false) => write_state(block_number, &StateType::Proof(calldata))?,
-            Ok(true) => debug!("Already known proof. Skipping"),
-            Err(e) => return Err(ProverServerError::from(e)),
-        };
+        if block_number_has_state_file(StateFileType::Proof(calldata.prover_type), block_number)? {
+            debug!("Already known proof. Skipping");
+        } else {
+            write_state(block_number, &StateType::Proof(calldata))?;
+        }
 
         let response = ProofData::proof_submit_ack(block_number);
 
