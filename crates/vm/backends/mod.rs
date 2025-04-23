@@ -286,5 +286,4 @@ impl Evm {
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
-    pub account_updates: Vec<AccountUpdate>,
 }

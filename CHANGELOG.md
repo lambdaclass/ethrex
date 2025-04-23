@@ -4,6 +4,8 @@
 
 ### 2025-04-22
 
+- Avoid calculating state transitions after every block in bulk mode [2519](https://github.com/lambdaclass/ethrex/pull/2519)
+
 - Transform the inlined variant of NodeHash to a constant sized array [2516](https://github.com/lambdaclass/ethrex/pull/2516)
 
 ### 2025-04-11
