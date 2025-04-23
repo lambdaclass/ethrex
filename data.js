@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745419697306,
+  "lastUpdate": 1745422034369,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3835,6 +3835,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182754061490,
             "range": "± 538702793",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b9cb992689c85c2c037083d731855e56aac8a2ee",
+          "message": "fix(levm): also use config chain_id (#2537)\n\n**Motivation**\n\nIn #2531 only one of the creation methods was fixed to use chain_id from\nthe config\n\n**Description**\n\nThis PR changes it in the other constructor",
+          "timestamp": "2025-04-23T14:39:27Z",
+          "tree_id": "e40badc4c2f4dbf0ab6d390fe9e95a799ef7ce9f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b9cb992689c85c2c037083d731855e56aac8a2ee"
+        },
+        "date": 1745422032652,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180822174433,
+            "range": "± 819046710",
             "unit": "ns/iter"
           }
         ]
