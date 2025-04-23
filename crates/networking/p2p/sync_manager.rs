@@ -55,15 +55,18 @@ impl SyncManager {
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
         };
-        // If the node was in the middle of a sync and then re-started we must resume syncing
-        // Otherwise we will incorreclty assume the node is already synced and work on invalid state
-        if store
-            .get_header_download_checkpoint()
-            .await
-            .is_ok_and(|res| res.is_some())
-        {
-            sync_manager.start_sync().await;
-        }
+        // Hack to start syncing without needing consensus
+        sync_manager.set_head(H256::random());
+        sync_manager.start_sync().await;
+        // // If the node was in the middle of a sync and then re-started we must resume syncing
+        // // Otherwise we will incorreclty assume the node is already synced and work on invalid state
+        // if store
+        //     .get_header_download_checkpoint()
+        //     .await
+        //     .is_ok_and(|res| res.is_some())
+        // {
+        //     sync_manager.start_sync().await;
+        // }
         sync_manager
     }
 
