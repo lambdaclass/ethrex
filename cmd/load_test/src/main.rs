@@ -9,7 +9,6 @@ use ethrex_rpc::types::receipt::RpcReceipt;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hex::ToHex;
-use keccak_hash::keccak;
 use secp256k1::{PublicKey, SecretKey};
 use std::fs;
 use std::path::Path;
@@ -117,7 +116,7 @@ async fn claim_erc20_balances(
 ) -> eyre::Result<()> {
     let mut tasks = JoinSet::new();
 
-    for (pk, sk) in accounts {
+    for (_pk, sk) in accounts {
         let contract = contract_address;
         let client = client.clone();
         let sk = *sk;
