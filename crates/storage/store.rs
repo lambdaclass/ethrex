@@ -976,8 +976,8 @@ impl Store {
     pub async fn is_synced(&self) -> Result<bool, StoreError> {
         self.engine.is_synced().await
     }
-    pub async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.engine.update_sync_status(status).await
+    pub async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
+        self.engine.update_sync_status(is_synced).await
     }
 
     /// Write an account batch into the current state snapshot
