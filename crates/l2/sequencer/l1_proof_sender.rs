@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::{
@@ -7,7 +5,6 @@ use ethrex_rpc::{
     EthClient,
 };
 use secp256k1::SecretKey;
-use tokio::sync::oneshot::Receiver;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -24,6 +21,8 @@ use crate::{
     },
 };
 
+use super::utils::sleep_random;
+
 // These constants have to match with the OnChainProposer.sol contract
 const R0VERIFIER: &str = "R0VERIFIER()";
 const SP1VERIFIER: &str = "SP1VERIFIER()";
@@ -39,10 +38,10 @@ const VERIFY_FUNCTION_SIGNATURE: &str =
 pub async fn start_l1_proof_sender() -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
-    let prover_server_config = ProofCoordinatorConfig::from_env()?;
+    let proof_sender_config = ProofCoordinatorConfig::from_env()?;
 
     let proof_sender =
-        L1ProofSender::new(&prover_server_config, &committer_config, &eth_config).await?;
+        L1ProofSender::new(&proof_sender_config, &committer_config, &eth_config).await?;
     proof_sender.run().await;
 
     Ok(())
@@ -54,6 +53,7 @@ struct L1ProofSender {
     l1_private_key: SecretKey,
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
+    proof_send_interval_ms: u64,
 }
 
 impl L1ProofSender {
@@ -104,39 +104,34 @@ impl L1ProofSender {
             l1_private_key: config.l1_private_key,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             needed_proof_types,
+            proof_send_interval_ms: config.proof_send_interval_ms,
         })
     }
 
     async fn run(&self) {
         loop {
-            match self.main_logic().await {
-                Ok(()) => {
-                    info!("Proof sender finished. Shutting down");
-                    break;
-                }
-                Err(e) => {
-                    error!("Proof sender exited with error, trying to restart the main_logic function: {e}")
-                }
+            if let Err(err) = self.main_logic().await {
+                error!("L1 Proof Sender Error: {}", err);
             }
 
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            sleep_random(self.proof_send_interval_ms).await;
         }
     }
 
     async fn main_logic(&self) -> Result<(), ProofSenderError> {
-        loop {
-            let block_to_verify = 1 + EthClient::get_last_verified_block(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
+        let block_to_verify = 1 + EthClient::get_last_verified_block(
+            &self.eth_client,
+            self.on_chain_proposer_address,
+        )
+        .await?;
 
-            if block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types)
-                .is_ok_and(|has_all_proofs| has_all_proofs)
-            {
-                self.send_proof(block_to_verify).await?;
-            }
+        if block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types)
+            .is_ok_and(|has_all_proofs| has_all_proofs)
+        {
+            self.send_proof(block_to_verify).await?;
         }
+
+        Ok(())
     }
 
     pub async fn send_proof(&self, block_number: u64) -> Result<H256, ProofSenderError> {

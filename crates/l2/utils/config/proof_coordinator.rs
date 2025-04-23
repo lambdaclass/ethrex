@@ -12,6 +12,7 @@ pub struct ProofCoordinatorConfig {
     pub l1_private_key: SecretKey,
     pub listen_ip: IpAddr,
     pub listen_port: u16,
+    pub proof_send_interval_ms: u64,
     pub dev_mode: bool,
 }
 
