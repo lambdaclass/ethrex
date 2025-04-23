@@ -155,8 +155,10 @@ impl Command {
                 )
                 .await;
 
-                // TODO: Add a --metrics flag to enable metrics.
-                init_metrics(&opts.node_opts, tracker.clone());
+                // Initialize metrics if enabled
+                if opts.node_opts.metrics_enabled {
+                    init_metrics(&opts.node_opts, tracker.clone());
+                }
 
                 if opts.node_opts.p2p_enabled {
                     init_network(

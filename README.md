@@ -225,6 +225,9 @@ Node options:
           [env: ETHREX_METRICS_PORT=]
           [default: 9090]
 
+      --metrics
+          Enable metrics collection and exposition
+
       --dev
           If set it will be considered as `true`. The Binary has to be built with the `dev` feature enabled.
 
