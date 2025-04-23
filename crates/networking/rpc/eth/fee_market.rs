@@ -197,8 +197,6 @@ fn project_next_block_base_fee_values(
     // Geth performs a validation for this case:
     // -> https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go#L93
     let next_gas_limit = calc_gas_limit(header.gas_limit);
-    // This ENV variable is used for the L2 to set an arbitrary value
-    // if not present the constant value is used
     let base_fee_per_gas = calculate_base_fee_per_gas(
         next_gas_limit,
         header.gas_limit,

@@ -408,8 +408,6 @@ async fn build_payload(
     version: u8,
 ) -> Result<u64, RpcErr> {
     info!("Fork choice updated includes payload attributes. Creating a new payload.");
-    // This ENV variable is used for the L2 to set an arbitrary value
-    // if not present the constant value is used
     let args = BuildPayloadArgs {
         parent: fork_choice_state.head_block_hash,
         timestamp: attributes.timestamp,
