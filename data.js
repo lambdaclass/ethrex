@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745438868239,
+  "lastUpdate": 1745444952147,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3985,6 +3985,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179314675128,
             "range": "± 863506155",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4e6a960d89fefc07cd33f64e52e9c6c9f4d8d5cc",
+          "message": "fix(levm): don't read from parent block when processing withdrawals (#2556)\n\n**Motivation**\nWhen processing withdrawals with levm, accounts that are not cached are\nfetched directly from the `Store` (aka our DB) using the block's parent\nhash instead of using the `StoreWrapper` api that already knows which\nblock's state to read accounts from (as we do for all other DB reads).\nThis works fine when executing one block at a time as the block that the\nStoreWrapper reads from is the block's parent. But when we execute\nblocks in batch, the StoreWrapper reads from the parent of the first\nblock in the batch, as changes from the following blocks will be\nrecorded in the cache, so when processing withdrawals we may not have\nthe state of the current block's parent in the Store.\nThis PR fixes this issue by using the `StoreWrapper` to read uncached\naccounts from the batch's parent block instead of looking for an\naccounts in a parent state that may not exist. It also removes the\nmethod `get_account_info_by_hash` so we don't run into the same issue in\nthe future\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Remove misleading method `get_account_info_by_hash` from levm Database\ntrait (this can lead us to read state from a block that is not the\ndesignated parent block and which's state may not exist leading to\nInconsistent Trie errors)\n* Remove the argument `parent_block_hash` from `process_withdrawals`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-23T20:59:41Z",
+          "tree_id": "0358e2acbf771434f59343540eed21326b65e394",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4e6a960d89fefc07cd33f64e52e9c6c9f4d8d5cc"
+        },
+        "date": 1745444950159,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183262364831,
+            "range": "± 1251079032",
             "unit": "ns/iter"
           }
         ]
