@@ -37,7 +37,11 @@ impl RpcHandler for NewPayloadV1Request {
         validate_execution_payload_v1(&self.payload)?;
         let block = match get_block_from_payload(&self.payload, None, None) {
             Ok(block) => block,
-            Err(err) => return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(&err.to_string()))?)
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?)
+            }
         };
         let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -65,7 +69,11 @@ impl RpcHandler for NewPayloadV2Request {
         }
         let block = match get_block_from_payload(&self.payload, None, None) {
             Ok(block) => block,
-            Err(err) => return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(&err.to_string()))?)
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?)
+            }
         };
         let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -113,9 +121,17 @@ impl RpcHandler for NewPayloadV3Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let block = match get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root), None) {
+        let block = match get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            None,
+        ) {
             Ok(block) => block,
-            Err(err) => return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(&err.to_string()))?)
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?)
+            }
         };
         validate_fork(&block, Fork::Cancun, &context)?;
         validate_execution_payload_v3(&self.payload)?;
@@ -216,9 +232,17 @@ impl RpcHandler for NewPayloadV4Request {
         validate_execution_requests(&self.execution_requests)?;
 
         let requests_hash = compute_requests_hash(&self.execution_requests);
-        let block = match get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root), Some(requests_hash)) {
+        let block = match get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            Some(requests_hash),
+        ) {
             Ok(block) => block,
-            Err(err) => return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(&err.to_string()))?)
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?)
+            }
         };
 
         let chain_config = context.storage.get_chain_config()?;
