@@ -1,5 +1,4 @@
 use crate::{
-    call_frame::CallFrame,
     errors::{OpcodeResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
@@ -12,10 +11,8 @@ use sha3::{Digest, Keccak256};
 // Opcodes: KECCAK256
 
 impl<'a> VM<'a> {
-    pub fn op_keccak256(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_keccak256(&mut self) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         let offset = current_call_frame.stack.pop()?;
         let size: usize = current_call_frame
             .stack
