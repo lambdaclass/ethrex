@@ -1,4 +1,3 @@
-use ethrex_common::types::AccountInfo;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::constants::EMPTY_CODE_HASH;
@@ -86,29 +85,6 @@ impl LevmDatabase for DatabaseLogger {
         self.store.lock().unwrap().get_chain_config()
     }
 
-    fn get_account_info_by_hash(
-        &self,
-        block_hash: ethrex_common::types::BlockHash,
-        address: CoreAddress,
-    ) -> Result<Option<AccountInfo>, DatabaseError> {
-        let account = self
-            .store
-            .lock()
-            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_account_info_by_hash(block_hash, address)?;
-        {
-            if let Some(acc) = account.clone() {
-                let mut code_accessed = self
-                    .code_accessed
-                    .lock()
-                    .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
-                code_accessed.push(acc.code_hash);
-            }
-        }
-
-        Ok(account)
-    }
-
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
         {
             let mut code_accessed = self
@@ -181,16 +157,6 @@ impl LevmDatabase for StoreWrapper {
         self.store.get_chain_config().unwrap()
     }
 
-    fn get_account_info_by_hash(
-        &self,
-        block_hash: ethrex_common::types::BlockHash,
-        address: CoreAddress,
-    ) -> Result<Option<AccountInfo>, DatabaseError> {
-        self.store
-            .get_account_info_by_hash(block_hash, address)
-            .map_err(|e| DatabaseError::Custom(e.to_string()))
-    }
-
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
         self.store
             .get_account_code(code_hash)
@@ -246,14 +212,6 @@ impl LevmDatabase for ExecutionDB {
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
         self.get_chain_config()
-    }
-
-    fn get_account_info_by_hash(
-        &self,
-        _block_hash: ethrex_common::types::BlockHash,
-        address: CoreAddress,
-    ) -> Result<Option<ethrex_common::types::AccountInfo>, DatabaseError> {
-        Ok(self.accounts.get(&address).cloned())
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
