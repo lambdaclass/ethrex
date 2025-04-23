@@ -9,7 +9,7 @@ import "./interfaces/IOnChainProposer.sol";
 /// @title CommonBridge contract.
 /// @author LambdaClass
 contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
-    /// @notice Mapping of claimed withdrawals. A withdrawal is claimed if
+    /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
     /// there is a non-zero value in the mapping (a merkle root) for the hash
     /// of the L2 transaction that requested the withdrawal.
     /// @dev The key is the hash of the L2 transaction that requested the

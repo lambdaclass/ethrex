@@ -155,9 +155,9 @@ impl Committer {
 
     async fn prepare_batch_from_block(
         &self,
-        mut last_commited_block_number: BlockNumber,
+        mut last_added_block_number: BlockNumber,
     ) -> Result<(BlobsBundle, Vec<H256>, H256, BlockNumber), CommitterError> {
-        let first_block_of_batch = last_commited_block_number + 1;
+        let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
         let mut acc_withdrawals = vec![];
@@ -169,29 +169,30 @@ impl Committer {
         info!("Preparing state diff from block {}", first_block_of_batch);
 
         loop {
+            // Get a block to add to the batch
             let Some(block_to_commit_body) = self
                 .store
-                .get_block_body(last_commited_block_number + 1)
+                .get_block_body(last_added_block_number + 1)
                 .await
                 .map_err(CommitterError::from)?
             else {
                 debug!("No new block to commit, skipping..");
                 break;
             };
-
             let block_to_commit_header = self
                 .store
-                .get_block_header(last_commited_block_number + 1)
+                .get_block_header(last_added_block_number + 1)
                 .map_err(CommitterError::from)?
                 .ok_or(CommitterError::FailedToGetInformationFromStorage(
                     "Failed to get_block_header() after get_block_body()".to_owned(),
                 ))?;
 
+            // Get block transactions and receipts
             let mut txs_and_receipts = vec![];
             for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
                 let receipt = self
                     .store
-                    .get_receipt(last_commited_block_number + 1, index.try_into()?)
+                    .get_receipt(last_added_block_number + 1, index.try_into()?)
                     .await?
                     .ok_or(CommitterError::InternalError(
                         "Transactions in a block should have a receipt".to_owned(),
@@ -199,22 +200,25 @@ impl Committer {
                 txs_and_receipts.push((tx.clone(), receipt));
             }
 
-            let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
-
+            // Get block withdrawals and deposits
             let withdrawals = self.get_block_withdrawals(&txs_and_receipts)?;
-            let deposits = self.get_block_deposits(&block_to_commit);
+            let deposits = self.get_block_deposits(&txs_and_receipts);
 
+            // Get block account updates.
+            let block_to_commit = Block::new(block_to_commit_header.clone(), block_to_commit_body);
             let account_updates = match self.execution_cache.get(block_to_commit.hash())? {
                 Some(account_updates) => account_updates,
                 None => {
                     warn!(
-                            "Could not find execution cache result for block {}, falling back to re-execution", last_commited_block_number + 1
+                            "Could not find execution cache result for block {}, falling back to re-execution", last_added_block_number + 1
                         );
                     Evm::default(self.store.clone(), block_to_commit.header.parent_hash)
                         .execute_block(&block_to_commit)
                         .map(|result| result.account_updates)?
                 }
             };
+
+            // Accumulate block data with the rest of the batch.
             acc_withdrawals.extend(withdrawals.clone());
             acc_deposits.extend(deposits.clone());
             for account in account_updates {
@@ -226,6 +230,7 @@ impl Committer {
                 }
             }
 
+            // Prepare current state diff.
             let state_diff = self
                 .prepare_state_diff(
                     first_block_of_batch,
@@ -237,8 +242,10 @@ impl Committer {
                 )
                 .await?;
 
+            // Try to generate blobs_bundle.
             match self.generate_blobs_bundle(&state_diff) {
                 Ok(bundle) => {
+                    // Save current blobs_bundle and continue to add more blocks.
                     blobs_bundle = bundle;
                     for (_, tx) in &withdrawals {
                         let hash = get_withdrawal_hash(tx)
@@ -253,9 +260,10 @@ impl Committer {
                             .collect::<Vec<H256>>(),
                     );
 
-                    last_commited_block_number += 1;
+                    last_added_block_number += 1;
                 }
                 Err(e) => {
+                    // Break loop. Use the previous generated blobs_bundle.
                     error!("Failed to generate blobs bundle: {e}");
                     break;
                 }
@@ -266,7 +274,7 @@ impl Committer {
             blobs_bundle,
             withdrawal_hashes,
             deposit_logs_hash,
-            last_commited_block_number,
+            last_added_block_number,
         ))
     }
 
@@ -295,12 +303,13 @@ impl Committer {
         }
     }
 
-    fn get_block_deposits(&self, block: &Block) -> Vec<PrivilegedL2Transaction> {
-        let deposits = block
-            .body
-            .transactions
+    fn get_block_deposits(
+        &self,
+        txs_and_receipts: &[(Transaction, Receipt)],
+    ) -> Vec<PrivilegedL2Transaction> {
+        let deposits = txs_and_receipts
             .iter()
-            .filter_map(|tx| match tx {
+            .filter_map(|(tx, _)| match tx {
                 Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
                 _ => None,
             })
