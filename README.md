@@ -209,8 +209,6 @@ Node options:
 
           [env: ETHREX_NETWORK=]
 
-          [env: ETHREX_NETWORK=]
-
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
 
