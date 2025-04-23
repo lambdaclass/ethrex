@@ -1,9 +1,12 @@
+use std::str::FromStr;
+
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::{
     clients::{eth::WrappedTransaction, Overrides},
     EthClient,
 };
+use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use tracing::{debug, error, info};
 
@@ -23,11 +26,6 @@ use crate::{
 
 use super::utils::sleep_random;
 
-// These constants have to match with the OnChainProposer.sol contract
-const R0VERIFIER: &str = "R0VERIFIER()";
-const SP1VERIFIER: &str = "SP1VERIFIER()";
-const PICOVERIFIER: &str = "PICOVERIFIER()";
-const VERIFIER_CONTRACTS: [&str; 3] = [R0VERIFIER, SP1VERIFIER, PICOVERIFIER];
 const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0xAA,
@@ -64,34 +62,27 @@ impl L1ProofSender {
     ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
 
-        let verifier_contracts = EthClient::get_verifier_contracts(
-            &eth_client,
-            &VERIFIER_CONTRACTS,
-            committer_config.on_chain_proposer_address,
-        )
-        .await?;
-
         let mut needed_proof_types = vec![];
         if !config.dev_mode {
-            for (key, addr) in verifier_contracts {
-                if addr == DEV_MODE_ADDRESS {
+            for prover_type in ProverType::all() {
+                let Some(getter) = prover_type.verifier_getter() else {
                     continue;
-                } else {
-                    match key.as_str() {
-                        "R0VERIFIER()" => {
-                            info!("RISC0 proof needed");
-                            needed_proof_types.push(ProverType::RISC0);
-                        }
-                        "SP1VERIFIER()" => {
-                            info!("SP1 proof needed");
-                            needed_proof_types.push(ProverType::SP1);
-                        }
-                        "PICOVERIFIER()" => {
-                            info!("PICO proof needed");
-                            needed_proof_types.push(ProverType::Pico);
-                        }
-                        _ => unreachable!("There shouldn't be a value different than the used backends/verifiers R0VERIFIER|SP1VERIFER|PICOVERIFIER."),
-                    }
+                };
+                let calldata = keccak(getter)[..4].to_vec();
+
+                let response = eth_client
+                    .call(
+                        committer_config.on_chain_proposer_address,
+                        calldata.into(),
+                        Overrides::default(),
+                    )
+                    .await?;
+                let address = Address::from_str(&response)
+                    .map_err(|_| ConfigError::HexParsingError(response))?;
+
+                if address != DEV_MODE_ADDRESS {
+                    info!("{prover_type} proof needed");
+                    needed_proof_types.push(prover_type);
                 }
             }
         } else {

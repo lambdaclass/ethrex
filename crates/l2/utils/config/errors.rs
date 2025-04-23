@@ -15,8 +15,12 @@ pub enum ConfigError {
     BuildProverServerFromConfigError(#[from] eth::errors::EthClientError),
     #[error("Error parsing the .toml configuration files: {0}")]
     TomlParserError(#[from] TomlParserError),
+    #[error("Error parsing '{0}' as hex value")]
+    HexParsingError(String),
     #[error("{0}")]
     Custom(String),
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
