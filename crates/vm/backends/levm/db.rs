@@ -105,8 +105,8 @@ impl LevmDatabase for DatabaseLogger {
         self.store.get_account_code(code_hash)
     }
 
-    fn get_block(&self) -> CoreH256 {
-        self.store.get_block()
+    fn get_parent_hash(&self) -> CoreH256 {
+        self.store.get_parent_hash()
     }
 }
 
@@ -183,7 +183,7 @@ impl LevmDatabase for StoreWrapper {
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
-    fn get_block(&self) -> CoreH256 {
+    fn get_parent_hash(&self) -> CoreH256 {
         self.block_hash
     }
 }
@@ -250,7 +250,7 @@ impl LevmDatabase for ExecutionDB {
         Ok(self.code.get(&code_hash).cloned())
     }
 
-    fn get_block(&self) -> CoreH256 {
+    fn get_parent_hash(&self) -> CoreH256 {
         *self.block_hashes.iter().max_by_key(|(k, _v)| *k).unwrap().1
     }
 }
