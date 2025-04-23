@@ -20,6 +20,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// logs that is encoded in this root are to be removed from the
     /// pendingDepositLogs queue of the CommonBridge contract.
     struct BlockCommitmentInfo {
+        bytes32 newStateRoot;
         bytes32 stateDiffKZGVersionedHash;
         bytes32 processedDepositLogsRollingHash;
     }
@@ -143,6 +144,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @inheritdoc IOnChainProposer
     function commit(
         uint256 blockNumber,
+        bytes32 newStateRoot,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash
@@ -151,12 +153,8 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             blockNumber == lastCommittedBlock + 1,
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
-        // TODO: We are using the state diff KZG versioned hash to figure out
-        // whether a block was committed or not. Ideally, we should use the new
-        // state root hash instead.
         require(
-            blockCommitments[blockNumber].stateDiffKZGVersionedHash ==
-                bytes32(0),
+            blockCommitments[blockNumber].newStateRoot == bytes32(0),
             "OnChainProposer: block already committed"
         );
 
@@ -179,11 +177,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
         }
         blockCommitments[blockNumber] = BlockCommitmentInfo(
+            newStateRoot,
             stateDiffKZGVersionedHash,
             processedDepositLogsRollingHash
         );
         lastCommittedBlock = blockNumber;
-        emit BlockCommitted(stateDiffKZGVersionedHash);
+        emit BlockCommitted(newStateRoot);
     }
 
     /// @inheritdoc IOnChainProposer
