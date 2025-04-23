@@ -17,6 +17,7 @@ use super::error::DatabaseError;
 use super::CacheDB;
 use super::Database;
 
+#[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,
