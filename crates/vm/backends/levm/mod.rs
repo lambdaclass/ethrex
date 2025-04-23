@@ -20,7 +20,7 @@ use ethrex_common::{
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, GeneralizedDatabase, Substate, VM},
-    Account, AccountInfo as LevmAccountInfo, Environment,
+    Account, Environment,
 };
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
@@ -79,7 +79,7 @@ impl LEVM {
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals, block.header.parent_hash)?;
+            Self::process_withdrawals(db, withdrawals)?;
         }
 
         cfg_if::cfg_if! {
@@ -243,7 +243,6 @@ impl LEVM {
     pub fn process_withdrawals(
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
-        parent_hash: H256,
     ) -> Result<(), ethrex_storage::error::StoreError> {
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
@@ -253,23 +252,13 @@ impl LEVM {
         {
             // We check if it was in block_cache, if not, we get it from DB.
             let mut account = db.cache.get(&address).cloned().unwrap_or({
-                let acc_info = db
+                let info = db
                     .store
-                    .get_account_info_by_hash(parent_hash, address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-                    .unwrap_or_default();
-                let acc_code = db
-                    .store
-                    .get_account_code(acc_info.code_hash)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-                    .unwrap_or_default();
+                    .get_account_info(address)
+                    .map_err(|e| StoreError::Custom(e.to_string()))?;
 
                 Account {
-                    info: LevmAccountInfo {
-                        balance: acc_info.balance,
-                        bytecode: acc_code,
-                        nonce: acc_info.nonce,
-                    },
+                    info,
                     // This is the added_storage for the withdrawal.
                     // If not involved in the TX, there won't be any updates in the storage
                     storage: HashMap::new(),
