@@ -22,7 +22,7 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     /// @dev The value is the merkle root of the logs.
     /// @dev If there exist a merkle root for a given block number it means
     /// that the logs were published on L1, and that that block was committed.
-    mapping(uint256 => bytes32) public blockWithdrawalsLogs;
+    mapping(uint256 => bytes32) public blockWithdrawalLogsMerkleRoots;
 
     /// @notice Array of hashed pending deposit logs.
     bytes32[] public pendingDepositLogs;
@@ -172,10 +172,11 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         bytes32 withdrawalsLogsMerkleRoot
     ) public onlyOnChainProposer {
         require(
-            blockWithdrawalsLogs[withdrawalLogsBlockNumber] == bytes32(0),
+            blockWithdrawalLogsMerkleRoots[withdrawalLogsBlockNumber] ==
+                bytes32(0),
             "CommonBridge: withdrawal logs already published"
         );
-        blockWithdrawalsLogs[
+        blockWithdrawalLogsMerkleRoots[
             withdrawalLogsBlockNumber
         ] = withdrawalsLogsMerkleRoot;
         emit WithdrawalsPublished(
@@ -193,7 +194,7 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         bytes32[] calldata withdrawalProof
     ) public nonReentrant {
         require(
-            blockWithdrawalsLogs[withdrawalBlockNumber] != bytes32(0),
+            blockWithdrawalLogsMerkleRoots[withdrawalBlockNumber] != bytes32(0),
             "CommonBridge: the block that emitted the withdrawal logs was not committed"
         );
         require(
@@ -247,6 +248,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             }
             withdrawalLogIndex /= 2;
         }
-        return withdrawalLeaf == blockWithdrawalsLogs[withdrawalBlockNumber];
+        return
+            withdrawalLeaf ==
+            blockWithdrawalLogsMerkleRoots[withdrawalBlockNumber];
     }
 }
