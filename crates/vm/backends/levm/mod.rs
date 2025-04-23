@@ -1,34 +1,33 @@
-pub(crate) mod db;
+pub mod db;
 
+use super::revm::db::get_potential_child_nodes;
 use super::BlockExecutionResult;
+use crate::backends::levm::db::DatabaseLogger;
 use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult};
+use crate::{EvmError, ExecutionDB, ExecutionDBError, ExecutionResult, StoreWrapper};
 use bytes::Bytes;
-use ethrex_common::types::requests::Requests;
-use ethrex_common::types::{
-    AccessList, AuthorizationTuple, Fork, GenericTransaction, INITIAL_BASE_FEE,
-};
 use ethrex_common::{
     types::{
-        code_hash, AccountInfo, Block, BlockHeader, Receipt, Transaction, TxKind, Withdrawal,
-        GWEI_TO_WEI,
+        code_hash, requests::Requests, AccessList, AccountInfo, AuthorizationTuple, Block,
+        BlockHeader, EIP1559Transaction, EIP7702Transaction, Fork, GenericTransaction, Receipt,
+        Transaction, TxKind, Withdrawal, GWEI_TO_WEI, INITIAL_BASE_FEE,
     },
     Address, H256, U256,
 };
-use ethrex_levm::vm::{GeneralizedDatabase, Substate};
-use ethrex_levm::AccountInfo as LevmAccountInfo;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
-    vm::{EVMConfig, VM},
-    Account, Environment,
+    vm::{EVMConfig, GeneralizedDatabase, Substate, VM},
+    Account, AccountInfo as LevmAccountInfo, Environment,
 };
 use ethrex_storage::error::StoreError;
-use ethrex_storage::AccountUpdate;
+use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
+use ethrex_trie::{NodeRLP, TrieError};
 use std::cmp::min;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // Export needed types
 pub use ethrex_levm::db::CacheDB;
@@ -140,15 +139,7 @@ impl LEVM {
             difficulty: block_header.difficulty,
         };
 
-        let mut vm = VM::new(
-            tx.to(),
-            env,
-            tx.value(),
-            tx.data().clone(),
-            db,
-            tx.access_list(),
-            tx.authorization_list(),
-        )?;
+        let mut vm = VM::new(env, db, tx)?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -393,6 +384,176 @@ impl LEVM {
 
         Ok((report.into(), access_list))
     }
+
+    pub async fn to_execution_db(
+        block: &Block,
+        store: &Store,
+    ) -> Result<ExecutionDB, ExecutionDBError> {
+        let parent_hash = block.header.parent_hash;
+        let chain_config = store.get_chain_config()?;
+
+        let logger = Arc::new(DatabaseLogger::new(Arc::new(StoreWrapper {
+            store: store.clone(),
+            block_hash: block.header.parent_hash,
+        })));
+        let logger_ref = Arc::clone(&logger);
+        let mut db = GeneralizedDatabase::new(logger, CacheDB::new());
+
+        // pre-execute and get all state changes
+        let execution_updates = Self::execute_block(block, &mut db)
+            .map_err(Box::new)?
+            .account_updates;
+
+        // index accessed account addresses and storage keys
+        let state_accessed = logger_ref
+            .state_accessed
+            .lock()
+            .map_err(|_| {
+                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+            })?
+            .clone();
+
+        // fetch all read/written accounts from store
+        let accounts = state_accessed
+            .keys()
+            .chain(execution_updates.iter().map(|update| &update.address))
+            .filter_map(|address| {
+                store
+                    .get_account_info_by_hash(parent_hash, *address)
+                    .transpose()
+                    .map(|account| Ok((*address, account?)))
+            })
+            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+
+        // fetch all read/written code from store
+        let code_accessed = logger_ref
+            .code_accessed
+            .lock()
+            .map_err(|_| {
+                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+            })?
+            .clone();
+        let code = accounts
+            .values()
+            .map(|account| account.code_hash)
+            .chain(code_accessed.into_iter())
+            .filter_map(|hash| {
+                store
+                    .get_account_code(hash)
+                    .transpose()
+                    .map(|account| Ok((hash, account?)))
+            })
+            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+
+        // fetch all read/written storage from store
+        let added_storage = execution_updates.iter().filter_map(|update| {
+            if !update.added_storage.is_empty() {
+                let keys = update.added_storage.keys().cloned().collect::<Vec<_>>();
+                Some((update.address, keys))
+            } else {
+                None
+            }
+        });
+        let storage = state_accessed
+            .clone()
+            .into_iter()
+            .chain(added_storage)
+            .map(|(address, keys)| {
+                let keys: Result<HashMap<_, _>, ExecutionDBError> = keys
+                    .iter()
+                    .filter_map(|key| {
+                        store
+                            .get_storage_at_hash(parent_hash, address, *key)
+                            .transpose()
+                            .map(|value| Ok((*key, value?)))
+                    })
+                    .collect();
+                Ok((address, keys?))
+            })
+            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+
+        let block_hashes = logger_ref
+            .block_hashes_accessed
+            .lock()
+            .map_err(|_| {
+                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+            })?
+            .clone()
+            .into_iter()
+            .map(|(num, hash)| (num, H256::from(hash.0)))
+            .collect();
+
+        // get account proofs
+        let state_trie = store
+            .state_trie(block.hash())?
+            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
+        let parent_state_trie = store
+            .state_trie(parent_hash)?
+            .ok_or(ExecutionDBError::NewMissingStateTrie(parent_hash))?;
+        let hashed_addresses: Vec<_> = state_accessed.keys().map(hash_address).collect();
+        let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
+        let final_state_proofs: Vec<_> = hashed_addresses
+            .iter()
+            .map(|hashed_address| Ok((hashed_address, state_trie.get_proof(hashed_address)?)))
+            .collect::<Result<_, TrieError>>()?;
+        let potential_account_child_nodes = final_state_proofs
+            .iter()
+            .filter_map(|(hashed_address, proof)| get_potential_child_nodes(proof, hashed_address))
+            .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
+            .collect();
+        let state_proofs = (
+            initial_state_proofs.0,
+            [initial_state_proofs.1, potential_account_child_nodes].concat(),
+        );
+
+        // get storage proofs
+        let mut storage_proofs = HashMap::new();
+        let mut final_storage_proofs = HashMap::new();
+        for (address, storage_keys) in state_accessed {
+            let Some(parent_storage_trie) = store.storage_trie(parent_hash, address)? else {
+                // the storage of this account was empty or the account is newly created, either
+                // way the storage trie was initially empty so there aren't any proofs to add.
+                continue;
+            };
+            let storage_trie = store.storage_trie(block.hash(), address)?.ok_or(
+                ExecutionDBError::NewMissingStorageTrie(block.hash(), address),
+            )?;
+            let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
+
+            let initial_proofs = parent_storage_trie.get_proofs(&paths)?;
+            let final_proofs: Vec<(_, Vec<_>)> = storage_keys
+                .iter()
+                .map(|key| {
+                    let hashed_key = hash_key(key);
+                    let proof = storage_trie.get_proof(&hashed_key)?;
+                    Ok((hashed_key, proof))
+                })
+                .collect::<Result<_, TrieError>>()?;
+
+            let potential_child_nodes: Vec<NodeRLP> = final_proofs
+                .iter()
+                .filter_map(|(hashed_key, proof)| get_potential_child_nodes(proof, hashed_key))
+                .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
+                .collect();
+            let proofs = (
+                initial_proofs.0,
+                [initial_proofs.1, potential_child_nodes].concat(),
+            );
+
+            storage_proofs.insert(address, proofs);
+            final_storage_proofs.insert(address, final_proofs);
+        }
+
+        Ok(ExecutionDB {
+            accounts,
+            code,
+            storage,
+            block_hashes,
+            chain_config,
+            state_proofs,
+            storage_proofs,
+        })
+    }
 }
 
 pub fn generic_system_contract_levm(
@@ -423,16 +584,13 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
-    let mut vm = VM::new(
-        TxKind::Call(contract_address),
-        env,
-        U256::zero(),
-        calldata,
-        db,
-        vec![],
-        None,
-    )
-    .map_err(EvmError::from)?;
+    let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(contract_address),
+        value: U256::zero(),
+        data: calldata,
+        ..Default::default()
+    });
+    let mut vm = VM::new(env, db, tx).map_err(EvmError::from)?;
 
     let report = vm.execute().map_err(EvmError::from)?;
 
@@ -554,7 +712,7 @@ fn env_from_generic(
         coinbase: header.coinbase,
         timestamp: header.timestamp.into(),
         prev_randao: Some(header.prev_randao),
-        chain_id: tx.chain_id.unwrap_or(chain_config.chain_id).into(),
+        chain_id: chain_config.chain_id.into(),
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
         gas_price,
         block_excess_blob_gas: header.excess_blob_gas.map(U256::from),
@@ -575,20 +733,36 @@ fn vm_from_generic<'a>(
     env: Environment,
     db: &'a mut GeneralizedDatabase,
 ) -> Result<VM<'a>, VMError> {
-    VM::new(
-        tx.to.clone(),
-        env,
-        tx.value,
-        tx.input.clone(),
-        db,
-        tx.access_list
-            .iter()
-            .map(|list| (list.address, list.storage_keys.clone()))
-            .collect(),
-        tx.authorization_list.clone().map(|list| {
-            list.iter()
-                .map(|list| Into::<AuthorizationTuple>::into(list.clone()))
-                .collect()
+    let tx = match &tx.authorization_list {
+        Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
+            to: match tx.to {
+                TxKind::Call(to) => to,
+                TxKind::Create => return Err(VMError::InvalidTransaction),
+            },
+            value: tx.value,
+            data: tx.input.clone(),
+            access_list: tx
+                .access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            authorization_list: authorization_list
+                .iter()
+                .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
+                .collect(),
+            ..Default::default()
         }),
-    )
+        None => Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: tx.to.clone(),
+            value: tx.value,
+            data: tx.input.clone(),
+            access_list: tx
+                .access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            ..Default::default()
+        }),
+    };
+    VM::new(env, db, &tx)
 }

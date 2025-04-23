@@ -18,7 +18,7 @@
 //  Modified from the original file. 
 //  Making use of the IRiscZeroVerifier interface and nothing else.
 
-pragma solidity ^0.8.9;
+pragma solidity =0.8.29;
 
 /// @notice A receipt attesting to the execution of a guest program.
 /// @dev A receipt contains two parts: a seal and a claim. The seal is a zero-knowledge proof

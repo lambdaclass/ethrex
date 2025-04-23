@@ -1,4 +1,5 @@
 use crate::utils::config::errors::ConfigError;
+use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
@@ -83,6 +84,12 @@ pub enum BlockProducerError {
     FailedToDecodeJWT(#[from] hex::FromHexError),
     #[error("Block Producer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
+    #[error("Interval does not fit in u64")]
+    TryIntoError(#[from] std::num::TryFromIntError),
+    #[error("{0}")]
+    Custom(String),
+    #[error("Failed to parse withdrawal: {0}")]
+    FailedToParseWithdrawal(#[from] UtilsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -97,8 +104,6 @@ pub enum CommitterError {
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]
     FailedToRetrieveDataFromStorage,
-    #[error("Committer registered a negative nonce in AccountUpdate")]
-    FailedToCalculateNonce,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage")]
@@ -125,6 +130,8 @@ pub enum CommitterError {
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
+    #[error("Failed to get withdrawals: {0}")]
+    FailedToGetWithdrawals(#[from] UtilsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -159,6 +166,10 @@ pub enum StateDiffError {
     LengthTooBig(#[from] core::num::TryFromIntError),
     #[error("DB Error: {0}")]
     DbError(#[from] TrieError),
+    #[error("Store Error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("New nonce is lower than the previous one")]
+    FailedToCalculateNonce,
 }
 
 #[derive(Debug, thiserror::Error)]

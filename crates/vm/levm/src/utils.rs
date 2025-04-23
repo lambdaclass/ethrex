@@ -358,7 +358,7 @@ pub fn get_base_fee_per_blob_gas(
 /// Gets the max blob gas cost for a transaction that a user is
 /// willing to pay.
 pub fn get_max_blob_gas_price(
-    tx_blob_hashes: Vec<H256>,
+    tx_blob_hashes: &[H256],
     tx_max_fee_per_blob_gas: Option<U256>,
 ) -> Result<U256, VMError> {
     let blobhash_amount: u64 = tx_blob_hashes
@@ -379,7 +379,7 @@ pub fn get_max_blob_gas_price(
 }
 /// Gets the actual blob gas cost.
 pub fn get_blob_gas_price(
-    tx_blob_hashes: Vec<H256>,
+    tx_blob_hashes: &[H256],
     block_excess_blob_gas: Option<U256>,
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
@@ -544,7 +544,7 @@ pub fn eip7702_set_access_code(
 
         // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
         if cache::is_account_cached(&db.cache, &authority_address)
-            || db.store.account_exists(authority_address)
+            || account_exists(db, authority_address)
         {
             let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
             refunded_gas = refunded_gas
@@ -717,4 +717,12 @@ pub fn eip7702_get_code(
     let authorized_bytecode = get_account_no_push_cache(db, auth_address)?.info.bytecode;
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
+}
+
+/// Checks if a given account exists in the database or cache
+pub fn account_exists(db: &mut GeneralizedDatabase, address: Address) -> bool {
+    match cache::get_account(&db.cache, &address) {
+        Some(_) => true,
+        None => db.store.account_exists(address),
+    }
 }
