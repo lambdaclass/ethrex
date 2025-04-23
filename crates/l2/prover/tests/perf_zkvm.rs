@@ -1,11 +1,7 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::Block;
-use ethrex_l2::utils::config::{
-    block_producer::BlockProducerConfig, prover_client::ProverClientConfig,
-    read_env_file_by_config, ConfigMode,
-};
+use ethrex_common::types::{Block, ELASTICITY_MULTIPLIER};
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;
@@ -72,10 +68,8 @@ async fn setup() -> (ProgramInput, Block) {
         .await
         .unwrap();
 
-    read_env_file_by_config(ConfigMode::ProverClient).expect("could not read env file");
-    let elasticity_multiplier = ProverClientConfig::from_env()
-        .unwrap()
-        .elasticity_multiplier;
+    // This is just a test, so we can use the default value for the elasticity multiplier.
+    let elasticity_multiplier = ELASTICITY_MULTIPLIER;
 
     let input = ProgramInput {
         block: block_to_prove.clone(),
