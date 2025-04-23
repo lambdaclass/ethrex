@@ -3,7 +3,8 @@
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Block;
 use ethrex_l2::utils::config::{
-    block_producer::BlockProducerConfig, read_env_file_by_config, ConfigMode,
+    block_producer::BlockProducerConfig, prover_client::ProverClientConfig,
+    read_env_file_by_config, ConfigMode,
 };
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
@@ -71,8 +72,8 @@ async fn setup() -> (ProgramInput, Block) {
         .await
         .unwrap();
 
-    read_env_file_by_config(ConfigMode::Sequencer).expect("could not read env file");
-    let elasticity_multiplier = BlockProducerConfig::from_env()
+    read_env_file_by_config(ConfigMode::ProverClient).expect("could not read env file");
+    let elasticity_multiplier = ProverClientConfig::from_env()
         .unwrap()
         .elasticity_multiplier;
 

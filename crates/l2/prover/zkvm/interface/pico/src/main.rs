@@ -3,7 +3,7 @@
 use pico_sdk::io::{commit, read_as};
 
 use ethrex_blockchain::{validate_block, validate_gas_used};
-use ethrex_vm::backends::revm::{REVM, db::EvmState};
+use ethrex_vm::backends::revm::{db::EvmState, REVM};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -16,6 +16,7 @@ pub fn main() {
         block,
         parent_block_header,
         db,
+        elasticity_multiplier,
     } = read_as();
     let mut state = EvmState::from(db.clone());
     let chain_config = state
@@ -23,7 +24,13 @@ pub fn main() {
         .expect("Failed to get chain config from state");
 
     // Validate the block
-    validate_block(&block, &parent_block_header, &chain_config).expect("invalid block");
+    validate_block(
+        &block,
+        &parent_block_header,
+        &chain_config,
+        elasticity_multiplier,
+    )
+    .expect("invalid block");
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
