@@ -13,9 +13,15 @@ import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 /// @title OnChainProposer contract.
 /// @author LambdaClass
 contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
+    /// @notice Committed blocks data.
+    /// @dev This struct holds the information about the committed blocks.
+    /// @dev processedDepositLogsRoot is the Merkle root of the logs of the
+    /// deposits that were processed in the block being committed. The amount of
+    /// logs that is encoded in this root are to be removed from the
+    /// pendingDepositLogs queue of the CommonBridge contract.
     struct BlockCommitmentInfo {
         bytes32 stateDiffKZGVersionedHash;
-        bytes32 depositLogs;
+        bytes32 processedDepositLogsRoot;
     }
 
     /// @notice The commitments of the committed blocks.
@@ -139,7 +145,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         uint256 blockNumber,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 depositLogs
+        bytes32 processedDepositLogs
     ) external override onlySequencer {
         require(
             blockNumber == lastCommittedBlock + 1,
@@ -156,11 +162,13 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
         // Check if commitment is equivalent to blob's KZG commitment.
 
-        if (depositLogs != bytes32(0)) {
-            bytes32 savedDepositLogs = ICommonBridge(BRIDGE)
-                .getDepositLogsVersionedHash(uint16(bytes2(depositLogs)));
+        if (processedDepositLogs != bytes32(0)) {
+            bytes32 pendingDepositLogs = ICommonBridge(BRIDGE)
+                .getPendingDepositLogsVersionedHash(
+                    uint16(bytes2(processedDepositLogs))
+                );
             require(
-                savedDepositLogs == depositLogs,
+                pendingDepositLogs == processedDepositLogs,
                 "OnChainProposer: invalid deposit logs"
             );
         }
@@ -172,7 +180,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
         blockCommitments[blockNumber] = BlockCommitmentInfo(
             stateDiffKZGVersionedHash,
-            depositLogs
+            processedDepositLogs
         );
         lastCommittedBlock = blockNumber;
         emit BlockCommitted(stateDiffKZGVersionedHash);
@@ -242,10 +250,10 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         lastVerifiedBlock = blockNumber;
         // The first 2 bytes are the number of deposits.
         uint16 deposits_amount = uint16(
-            bytes2(blockCommitments[blockNumber].depositLogs)
+            bytes2(blockCommitments[blockNumber].processedDepositLogsRoot)
         );
         if (deposits_amount > 0) {
-            ICommonBridge(BRIDGE).removeDepositLogs(deposits_amount);
+            ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
         }
 
         // Remove previous block commitment as it is no longer needed.

@@ -48,12 +48,13 @@ interface IOnChainProposer {
     /// @param stateDiffKZGVersionedHash of the block to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the block to be committed.
-    /// @param depositLogs the deposit logs of the block to be committed.
+    /// @param processedDepositLogs the processed deposits logs of the block to
+    /// be committed.
     function commit(
         uint256 blockNumber,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 depositLogs
+        bytes32 processedDepositLogs
     ) external;
 
     /// @notice Method used to verify an L2 block proof.

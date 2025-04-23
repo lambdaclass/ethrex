@@ -24,7 +24,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     /// that the logs were published on L1, and that that block was committed.
     mapping(uint256 => bytes32) public blockWithdrawalsLogs;
 
-    bytes32[] public depositLogs;
+    /// @notice Array of hashed pending deposit logs.
+    bytes32[] public pendingDepositLogs;
 
     address public ON_CHAIN_PROPOSER;
 
@@ -67,8 +68,8 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ICommonBridge
-    function getDepositLogs() public view returns (bytes32[] memory) {
-        return depositLogs;
+    function getPendingDepositLogs() public view returns (bytes32[] memory) {
+        return pendingDepositLogs;
     }
 
     function _deposit(DepositValues memory depositValues) private {
@@ -86,7 +87,7 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
             )
         );
 
-        depositLogs.push(
+        pendingDepositLogs.push(
             keccak256(
                 bytes.concat(
                     bytes20(depositValues.to),
@@ -128,18 +129,18 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ICommonBridge
-    function getDepositLogsVersionedHash(
+    function getPendingDepositLogsVersionedHash(
         uint16 number
     ) public view returns (bytes32) {
         require(number > 0, "CommonBridge: number is zero (get)");
         require(
-            uint256(number) <= depositLogs.length,
+            uint256(number) <= pendingDepositLogs.length,
             "CommonBridge: number is greater than the length of depositLogs (get)"
         );
 
         bytes memory logs;
         for (uint i = 0; i < number; i++) {
-            logs = bytes.concat(logs, depositLogs[i]);
+            logs = bytes.concat(logs, pendingDepositLogs[i]);
         }
 
         return
@@ -148,18 +149,20 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ICommonBridge
-    function removeDepositLogs(uint16 number) public onlyOnChainProposer {
+    function removePendingDepositLogs(
+        uint16 number
+    ) public onlyOnChainProposer {
         require(
-            number <= depositLogs.length,
+            number <= pendingDepositLogs.length,
             "CommonBridge: number is greater than the length of depositLogs (remove)"
         );
 
-        for (uint i = 0; i < depositLogs.length - number; i++) {
-            depositLogs[i] = depositLogs[i + number];
+        for (uint i = 0; i < pendingDepositLogs.length - number; i++) {
+            pendingDepositLogs[i] = pendingDepositLogs[i + number];
         }
 
         for (uint _i = 0; _i < number; _i++) {
-            depositLogs.pop();
+            pendingDepositLogs.pop();
         }
     }
 
