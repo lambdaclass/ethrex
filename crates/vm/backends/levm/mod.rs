@@ -79,7 +79,7 @@ impl LEVM {
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals, block.header.parent_hash)?;
+            Self::process_withdrawals(db, withdrawals, db.store.get_block())?;
         }
 
         cfg_if::cfg_if! {

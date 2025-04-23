@@ -22,4 +22,5 @@ pub trait Database: Send + Sync {
         address: Address,
     ) -> Result<Option<ethrex_common::types::AccountInfo>, DatabaseError>;
     fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, DatabaseError>;
+    fn get_block(&self) -> H256;
 }

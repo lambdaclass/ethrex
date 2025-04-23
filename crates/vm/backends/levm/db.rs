@@ -104,6 +104,10 @@ impl LevmDatabase for DatabaseLogger {
         }
         self.store.get_account_code(code_hash)
     }
+
+    fn get_block(&self) -> CoreH256 {
+        self.store.get_block()
+    }
 }
 
 impl LevmDatabase for StoreWrapper {
@@ -178,6 +182,10 @@ impl LevmDatabase for StoreWrapper {
             .get_account_code(code_hash)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
+
+    fn get_block(&self) -> CoreH256 {
+        self.block_hash
+    }
 }
 
 impl LevmDatabase for ExecutionDB {
@@ -240,5 +248,9 @@ impl LevmDatabase for ExecutionDB {
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Option<bytes::Bytes>, DatabaseError> {
         Ok(self.code.get(&code_hash).cloned())
+    }
+
+    fn get_block(&self) -> CoreH256 {
+        *self.block_hashes.iter().max_by_key(|(k, _v)| *k).unwrap().1
     }
 }
