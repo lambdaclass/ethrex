@@ -181,6 +181,7 @@ impl L1Watcher {
         blockchain: &Blockchain,
     ) -> Result<Vec<H256>, L1WatcherError> {
         let mut deposit_txs = Vec::new();
+        dbg!(&blockchain.mempool);
 
         for log in logs {
             let (mint_value, to_address, deposit_id, recipient, from, gas_limit, calldata) =
