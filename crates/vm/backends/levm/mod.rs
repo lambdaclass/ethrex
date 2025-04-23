@@ -90,17 +90,7 @@ impl LEVM {
             }
         }
 
-<<<<<<< HEAD
-        let account_updates = Self::get_state_transitions_without_drain(db, fork)?;
-
-        Ok(BlockExecutionResult {
-            receipts,
-            requests,
-            account_updates,
-        })
-=======
         Ok(BlockExecutionResult { receipts, requests })
->>>>>>> origin/refactor/separate-state-transitions
     }
 
     pub fn execute_tx(
