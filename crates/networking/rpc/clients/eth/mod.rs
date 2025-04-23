@@ -204,30 +204,27 @@ impl EthClient {
         let mut number_of_retries = 0;
 
         'outer: while number_of_retries < MAX_NUMBER_OF_RETRIES {
-            match wrapped_tx {
-                WrappedTransaction::EIP4844(eip4844_tx) => {
-                    if let (Some(max_fee_per_gas), Some(max_fee_per_blob_gas)) =
-                        (self.max_fee_per_gas, self.max_fee_per_blob_gas)
-                    {
-                        if eip4844_tx.tx.max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas)
-                            || eip4844_tx.tx.max_fee_per_gas > max_fee_per_gas
-                        {
-                            return Err(EthClientError::Custom("max_fee too high".to_owned()));
-                        }
-                    }
+            if let Some(max_fee_per_gas) = self.max_fee_per_gas {
+                let tx_max_fee = match wrapped_tx {
+                    WrappedTransaction::EIP4844(tx) => tx.tx.max_fee_per_gas,
+                    WrappedTransaction::EIP1559(tx) => tx.max_fee_per_gas,
+                    WrappedTransaction::L2(tx) => tx.max_fee_per_gas,
+                };
+
+                if tx_max_fee > max_fee_per_gas {
+                    return Err(EthClientError::Custom(
+                        "max_fee_per_gas too high".to_owned(),
+                    ));
                 }
-                WrappedTransaction::EIP1559(eip1559_tx) => {
-                    if let Some(max_fee_per_gas) = self.max_fee_per_gas {
-                        if eip1559_tx.max_fee_per_gas > max_fee_per_gas {
-                            return Err(EthClientError::Custom("max_fee too high".to_owned()));
-                        }
-                    }
-                }
-                WrappedTransaction::L2(l2_tx) => {
-                    if let Some(max_fee_per_gas) = self.max_fee_per_gas {
-                        if l2_tx.max_fee_per_gas > max_fee_per_gas {
-                            return Err(EthClientError::Custom("max_fee too high".to_owned()));
-                        }
+            }
+
+            // Check blob gas fees only for EIP4844 transactions
+            if let WrappedTransaction::EIP4844(tx) = wrapped_tx {
+                if let Some(max_fee_per_blob_gas) = self.max_fee_per_blob_gas {
+                    if tx.tx.max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
+                        return Err(EthClientError::Custom(
+                            "max_fee_per_blob_gas too high".to_owned(),
+                        ));
                     }
                 }
             }
