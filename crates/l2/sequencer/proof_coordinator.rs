@@ -310,14 +310,13 @@ impl ProofCoordinator {
 
         let block = Block::new(header, body);
 
-        let parent_hash = block.header.parent_hash;
         let db = Evm::to_execution_db(&self.store.clone(), &block)
             .await
             .map_err(EvmError::ExecutionDB)?;
 
         let parent_block_header = self
             .store
-            .get_block_header_by_hash(parent_hash)?
+            .get_block_header_by_hash(block.header.parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
         debug!("Created prover input for block {block_number}");
