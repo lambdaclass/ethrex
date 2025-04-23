@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745422034369,
+  "lastUpdate": 1745424001644,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3865,6 +3865,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180822174433,
             "range": "± 819046710",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c0321931a9d740cde2df4c2985bde12396ad273",
+          "message": "fix(l1): validate incoming payloads even when the node is syncing. (#2426)\n\n**Motivation**\nWe should be able to do payload validations even when the node is in a\nsync process (except if it's snap sync).\n\n**Description**\n- Refactored some code to make it flatter\n- Removed early return when the node is syncing\n- minor renames for clarity sake.",
+          "timestamp": "2025-04-23T15:12:25Z",
+          "tree_id": "26ec7cc923f16129fd1ab25a6edc1bb7f48865a7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7c0321931a9d740cde2df4c2985bde12396ad273"
+        },
+        "date": 1745423999081,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179706822635,
+            "range": "± 903113760",
             "unit": "ns/iter"
           }
         ]
