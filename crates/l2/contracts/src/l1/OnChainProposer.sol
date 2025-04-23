@@ -15,13 +15,13 @@ import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @notice Committed blocks data.
     /// @dev This struct holds the information about the committed blocks.
-    /// @dev processedDepositLogsRollingHashRoot is the Merkle root of the logs of the
+    /// @dev processedDepositLogsRollingHash is the Merkle root of the logs of the
     /// deposits that were processed in the block being committed. The amount of
     /// logs that is encoded in this root are to be removed from the
     /// pendingDepositLogs queue of the CommonBridge contract.
     struct BlockCommitmentInfo {
         bytes32 stateDiffKZGVersionedHash;
-        bytes32 processedDepositLogsRollingHashRoot;
+        bytes32 processedDepositLogsRollingHash;
     }
 
     /// @notice The commitments of the committed blocks.
@@ -251,8 +251,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         // The first 2 bytes are the number of deposits.
         uint16 deposits_amount = uint16(
             bytes2(
-                blockCommitments[blockNumber]
-                    .processedDepositLogsRollingHashRoot
+                blockCommitments[blockNumber].processedDepositLogsRollingHash
             )
         );
         if (deposits_amount > 0) {
