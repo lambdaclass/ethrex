@@ -115,10 +115,10 @@ pub fn prepare_revm_for_tx<'state>(
     let blob_excess_gas_and_price = if test.env.current_excess_blob_gas.is_none() {
         None
     } else {
-        Some(BlobExcessGasAndPrice::new(
-            test.env.current_excess_blob_gas.unwrap().as_u64(),
-            *fork >= Fork::Prague,
-        ))
+        Some(BlobExcessGasAndPrice {
+            excess_blob_gas: test.env.current_excess_blob_gas.unwrap().as_u64(),
+            blob_gasprice: 0,
+        })
     };
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
@@ -187,7 +187,7 @@ pub fn prepare_revm_for_tx<'state>(
         value: RevmU256::from_limbs(tx.value.0),
         data: tx.data.to_vec().into(),
         nonce: Some(tx.nonce),
-        chain_id: Some(1),
+        chain_id: Some(chain_spec.chain_id),
         access_list: revm_access_list,
         gas_priority_fee: tx
             .max_priority_fee_per_gas
