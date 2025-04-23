@@ -15,8 +15,16 @@ pub fn main() {
         parent_block_header,
         db,
     } = sp1_zkvm::io::read::<ProgramInput>();
+    let elasticity_multiplier =
+        std::env::var("PROVER_CLIENT_ELASTICITY_MULTIPLIER")?.parse::<u64>()?;
     // Validate the block
-    validate_block(&block, &parent_block_header, &db.chain_config).expect("invalid block");
+    validate_block(
+        &block,
+        &parent_block_header,
+        &db.chain_config,
+        elasticity_multiplier,
+    )
+    .expect("invalid block");
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
