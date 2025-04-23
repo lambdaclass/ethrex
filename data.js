@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745444952147,
+  "lastUpdate": 1745449739192,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4015,6 +4015,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183262364831,
             "range": "± 1251079032",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2d049b952259f1e659eabba2859583b79a243188",
+          "message": "feat(levm): improve state EF Tests (#2490)\n\n**Motivation**\n\n- Make running and modifying EF Tests a better experience\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- Remove spinner and just use prints\n- We now can filter the tests we want to run by fork name(we do the\nfiltering in the parsing). Default is all forks.\n- Upgrade tests to more recent version\n- Run some Legacy Tests that we weren't running before. This adds a lot\nof tests more, it is the folder Cancun under LegacyTests. There will be\nrepeated tests with the folder GeneralStateTests, we may want to find a\nsolution for that so that it takes less time to execute.\n- Create docs in `README.md`\n- Implement some nits in the runner, making code easier to understand.\n- Ignore a few tests that take too long to run so that we can check for\nbreaking changes fast.\n- Fix comparison report against LEVM, they weren't working correctly\nmostly because we were mishandling our Cache\n- Tidy the report, now it is much more clear and easier for debugging.\nAlso the code is easier to follow and more concise too!\n- Fix some tests with REVM, basically now using constructor of\n`BlobExcessGasAndPrice` and setting chain id to 1 (as we do in LEVM).\n- Changed `get_state_transitions`\n[here](https://github.com/lambdaclass/ethrex/pull/2518) so that REVM and\nLEVM account updates are mostly the same and the comparison is more\naccurate for the person who is debugging any test.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-23T22:19:57Z",
+          "tree_id": "1506ee48aca41baf76b6efcc4ba14a8efce48863",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2d049b952259f1e659eabba2859583b79a243188"
+        },
+        "date": 1745449736762,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181072202781,
+            "range": "± 397962718",
             "unit": "ns/iter"
           }
         ]
