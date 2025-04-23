@@ -77,10 +77,11 @@ impl LEVM {
 
             receipts.push(receipt);
         }
-
+        info!("Processing Withdrawals");
         if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals, block.header.parent_hash)?;
+            Self::process_withdrawals(db, withdrawals)?;
         }
+        info!("Processed Withdrawals");
 
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
@@ -249,7 +250,6 @@ impl LEVM {
     pub fn process_withdrawals(
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
-        parent_hash: H256,
     ) -> Result<(), ethrex_storage::error::StoreError> {
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
@@ -257,23 +257,18 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
+            info!("Processing withdrawals for address: {address}, increment: {increment}");
             // We check if it was in block_cache, if not, we get it from DB.
             let mut account = db.cache.get(&address).cloned().unwrap_or({
                 let acc_info = db
                     .store
-                    .get_account_info_by_hash(parent_hash, address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-                    .unwrap_or_default();
-                let acc_code = db
-                    .store
-                    .get_account_code(acc_info.code_hash)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-                    .unwrap_or_default();
+                    .get_account_info(address)
+                    .map_err(|e| StoreError::Custom(e.to_string()))?;
 
                 Account {
                     info: LevmAccountInfo {
                         balance: acc_info.balance,
-                        bytecode: acc_code,
+                        bytecode: acc_info.bytecode,
                         nonce: acc_info.nonce,
                     },
                     // This is the added_storage for the withdrawal.
