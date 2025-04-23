@@ -53,7 +53,7 @@ pub enum ProofData {
 
     /// 2.
     /// The Server responds with a Response containing the ProverInputData.
-    /// If the Response will is ProofData::Response{None, None}, the Client knows that the Request couldn't be performed.
+    /// If the Response is ProofData::Response{None, None}, the Client knows the Request couldn't be performed.
     BlockResponse {
         block_number: Option<u64>,
         input: Option<ProverInputData>,
