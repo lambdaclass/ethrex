@@ -27,7 +27,7 @@ jobs:
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: RISC-V SP1 toolchain install
-        if: ${{ backend == 'sp1' }}
+        if: ${ backend == 'sp1' }
         run: |
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 4.1.0
