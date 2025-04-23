@@ -34,7 +34,7 @@ jobs:
       - name: Check sp1
         run: |
             cargo check -p ethrex-prover -F sp1
-      - name: Clippy
+      - name: Clippy sp1
         run: |
             cargo clippy -p ethrex-prover --all-targets -F sp1
       - name: Check exec
