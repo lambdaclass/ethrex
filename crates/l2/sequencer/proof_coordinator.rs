@@ -146,16 +146,6 @@ impl ProofCoordinator {
     }
 
     async fn main_logic(&self) -> Result<(), ProverServerError> {
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
-        tokio::task::spawn(async move {
-            if let Err(e) = tokio::signal::ctrl_c().await {
-                error!("Error handling ctrl_c: {e}");
-            };
-            if let Err(e) = shutdown_tx.send(0) {
-                error!("Error sending shutdown message through the oneshot::channel {e}");
-            };
-        });
-
         let listener = TcpListener::bind(format!("{}:{}", self.listen_ip, self.port)).await?;
 
         let concurent_clients = 3;
@@ -167,13 +157,6 @@ impl ProofCoordinator {
 
         loop {
             tokio::select! {
-                _ = &mut shutdown_rx => {
-                    debug!("Shutting down...");
-                    // It will return from the main_logic() with an `Ok(())`
-                    // And inside the run() function the loop will break
-                    // and the prover_server task will finish gracefully.
-                    break;
-                }
                 res = listener.accept() => {
                     match res {
                         Ok((stream, addr)) => {
@@ -211,8 +194,6 @@ impl ProofCoordinator {
                 }
             }
         }
-
-        Ok(())
     }
 
     async fn handle_connection(&self, mut stream: TcpStream) -> Result<(), ProverServerError> {
