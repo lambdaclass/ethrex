@@ -269,10 +269,9 @@ impl Blockchain {
             all_receipts.insert(block.hash(), receipts);
         }
 
-        let account_updates = match vm.get_state_transitions(fork) {
-            Ok(v) => v,
-            Err(err) => return Err((ChainError::EvmError(err), None)),
-        };
+        let account_updates = vm
+            .get_state_transitions(fork)
+            .map_err(|err| (ChainError::EvmError(err), None))?;
         for account_update in account_updates {
             all_account_updates.insert(account_update.address, account_update);
         }

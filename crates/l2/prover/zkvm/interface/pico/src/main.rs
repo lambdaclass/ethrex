@@ -39,7 +39,6 @@ pub fn main() {
         panic!("invalid database")
     };
 
-    let fork = db.chain_config.fork(block.header.timestamp);
     let result = REVM::execute_block(&block, &mut state).expect("failed to execute block");
     let receipts = result.receipts;
     let account_updates = REVM::get_state_transitions(&mut state);
