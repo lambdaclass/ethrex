@@ -2,6 +2,9 @@
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Block;
+use ethrex_l2::utils::config::{
+    block_producer::BlockProducerConfig, read_env_file_by_config, ConfigMode,
+};
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;
@@ -16,7 +19,6 @@ async fn test_performance_zkvm() {
     let (input, block_to_prove) = setup().await;
 
     let start = std::time::Instant::now();
-
     // this is only executing because these tests run as a CI job and should be fast
     // TODO: create a test for actual proving
     execute(input).unwrap();
@@ -69,10 +71,16 @@ async fn setup() -> (ProgramInput, Block) {
         .await
         .unwrap();
 
+    read_env_file_by_config(ConfigMode::Sequencer).expect("could not read env file");
+    let elasticity_multiplier = BlockProducerConfig::from_env()
+        .unwrap()
+        .elasticity_multiplier;
+
     let input = ProgramInput {
         block: block_to_prove.clone(),
         parent_block_header,
         db,
+        elasticity_multiplier,
     };
     (input, block_to_prove.clone())
 }

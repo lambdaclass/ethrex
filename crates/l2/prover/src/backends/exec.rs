@@ -39,10 +39,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         block,
         parent_block_header,
         db,
+        elasticity_multiplier,
     } = input;
-
-    let elasticity_multiplier =
-        std::env::var("PROVER_CLIENT_ELASTICITY_MULTIPLIER")?.parse::<u64>()?;
 
     // Validate the block
     validate_block(

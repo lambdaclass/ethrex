@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use super::errors::ConfigError;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct BlockProducerConfig {
     pub block_time_ms: u64,
     pub coinbase_address: Address,

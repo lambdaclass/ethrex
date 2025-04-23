@@ -25,7 +25,7 @@ struct ProverData {
 struct ProverClient {
     prover_server_endpoint: String,
     proving_time_ms: u64,
-    _elasticity_multiplier: u64,
+    elasticity_multiplier: u64,
 }
 
 impl ProverClient {
@@ -33,7 +33,7 @@ impl ProverClient {
         Self {
             prover_server_endpoint: config.prover_server_endpoint,
             proving_time_ms: config.proving_time_ms,
-            _elasticity_multiplier: config.elasticity_multiplier,
+            elasticity_multiplier: config.elasticity_multiplier,
         }
     }
 
@@ -85,7 +85,8 @@ impl ProverClient {
                         input:  ProgramInput {
                             block: input.block,
                             parent_block_header: input.parent_block_header,
-                            db: input.db
+                            db: input.db,
+                            elasticity_multiplier: self.elasticity_multiplier,
                         }
                     };
                     Ok(prover_data)
