@@ -1,10 +1,7 @@
 use crate::account::AccountInfo;
 use bytes::Bytes;
 use error::DatabaseError;
-use ethrex_common::{
-    types::ChainConfig,
-    Address, H256, U256,
-};
+use ethrex_common::{types::ChainConfig, Address, H256, U256};
 
 pub mod cache;
 pub use cache::CacheDB;
