@@ -31,7 +31,6 @@ pub fn main() {
     if !verify_db(&db, &state_trie, &storage_tries).expect("failed to validate database") {
         panic!("invalid database")
     };
-    let fork = db.chain_config.fork(block.header.timestamp);
 
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
@@ -39,6 +38,7 @@ pub fn main() {
     let mut cumulative_gas_used = 0;
 
     for block in blocks {
+        let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
 

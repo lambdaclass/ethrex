@@ -53,12 +53,12 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     if !verify_db(&db, &state_trie, &storage_tries)? {
         return Err("invalid database".to_string().into());
     };
-    let fork = db.chain_config.fork(block.header.timestamp);
 
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
     for block in blocks {
+        let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config)?;
 
