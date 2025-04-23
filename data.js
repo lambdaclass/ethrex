@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745418320429,
+  "lastUpdate": 1745419075795,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3775,6 +3775,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182542421832,
             "range": "± 560350561",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "12560266+MauroToscano@users.noreply.github.com",
+            "name": "Mauro Toscano",
+            "username": "MauroToscano"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "35ca6af05a4bc73a028d5d0a9dfa418e22c3e363",
+          "message": "fix(l2): add missing requirements to run the L2 (#2512)\n\n**Motivation**\n\nBuild fails if requirements are not met. In particular, solc versions\nneed to be the requirements\n\n**Description**\n\nThis adds a short description of the requirements\n\n---------\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-04-23T13:49:55Z",
+          "tree_id": "e79395c6da2328ec5038c3c2148295eef07d2756",
+          "url": "https://github.com/lambdaclass/ethrex/commit/35ca6af05a4bc73a028d5d0a9dfa418e22c3e363"
+        },
+        "date": 1745419073885,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180346542446,
+            "range": "± 612174471",
             "unit": "ns/iter"
           }
         ]
