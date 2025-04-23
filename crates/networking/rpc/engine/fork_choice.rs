@@ -4,7 +4,7 @@ use ethrex_blockchain::{
     latest_canonical_block_hash,
     payload::{create_payload, BuildPayloadArgs},
 };
-use ethrex_common::types::BlockHeader;
+use ethrex_common::types::{BlockHeader, Transaction};
 use ethrex_p2p::sync_manager::SyncStatus;
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -277,12 +277,13 @@ async fn handle_forkchoice(
                 .await
             {
                 Ok(Some(block)) => {
-                    for tx in &block.body.transactions {
-                        context
-                            .blockchain
-                            .remove_transaction_from_pool(&tx.compute_hash())
-                            .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                    }
+                    let hashes: Vec<_> = block
+                        .body
+                        .transactions
+                        .iter()
+                        .map(Transaction::compute_hash)
+                        .collect();
+                    context.blockchain.remove_transactions_from_pool(&hashes)?;
                 }
                 Ok(None) => {
                     warn!("Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network")

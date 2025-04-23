@@ -319,7 +319,7 @@ impl Blockchain {
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
-        blobs_bundle: BlobsBundle,
+        blobs_bundle: std::sync::Arc<BlobsBundle>,
     ) -> Result<H256, MempoolError> {
         // Validate blobs bundle
 
@@ -334,7 +334,7 @@ impl Blockchain {
         // Add transaction and blobs bundle to storage
         let hash = transaction.compute_hash();
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, MempoolTransaction::new(transaction, sender).into())?;
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
         Ok(hash)
     }
@@ -356,14 +356,46 @@ impl Blockchain {
 
         // Add transaction to storage
         self.mempool
-            .add_transaction(hash, MempoolTransaction::new(transaction, sender))?;
+            .add_transaction(hash, MempoolTransaction::new(transaction, sender).into())?;
 
         Ok(hash)
+    }
+
+    /// Adds multiple transactions to the mempool checking that the transaction is valid
+    pub async fn add_transactions_to_pool(
+        &self,
+        transactions: Vec<Transaction>,
+    ) -> Result<Vec<H256>, MempoolError> {
+        let mut mempool_txs = Vec::with_capacity(transactions.len());
+
+        for transaction in transactions {
+            // Blob transactions should be submitted via add_blob_transactions along with the corresponding blobs bundle
+            if matches!(transaction, Transaction::EIP4844Transaction(_)) {
+                return Err(MempoolError::BlobTxNoBlobsBundle);
+            }
+            let sender = transaction.sender();
+            // Validate transaction
+            self.validate_transaction(&transaction, sender).await?;
+
+            let hash = transaction.compute_hash();
+            mempool_txs.push((hash, MempoolTransaction::new(transaction, sender).into()));
+        }
+
+        // Add transaction to storage
+        self.mempool.add_transactions(&mempool_txs)?;
+
+        let hashes = mempool_txs.iter().map(|x| x.0).collect();
+        Ok(hashes)
     }
 
     /// Remove a transaction from the mempool
     pub fn remove_transaction_from_pool(&self, hash: &H256) -> Result<(), StoreError> {
         self.mempool.remove_transaction(hash)
+    }
+
+    /// Remove multiple transactions from the mempool
+    pub fn remove_transactions_from_pool(&self, hashes: &[H256]) -> Result<(), StoreError> {
+        self.mempool.remove_transactions(hashes)
     }
 
     /*

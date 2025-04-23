@@ -95,7 +95,7 @@ impl NewPooledTransactionHashes {
                     let tx_blobs_bundle = blockchain
                         .mempool
                         .get_blobs_bundle(transaction_hash)?
-                        .unwrap_or(BlobsBundle::empty());
+                        .unwrap_or(BlobsBundle::empty().into());
                     eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle)
                 }
                 _ => transaction.encode_canonical_to_vec().len(),
@@ -273,6 +273,8 @@ impl PooledTransactions {
     /// Saves every incoming pooled transaction to the mempool.
 
     pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
+        let mut txs = Vec::new();
+
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 if let Err(e) = blockchain
@@ -286,12 +288,11 @@ impl PooledTransactions {
                 let regular_tx = tx
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    log_peer_warn(node, &format!("Error adding transaction: {}", e));
-                    continue;
-                }
+                txs.push(regular_tx);
             }
         }
+
+        blockchain.add_transactions_to_pool(txs).await?;
         Ok(())
     }
 }

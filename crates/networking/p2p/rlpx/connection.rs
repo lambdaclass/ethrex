@@ -391,7 +391,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         if self.capabilities.contains(&CAP_ETH_68) {
             let filter =
                 |tx: &Transaction| -> bool { !self.broadcasted_txs.contains(&tx.compute_hash()) };
-            let txs: Vec<MempoolTransaction> = self
+            let txs: Vec<Arc<MempoolTransaction>> = self
                 .blockchain
                 .mempool
                 .filter_transactions_with_filter_fn(&filter)?
@@ -402,11 +402,11 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let tx_count = txs.len();
                 for tx in txs {
                     self.send(Message::NewPooledTransactionHashes(
-                        NewPooledTransactionHashes::new(vec![(*tx).clone()], &self.blockchain)?,
+                        NewPooledTransactionHashes::new(vec![tx.clone().into()], &self.blockchain)?,
                     ))
                     .await?;
                     // Possible improvement: the mempool already knows the hash but the filter function does not return it
-                    self.broadcasted_txs.insert((*tx).compute_hash());
+                    self.broadcasted_txs.insert(tx.compute_hash());
                 }
                 log_peer_debug(
                     &self.node,
@@ -452,17 +452,25 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let response = process_account_range_request(req, self.storage.clone())?;
                 self.send(Message::AccountRange(response)).await?
             }
-            // TODO(#1129) Add the transaction to the mempool once received.
             Message::Transactions(txs) if peer_supports_eth => {
                 if is_synced {
                     let mut valid_txs = vec![];
+
                     for tx in &txs.transactions {
-                        if let Err(e) = self.blockchain.add_transaction_to_pool(tx.clone()).await {
-                            log_peer_warn(&self.node, &format!("Error adding transaction: {}", e));
+                        if matches!(tx, Transaction::EIP4844Transaction(_)) {
+                            log_peer_warn(
+                                &self.node,
+                                "Error adding transaction: EIP4844 tx not accepted here",
+                            );
                             continue;
                         }
                         valid_txs.push(tx.clone());
                     }
+
+                    self.blockchain
+                        .add_transactions_to_pool(valid_txs.clone())
+                        .await?;
+
                     self.broadcast_message(Message::Transactions(Transactions::new(valid_txs)))?;
                 }
             }

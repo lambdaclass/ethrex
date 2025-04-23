@@ -795,7 +795,10 @@ impl EthClient {
             ..Default::default()
         };
 
-        let mut wrapped_eip4844 = WrappedEIP4844Transaction { tx, blobs_bundle };
+        let mut wrapped_eip4844 = WrappedEIP4844Transaction {
+            tx,
+            blobs_bundle: blobs_bundle.into(),
+        };
         if let Some(overrides_gas_limit) = overrides.gas_limit {
             wrapped_eip4844.tx.gas = overrides_gas_limit;
         } else {

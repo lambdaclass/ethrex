@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::{cmp::min, sync::Arc};
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
@@ -118,7 +118,7 @@ impl RLPDecode for P2PTransaction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WrappedEIP4844Transaction {
     pub tx: EIP4844Transaction,
-    pub blobs_bundle: BlobsBundle,
+    pub blobs_bundle: Arc<BlobsBundle>,
 }
 
 impl RLPEncode for WrappedEIP4844Transaction {
@@ -147,7 +147,8 @@ impl RLPDecode for WrappedEIP4844Transaction {
                 blobs,
                 commitments,
                 proofs,
-            },
+            }
+            .into(),
         };
         Ok((wrapped, decoder.finish()?))
     }
@@ -2299,6 +2300,7 @@ mod mempool {
     use super::*;
     use std::{
         cmp::Ordering,
+        sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -2367,6 +2369,12 @@ mod mempool {
     impl From<MempoolTransaction> for Transaction {
         fn from(val: MempoolTransaction) -> Self {
             val.inner
+        }
+    }
+
+    impl From<Arc<MempoolTransaction>> for Transaction {
+        fn from(val: Arc<MempoolTransaction>) -> Self {
+            val.inner.clone()
         }
     }
 

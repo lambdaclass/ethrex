@@ -2,6 +2,7 @@ use std::{
     cmp::{max, Ordering},
     collections::HashMap,
     ops::Div,
+    sync::Arc,
     time::Instant,
 };
 
@@ -485,7 +486,7 @@ impl Blockchain {
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
             Some(prev_blob_gas + blobs_bundle.blobs.len() as u64 * GAS_PER_BLOB);
-        context.blobs_bundle += blobs_bundle;
+        context.blobs_bundle += (*blobs_bundle).clone();
         Ok(receipt)
     }
 
@@ -552,14 +553,14 @@ pub struct TransactionQueue {
     // The first transaction for each account along with its tip, sorted by highest tip
     heads: Vec<HeadTransaction>,
     // The remaining txs grouped by account and sorted by nonce
-    txs: HashMap<Address, Vec<MempoolTransaction>>,
+    txs: HashMap<Address, Vec<Arc<MempoolTransaction>>>,
     // Base Fee stored for tip calculations
     base_fee: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
-    pub tx: MempoolTransaction,
+    pub tx: Arc<MempoolTransaction>,
     tip: u64,
 }
 
@@ -580,7 +581,7 @@ impl From<HeadTransaction> for Transaction {
 impl TransactionQueue {
     /// Creates a new TransactionQueue from a set of transactions grouped by sender and sorted by nonce
     fn new(
-        mut txs: HashMap<Address, Vec<MempoolTransaction>>,
+        mut txs: HashMap<Address, Vec<Arc<MempoolTransaction>>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
         let mut heads = Vec::new();
