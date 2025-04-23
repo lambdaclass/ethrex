@@ -103,7 +103,7 @@ impl SyncManager {
     pub async fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
-        let Ok(Some(current_head)) = self.store.get_canonical_block_hash(1556).await else {
+        let Ok(Some(current_head)) = self.store.get_latest_canonical_block_hash().await else {
             tracing::error!("Failed to fecth latest canonical block, unable to sync");
             return;
         };

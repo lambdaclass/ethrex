@@ -227,15 +227,15 @@ impl Blockchain {
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
-            if chain_config.fork(block.header.timestamp) != fork {
-                return Err((
-                    ChainError::Custom("Crossing fork boundary in bulk mode".into()),
-                    Some(BatchBlockProcessingFailure {
-                        last_valid_hash,
-                        failed_block_hash: block.hash(),
-                    }),
-                ));
-            }
+            // if chain_config.fork(block.header.timestamp) != fork {
+            //     return Err((
+            //         ChainError::Custom("Crossing fork boundary in bulk mode".into()),
+            //         Some(BatchBlockProcessingFailure {
+            //             last_valid_hash,
+            //             failed_block_hash: block.hash(),
+            //         }),
+            //     ));
+            // }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
                 let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
@@ -252,6 +252,8 @@ impl Blockchain {
                 // for the subsequent ones, the parent is the previous block
                 blocks[i - 1].header.clone()
             };
+
+            info!("Executing Block: {}", block.header.number);
 
             let BlockExecutionResult { receipts, .. } = match self.execute_block_from_state(
                 &parent_header,
@@ -270,6 +272,7 @@ impl Blockchain {
                     ))
                 }
             };
+            info!("Executed Block {} succesfully", block.header.number);
 
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
