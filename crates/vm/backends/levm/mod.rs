@@ -77,11 +77,10 @@ impl LEVM {
 
             receipts.push(receipt);
         }
-        info!("Processing Withdrawals");
+
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
         }
-        info!("Processed Withdrawals");
 
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
