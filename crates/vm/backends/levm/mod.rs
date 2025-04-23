@@ -20,7 +20,7 @@ use ethrex_common::{
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, GeneralizedDatabase, Substate, VM},
-    Account, AccountInfo as LevmAccountInfo, Environment,
+    Account, Environment,
 };
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
@@ -256,20 +256,15 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            info!("Processing withdrawals for address: {address}, increment: {increment}");
             // We check if it was in block_cache, if not, we get it from DB.
             let mut account = db.cache.get(&address).cloned().unwrap_or({
-                let acc_info = db
+                let info = db
                     .store
                     .get_account_info(address)
                     .map_err(|e| StoreError::Custom(e.to_string()))?;
 
                 Account {
-                    info: LevmAccountInfo {
-                        balance: acc_info.balance,
-                        bytecode: acc_info.bytecode,
-                        nonce: acc_info.nonce,
-                    },
+                    info,
                     // This is the added_storage for the withdrawal.
                     // If not involved in the TX, there won't be any updates in the storage
                     storage: HashMap::new(),
