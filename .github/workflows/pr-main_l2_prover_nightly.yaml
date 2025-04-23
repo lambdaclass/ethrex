@@ -23,12 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
-      matrix:
-        action:
-          - command: check
-            args: -p ethrex-prover -F pico
-          - command: clippy
-            args: -p ethrex-prover -F pico --all-targets
+      action:
+        - command: check
+          args: -p ethrex-prover -F pico
+        - command: clippy
+          args: -p ethrex-prover -F pico --all-targets
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4

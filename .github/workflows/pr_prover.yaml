@@ -19,9 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
-      matrix:
-        # backend: ["sp1", "risc0", "exec"] # TODO: fix Risc0 (https://github.com/lambdaclass/ethrex/issues/2145)
-        backend: ["sp1", "exec"]
+      # backend: ["sp1", "risc0", "exec"] # TODO: fix Risc0 (https://github.com/lambdaclass/ethrex/issues/2145)
+      backend: ["sp1", "exec"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
