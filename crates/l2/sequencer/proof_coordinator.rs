@@ -47,13 +47,14 @@ struct ProofCoordinator {
 #[derive(Serialize, Deserialize)]
 pub enum ProofData {
     /// 1.
-    /// The Client initiates the connection with a Request.
+    /// The Client initiates the connection with a BlockRequest.
     /// Asking for the ProverInputData the prover_server considers/needs.
     BlockRequest,
 
     /// 2.
-    /// The Server responds with a Response containing the ProverInputData.
-    /// If the Response is ProofData::Response{None, None}, the Client knows the Request couldn't be performed.
+    /// The Server responds with a BlockResponse containing the ProverInputData.
+    /// If the BlockResponse is ProofData::BlockResponse{None, None},
+    /// the Client knows the BlockRequest couldn't be performed.
     BlockResponse {
         block_number: Option<u64>,
         input: Option<ProverInputData>,
@@ -73,20 +74,27 @@ pub enum ProofData {
 }
 
 impl ProofData {
-    /// Builder function for creating a Request
+    /// Builder function for creating a BlockRequest
     pub fn block_request() -> Self {
         ProofData::BlockRequest
     }
 
-    /// Builder function for creating a Response
-    pub fn block_response(block_number: Option<u64>, input: Option<ProverInputData>) -> Self {
+    /// Builder function for creating a BlockResponse
+    pub fn block_response(block_number: u64, input: ProverInputData) -> Self {
         ProofData::BlockResponse {
-            block_number,
-            input,
+            block_number: Some(block_number),
+            input: Some(input),
         }
     }
 
-    /// Builder function for creating a Submit
+    pub fn empty_block_response() -> Self {
+        ProofData::BlockResponse {
+            block_number: None,
+            input: None,
+        }
+    }
+
+    /// Builder function for creating a ProofSubmit
     pub fn proof_submit(block_number: u64, calldata: ProofCalldata) -> Self {
         ProofData::ProofSubmit {
             block_number,
@@ -94,7 +102,7 @@ impl ProofData {
         }
     }
 
-    /// Builder function for creating a SubmitAck
+    /// Builder function for creating a ProofSubmitAck
     pub fn proof_submit_ack(block_number: u64) -> Self {
         ProofData::ProofSubmitACK { block_number }
     }
@@ -204,7 +212,7 @@ impl ProofCoordinator {
         match data {
             Ok(ProofData::BlockRequest) => {
                 if let Err(e) = self.handle_request(&mut stream).await {
-                    error!("Failed to handle request: {e}");
+                    error!("Failed to handle BlockRequest: {e}");
                 }
             }
             Ok(ProofData::ProofSubmit {
@@ -215,7 +223,7 @@ impl ProofCoordinator {
                     .handle_submit(&mut stream, block_number, calldata)
                     .await
                 {
-                    error!("Failed to handle submit: {e}");
+                    error!("Failed to handle ProofSubmit: {e}");
                 }
             }
             Err(e) => {
@@ -231,7 +239,7 @@ impl ProofCoordinator {
     }
 
     async fn handle_request(&self, stream: &mut TcpStream) -> Result<(), ProverServerError> {
-        info!("Request received");
+        info!("BlockRequest received");
 
         let block_to_verify = 1 + EthClient::get_last_verified_block(
             &self.eth_client,
@@ -242,13 +250,13 @@ impl ProofCoordinator {
         let latest_block_number = self.store.get_latest_block_number().await?;
 
         let response = if block_to_verify > latest_block_number {
-            let response = ProofData::block_response(None, None);
-            debug!("Sending empty response");
+            let response = ProofData::empty_block_response();
+            debug!("Sending empty BlockResponse");
             response
         } else {
             let input = self.create_prover_input(block_to_verify).await?;
-            let response = ProofData::block_response(Some(block_to_verify), Some(input));
-            debug!("Sending Response for block_number: {block_to_verify}");
+            let response = ProofData::block_response(block_to_verify, input);
+            debug!("Sending BlockResponse for block_number: {block_to_verify}");
             response
         };
 
@@ -257,7 +265,7 @@ impl ProofCoordinator {
             .write_all(&buffer)
             .await
             .map_err(ProverServerError::ConnectionError)
-            .map(|_| info!("Response sent for block number: {block_to_verify}"))
+            .map(|_| info!("BlockResponse sent for block number: {block_to_verify}"))
     }
 
     async fn handle_submit(
@@ -266,7 +274,7 @@ impl ProofCoordinator {
         block_number: u64,
         calldata: ProofCalldata,
     ) -> Result<(), ProverServerError> {
-        info!("Submit received for block number: {block_number}");
+        info!("ProofSubmit received for block number: {block_number}");
 
         // Check if we have the proof for that ProverType
         match block_number_has_state_file(StateFileType::Proof(calldata.prover_type), block_number)
@@ -283,7 +291,7 @@ impl ProofCoordinator {
             .write_all(&buffer)
             .await
             .map_err(ProverServerError::ConnectionError)
-            .map(|_| info!("Submit ACK sent"))
+            .map(|_| info!("ProofSubmit ACK sent"))
     }
 
     async fn create_prover_input(
