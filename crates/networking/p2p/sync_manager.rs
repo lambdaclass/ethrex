@@ -18,6 +18,7 @@ use crate::{
     sync::{SyncMode, Syncer},
 };
 
+#[derive(Debug)]
 pub enum SyncStatus {
     Active(SyncMode),
     Inactive,
@@ -62,7 +63,7 @@ impl SyncManager {
             .await
             .is_ok_and(|res| res.is_some())
         {
-            sync_manager.start_sync().await;
+            sync_manager.start_sync();
         }
         sync_manager
     }
@@ -100,15 +101,17 @@ impl SyncManager {
     /// Attempts to sync to the last received fcu head
     /// Will do nothing if the syncer is already involved in a sync process
     /// If the sync process would require multiple sync cycles (such as snap sync), starts all required sync cycles until the sync is complete
-    pub async fn start_sync(&self) {
+    pub fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
-        let Ok(Some(current_head)) = self.store.get_latest_canonical_block_hash().await else {
-            tracing::error!("Failed to fecth latest canonical block, unable to sync");
-            return;
-        };
         let sync_head = self.last_fcu_head.clone();
+
         tokio::spawn(async move {
+            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
+                tracing::error!("Failed to fecth latest canonical block, unable to sync");
+                return;
+            };
+
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             let Ok(mut syncer) = syncer.try_lock() else {
                 return;
@@ -147,7 +150,7 @@ impl SyncManager {
     }
 
     /// Returns the syncer's current syncmode (either snap or full)
-    fn sync_mode(&self) -> SyncMode {
+    pub fn sync_mode(&self) -> SyncMode {
         if self.snap_enabled.load(Ordering::Relaxed) {
             SyncMode::Snap
         } else {
