@@ -10,6 +10,7 @@ use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
+#[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{

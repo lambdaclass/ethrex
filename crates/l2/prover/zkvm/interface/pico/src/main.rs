@@ -66,7 +66,7 @@ pub fn main() {
             }
         }
 
-        // validate_gas_used(&receipts, &block.header).expect("invalid gas used");
+        validate_gas_used(&receipts, &block.header).expect("invalid gas used");
         parent_header = block.header;
     }
 
