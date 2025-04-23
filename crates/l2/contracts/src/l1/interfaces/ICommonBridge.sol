@@ -91,6 +91,16 @@ interface ICommonBridge {
     /// the pending deposit logs to remove, only the number of them.
     function removePendingDepositLogs(uint16 number) external;
 
+    /// @notice Method to retrieve the merkle root of the withdrawal logs of a
+    /// given block.
+    /// @dev This method is used by the L2 OnChainOperator at the verify stage.
+    /// @param blockNumber the block number in L2 where the withdrawal logs were
+    /// emitted.
+    /// @return the merkle root of the withdrawal logs of the given block.
+    function getWithdrawalLogsMerkleRoot(
+        uint256 blockNumber
+    ) external view returns (bytes32);
+
     /// @notice Publishes the L2 withdrawals on L1.
     /// @dev This method is used by the L2 OnChainOperator to publish the L2
     /// withdrawals when an L2 block is committed.
