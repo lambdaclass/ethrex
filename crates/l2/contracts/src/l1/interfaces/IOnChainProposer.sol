@@ -14,14 +14,10 @@ interface IOnChainProposer {
     /// @return The latest verified block number as a uint256.
     function lastVerifiedBlock() external view returns (uint256);
 
-    // TODO: We are using the state diff KZG versioned hash to figure out
-    // whether a block was committed or not. Ideally, we should use the new
-    // state root hash instead.
     /// @notice A block has been committed.
     /// @dev Event emitted when a block is committed.
-    /// @param stateDiffKZGVersionedHash the KZG versioned hash of the committed
-    /// block's state diff.
-    event BlockCommitted(bytes32 indexed stateDiffKZGVersionedHash);
+    /// @param newStateRoot The new state root of the block that was committed.
+    event BlockCommitted(bytes32 indexed newStateRoot);
 
     /// @notice A block has been verified.
     /// @dev Event emitted when a block is verified.
@@ -45,6 +41,7 @@ interface IOnChainProposer {
     /// @dev Committing to an L2 block means to store the block's commitment
     /// and to publish withdrawals if any.
     /// @param blockNumber the number of the block to be committed.
+    /// @param newStateRoot the new state root of the block to be committed.
     /// @param stateDiffKZGVersionedHash of the block to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the block to be committed.
@@ -52,6 +49,7 @@ interface IOnChainProposer {
     /// deposits logs of the block to be committed.
     function commit(
         uint256 blockNumber,
+        bytes32 newStateRoot,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash

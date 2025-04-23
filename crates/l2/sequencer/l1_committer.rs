@@ -31,7 +31,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -156,6 +156,14 @@ impl Committer {
             }
         };
 
+        let new_state_root = self
+            .store
+            .state_trie(block_to_commit.hash())?
+            .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                "Failed to get state root from storage".to_owned(),
+            ))?
+            .hash_no_commit();
+
         let state_diff = self
             .prepare_state_diff(
                 &block_to_commit,
@@ -172,6 +180,7 @@ impl Committer {
         match self
             .send_commitment(
                 block_to_commit.header.number,
+                new_state_root,
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
@@ -330,6 +339,7 @@ impl Committer {
     async fn send_commitment(
         &self,
         block_number: u64,
+        new_state_root: H256,
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
@@ -346,6 +356,7 @@ impl Committer {
 
         let calldata_values = vec![
             Value::Uint(U256::from(block_number)),
+            Value::FixedBytes(new_state_root.0.to_vec().into()),
             Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
