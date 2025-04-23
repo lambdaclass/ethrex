@@ -206,12 +206,12 @@ Options:
 Node options:
       --network <GENESIS_FILE_PATH>
           Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.
-          
+
           [env: ETHREX_NETWORK=]
 
       --datadir <DATABASE_DIRECTORY>
           If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.
-          
+
           [env: ETHREX_DATADIR=]
           [default: ethrex]
 
@@ -230,13 +230,13 @@ Node options:
 
       --evm <EVM_BACKEND>
           Has to be `levm` or `revm`
-          
+
           [env: ETHREX_EVM=]
           [default: revm]
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-          
+
           [default: INFO]
 
 P2P options:
