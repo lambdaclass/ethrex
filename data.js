@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745419075795,
+  "lastUpdate": 1745419697306,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3805,6 +3805,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180346542446,
             "range": "± 612174471",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fbfe149c015ec249dc4e7c11ef3f3582f9e04e54",
+          "message": "fix(levm): improve get state transitions LEVM (#2518)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Make `get_state_transitions` we use un LEVM return the same as the one\nin REVM.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- I made changes in the past to make `get_state_transitions` for both\nLEVM and REVM the same for comparison but I missed one aspect. We only\nwant to show the code in an `AccountUpdate` if the code itself has been\nmodified, not just the `AccountInfo`. Before we were returning the code\nin the `AccountUpdate` even if only the nonce of the contract changed\nfor example.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-23T13:58:35Z",
+          "tree_id": "4ad9afc6415e5a389ea6f7b5f00818246856e177",
+          "url": "https://github.com/lambdaclass/ethrex/commit/fbfe149c015ec249dc4e7c11ef3f3582f9e04e54"
+        },
+        "date": 1745419694445,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182754061490,
+            "range": "± 538702793",
             "unit": "ns/iter"
           }
         ]
