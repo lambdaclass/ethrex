@@ -262,7 +262,7 @@ pub fn read_latest_state(state_file_type: StateFileType) -> Result<StateType, Sa
     Ok(state)
 }
 
-/// DELETE the [StateFileType] for the given block_nbatch_numberumber
+/// DELETE the [StateFileType] for the given batch_number
 pub fn delete_state_file(
     batch_number: u64,
     state_file_type: StateFileType,
@@ -381,7 +381,6 @@ pub fn batch_number_has_all_needed_proofs(
     Ok(has_all_proofs)
 }
 
-// TODO: Update this test to work with batches
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {

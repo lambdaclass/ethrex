@@ -424,7 +424,7 @@ impl LEVM {
                 block_hash: block.hash(),
             };
 
-            // Replace the entire Arc (no need to lock since Arc is atomic)
+            // Replace the store
             *logger.store.lock().unwrap() = Box::new(new_store);
         }
 

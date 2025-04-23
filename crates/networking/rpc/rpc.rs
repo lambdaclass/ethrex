@@ -68,7 +68,7 @@ use tracing::info;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "l2")] {
-        use crate::l2::{transaction::SponsoredTx};
+        use crate::l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
         use ethrex_storage_l2::{StoreL2};

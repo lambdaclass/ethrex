@@ -34,7 +34,7 @@ pub enum EthClientError {
     GetCodeError(#[from] GetCodeError),
     #[error("eth_getTransactionByHash request error: {0}")]
     GetTransactionByHashError(#[from] GetTransactionByHashError),
-    #[error("ethrex_getEithdrawalProof request error: {0}")]
+    #[error("ethrex_getWithdrawalProof request error: {0}")]
     GetWithdrawalProofError(#[from] GetWithdrawalProofError),
     #[error("Unreachable nonce")]
     UnrecheableNonce,
