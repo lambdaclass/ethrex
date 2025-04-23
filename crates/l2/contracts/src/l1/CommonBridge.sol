@@ -167,6 +167,13 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
     }
 
     /// @inheritdoc ICommonBridge
+    function getWithdrawalLogsMerkleRoot(
+        uint256 blockNumber
+    ) public view returns (bytes32) {
+        return blockWithdrawalLogsMerkleRoots[blockNumber];
+    }
+
+    /// @inheritdoc ICommonBridge
     function publishWithdrawals(
         uint256 withdrawalLogsBlockNumber,
         bytes32 withdrawalsLogsMerkleRoot
