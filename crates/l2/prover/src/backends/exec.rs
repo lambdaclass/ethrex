@@ -1,8 +1,10 @@
 use ethrex_blockchain::validate_block;
+use ethrex_common::Address;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
+use std::collections::HashMap;
 use tracing::warn;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
