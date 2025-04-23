@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745435238353,
+  "lastUpdate": 1745438868239,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -3955,6 +3955,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178477293548,
             "range": "± 717683689",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a7d7591cf064065d760c757e3de8aa21a45f511",
+          "message": "refactor(levm,l1,l2): split block execution and update generation (#2519)\n\n**Motivation**\n\nCurrently during batch processing, the state transitions are calculated\nfor every block and then merged, when it would be more performant to\ncalculate them once at the end.\n\n**Description**\n\nThis PR removes the account updates from the execution result and makes\nevery consumer manually request them.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2504",
+          "timestamp": "2025-04-23T19:20:35Z",
+          "tree_id": "625c9224878ee0b6606f300688a2dd88f72a98fd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5a7d7591cf064065d760c757e3de8aa21a45f511"
+        },
+        "date": 1745438866023,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179314675128,
+            "range": "± 863506155",
             "unit": "ns/iter"
           }
         ]
