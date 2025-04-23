@@ -18,7 +18,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{BlobsBundle, Fork};
 
-use ethrex_common::{Address, H160, H256};
+use ethrex_common::{Address, H256};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::{ops::Div, time::Instant};
@@ -213,7 +213,6 @@ impl Blockchain {
 
         let blocks_len = blocks.len();
         let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
-        let mut all_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
@@ -272,9 +271,6 @@ impl Blockchain {
         let account_updates = vm
             .get_state_transitions(fork)
             .map_err(|err| (ChainError::EvmError(err), None))?;
-        for account_update in account_updates {
-            all_account_updates.insert(account_update.address, account_update);
-        }
 
         let Some(last_block) = blocks.last() else {
             return Err((ChainError::Custom("Last block not found".into()), None));
@@ -283,10 +279,7 @@ impl Blockchain {
         // Apply the account updates over all blocks and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(
-                first_block_header.parent_hash,
-                &all_account_updates.into_values().collect::<Vec<_>>(),
-            )
+            .apply_account_updates(first_block_header.parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
