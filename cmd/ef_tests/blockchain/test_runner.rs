@@ -168,9 +168,9 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
             .get_account_info(latest_block_number, *addr)
             .await
             .expect("Failed to read from DB")
-            .expect(&format!(
-                "Account info for address {addr} not found in DB, test:{test_key}"
-            ));
+            .unwrap_or_else(|| {
+                panic!("Account info for address {addr} not found in DB, test:{test_key}")
+            });
         assert_eq!(
             db_account_info, expected_account.info,
             "Mismatched account info for address {addr} test:{test_key}"
@@ -182,9 +182,9 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
             let db_account_code = db
                 .get_account_code(code_hash)
                 .expect("Failed to read from DB")
-                .expect(&format!(
-                    "Account code for code hash {code_hash} not found in DB test:{test_key}"
-                ));
+                .unwrap_or_else(|| {
+                    panic!("Account code for code hash {code_hash} not found in DB test:{test_key}")
+                });
             assert_eq!(
                 db_account_code, expected_account.code,
                 "Mismatched account code for code hash {code_hash} test:{test_key}"
@@ -196,9 +196,9 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
                 .get_storage_at(latest_block_number, *addr, key)
                 .await
                 .expect("Failed to read from DB")
-                .expect(&format!(
-                    "Storage missing for address {addr} key {key} in DB test:{test_key}"
-                ));
+                .unwrap_or_else(|| {
+                    panic!("Storage missing for address {addr} key {key} in DB test:{test_key}")
+                });
             assert_eq!(
                 db_storage_value, value,
                 "Mismatched storage value for address {addr}, key {key} test:{test_key}"
