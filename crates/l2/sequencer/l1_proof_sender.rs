@@ -110,11 +110,10 @@ impl L1ProofSender {
     }
 
     async fn main_logic(&self) -> Result<(), ProofSenderError> {
-        let batch_to_verify = 1 + EthClient::get_last_verified_batch(
-            &self.eth_client,
-            self.on_chain_proposer_address,
-        )
-        .await?;
+        let batch_to_verify = 1 + self
+            .eth_client
+            .get_last_verified_batch(self.on_chain_proposer_address)
+            .await?;
 
         if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
             .is_ok_and(|has_all_proofs| has_all_proofs)

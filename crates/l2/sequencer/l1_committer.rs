@@ -101,9 +101,10 @@ impl Committer {
 
     async fn main_logic(&mut self) -> Result<(), CommitterError> {
         // Get the batch to commit
-        let last_committed_batch_number =
-            EthClient::get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address)
-                .await?;
+        let last_committed_batch_number = self
+            .eth_client
+            .get_last_committed_batch(self.on_chain_proposer_address)
+            .await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
         // Get the last committed block_number
@@ -174,7 +175,7 @@ impl Committer {
         let mut deposit_logs_hashes = vec![];
         let mut new_state_root = H256::default();
 
-        info!("Preparing state diff from block {}", first_block_of_batch);
+        info!("Preparing state diff from block {first_block_of_batch}");
 
         loop {
             // Get a block to add to the batch

@@ -886,27 +886,19 @@ impl EthClient {
     }
 
     pub async fn get_last_committed_batch(
-        eth_client: &EthClient,
+        &self,
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {
-        Self::_call_variable(
-            eth_client,
-            b"lastCommittedBatch()",
-            on_chain_proposer_address,
-        )
-        .await
+        self._call_variable(b"lastCommittedBatch()", on_chain_proposer_address)
+            .await
     }
 
     pub async fn get_last_verified_batch(
-        eth_client: &EthClient,
+        &self,
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {
-        Self::_call_variable(
-            eth_client,
-            b"lastVerifiedBatch()",
-            on_chain_proposer_address,
-        )
-        .await
+        self._call_variable(b"lastVerifiedBatch()", on_chain_proposer_address)
+            .await
     }
 
     pub async fn get_last_fetched_l1_block(
@@ -917,7 +909,7 @@ impl EthClient {
     }
 
     async fn _generic_call(
-        eth_client: &EthClient,
+        &self,
         selector: &[u8],
         on_chain_proposer_address: Address,
     ) -> Result<String, EthClientError> {
@@ -933,7 +925,7 @@ impl EthClient {
         let leading_zeros = 32 - ((calldata.len() - 4) % 32);
         calldata.extend(vec![0; leading_zeros]);
 
-        let hex_string = eth_client
+        let hex_string = self
             .call(
                 on_chain_proposer_address,
                 calldata.into(),
@@ -945,12 +937,13 @@ impl EthClient {
     }
 
     async fn _call_variable(
-        eth_client: &EthClient,
+        &self,
         selector: &[u8],
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {
-        let hex_string =
-            Self::_generic_call(eth_client, selector, on_chain_proposer_address).await?;
+        let hex_string = self
+            ._generic_call(selector, on_chain_proposer_address)
+            .await?;
 
         let value = from_hex_string_to_u256(&hex_string)?
             .try_into()

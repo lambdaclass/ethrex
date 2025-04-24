@@ -64,17 +64,15 @@ impl MetricsGatherer {
                 EthClient::get_last_fetched_l1_block(&self.eth_client, self.common_bridge_address)
                     .await?;
 
-            let last_committed_batch = EthClient::get_last_committed_batch(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
+            let last_committed_batch = self
+                .eth_client
+                .get_last_committed_batch(self.on_chain_proposer_address)
+                .await?;
 
-            let last_verified_block = EthClient::get_last_verified_batch(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
+            let last_verified_block = self
+                .eth_client
+                .get_last_verified_batch(self.on_chain_proposer_address)
+                .await?;
 
             METRICS_L2.set_block_type_and_block_number(
                 MetricsL2BlockType::LastCommittedBlock,

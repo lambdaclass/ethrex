@@ -49,13 +49,13 @@ impl Command {
         let on_chain_proposer_address = cfg.contracts.on_chain_proposer;
         match self {
             Command::LatestBatches => {
-                let last_committed_batch =
-                    EthClient::get_last_committed_batch(&eth_client, on_chain_proposer_address)
-                        .await?;
+                let last_committed_batch = eth_client
+                    .get_last_committed_batch(on_chain_proposer_address)
+                    .await?;
 
-                let last_verified_batch =
-                    EthClient::get_last_verified_batch(&eth_client, on_chain_proposer_address)
-                        .await?;
+                let last_verified_batch = eth_client
+                    .get_last_verified_batch(on_chain_proposer_address)
+                    .await?;
 
                 println!(
                     "latestCommittedBatch: {}",

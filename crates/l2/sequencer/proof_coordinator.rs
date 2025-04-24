@@ -246,11 +246,10 @@ impl ProofCoordinator {
     async fn handle_request(&self, stream: &mut TcpStream) -> Result<(), ProverServerError> {
         info!("BatchRequest received");
 
-        let batch_to_verify = 1 + EthClient::get_last_verified_batch(
-            &self.eth_client,
-            self.on_chain_proposer_address,
-        )
-        .await?;
+        let batch_to_verify = 1 + self
+            .eth_client
+            .get_last_verified_batch(self.on_chain_proposer_address)
+            .await?;
 
         let response = if !self.rollup_store.contains_batch(&batch_to_verify).await? {
             let response = ProofData::empty_batch_response();
