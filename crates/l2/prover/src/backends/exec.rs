@@ -92,8 +92,10 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)?;
 
     // Calculate final state root hash and check
+    let last_block = blocks.last()?;
     let final_state_hash = state_trie.hash_no_commit();
-    if final_state_hash != block.header.state_root {
+
+    if final_state_hash != last_block.header.state_root {
         return Err("invalid final state trie".to_string().into());
     }
 

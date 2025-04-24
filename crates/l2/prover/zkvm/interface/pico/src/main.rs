@@ -78,7 +78,9 @@ pub fn main() {
         .expect("failed to update state and storage tries");
 
     // Calculate final state root hash and check
+    let last_block = blocks.last().expect("empty batch");
     let final_state_hash = state_trie.hash_no_commit();
+
     if final_state_hash != block.header.state_root {
         panic!("invalid final state trie");
     }
