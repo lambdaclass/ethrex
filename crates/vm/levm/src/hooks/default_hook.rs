@@ -324,9 +324,11 @@ impl Hook for DefaultHook {
     fn finalize_execution(
         &self,
         vm: &mut VM<'_>,
-        initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
+
+        let initial_call_frame = vm.current_call_frame()?.clone();
+
         // POST-EXECUTION Changes
         let sender_address = initial_call_frame.msg_sender;
         let receiver_address = initial_call_frame.to;
@@ -383,7 +385,7 @@ impl Hook for DefaultHook {
             .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
 
         let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
-            let minimum_gas_consumed = vm.get_min_gas_used(initial_call_frame)?;
+            let minimum_gas_consumed = vm.get_min_gas_used(&initial_call_frame)?;
             exec_gas_consumed.max(minimum_gas_consumed)
         } else {
             exec_gas_consumed
