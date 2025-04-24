@@ -326,7 +326,6 @@ impl Hook for DefaultHook {
         vm: &mut VM<'_>,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
-
         let initial_call_frame = vm.current_call_frame()?.clone();
 
         // POST-EXECUTION Changes

@@ -359,7 +359,7 @@ impl<'a> VM<'a> {
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
             let report =
                 self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
-            self.handle_return(&current_call_frame, &report)?;
+            self.handle_return(&report)?;
             self.current_call_frame_mut()?.increment_pc_by(1)?;
             return Ok(report);
         }
@@ -369,29 +369,26 @@ impl<'a> VM<'a> {
 
             let op_result = self.handle_current_opcode(opcode);
 
+            let mut current_call_frame = self
+                .call_frames
+                .pop()
+                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+
             match op_result {
                 Ok(OpcodeResult::Continue { pc_increment }) => self
                     .current_call_frame_mut()?
                     .increment_pc_by(pc_increment)?,
                 Ok(OpcodeResult::Halt) => {
-                    let mut current_call_frame = self
-                        .call_frames
-                        .pop()
-                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
                     let report = self.handle_opcode_result(&mut current_call_frame)?;
-                    if self.handle_return(&current_call_frame, &report)? {
+                    if self.handle_return(&report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
                         return Ok(report);
                     }
                 }
                 Err(error) => {
-                    let mut current_call_frame = self
-                        .call_frames
-                        .pop()
-                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
                     let report = self.handle_opcode_error(error, &mut current_call_frame)?;
-                    if self.handle_return(&current_call_frame, &report)? {
+                    if self.handle_return(&report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
                         return Ok(report);
@@ -616,14 +613,9 @@ impl<'a> VM<'a> {
         // NOTE: ATTOW the default hook is created in VM::new(), so
         // (in theory) _at least_ the default finalize execution should
         // run
-        let call_frame = self
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         for hook in self.hooks.clone() {
-            hook.finalize_execution(self, &call_frame, report)?;
+            hook.finalize_execution(self, report)?;
         }
-        self.call_frames.push(call_frame);
 
         Ok(())
     }
