@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745510778631,
+  "lastUpdate": 1745511651564,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4195,6 +4195,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181436739081,
             "range": "± 1101213285",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f93e67a0601ebf79bcc80d768aa89aa243584983",
+          "message": "ci(l1): comment flaky hive cancun engine test (#2572)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Temporarily comment Invalid Missing Ancestor Syncing ReOrg and\nInvlalid P9 and P10. Should be fixed later, the issue is [this\none](https://github.com/lambdaclass/ethrex/issues/2565)\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-24T15:33:48Z",
+          "tree_id": "70b85220ffea5a7b71eeeccefe92cd2b0d8e4c39",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f93e67a0601ebf79bcc80d768aa89aa243584983"
+        },
+        "date": 1745511649285,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178439868681,
+            "range": "± 1382376837",
             "unit": "ns/iter"
           }
         ]
