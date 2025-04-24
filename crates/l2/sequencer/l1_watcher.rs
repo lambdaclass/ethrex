@@ -189,7 +189,7 @@ impl L1Watcher {
             let value_bytes = mint_value.to_big_endian();
             let id_bytes = deposit_id.to_big_endian();
             let gas_limit_bytes = gas_limit.to_big_endian();
-            if !pending_deposit_logs.contains(&keccak(
+            let deposit_hash = keccak(
                 [
                     to_address.as_bytes(),
                     &value_bytes,
@@ -200,7 +200,17 @@ impl L1Watcher {
                     keccak(&calldata).as_bytes(),
                 ]
                 .concat(),
-            )) {
+            );
+
+            let deposit_already_processed = blockchain
+                .mempool
+                .get_transaction_by_hash(deposit_hash)
+                .map_err(|_| {
+                    L1WatcherError::Custom("Failed to get deposit tx from the mempool".to_string())
+                })?
+                .is_some();
+
+            if !pending_deposit_logs.contains(&deposit_hash) || deposit_already_processed {
                 warn!("Deposit already processed (to: {recipient:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
                 continue;
             }
