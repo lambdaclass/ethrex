@@ -174,7 +174,7 @@ fn parse(
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-    
+
     if params.len() != 2 || params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
     }
@@ -184,13 +184,13 @@ fn parse(
     if params.len() == 2 {
         // if there is an error when parsing (or the parameter is missing), set to None
         payload_attributes =
-        match serde_json::from_value::<Option<PayloadAttributesV3>>(params[1].clone()) {
-            Ok(attributes) => attributes,
-            Err(error) => {
-                info!("Could not parse params {}", error);
-                None
-            }
-        };
+            match serde_json::from_value::<Option<PayloadAttributesV3>>(params[1].clone()) {
+                Ok(attributes) => attributes,
+                Err(error) => {
+                    info!("Could not parse params {}", error);
+                    None
+                }
+            };
     }
     if let Some(attr) = &payload_attributes {
         if !is_v3 && attr.parent_beacon_block_root.is_some() {
