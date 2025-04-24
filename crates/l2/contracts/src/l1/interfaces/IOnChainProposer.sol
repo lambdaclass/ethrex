@@ -16,7 +16,8 @@ interface IOnChainProposer {
 
     /// @notice A batch has been committed.
     /// @dev Event emitted when a batch is committed.
-    event BatchCommitted(bytes32 indexed currentBatchCommitment);
+    /// @param newStateRoot The new state root of the batch that was committed.
+    event BatchCommitted(bytes32 indexed newStateRoot);
 
     /// @notice A batch has been verified.
     /// @dev Event emitted when a batch is verified.
@@ -40,15 +41,18 @@ interface IOnChainProposer {
     /// @dev Committing to an L2 batch means to store the batch's commitment
     /// and to publish withdrawals if any.
     /// @param batchNumber the number of the batch to be committed.
-    /// @param commitment of the batch to be committed.
+    /// @param newStateRoot the new state root of the batch to be committed.
+    /// @param stateDiffKZGVersionedHash of the block to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the batch to be committed.
-    /// @param depositLogs the deposit logs of the batch to be committed.
+    /// @param processedDepositLogsRollingHash the rolling hash of the processed
+    /// deposits logs of the batch to be committed.
     function commitBatch(
         uint256 batchNumber,
-        bytes32 commitment,
+        bytes32 newStateRoot,
+        bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 depositLogs
+        bytes32 processedDepositLogsRollingHash
     ) external;
 
     /// @notice Method used to verify a batch of L2 blocks.

@@ -13,9 +13,16 @@ import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 /// @title OnChainProposer contract.
 /// @author LambdaClass
 contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
+    /// @notice Committed batches data.
+    /// @dev This struct holds the information about the committed batches.
+    /// @dev processedDepositLogsRollingHash is the Merkle root of the logs of the
+    /// deposits that were processed in the batch being committed. The amount of
+    /// logs that is encoded in this root are to be removed from the
+    /// pendingDepositLogs queue of the CommonBridge contract.
     struct BatchCommitmentInfo {
-        bytes32 commitmentHash;
-        bytes32 depositLogs;
+        bytes32 newStateRoot;
+        bytes32 stateDiffKZGVersionedHash;
+        bytes32 processedDepositLogsRollingHash;
     }
 
     /// @notice The commitments of the committed batches.
@@ -138,26 +145,29 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @inheritdoc IOnChainProposer
     function commitBatch(
         uint256 batchNumber,
-        bytes32 commitment,
+        bytes32 newStateRoot,
+        bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 depositLogs
+        bytes32 processedDepositLogsRollingHash
     ) external override onlySequencer {
         require(
             batchNumber == lastCommittedBatch + 1,
             "OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch"
         );
         require(
-            batchCommitments[batchNumber].commitmentHash == bytes32(0),
+            batchCommitments[batchNumber].newStateRoot == bytes32(0),
             "OnChainProposer: batch already committed"
         );
 
         // Check if commitment is equivalent to blob's KZG commitment.
 
-        if (depositLogs != bytes32(0)) {
-            bytes32 savedDepositLogs = ICommonBridge(BRIDGE)
-                .getDepositLogsVersionedHash(uint16(bytes2(depositLogs)));
+        if (processedDepositLogsRollingHash != bytes32(0)) {
+            bytes32 claimedProcessedDepositLogs = ICommonBridge(BRIDGE)
+                .getPendingDepositLogsVersionedHash(
+                    uint16(bytes2(processedDepositLogsRollingHash))
+                );
             require(
-                savedDepositLogs == depositLogs,
+                claimedProcessedDepositLogs == processedDepositLogsRollingHash,
                 "OnChainProposer: invalid deposit logs"
             );
         }
@@ -168,11 +178,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
         }
         batchCommitments[batchNumber] = BatchCommitmentInfo(
-            commitment,
-            depositLogs
+            newStateRoot,
+            stateDiffKZGVersionedHash,
+            processedDepositLogsRollingHash
         );
         lastCommittedBatch = batchNumber;
-        emit BatchCommitted(commitment);
+        emit BatchCommitted(newStateRoot);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -204,7 +215,8 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         );
 
         require(
-            batchCommitments[batchNumber].commitmentHash != bytes32(0),
+            batchCommitments[batchNumber].stateDiffKZGVersionedHash !=
+                bytes32(0),
             "OnChainProposer: batch not committed"
         );
 
@@ -238,10 +250,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         lastVerifiedBatch = batchNumber;
         // The first 2 bytes are the number of deposits.
         uint16 deposits_amount = uint16(
-            bytes2(batchCommitments[batchNumber].depositLogs)
+            bytes2(
+                batchCommitments[batchNumber].processedDepositLogsRollingHash
+            )
         );
         if (deposits_amount > 0) {
-            ICommonBridge(BRIDGE).removeDepositLogs(deposits_amount);
+            ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
         }
 
         // Remove previous batch commitment as it is no longer needed.

@@ -35,7 +35,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -117,7 +117,13 @@ impl Committer {
         let first_block_to_commit = last_committed_block_number + 1;
 
         // Try to prepare batch
-        let (blobs_bundle, withdrawal_hashes, deposit_logs_hash, last_block_of_batch) = self
+        let (
+            blobs_bundle,
+            new_state_root,
+            withdrawal_hashes,
+            deposit_logs_hash,
+            last_block_of_batch,
+        ) = self
             .prepare_batch_from_block(last_committed_block_number)
             .await?;
 
@@ -134,6 +140,7 @@ impl Committer {
         match self
             .send_commitment(
                 batch_to_commit,
+                new_state_root,
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
@@ -156,7 +163,7 @@ impl Committer {
     async fn prepare_batch_from_block(
         &self,
         mut last_added_block_number: BlockNumber,
-    ) -> Result<(BlobsBundle, Vec<H256>, H256, BlockNumber), CommitterError> {
+    ) -> Result<(BlobsBundle, H256, Vec<H256>, H256, BlockNumber), CommitterError> {
         let first_block_of_batch = last_added_block_number + 1;
         let mut blobs_bundle = BlobsBundle::default();
 
@@ -165,6 +172,7 @@ impl Committer {
         let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         let mut withdrawal_hashes = vec![];
         let mut deposit_logs_hashes = vec![];
+        let mut new_state_root = H256::default();
 
         info!("Preparing state diff from block {}", first_block_of_batch);
 
@@ -265,6 +273,14 @@ impl Committer {
                             .collect::<Vec<H256>>(),
                     );
 
+                    new_state_root = self
+                        .store
+                        .state_trie(block_to_commit.hash())?
+                        .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                            "Failed to get state root from storage".to_owned(),
+                        ))?
+                        .hash_no_commit();
+
                     last_added_block_number += 1;
                 }
                 Err(e) => {
@@ -277,6 +293,7 @@ impl Committer {
         let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
         Ok((
             blobs_bundle,
+            new_state_root,
             withdrawal_hashes,
             deposit_logs_hash,
             last_added_block_number,
@@ -425,22 +442,23 @@ impl Committer {
     async fn send_commitment(
         &self,
         batch_number: u64,
+        new_state_root: H256,
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, CommitterError> {
         let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let state_diff_kzg_versioned_hash = blob_versioned_hashes
+            .first()
+            .ok_or(BlobsBundleError::BlobBundleEmptyError)
+            .map_err(CommitterError::from)?
+            .as_fixed_bytes();
+
         let calldata_values = vec![
             Value::Uint(U256::from(batch_number)),
-            Value::FixedBytes(
-                blob_versioned_hashes
-                    .first()
-                    .ok_or(BlobsBundleError::BlobBundleEmptyError)
-                    .map_err(CommitterError::from)?
-                    .as_fixed_bytes()
-                    .to_vec()
-                    .into(),
-            ),
+            Value::FixedBytes(new_state_root.0.to_vec().into()),
+            Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
         ];
