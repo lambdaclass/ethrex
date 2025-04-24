@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745507655896,
+  "lastUpdate": 1745510778631,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4165,6 +4165,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181446212274,
             "range": "± 590523106",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "588da6509b115b22090fb99cbaeee28b6ce8fd1f",
+          "message": "fix(core): flamegraphs width (#2566)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nThe flamegraphs are displayed half-sized on GH Pages.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nIn the CI, remove the line that cause the problem. Added Zed editor\nconfig directory to `.gitignore` btw.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-04-24T15:18:39Z",
+          "tree_id": "50f1def90f95b2dee9087426bd8d921462fd03cc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/588da6509b115b22090fb99cbaeee28b6ce8fd1f"
+        },
+        "date": 1745510776703,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181436739081,
+            "range": "± 1101213285",
             "unit": "ns/iter"
           }
         ]
