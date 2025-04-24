@@ -13,7 +13,7 @@ use crate::{
 use ethrex_common::{types::Fork, Address, U256};
 
 pub struct L2Hook {
-    pub recipient: Address,
+    pub recipient: Option<Address>,
 }
 
 impl Hook for L2Hook {
@@ -23,7 +23,12 @@ impl Hook for L2Hook {
         initial_call_frame: &mut crate::call_frame::CallFrame,
     ) -> Result<(), crate::errors::VMError> {
         if vm.env.is_privilege {
-            increase_account_balance(vm.db, self.recipient, initial_call_frame.msg_value)?;
+            let Some(recipient) = self.recipient else {
+                return Err(VMError::Internal(
+                    InternalError::RecipientNotFoundForPrivilegeTransaction,
+                ));
+            };
+            increase_account_balance(vm.db, recipient, initial_call_frame.msg_value)?;
             initial_call_frame.msg_value = U256::from(0);
         }
 

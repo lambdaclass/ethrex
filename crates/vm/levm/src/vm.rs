@@ -21,7 +21,8 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, Transaction, TxKind,
+        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, PrivilegedL2Transaction, Transaction,
+        TxKind,
     },
     Address, H256, U256,
 };
@@ -255,9 +256,18 @@ impl<'a> VM<'a> {
         #[cfg(not(feature = "l2"))]
         let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
         #[cfg(feature = "l2")]
-        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(L2Hook {
-            recipient: env.origin,
-        })];
+        let hooks: Vec<Arc<dyn Hook>> = {
+            let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
+                recipient,
+                ..
+            }) = tx
+            {
+                Some(*recipient)
+            } else {
+                None
+            };
+            vec![Arc::new(L2Hook { recipient })]
+        };
 
         match tx.to() {
             TxKind::Call(address_to) => {
