@@ -80,7 +80,6 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
             } else if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
             } else {
-                let engine_type = EngineType::InMemory;
                 error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
@@ -108,7 +107,6 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
             } else if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineTypeRollup::Libmdbx;
             } else {
-                let engine_type = EngineTypeRollup::InMemory;
                 error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
