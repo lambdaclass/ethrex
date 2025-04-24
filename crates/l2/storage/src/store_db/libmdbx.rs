@@ -145,6 +145,14 @@ impl StoreEngineL2 for Store {
         )
         .await
     }
+
+    async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
+        let exists = self
+            .read::<BlockNumbersByBatch>(*batch_number)
+            .await?
+            .is_some();
+        Ok(exists)
+    }
 }
 
 table!(

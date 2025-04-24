@@ -162,4 +162,12 @@ impl StoreEngineL2 for RedBStoreL2 {
             .await?
             .map(|rlp| rlp.value().to()))
     }
+
+    async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
+        let exists = self
+            .read(BLOCK_NUMBERS_BY_BATCH, *batch_number)
+            .await?
+            .is_some();
+        Ok(exists)
+    }
 }

@@ -336,6 +336,10 @@ pub fn batch_number_has_state_file(
     let batch_state_path = get_batch_state_path(batch_number)?;
     let file_name_to_seek: OsString = get_state_file_name(batch_number, &state_file_type).into();
 
+    if !batch_state_path.exists() {
+        return Ok(false);
+    }
+
     for entry in std::fs::read_dir(batch_state_path)? {
         let entry = entry?;
         let file_name_stored = entry.file_name();

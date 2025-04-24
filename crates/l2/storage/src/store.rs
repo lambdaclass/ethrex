@@ -126,4 +126,9 @@ impl Store {
             .await?;
         Ok(())
     }
+
+    /// Returns whether the batch with the given number is present.
+    pub async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
+        self.engine.contains_batch(batch_number).await
+    }
 }

@@ -47,4 +47,7 @@ pub trait StoreEngineL2: Debug + Send + Sync + RefUnwindSafe {
         &self,
         batch_number: u64,
     ) -> Result<Option<Vec<BlockNumber>>, StoreError>;
+
+    /// Returns whether the batch with the given number is present.
+    async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError>;
 }

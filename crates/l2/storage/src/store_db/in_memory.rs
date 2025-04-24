@@ -99,6 +99,13 @@ impl StoreEngineL2 for Store {
             .cloned();
         Ok(block_numbers)
     }
+
+    async fn contains_batch(&self, batch_number: &u64) -> Result<bool, StoreError> {
+        Ok(self
+            .inner()?
+            .block_numbers_by_batch
+            .contains_key(batch_number))
+    }
 }
 
 impl Debug for Store {

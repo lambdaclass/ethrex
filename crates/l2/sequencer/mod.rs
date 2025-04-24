@@ -11,10 +11,11 @@ use tracing::{error, info};
 
 pub mod block_producer;
 pub mod l1_committer;
+pub mod l1_proof_sender;
 pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
-pub mod prover_server;
+pub mod proof_coordinator;
 pub mod state_diff;
 
 pub mod execution_cache;
@@ -42,7 +43,11 @@ pub async fn start_l2(store: Store, l2_store: StoreL2, blockchain: Arc<Blockchai
         l2_store.clone(),
         execution_cache.clone(),
     ));
-    task_set.spawn(prover_server::start_prover_server(store.clone(), l2_store));
+    task_set.spawn(proof_coordinator::start_proof_coordinator(
+        store.clone(),
+        l2_store,
+    ));
+    task_set.spawn(l1_proof_sender::start_l1_proof_sender());
     task_set.spawn(start_block_producer(
         store.clone(),
         blockchain,
