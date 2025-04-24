@@ -219,7 +219,7 @@ jobs:
 
       # By default ethrex uses revm as evm backend.
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
+        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --docker.output
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
