@@ -11,3 +11,14 @@ pub const ETHREX_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const ETHREX_COMMIT_HASH: &str = env!("VERGEN_RUSTC_COMMIT_HASH");
 pub const ETHREX_BUILD_OS: &str = env!("VERGEN_RUSTC_HOST_TRIPLE");
 pub const ETHREX_RUSTC_VERSION: &str = env!("VERGEN_RUSTC_SEMVER");
+
+pub fn get_client_info() -> String {
+    format!(
+        "{}/v{}-develop-{}/{}/rustc-v{}",
+        ETHREX_PKG_NAME,
+        ETHREX_PKG_VERSION,
+        &ETHREX_COMMIT_HASH[0..6],
+        ETHREX_BUILD_OS,
+        ETHREX_RUSTC_VERSION
+    )
+}
