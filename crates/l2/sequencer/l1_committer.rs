@@ -32,7 +32,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -153,11 +153,23 @@ impl Committer {
                 warn!(
                             "Could not find execution cache result for block {block_number}, falling back to re-execution"
                         );
-                Evm::default(self.store.clone(), block_to_commit.header.parent_hash)
-                    .execute_block(&block_to_commit)
-                    .map(|result| result.account_updates)?
+                let mut vm = Evm::default(self.store.clone(), block_to_commit.header.parent_hash);
+                vm.execute_block(&block_to_commit)?;
+                let fork = self
+                    .store
+                    .get_chain_config()?
+                    .fork(block_to_commit.header.timestamp);
+                vm.get_state_transitions(fork)?
             }
         };
+
+        let new_state_root = self
+            .store
+            .state_trie(block_to_commit.hash())?
+            .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                "Failed to get state root from storage".to_owned(),
+            ))?
+            .hash_no_commit();
 
         let blobs_bundle = if !self.validium {
             let state_diff = self
@@ -178,6 +190,7 @@ impl Committer {
         match self
             .send_commitment(
                 block_to_commit.header.number,
+                new_state_root,
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
@@ -336,28 +349,28 @@ impl Committer {
     async fn send_commitment(
         &self,
         block_number: u64,
+        new_state_root: H256,
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, CommitterError> {
         info!("Sending commitment for block {block_number}");
 
-        let commitment_bytes: Bytes = if !self.validium {
+        let state_diff_kzg_versioned_hash = if !self.validium {
             let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
-            blob_versioned_hashes
+            *blob_versioned_hashes
                 .first()
                 .ok_or(BlobsBundleError::BlobBundleEmptyError)
                 .map_err(CommitterError::from)?
                 .as_fixed_bytes()
-                .to_vec()
-                .into()
         } else {
-            Bytes::from(vec![0; 32]) // Validium doesn't need to send commitment.
+            [0u8; 32] // Validium doesn't send state_diff_kzg_versioned_hash.
         };
 
         let calldata_values = vec![
             Value::Uint(U256::from(block_number)),
-            Value::FixedBytes(commitment_bytes),
+            Value::FixedBytes(new_state_root.0.to_vec().into()),
+            Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
         ];
