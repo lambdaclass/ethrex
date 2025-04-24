@@ -9,10 +9,10 @@ use std::str::FromStr;
 #[derive(Subcommand)]
 pub(crate) enum Command {
     #[clap(
-        about = "Get latestCommittedBlock and latestVerifiedBlock from the OnChainProposer.",
+        about = "Get latestCommittedBatch and latestVerifiedBatch from the OnChainProposer.",
         short_flag = 'l'
     )]
-    LatestBlocks,
+    LatestBatches,
     #[clap(about = "Get the current block_number.", alias = "bl")]
     BlockNumber {
         #[arg(long = "l2", required = false)]
@@ -48,7 +48,7 @@ impl Command {
         let rollup_client = EthClient::new(&cfg.network.l2_rpc_url);
         let on_chain_proposer_address = cfg.contracts.on_chain_proposer;
         match self {
-            Command::LatestBlocks => {
+            Command::LatestBatches => {
                 let last_committed_batch =
                     EthClient::get_last_committed_batch(&eth_client, on_chain_proposer_address)
                         .await?;
