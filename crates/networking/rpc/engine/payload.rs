@@ -80,7 +80,6 @@ impl RpcHandler for NewPayloadV2Request {
     }
 }
 
-#[derive(Debug)]
 pub struct NewPayloadV3Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
@@ -103,21 +102,20 @@ impl From<NewPayloadV3Request> for RpcRequest {
 
 impl RpcHandler for NewPayloadV3Request {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        dbg!(&params);
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 3 {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         }
-        Ok(dbg!(NewPayloadV3Request {
+        Ok(NewPayloadV3Request {
             payload: serde_json::from_value(params[0].clone())
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
             expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
             parent_beacon_block_root: serde_json::from_value(params[2].clone())
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-        }))
+        })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -135,7 +133,6 @@ impl RpcHandler for NewPayloadV3Request {
         };
         validate_fork(&block, Fork::Cancun, &context)?;
         validate_execution_payload_v3(&self.payload)?;
-        dbg!("Payload validated, proceed to exec");
         let payload_status = handle_new_payload_v3(
             &self.payload,
             context,
