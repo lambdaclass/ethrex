@@ -344,7 +344,7 @@ impl Hook for DefaultHook {
             .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
 
         let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
-            let minimum_gas_consumed = vm.get_min_gas_used(vm.current_call_frame()?)?;
+            let minimum_gas_consumed = vm.get_min_gas_used()?;
             exec_gas_consumed.max(minimum_gas_consumed)
         } else {
             exec_gas_consumed

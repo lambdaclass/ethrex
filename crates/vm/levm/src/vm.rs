@@ -5,7 +5,6 @@ use crate::{
     db::{cache, gen_db::GeneralizedDatabase},
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::{default_hook::DefaultHook, hook::Hook, l2_hook::L2Hook},
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
@@ -38,7 +37,6 @@ pub struct Substate {
 }
 
 /// Backup if sub-context is reverted. It consists of a copy of:
-///   - Database
 ///   - Substate
 ///   - Gas Refunds
 ///   - Transient Storage
@@ -390,36 +388,6 @@ impl<'a> VM<'a> {
 
     pub fn is_create(&self) -> bool {
         matches!(self.tx_kind, TxKind::Create)
-    }
-
-    /// Calculates the minimum gas to be consumed in the transaction.
-    pub fn get_min_gas_used(&self, initial_call_frame: &CallFrame) -> Result<u64, VMError> {
-        // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
-        let calldata = if self.is_create() {
-            &initial_call_frame.bytecode
-        } else {
-            &initial_call_frame.calldata
-        };
-
-        // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
-        // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
-        // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
-        // see it in https://eips.ethereum.org/EIPS/eip-7623
-        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
-            .map_err(VMError::OutOfGas)?
-            .checked_div(STANDARD_TOKEN_COST)
-            .ok_or(VMError::Internal(InternalError::DivisionError))?;
-
-        // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-        let mut min_gas_used: u64 = tokens_in_calldata
-            .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
-            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-
-        min_gas_used = min_gas_used
-            .checked_add(TX_BASE_COST)
-            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-
-        Ok(min_gas_used)
     }
 
     /// Executes without making changes to the cache.

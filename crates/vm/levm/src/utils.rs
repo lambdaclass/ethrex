@@ -6,8 +6,7 @@ use crate::{
     },
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
-        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
-        BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, WARM_ADDRESS_ACCESS_COST,
+        self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST
     },
     opcodes::Opcode,
     vm::{EVMConfig, Substate, VM},
@@ -572,5 +571,35 @@ impl<'a> VM<'a> {
             .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
         Ok(intrinsic_gas)
+    }
+
+    /// Calculates the minimum gas to be consumed in the transaction.
+    pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
+        // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
+        let calldata = if self.is_create() {
+            &self.current_call_frame()?.bytecode
+        } else {
+            &self.current_call_frame()?.calldata
+        };
+
+        // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
+        // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
+        // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
+        // see it in https://eips.ethereum.org/EIPS/eip-7623
+        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
+            .map_err(VMError::OutOfGas)?
+            .checked_div(STANDARD_TOKEN_COST)
+            .ok_or(VMError::Internal(InternalError::DivisionError))?;
+
+        // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+        let mut min_gas_used: u64 = tokens_in_calldata
+            .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+        min_gas_used = min_gas_used
+            .checked_add(TX_BASE_COST)
+            .ok_or(VMError::Internal(InternalError::GasOverflow))?;
+
+        Ok(min_gas_used)
     }
 }
