@@ -46,10 +46,10 @@ pub struct Substate {
 ///   - Gas Refunds
 ///   - Transient Storage
 pub struct StateBackup {
-    cache: CacheDB,
-    substate: Substate,
-    refunded_gas: u64,
-    transient_storage: TransientStorage,
+    pub cache: CacheDB,
+    pub substate: Substate,
+    pub refunded_gas: u64,
+    pub transient_storage: TransientStorage,
 }
 
 impl StateBackup {
@@ -175,8 +175,22 @@ pub struct VM<'a> {
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
     pub cache_backup: CacheDB, // Backup of the cache before executing the transaction
+    pub return_data: Vec<RetData>,
+    pub backups: Vec<StateBackup>,
 }
 
+pub struct RetData {
+    pub is_create: bool,
+    pub ret_offset: U256,
+    pub ret_size: usize,
+    pub should_transfer_value: bool,
+    pub to: Address,
+    pub msg_sender: Address,
+    pub value: U256,
+    pub max_message_call_gas: u64,
+}
+
+#[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,
@@ -279,6 +293,8 @@ impl<'a> VM<'a> {
                     authorization_list: tx.authorization_list(),
                     hooks,
                     cache_backup,
+                    return_data: vec![],
+                    backups: vec![],
                 })
             }
             TxKind::Create => {
@@ -321,41 +337,66 @@ impl<'a> VM<'a> {
                     authorization_list: tx.authorization_list(),
                     hooks,
                     cache_backup,
+                    return_data: vec![],
+                    backups: vec![],
                 })
             }
         }
     }
 
-    pub fn run_execution(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<ExecutionReport, VMError> {
-        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let backup = StateBackup::new(
-            self.db.cache.clone(),
-            self.accrued_substate.clone(),
-            self.env.refunded_gas,
-            self.env.transient_storage.clone(),
-        );
+    pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
+        let fork = self.env.config.fork;
 
-        if is_precompile(&current_call_frame.code_address, self.env.config.fork) {
-            let precompile_result = execute_precompile(current_call_frame, self.env.config.fork);
-            return self.handle_precompile_result(precompile_result, current_call_frame, backup);
+        if is_precompile(&self.current_call_frame()?.code_address, fork) {
+            let mut current_call_frame = self
+                .call_frames
+                .pop()
+                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+            let precompile_result = execute_precompile(&mut current_call_frame, fork);
+            let backup = self
+                .backups
+                .pop()
+                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+            let report =
+                self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
+            self.handle_return(&current_call_frame, &report)?;
+            self.current_call_frame_mut()?.increment_pc_by(1)?;
+            return Ok(report);
         }
 
         loop {
-            let opcode = current_call_frame.next_opcode();
+            let opcode = self.current_call_frame()?.next_opcode();
 
-            let op_result = self.handle_current_opcode(opcode, current_call_frame);
+            let op_result = self.handle_current_opcode(opcode);
 
             match op_result {
-                Ok(OpcodeResult::Continue { pc_increment }) => {
-                    current_call_frame.increment_pc_by(pc_increment)?
-                }
+                Ok(OpcodeResult::Continue { pc_increment }) => self
+                    .current_call_frame_mut()?
+                    .increment_pc_by(pc_increment)?,
                 Ok(OpcodeResult::Halt) => {
-                    return self.handle_opcode_result(current_call_frame, backup)
+                    let mut current_call_frame = self
+                        .call_frames
+                        .pop()
+                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+                    let report = self.handle_opcode_result(&mut current_call_frame)?;
+                    if self.handle_return(&current_call_frame, &report)? {
+                        self.current_call_frame_mut()?.increment_pc_by(1)?;
+                    } else {
+                        return Ok(report);
+                    }
                 }
-                Err(error) => return self.handle_opcode_error(error, current_call_frame, backup),
+                Err(error) => {
+                    let mut current_call_frame = self
+                        .call_frames
+                        .pop()
+                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+                    let report = self.handle_opcode_error(error, &mut current_call_frame)?;
+                    if self.handle_return(&current_call_frame, &report)? {
+                        self.current_call_frame_mut()?.increment_pc_by(1)?;
+                    } else {
+                        return Ok(report);
+                    }
+                }
             }
         }
     }
@@ -439,7 +480,8 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
             if new_account.has_code_or_nonce() {
-                return self.handle_create_non_empty_account(&initial_call_frame);
+                self.call_frames.push(initial_call_frame);
+                return self.handle_create_non_empty_account();
             }
 
             // https://eips.ethereum.org/EIPS/eip-161
@@ -451,15 +493,30 @@ impl<'a> VM<'a> {
             cache::insert_account(&mut self.db.cache, new_contract_address, created_contract);
         }
 
-        let mut report = self.run_execution(&mut initial_call_frame)?;
+        self.call_frames.push(initial_call_frame);
+        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
+        let backup = StateBackup::new(
+            self.db.cache.clone(),
+            self.accrued_substate.clone(),
+            self.env.refunded_gas,
+            self.env.transient_storage.clone(),
+        );
+        self.backups.push(backup);
 
-        self.finalize_execution(&initial_call_frame, &mut report)?;
+        let mut report = self.run_execution()?;
 
+        self.finalize_execution(&mut report)?;
         Ok(report)
     }
 
     pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
         self.call_frames.last_mut().ok_or(VMError::Internal(
+            InternalError::CouldNotAccessLastCallframe,
+        ))
+    }
+
+    pub fn current_call_frame(&self) -> Result<&CallFrame, VMError> {
+        self.call_frames.last().ok_or(VMError::Internal(
             InternalError::CouldNotAccessLastCallframe,
         ))
     }
@@ -530,10 +587,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    fn handle_create_non_empty_account(
-        &mut self,
-        initial_call_frame: &CallFrame,
-    ) -> Result<ExecutionReport, VMError> {
+    fn handle_create_non_empty_account(&mut self) -> Result<ExecutionReport, VMError> {
         let mut report = ExecutionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
             gas_used: self.env.gas_limit,
@@ -542,7 +596,7 @@ impl<'a> VM<'a> {
             output: Bytes::new(),
         };
 
-        self.finalize_execution(initial_call_frame, &mut report)?;
+        self.finalize_execution(&mut report)?;
 
         Ok(report)
     }
@@ -558,17 +612,18 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    fn finalize_execution(
-        &mut self,
-        initial_call_frame: &CallFrame,
-        report: &mut ExecutionReport,
-    ) -> Result<(), VMError> {
+    fn finalize_execution(&mut self, report: &mut ExecutionReport) -> Result<(), VMError> {
         // NOTE: ATTOW the default hook is created in VM::new(), so
         // (in theory) _at least_ the default finalize execution should
         // run
+        let call_frame = self
+            .call_frames
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         for hook in self.hooks.clone() {
-            hook.finalize_execution(self, initial_call_frame, report)?;
+            hook.finalize_execution(self, &call_frame, report)?;
         }
+        self.call_frames.push(call_frame);
 
         Ok(())
     }

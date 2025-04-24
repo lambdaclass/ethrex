@@ -178,7 +178,7 @@ impl Trie {
         // dedup
         // TODO: really inefficient, by making the traversing smarter we can avoid having
         // duplicates
-        let node_path: HashSet<_> = node_path.drain(..).collect();
+        let node_path: HashSet<_> = node_path.into_iter().collect();
         let node_path = Vec::from_iter(node_path);
         Ok((Some(root_node.encode_raw(&self.state)), node_path))
     }

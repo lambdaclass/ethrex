@@ -141,14 +141,7 @@ impl ExtensionNode {
     pub fn encode_raw(&self, state: &TrieState) -> Vec<u8> {
         let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
-        match state[self.child].compute_hash(state) {
-            NodeHash::Inline(x) => {
-                encoder = encoder.encode_raw(&x);
-            }
-            NodeHash::Hashed(x) => {
-                encoder = encoder.encode_bytes(&x.0);
-            }
-        }
+        encoder = state[self.child].encode(encoder);
         encoder.finish();
         buf
     }

@@ -16,7 +16,7 @@ pub struct LeafNode {
 
 impl LeafNode {
     /// Creates a new leaf node and stores the given (path, value) pair
-    pub fn new(partial: Nibbles, value: ValueRLP) -> Self {
+    pub const fn new(partial: Nibbles, value: ValueRLP) -> Self {
         Self { partial, value }
     }
 
@@ -101,7 +101,7 @@ impl LeafNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(self.encode_raw())
+        NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
     /// Encodes the node

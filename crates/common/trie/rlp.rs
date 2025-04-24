@@ -16,7 +16,7 @@ enum NodeType {
 }
 
 impl NodeType {
-    fn from_u8(val: u8) -> Option<Self> {
+    const fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(Self::Branch),
             1 => Some(Self::Extension),

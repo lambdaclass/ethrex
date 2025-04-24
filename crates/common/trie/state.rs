@@ -30,8 +30,8 @@ impl TrieState {
     /// Retrieves a node based on its hash
     pub fn get_node(&self, hash: NodeHash) -> Result<Option<Node>, TrieError> {
         // Decode the node if it is inlined
-        if let NodeHash::Inline(encoded) = hash {
-            return Ok(Some(Node::decode_raw(&encoded)?));
+        if let NodeHash::Inline(_) = hash {
+            return Ok(Some(Node::decode_raw(hash.as_ref())?));
         }
         if let Some(node) = self.cache.get(&hash) {
             return Ok(Some(node.clone()));

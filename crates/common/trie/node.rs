@@ -5,7 +5,6 @@ mod leaf;
 use std::array;
 
 pub use branch::BranchNode;
-use ethereum_types::H256;
 use ethrex_rlp::{decode::decode_bytes, error::RLPDecodeError, structs::Decoder};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
@@ -178,8 +177,8 @@ impl Node {
 
 fn decode_child(rlp: &[u8]) -> NodeHash {
     match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::Hashed(H256::from_slice(hash)),
-        Ok((&[], &[])) => NodeHash::Inline(vec![]),
-        _ => NodeHash::Inline(rlp.to_vec()),
+        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
+        Ok((&[], &[])) => NodeHash::default(),
+        _ => NodeHash::from_slice(rlp),
     }
 }

@@ -24,7 +24,7 @@ clean-vectors: ## 🗑️  Clean test vectors
 	rm -f $(SPECTEST_ARTIFACT)
 
 test-levm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with LEVM
-	RUST_MIN_STACK=11000000 cargo test --release --features levm
+	cargo test --release --features levm
 
 test-revm: $(SPECTEST_VECTORS_DIR) ## 🧪 Run blockchain tests with REVM
 	cargo test --release

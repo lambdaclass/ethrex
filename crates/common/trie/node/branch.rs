@@ -29,7 +29,7 @@ impl BranchNode {
     }
 
     /// Creates a new branch node given its children and value
-    pub fn new_with_value(choices: [CacheKey; 16], value: ValueRLP) -> Self {
+    pub const fn new_with_value(choices: [CacheKey; 16], value: ValueRLP) -> Self {
         Self { choices, value }
     }
 
