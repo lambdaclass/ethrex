@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745530355568,
+  "lastUpdate": 1745532145222,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4345,6 +4345,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181868933463,
             "range": "± 840939804",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "0fea11060b7bbf822ce23b2de90958f4d0987c2a",
+          "message": "ci(l2): removed matrices and made jobs that used them run sequentially (#2541)\n\n**Description**\n\nRemoved matrices in lint jobs, and made the commands run sequentially\nwith each alternative configuration.\n\nResolves issue [2538](https://github.com/lambdaclass/ethrex/issues/2538)",
+          "timestamp": "2025-04-24T21:13:24Z",
+          "tree_id": "c9fa1dff9abcb37e14485e804eeee10dc28135fb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/0fea11060b7bbf822ce23b2de90958f4d0987c2a"
+        },
+        "date": 1745532142775,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178540899928,
+            "range": "± 756117182",
             "unit": "ns/iter"
           }
         ]
