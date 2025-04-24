@@ -175,7 +175,7 @@ fn parse(
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
-    if params.len() != 2 || params.len() != 1 {
+    if params.len() != 2 && params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
     }
 
