@@ -214,9 +214,9 @@ jobs:
         run: |
           if [ "${{ matrix.simulation }}" != "ethereum/eest/consume-engine" ]; then
             EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
-            echo "HIVE_FALGS="--sim.buildarg fixtures=$EEST_FIXTURES" >> $GITHUB_ENV
+            echo "HIVE_FALGS="--sim.buildarg fixtures=$EEST_FIXTURES"" >> $GITHUB_ENV
           else
-            echo "HIVE_FALGS="" >> $GITHUB_ENV
+            echo "HIVE_FALGS=""" >> $GITHUB_ENV
           fi
 
       # By default ethrex uses revm as evm backend.
