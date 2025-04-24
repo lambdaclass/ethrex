@@ -56,6 +56,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         return Err("invalid database".to_string().into());
     };
 
+    let last_block = blocks.last().ok_or("empty batch".to_string())?;
+    let last_block_state_root = last_block.header.state_root;
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
@@ -92,10 +94,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)?;
 
     // Calculate final state root hash and check
-    let last_block = blocks.last()?;
     let final_state_hash = state_trie.hash_no_commit();
-
-    if final_state_hash != last_block.header.state_root {
+    if final_state_hash != last_block_state_root {
         return Err("invalid final state trie".to_string().into());
     }
 

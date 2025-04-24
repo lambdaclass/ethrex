@@ -32,6 +32,8 @@ pub fn main() {
         panic!("invalid database")
     };
 
+    let last_block = blocks.last().ok_or("empty batch".to_string())?;
+    let last_block_state_root = last_block.header.state_root;
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
@@ -78,10 +80,8 @@ pub fn main() {
         .expect("failed to update state and storage tries");
 
     // Calculate final state root hash and check
-    let last_block = blocks.last().expect("empty batch");
     let final_state_hash = state_trie.hash_no_commit();
-
-    if final_state_hash != last_block.header.state_root {
+    if final_state_hash != last_block_state_root {
         panic!("invalid final state trie");
     }
 
