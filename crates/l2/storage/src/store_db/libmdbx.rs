@@ -13,7 +13,7 @@ use libmdbx::{
 };
 
 use crate::{
-    api::StoreEngineL2,
+    api::StoreEngineRollup,
     rlp::{BlockNumbersRLP, WithdrawalHashesRLP},
 };
 
@@ -88,7 +88,7 @@ impl Debug for Store {
 }
 
 #[async_trait::async_trait]
-impl StoreEngineL2 for Store {
+impl StoreEngineRollup for Store {
     async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,

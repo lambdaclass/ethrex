@@ -26,7 +26,7 @@ use ethrex_rpc::{
     utils::get_withdrawal_hash,
 };
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_storage_l2::StoreL2;
+use ethrex_storage_l2::StoreRollup;
 use ethrex_vm::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
@@ -41,7 +41,7 @@ pub struct Committer {
     eth_client: EthClient,
     on_chain_proposer_address: Address,
     store: Store,
-    l2_store: StoreL2,
+    rollup_store: StoreRollup,
     l1_address: Address,
     l1_private_key: SecretKey,
     commit_time_ms: u64,
@@ -51,7 +51,7 @@ pub struct Committer {
 
 pub async fn start_l1_committer(
     store: Store,
-    l2_store: StoreL2,
+    rollup_store: StoreRollup,
     execution_cache: Arc<ExecutionCache>,
 ) -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
@@ -61,7 +61,7 @@ pub async fn start_l1_committer(
         &committer_config,
         eth_config,
         store,
-        l2_store,
+        rollup_store,
         execution_cache,
     );
     committer.run().await;
@@ -73,14 +73,14 @@ impl Committer {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
-        l2_store: StoreL2,
+        rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
     ) -> Self {
         Self {
             eth_client: EthClient::new(&eth_config.rpc_url),
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
-            l2_store,
+            rollup_store,
             l1_address: committer_config.l1_address,
             l1_private_key: committer_config.l1_private_key,
             commit_time_ms: committer_config.commit_time_ms,
@@ -108,7 +108,7 @@ impl Committer {
 
         // Get the last committed block_number
         let last_committed_blocks: Vec<BlockNumber> = self
-            .l2_store
+            .rollup_store
             .get_block_numbers_by_batch(last_committed_batch_number)
             .await?
             .unwrap_or_default();
@@ -151,7 +151,7 @@ impl Committer {
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
                 );
-                self.l2_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
+                self.rollup_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(

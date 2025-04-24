@@ -7,7 +7,7 @@ use std::{
 use ethrex_common::{types::BlockNumber, H256};
 use ethrex_storage::error::StoreError;
 
-use crate::api::StoreEngineL2;
+use crate::api::StoreEngineRollup;
 
 #[derive(Default, Clone)]
 pub struct Store(Arc<Mutex<StoreInner>>);
@@ -34,7 +34,7 @@ impl Store {
 }
 
 #[async_trait::async_trait]
-impl StoreEngineL2 for Store {
+impl StoreEngineRollup for Store {
     async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,

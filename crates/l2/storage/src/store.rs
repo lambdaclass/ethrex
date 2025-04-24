@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
-use crate::api::StoreEngineL2;
+use crate::api::StoreEngineRollup;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
-use crate::store_db::libmdbx::Store as LibmdbxStoreL2;
+use crate::store_db::libmdbx::Store as LibmdbxStoreRollup;
 #[cfg(feature = "redb")]
-use crate::store_db::redb::RedBStoreL2;
+use crate::store_db::redb::RedBStoreRollup;
 use ethrex_common::{types::BlockNumber, H256};
 use ethrex_storage::error::StoreError;
 use tracing::info;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    engine: Arc<dyn StoreEngineL2>,
+    engine: Arc<dyn StoreEngineRollup>,
 }
 
 impl Default for Store {
@@ -39,14 +39,14 @@ impl Store {
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStoreL2::new(path)?),
+                engine: Arc::new(LibmdbxStoreRollup::new(path)?),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
-                engine: Arc::new(RedBStoreL2::new()?),
+                engine: Arc::new(RedBStoreRollup::new()?),
             },
         };
         info!("Started l2 store engine");

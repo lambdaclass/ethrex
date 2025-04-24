@@ -6,7 +6,7 @@ use ethrex_common::{
 };
 use ethrex_l2::sequencer::state_diff::StateDiff;
 use ethrex_storage::{EngineType, Store};
-use ethrex_storage_l2::{EngineTypeL2, StoreL2};
+use ethrex_storage_l2::{EngineTypeRollup, StoreRollup};
 use eyre::ContextCompat;
 use itertools::Itertools;
 use secp256k1::SecretKey;
@@ -200,12 +200,12 @@ impl Command {
                     genesis.to_str().expect("Invalid genesis path"),
                 )
                 .await?;
-                let l2_store = StoreL2::new(
+                let rollup_store = StoreRollup::new(
                     store_path
-                        .join("../l2_store")
+                        .join("../rollup_store")
                         .to_str()
                         .expect("Invalid store path"),
-                    EngineTypeL2::Libmdbx,
+                    EngineTypeRollup::Libmdbx,
                 )?;
 
                 // Get genesis
@@ -323,7 +323,7 @@ impl Command {
                     last_state_root = state_diff.last_header.state_root;
 
                     // Store batch info in L2 storage
-                    l2_store
+                    rollup_store
                         .store_batch(
                             batch_number as u64,
                             first_block_number,

@@ -6,7 +6,7 @@ use ethrex_storage::error::StoreError;
 use redb::{AccessGuard, Database, Key, TableDefinition, Value};
 
 use crate::{
-    api::StoreEngineL2,
+    api::StoreEngineRollup,
     rlp::{BlockNumbersRLP, WithdrawalHashesRLP},
 };
 
@@ -20,12 +20,12 @@ const BLOCK_NUMBERS_BY_BATCH: TableDefinition<u64, BlockNumbersRLP> =
     TableDefinition::new("BlockNumbersByBatch");
 
 #[derive(Debug)]
-pub struct RedBStoreL2 {
+pub struct RedBStoreRollup {
     db: Arc<Database>,
 }
 
-impl RefUnwindSafe for RedBStoreL2 {}
-impl RedBStoreL2 {
+impl RefUnwindSafe for RedBStoreRollup {}
+impl RedBStoreRollup {
     pub fn new() -> Result<Self, StoreError> {
         Ok(Self {
             db: Arc::new(init_db()?),
@@ -97,7 +97,7 @@ pub fn init_db() -> Result<Database, StoreError> {
 }
 
 #[async_trait::async_trait]
-impl StoreEngineL2 for RedBStoreL2 {
+impl StoreEngineRollup for RedBStoreRollup {
     async fn get_batch_number_by_block(
         &self,
         block_number: BlockNumber,

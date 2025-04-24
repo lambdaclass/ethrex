@@ -354,7 +354,7 @@ pub mod test_utils {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     #[cfg(feature = "l2")]
-    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
+    use ethrex_storage_l2::{EngineTypeRollup, StoreRollup};
     #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
 
@@ -414,8 +414,8 @@ pub mod test_utils {
         #[cfg(feature = "l2")]
         let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
         #[cfg(feature = "l2")]
-        let l2_store =
-            StoreL2::new("", EngineTypeL2::InMemory).expect("Failed to create in-memory storage");
+        let rollup_store = StoreRollup::new("", EngineTypeRollup::InMemory)
+            .expect("Failed to create in-memory storage");
         start_api(
             http_addr,
             authrpc_addr,
@@ -436,7 +436,7 @@ pub mod test_utils {
             #[cfg(feature = "l2")]
             sponsor_pk,
             #[cfg(feature = "l2")]
-            l2_store,
+            rollup_store,
         )
         .await;
     }
@@ -462,7 +462,7 @@ pub mod test_utils {
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
             #[cfg(feature = "l2")]
-            l2_store: StoreL2::new("test-store", EngineTypeL2::InMemory)
+            rollup_store: StoreRollup::new("test-store", EngineTypeRollup::InMemory)
                 .expect("Fail to create in-memory db test"),
         }
     }

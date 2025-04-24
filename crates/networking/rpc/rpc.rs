@@ -71,7 +71,7 @@ cfg_if::cfg_if! {
         use crate::l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
-        use ethrex_storage_l2::{StoreL2};
+        use ethrex_storage_l2::StoreRollup;
     }
 }
 
@@ -105,7 +105,7 @@ pub struct RpcApiContext {
     #[cfg(feature = "l2")]
     pub sponsor_pk: SecretKey,
     #[cfg(feature = "l2")]
-    pub l2_store: StoreL2,
+    pub rollup_store: StoreRollup,
 }
 
 pub trait RpcHandler: Sized {
@@ -154,7 +154,7 @@ pub async fn start_api(
     #[cfg(feature = "based")] gateway_pubkey: Public,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
-    #[cfg(feature = "l2")] l2_store: StoreL2,
+    #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -178,7 +178,7 @@ pub async fn start_api(
         #[cfg(feature = "l2")]
         sponsor_pk,
         #[cfg(feature = "l2")]
-        l2_store,
+        rollup_store,
     };
 
     // Periodically clean up the active filters for the filters endpoints.

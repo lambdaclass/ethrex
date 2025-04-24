@@ -50,7 +50,7 @@ mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_p2p::sync_manager::SyncManager;
     #[cfg(feature = "l2")]
-    use ethrex_storage_l2::{EngineTypeL2, StoreL2};
+    use ethrex_storage_l2::{EngineTypeRollup, StoreRollup};
     #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
     use serde_json::{json, Value};
@@ -78,7 +78,7 @@ mod tests {
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
             #[cfg(feature = "l2")]
-            l2_store: StoreL2::new("test-store", EngineTypeL2::InMemory)
+            rollup_store: StoreRollup::new("test-store", EngineTypeRollup::InMemory)
                 .expect("Fail to create in-memory db test"),
         }
     }

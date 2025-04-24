@@ -1,8 +1,8 @@
 use crate::{
     cli::{self as ethrex_cli, Options},
     initializers::{
-        get_local_p2p_node, get_network, get_signer, init_blockchain, init_l2_store, init_metrics,
-        init_network, init_rpc_api, init_store,
+        get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_network,
+        init_rollup_store, init_rpc_api, init_store,
     },
     utils::{self, set_datadir, store_known_peers},
     DEFAULT_L2_DATADIR,
@@ -121,14 +121,14 @@ impl Command {
         match self {
             Command::Init { opts } => {
                 let data_dir = set_datadir(&opts.node_opts.datadir);
-                let l2_store_dir = data_dir.clone() + "/l2_store";
+                let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let network = get_network(&opts.node_opts);
 
-                let l1_store = init_store(&data_dir, &network).await;
-                let l2_store = init_l2_store(&l2_store_dir).await;
+                let store = init_store(&data_dir, &network).await;
+                let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
-                let blockchain = init_blockchain(opts.node_opts.evm, l1_store.clone());
+                let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
 
                 let signer = get_signer(&data_dir);
 
@@ -147,11 +147,11 @@ impl Command {
                     &signer,
                     peer_table.clone(),
                     local_p2p_node,
-                    l1_store.clone(),
+                    store.clone(),
                     blockchain.clone(),
                     cancel_token.clone(),
                     tracker.clone(),
-                    l2_store.clone(),
+                    rollup_store.clone(),
                 )
                 .await;
 
@@ -168,7 +168,7 @@ impl Command {
                         local_p2p_node,
                         signer,
                         peer_table.clone(),
-                        l1_store.clone(),
+                        store.clone(),
                         tracker.clone(),
                         blockchain.clone(),
                     )
@@ -178,7 +178,7 @@ impl Command {
                 }
 
                 let l2_sequencer =
-                    ethrex_l2::start_l2(l1_store, l2_store, blockchain).into_future();
+                    ethrex_l2::start_l2(store, rollup_store, blockchain).into_future();
 
                 tracker.spawn(l2_sequencer);
 

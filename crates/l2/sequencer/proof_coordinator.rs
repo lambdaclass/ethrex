@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
-use ethrex_storage_l2::StoreL2;
+use ethrex_storage_l2::StoreRollup;
 use ethrex_vm::{Evm, EvmError, ExecutionDB};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr};
@@ -42,7 +42,7 @@ struct ProofCoordinator {
     store: Store,
     eth_client: EthClient,
     on_chain_proposer_address: Address,
-    l2_store: StoreL2,
+    rollup_store: StoreRollup,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -110,7 +110,10 @@ impl ProofData {
     }
 }
 
-pub async fn start_proof_coordinator(store: Store, l2_store: StoreL2) -> Result<(), ConfigError> {
+pub async fn start_proof_coordinator(
+    store: Store,
+    rollup_store: StoreRollup,
+) -> Result<(), ConfigError> {
     let server_config = ProofCoordinatorConfig::from_env()?;
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
@@ -119,7 +122,7 @@ pub async fn start_proof_coordinator(store: Store, l2_store: StoreL2) -> Result<
         &committer_config,
         eth_config.clone(),
         store,
-        l2_store,
+        rollup_store,
     )
     .await?;
     proof_coordinator.run().await;
@@ -133,7 +136,7 @@ impl ProofCoordinator {
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
         store: Store,
-        l2_store: StoreL2,
+        rollup_store: StoreRollup,
     ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
@@ -144,7 +147,7 @@ impl ProofCoordinator {
             store,
             eth_client,
             on_chain_proposer_address,
-            l2_store,
+            rollup_store,
         })
     }
 
@@ -249,7 +252,7 @@ impl ProofCoordinator {
         )
         .await?;
 
-        let response = if !self.l2_store.contains_batch(&batch_to_verify).await? {
+        let response = if !self.rollup_store.contains_batch(&batch_to_verify).await? {
             let response = ProofData::empty_batch_response();
             debug!("Sending empty BatchResponse");
             response
@@ -299,7 +302,7 @@ impl ProofCoordinator {
     ) -> Result<ProverInputData, ProverServerError> {
         // Get blocks in batch
         let Some(block_numbers) = self
-            .l2_store
+            .rollup_store
             .get_block_numbers_by_batch(batch_number)
             .await?
         else {

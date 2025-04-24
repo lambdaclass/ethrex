@@ -15,7 +15,7 @@ use tracing::info;
 #[cfg(any(feature = "l2", feature = "based"))]
 use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
-use ethrex_storage_l2::StoreL2;
+use ethrex_storage_l2::StoreRollup;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -58,7 +58,7 @@ async fn main() -> eyre::Result<()> {
         cancel_token.clone(),
         tracker.clone(),
         #[cfg(feature = "l2")]
-        StoreL2::default(),
+        StoreRollup::default(),
     )
     .await;
 
