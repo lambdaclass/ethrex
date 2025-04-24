@@ -13,6 +13,6 @@ mod web3;
 pub mod clients;
 pub mod types;
 pub mod utils;
-pub use clients::{EngineClient, EthClient};
+pub use clients::{auth_errors, eth_errors, EngineClient, EthClient, Overrides};
 
 pub use rpc::start_api;
