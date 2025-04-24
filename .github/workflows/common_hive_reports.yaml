@@ -34,7 +34,7 @@ jobs:
           - name: "Sync tests"
             file_name: sync 
             simulation: ethereum/sync
-          - name: "Eest Engine-Consume tests"
+          - name: "Eest Consume-Engine tests"
             file_name: consume-engine
             simulation: ethereum/eest/consume-engine"
 
