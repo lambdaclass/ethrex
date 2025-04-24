@@ -131,7 +131,11 @@ impl ProofCoordinator {
         eth_config: EthConfig,
         store: Store,
     ) -> Result<Self, ConfigError> {
-        let eth_client = EthClient::new(&eth_config.rpc_url);
+        let eth_client = EthClient::new_with_fees(
+            &eth_config.rpc_url,
+            eth_config.max_fee_per_gas,
+            eth_config.max_fee_per_blob_gas,
+        );
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
         Ok(Self {
