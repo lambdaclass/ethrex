@@ -45,7 +45,7 @@ jobs:
           name: buildx-cache
           path: /tmp/buildx-cache
 
-  test:
+  integration-test:
     name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
