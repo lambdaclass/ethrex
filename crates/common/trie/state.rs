@@ -107,7 +107,7 @@ impl TrieState {
         let key_values = nodes
             .iter()
             .filter_map(|node| {
-                let hash = node.compute_hash();
+                let hash = node.compute_hash(self);
                 matches!(hash, NodeHash::Hashed(_)).then(|| (hash.into(), node.encode_to_vec()))
             })
             .collect();

@@ -4,7 +4,8 @@ use ethereum_types::H256;
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    nibbles::Nibbles, node::Node, node_hash::NodeHash, state::TrieState, Trie, TrieError, ValueRLP,
+    cache::CacheKey, nibbles::Nibbles, node::Node, node_hash::NodeHash, state::TrieState, Trie,
+    TrieError, ValueRLP,
 };
 
 /// Verifies that the key value range belongs to the trie with the given root given the edge proofs for the range
@@ -146,15 +147,15 @@ fn fill_state(
 /// Also returns the value if it is part of the proof
 fn fill_node(
     path: &mut Nibbles,
-    node_hash: &NodeHash,
+    node_key: &NodeHash,
     trie_state: &mut TrieState,
     proof_nodes: &ProofNodeStorage,
 ) -> Result<Vec<u8>, TrieError> {
-    let node = proof_nodes.get_node(node_hash)?;
+    let node = proof_nodes.get_node(node_key)?;
     let child_hash = get_child(path, &node);
-    if let Some(ref child_hash) = child_hash {
-        trie_state.insert_node(node, node_hash.clone());
-        fill_node(path, child_hash, trie_state, proof_nodes)
+    if let Some(ref child_key) = child_hash {
+        trie_state.insert_node(node_key, node);
+        fill_node(path, child_key, trie_state, proof_nodes)
     } else {
         let value = match &node {
             Node::Branch(n) => n.value.clone(),
@@ -163,23 +164,23 @@ fn fill_node(
                 .then_some(n.value.clone())
                 .unwrap_or_default(),
         };
-        trie_state.insert_node(node, node_hash.clone());
+        trie_state.insert_node(node_key, node);
         Ok(value)
     }
 }
 
 /// Returns the node hash of the node's child (if any) following the given path
-fn get_child<'a>(path: &'a mut Nibbles, node: &'a Node) -> Option<NodeHash> {
+fn get_child<'a>(path: &'a mut Nibbles, node: &'a Node) -> Option<CacheKey> {
     match node {
         Node::Branch(n) => {
             if let Some(choice) = path.next_choice() {
                 if n.choices[choice].is_valid() {
-                    return Some(n.choices[choice].clone());
+                    return Some(n.choices[choice]);
                 }
             }
             None
         }
-        Node::Extension(n) => path.skip_prefix(&n.prefix).then_some(n.child.clone()),
+        Node::Extension(n) => path.skip_prefix(&n.prefix).then_some(n.child),
         Node::Leaf(_) => None,
     }
 }
@@ -252,16 +253,16 @@ fn remove_internal_references(
 /// In which case the caller should remove the reference to this node from its parent node
 /// Asumes that left_key & right_key are not equal and of same length
 fn remove_internal_references_inner(
-    node_hash: NodeHash,
+    node_key: CacheKey,
     mut left_path: Nibbles,
     mut right_path: Nibbles,
     trie_state: &mut TrieState,
 ) -> Result<bool, TrieError> {
-    if !node_hash.is_valid() {
+    if !node_key.is_valid() {
         return Ok(true);
     }
     // We already looked up the nodes when filling the state so this shouldn't fail
-    let node = trie_state.get_node(node_hash.clone())?.unwrap();
+    let node = trie_state[node_key];
     match node {
         Node::Branch(mut n) => {
             // If none of the paths have a next choice nibble then it means that this is the end of the path
@@ -283,15 +284,15 @@ fn remove_internal_references_inner(
                 )?;
                 if should_remove {
                     // Remove child node
-                    n.choices[left_choice] = NodeHash::default();
+                    n.choices[left_choice] = CacheKey::INVALID;
                     // Update node in the state
-                    trie_state.insert_node(n.into(), node_hash);
+                    trie_state.insert_node(node_key, n.into());
                 }
             } else {
                 // We found our fork node, now we can remove the internal references
                 // Remove all child nodes between the left and right child nodes
                 for choice in &mut n.choices[left_choice + 1..right_choice] {
-                    *choice = NodeHash::default()
+                    *choice = CacheKey::INVALID;
                 }
                 // Remove nodes on the left and right choice's subtries
                 let should_remove_left =
@@ -304,13 +305,13 @@ fn remove_internal_references_inner(
                 );
                 // Remove left and right child nodes if their subtries where wiped in the process
                 if should_remove_left {
-                    n.choices[left_choice] = NodeHash::default();
+                    n.choices[left_choice] = CacheKey::INVALID;
                 }
                 if should_remove_right {
-                    n.choices[right_choice] = NodeHash::default();
+                    n.choices[right_choice] = CacheKey::INVALID;
                 }
                 // Update node in the state
-                trie_state.insert_node(n.into(), node_hash);
+                trie_state.insert_node(node_key, n.into());
             }
         }
         Node::Extension(n) => {
@@ -344,7 +345,7 @@ fn remove_internal_references_inner(
                     let path = if left.is_eq() { left_path } else { right_path };
                     // Propagate the response so that this node will be removed too if the child's subtrie is wiped
                     return Ok(remove_node(
-                        node_hash,
+                        node_key,
                         path.offset(n.prefix.len()),
                         right.is_eq(),
                         trie_state,
@@ -363,17 +364,17 @@ fn remove_internal_references_inner(
 // If the whole subtrie is removed in the process this function will return true, in which case
 // the caller must remove the reference to this node from it's parent node
 fn remove_node(
-    node_hash: NodeHash,
+    node_key: CacheKey,
     mut path: Nibbles,
     remove_left: bool,
     trie_state: &mut TrieState,
 ) -> bool {
     // Node doesn't exist already, no need to remove it
-    if !node_hash.is_valid() {
+    if !node_key.is_valid() {
         return false;
     }
     // We already looked up the nodes when filling the state so this shouldn't fail
-    let node = trie_state.get_node(node_hash.clone()).unwrap().unwrap();
+    let node = trie_state[node_key];
     match node {
         Node::Branch(mut n) => {
             // Remove child nodes
@@ -383,21 +384,21 @@ fn remove_node(
             };
             if remove_left {
                 for child in &mut n.choices[..choice] {
-                    *child = NodeHash::default()
+                    *child = CacheKey::INVALID;
                 }
             } else {
                 for child in &mut n.choices[choice + 1..] {
-                    *child = NodeHash::default()
+                    *child = CacheKey::INVALID;
                 }
             }
             // Remove nodes to the left/right of the choice's subtrie
             let should_remove =
                 remove_node(n.choices[choice].clone(), path, remove_left, trie_state);
             if should_remove {
-                n.choices[choice] = NodeHash::default();
+                n.choices[choice] = CacheKey::INVALID;
             }
             // Update node in the state
-            trie_state.insert_node(n.into(), node_hash);
+            trie_state.insert_node(node_key, n.into());
         }
         Node::Extension(n) => {
             // If no child subtrie would result from this process remove the node entirely
