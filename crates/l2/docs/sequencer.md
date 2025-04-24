@@ -8,7 +8,7 @@
     - [Block Producer](#block-producer)
     - [L1 Watcher](#l1-watcher)
     - [L1 Transaction Sender (a.k.a. L1 Committer)](#l1-transaction-sender-aka-l1-committer)
-    - [Prover Server](#prover-server)
+    - [Proof Coordinator](#proof-coordinator)
   - [Configuration](#configuration)
 
 ## Components
@@ -33,11 +33,11 @@ Commit transactions are sent when the Proposer wants to commit to a new block. T
 
 Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contain the proof to be verified in the L1.
 
-### Prover Server
+### Proof Coordinator
 
-The Prover Server is a simple TCP server that manages communication with a component called the `Prover Client`. The Prover Client acts as a simple TCP client, handling incoming requests to prove a block. It then "calls" a zkVM, generates the Groth16 proof, and sends it back to the Server. In this setup, the state is managed solely by the Prover Server, which, in theory, makes it less error-prone than the zkVMs.
+The Proof Coordinator is a simple TCP server that manages communication with a component called the `Proof Sender`. The Proof Sender acts as a simple TCP client, handling incoming requests to prove a block. It then "calls" a zkVM, generates the Groth16 proof, and sends it back to the Coordinator. In this setup, the state is managed solely by the Proof Coordinator, which, in theory, makes it less error-prone than the zkVMs.
 
-For more information about the Prover Server, the [Prover Docs](./prover.md) provides more insight.
+For more information about the Proof Sender, the [Prover Docs](./prover.md) provides more insight.
 
 ## Configuration
 
