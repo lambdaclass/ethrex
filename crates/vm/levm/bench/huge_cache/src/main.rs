@@ -1,7 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use bytes::Bytes;
-use ethrex_common::{types::TxKind, Address, H256, U256};
+use ethrex_common::{
+    types::{EIP1559Transaction, Transaction, TxKind},
+    Address, H256, U256,
+};
 use ethrex_levm::{
     db::{gen_db::GeneralizedDatabase, CacheDB},
     errors::VMError,
@@ -86,15 +89,12 @@ fn new_vm_with_ops_addr_bal_db(
         ..Default::default()
     };
 
-    VM::new(
-        TxKind::Call(Address::from_low_u64_be(42)),
-        env,
-        Default::default(),
-        Default::default(),
-        db,
-        Vec::new(),
-        None,
-    )
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(Address::from_low_u64_be(42)),
+        ..Default::default()
+    });
+
+    VM::new(env, db, &tx)
 }
 
 fn fill_cache_with_random_accounts(
