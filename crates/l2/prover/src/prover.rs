@@ -89,7 +89,7 @@ impl Prover {
                     Ok(prover_data)
                 }
                 _ => Err(
-                    "Received Empty Response, meaning that the ProverServer doesn't have blocks to prove.\nThe Prover may be advancing faster than the Proposer."
+                    "Received Empty Response, meaning that the ProverServer doesn't have batches to prove.\nThe Prover may be advancing faster than the Proposer."
                         .to_owned(),
                 ),
             },
