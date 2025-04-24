@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745511651564,
+  "lastUpdate": 1745514607056,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4225,6 +4225,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178439868681,
             "range": "± 1382376837",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3efa34009a3076f453712844ca568a1230a9f49a",
+          "message": "refactor(l2): contracts (#2551)\n\n**Motivation**\n\n- Some variable names are misleading and can confuse the reader.\n- There was no getter method for withdrawal logs merkle roots in\n`CommonBridge`.\n\n**Description**\n\n- Renamed deposit logs related variables in `OnChainProposer` and\n`CommonBridge` and their interfaces with clearer names.\n- Improved some documentation on the above.\n- Renamed some misleading naming in variables such as `commitment` in\n`OnChainProposer` and its interface.",
+          "timestamp": "2025-04-24T16:22:26Z",
+          "tree_id": "4709ca0a82fd79f54fe982bfe30243d91260a939",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3efa34009a3076f453712844ca568a1230a9f49a"
+        },
+        "date": 1745514604594,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179858713379,
+            "range": "± 992177586",
             "unit": "ns/iter"
           }
         ]
