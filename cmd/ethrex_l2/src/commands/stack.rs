@@ -302,8 +302,6 @@ impl Command {
                         ..state_diff.last_header
                     };
 
-                    assert!(state_diff.last_header.state_root == new_block.state_root);
-
                     // Store last block.
                     let new_block_hash = new_block.compute_block_hash();
                     store.add_block_header(new_block_hash, new_block).await?;

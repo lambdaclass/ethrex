@@ -25,9 +25,9 @@ use crate::{
 };
 
 // transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64)
-// block_number(u64) + base_fee_per_gas(u64) + state_root(H256).
-// 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes + 8bytes + 32bytes
-const LAST_HEADER_FIELDS_SIZE: usize = 136;
+// block_number(u64) + base_fee_per_gas(u64)
+// 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes + 8bytes
+const LAST_HEADER_FIELDS_SIZE: usize = 104;
 
 // address(H160) + amount(U256) + tx_hash(H256).
 // 20bytes + 32bytes + 32bytes.
