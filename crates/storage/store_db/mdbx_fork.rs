@@ -22,7 +22,7 @@ use crate::utils::{ChainDataIndex, SnapStateIndex};
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::eip4895::Withdrawal as RethWithdrawal;
 use alloy_primitives::{Bytes as AlloyBytes, B256};
-use anyhow::Result;
+use anyhow::{Chain, Result};
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::types::Withdrawal;
@@ -390,8 +390,12 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        todo!()
-        // self.env.insert_blo
+        let tx = self.env.tx_mut().unwrap();
+        let key = block_hash.encode_to_vec();
+        let body = block_body.encode_to_vec();
+        tx.put::<Bodies>(key, body).unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
@@ -419,18 +423,41 @@ impl StoreEngine for MDBXFork {
     }
 
     fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        todo!()
+        let key_values: Vec<_> = blocks
+            .iter()
+            .map(|e| (e.header.number, e.hash().encode_to_vec()))
+            .collect();
+        let tx = self.env.tx_mut().unwrap();
+        for (k, v) in key_values {
+            tx.put::<CanonicalBlockHashes>(k, v).unwrap();
+        }
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let Some(hash) = tx.get::<CanonicalBlockHashes>(block_number).unwrap() else {
+            return Ok(None);
+        };
+        let Some(encoded_body) = tx.get::<Bodies>(hash).unwrap() else {
+            return Ok(None);
+        };
+        let decoded = BlockBody::decode(&encoded_body).unwrap();
+        Ok(Some(decoded))
     }
 
     fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        todo!()
+        let encoded_hash = block_hash.encode_to_vec();
+        let tx = self.env.tx().unwrap();
+        let Some(encoded_body) = tx.get::<Bodies>(encoded_hash).unwrap() else {
+            return Ok(None);
+        };
+        let decoded = BlockBody::decode(&encoded_body).unwrap();
+        Ok(Some(decoded))
     }
 
     fn get_block_header_by_hash(
@@ -450,11 +477,17 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        todo!()
+        let encoded_hash = block_hash.encode_to_vec();
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<BlockNumbers>(encoded_hash, block_number).unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        let encoded_key = block_hash.encode_to_vec();
+        let tx = self.env.tx().unwrap();
+        Ok(tx.get::<BlockNumbers>(encoded_key).unwrap())
     }
 
     fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
@@ -486,7 +519,10 @@ impl StoreEngine for MDBXFork {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        todo!()
+        todo!();
+        // let encoded_hash = block_hash.encode_to_vec();
+        // let tx = self.env.tx_mut().unwrap();
+        // let mut cursor = tx.cursor_dup_write()
     }
 
     fn get_receipt(
@@ -573,7 +609,11 @@ impl StoreEngine for MDBXFork {
     }
 
     fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        Ok(tx
+            .get::<ChainData>(ChainDataIndex::FinalizedBlockNumber as u8)
+            .unwrap()
+            .map(|ref bn| BlockNumber::decode(bn).unwrap()))
     }
 
     fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
@@ -588,7 +628,11 @@ impl StoreEngine for MDBXFork {
     }
 
     fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        Ok(tx
+            .get::<ChainData>(ChainDataIndex::SafeBlockNumber as u8)
+            .unwrap()
+            .map(|ref num| BlockNumber::decode(num).unwrap()))
     }
 
     fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
@@ -612,11 +656,23 @@ impl StoreEngine for MDBXFork {
     }
 
     fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        todo!()
+        let encoded = block_number.encode_to_vec();
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<ChainData>(ChainDataIndex::PendingBlockNumber as u8, encoded)
+            .unwrap();
+        Ok(())
     }
 
     fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let Some(res) = tx
+            .get::<ChainData>(ChainDataIndex::PendingBlockNumber as u8)
+            .unwrap()
+        else {
+            return Ok(None);
+        };
+        let decoded = BlockNumber::decode(&res).unwrap();
+        Ok(Some(decoded))
     }
 
     fn open_storage_trie(&self, hashed_address: H256, storage_root: H256) -> Trie {
@@ -738,21 +794,20 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
+        let main_key = block_hash.encode_to_vec();
+        let key_values = receipts
+            .into_iter()
+            .enumerate()
+            .map(|receipt| (main_key.clone(), receipt.encode_to_vec()))
+            .collect::<Vec<_>>();
+
         let tx = self.env.tx_mut().unwrap();
         let mut cursor = tx.cursor_dup_write::<Receipts>().unwrap();
 
-        let main_key = block_hash.as_bytes().to_vec();
+        cursor.seek_exact(main_key).unwrap();
 
-        cursor.seek_exact(main_key.clone()).unwrap();
-
-        for (index, receipt) in receipts.into_iter().enumerate() {
-            let subkey = (index as u64).to_be_bytes().to_vec();
-
-            let receipt_rlp = receipt.encode_to_vec();
-
-            let value = [&subkey[..], &receipt_rlp[..]].concat();
-
-            cursor.append_dup(main_key.clone(), value).unwrap();
+        for (k, v) in key_values {
+            cursor.append_dup(k, v).unwrap();
         }
 
         tx.commit().unwrap();
@@ -763,11 +818,23 @@ impl StoreEngine for MDBXFork {
         &self,
         receipts: std::collections::HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
+        // See how to handle indexed chunks
         todo!()
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        todo!()
+        let main_key = block_hash.encode_to_vec();
+        let tx = self.env.tx().unwrap();
+        let mut cursor = tx.cursor_dup_read::<Receipts>().unwrap();
+        cursor.seek_exact(main_key).unwrap();
+        let mut receipts = vec![];
+        while let Some((_, receipt)) = cursor.next_dup().unwrap() {
+            receipts.push(receipt);
+        }
+        Ok(receipts
+            .into_iter()
+            .map(|encoded_receipt| Receipt::decode(&encoded_receipt).unwrap())
+            .collect())
     }
 
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
@@ -792,24 +859,47 @@ impl StoreEngine for MDBXFork {
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
-        todo!()
+        let encoded = last_keys.to_vec().encode_to_vec();
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<SnapState>(SnapStateIndex::StateTrieKeyCheckpoint as u8, encoded)
+            .unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        tx.get::<SnapState>(SnapStateIndex::StateTrieKeyCheckpoint as u8)
+            .unwrap()
+            .map(|ref c| {
+                <Vec<H256>>::decode(c)
+                    .unwrap()
+                    .try_into()
+                    .map_err(|_| RLPDecodeError::InvalidLength)
+            })
+            .transpose()
+            .map_err(StoreError::RLPDecode)
     }
 
     fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        todo!()
+        let encoded = accounts.encode_to_vec();
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<SnapState>(SnapStateIndex::StateHealPaths as u8, encoded)
+            .unwrap();
+        Ok(())
     }
 
     fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        Ok(tx
+            .get::<SnapState>(SnapStateIndex::StateHealPaths as u8)
+            .unwrap()
+            .map(|ref encoded| <Vec<(H256, Vec<Nibbles>)>>::decode(encoded).unwrap()))
     }
 
     fn is_synced(&self) -> Result<bool, StoreError> {
@@ -825,18 +915,32 @@ impl StoreEngine for MDBXFork {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<ChainData>(ChainDataIndex::IsSynced as u8, status.encode_to_vec())
             .unwrap();
+        tx.commit();
         Ok(())
     }
 
     fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
-        todo!()
+        let encoded = paths.encode_to_vec();
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<SnapState>(SnapStateIndex::StateHealPaths as u8, encoded);
+        tx.commit();
+        Ok(())
     }
 
     fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let Some(res) = tx
+            .get::<SnapState>(SnapStateIndex::StateHealPaths as u8)
+            .unwrap()
+        else {
+            return Ok(None);
+        };
+        let decoded = <Vec<Nibbles>>::decode(&res[..]).unwrap();
+        Ok(Some(decoded))
     }
 
     fn clear_snap_state(&self) -> Result<(), StoreError> {
+        // See how to drop a table
         todo!()
     }
 
