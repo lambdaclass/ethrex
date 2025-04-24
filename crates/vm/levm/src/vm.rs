@@ -483,7 +483,6 @@ impl<'a> VM<'a> {
         let mut report = self.run_execution()?;
 
         self.finalize_execution(&mut report)?;
-
         Ok(report)
     }
 
