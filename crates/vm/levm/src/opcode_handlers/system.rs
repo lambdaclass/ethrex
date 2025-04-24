@@ -920,7 +920,7 @@ impl<'a> VM<'a> {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if retdata.is_create {
-            self.handle_return_create(tx_report, retdata)?;
+            self.handle_return_create(call_frame, tx_report, retdata)?;
         } else {
             self.handle_return_call(call_frame, tx_report, retdata)?;
         }
@@ -960,6 +960,12 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
+                for (address, account_opt) in call_frame.cache_backup.clone() {
+                    self.current_call_frame_mut()?
+                        .cache_backup
+                        .entry(address)
+                        .or_insert(account_opt);
+                }
             }
             TxResult::Revert(_) => {
                 // Revert value transfer
@@ -976,6 +982,7 @@ impl<'a> VM<'a> {
     }
     pub fn handle_return_create(
         &mut self,
+        call_frame: &CallFrame,
         tx_report: &ExecutionReport,
         retdata: RetData,
     ) -> Result<(), VMError> {
@@ -1000,6 +1007,12 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(address_to_word(retdata.to))?;
+                for (address, account_opt) in call_frame.cache_backup.clone() {
+                    self.current_call_frame_mut()?
+                        .cache_backup
+                        .entry(address)
+                        .or_insert(account_opt);
+                }
             }
             TxResult::Revert(err) => {
                 // Return value to sender
