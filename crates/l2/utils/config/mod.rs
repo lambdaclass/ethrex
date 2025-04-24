@@ -10,8 +10,8 @@ pub mod block_producer;
 pub mod committer;
 pub mod eth;
 pub mod l1_watcher;
-pub mod prover_client;
-pub mod prover_server;
+pub mod proof_coordinator;
+pub mod prover;
 
 pub mod errors;
 pub mod toml_parser;

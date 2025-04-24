@@ -159,6 +159,7 @@ struct ProverServer {
     listen_ip: String,
     listen_port: u64,
     dev_mode: bool,
+    proof_send_interval_ms: u64,
 }
 
 impl ProverServer {
@@ -171,8 +172,14 @@ impl ProverServer {
 {prefix}_LISTEN_IP={}
 {prefix}_LISTEN_PORT={}
 {prefix}_DEV_MODE={}
+{prefix}_PROOF_SEND_INTERVAL_MS={}
 ",
-            self.l1_address, self.l1_private_key, self.listen_ip, self.listen_port, self.dev_mode,
+            self.l1_address,
+            self.l1_private_key,
+            self.listen_ip,
+            self.listen_port,
+            self.dev_mode,
+            self.proof_send_interval_ms
         )
     }
 }

@@ -21,7 +21,7 @@ down: down-local-l1 down-l2 down-metrics## 🛑 Shuts down the localnet
 
 clean: clean-contract-deps ## 🧹 Cleans the localnet
 
-restart: restart-local-l1 deploy-l1 restart-l2 ## 🔄 Restarts the localnet
+restart: restart-local-l1 deploy-l1 purge_prover_state restart-l2 ## 🔄 Restarts the localnet
 
 ## Same as restart but for testnet deployment. The local database is cleaned and the contracts are deployed again.
 restart-testnet:
@@ -243,10 +243,5 @@ else
 endif
 
 purge_prover_state: ## 🧹 Removes the L2 state, only use to start fresh.
-	@echo "Are you sure you want to delete the directory: $(PROJECT_PATH) ? [y/n]"
-	@read answer; \
-	if [ "$$answer" != "y" ]; then \
-		echo "Operation canceled."; \
-	fi; \
 	rm -rf $(PROJECT_PATH); \
 	echo "Directory deleted."

@@ -20,26 +20,26 @@
 
 ## What
 
-The prover consists of two main components: handling incoming proving data from the `L2 proposer`, specifically the `prover_server` component, and the `zkVM`. The `prover_client` is responsible for this first part, while the `zkVM` serves as a RISC-V emulator executing code specified in `crates/l2/prover/zkvm/interface/guest/src`.
+The prover consists of two main components: handling incoming proving data from the `L2 proposer`, specifically from the `ProofCoordinator` component, and the `zkVM`. The `Prover` is responsible for this first part, while the `zkVM` serves as a RISC-V emulator executing code specified in `crates/l2/prover/zkvm/interface/guest/src`.
 Before the `zkVM` code (or guest), there is a directory called `interface`, which indicates that we access the `zkVM` through the "interface" crate.
 
-In summary, the `prover_client` manages the inputs from the `prover_server` and then "calls" the `zkVM` to perform the proving process and generate the `groth16` ZK proof.
+In summary, the `Prover` manages the inputs from the `ProofCoordinator` and then "calls" the `zkVM` to perform the proving process and generate the `groth16` ZK proof.
 
 ## Workflow
 
-The `Prover Server` monitors requests for new jobs from the `Prover Client`, which are sent when the prover is available. Upon receiving a new job, the Prover generates the proof, after which the `Prover Client` sends the proof back to the `Prover Server`.
+The `ProofCoordinator` monitors requests for new jobs from the `Prover`, which are sent when the prover is available. Upon receiving a new job, the Prover generates the proof, after which the `Prover` sends the proof back to the `ProofCoordinator`.
 
 ```mermaid
 sequenceDiagram
     participant zkVM
-    participant ProverClient
-    participant ProverServer
-    ProverClient->>+ProverServer: ProofData::Request
-    ProverServer-->>-ProverClient: ProofData::Response(block_number, ProverInputs)
-    ProverClient->>+zkVM: Prove(ProverInputs)
-    zkVM-->>-ProverClient: Creates zkProof
-    ProverClient->>+ProverServer: ProofData::Submit(block_number, zkProof)
-    ProverServer-->>-ProverClient: ProofData::SubmitAck(block_number)
+    participant Prover
+    participant ProofCoordinator
+    Prover->>+ProofCoordinator: ProofData::Request
+    ProofCoordinator-->>-Prover: ProofData::Response(block_number, ProverInputs)
+    Prover->>+zkVM: Prove(ProverInputs)
+    zkVM-->>-Prover: Creates zkProof
+    Prover->>+ProofCoordinator: ProofData::Submit(block_number, zkProof)
+    ProofCoordinator-->>-Prover: ProofData::SubmitAck(block_number)
 ```
 
 ## How
@@ -76,7 +76,7 @@ Then run any of the targets:
 
 ### Dev Mode
 
-To run the blockchain (`proposer`) and prover in conjunction, start the `prover_client`, use the following command:
+To run the blockchain (`proposer`) and prover in conjunction, start the `Prover`, use the following command:
 
 ```sh
 make init-prover T="prover_type (pico,risc0,sp1) G=true"
@@ -137,12 +137,12 @@ Then run any of the targets:
 
 #### Run the whole system with a GPU Prover
 
-Two servers are required: one for the `prover` and another for the `proposer`. If you run both components on the same machine, the `prover` may consume all available resources, leading to potential stuttering or performance issues for the `proposer`/`node`.
+Two servers are required: one for the `Prover` and another for the `sequencer`. If you run both components on the same machine, the `Prover` may consume all available resources, leading to potential stuttering or performance issues for the `sequencer`/`node`.
 
-- The number 1 simbolizes a machine with GPU for the `prover_client`.
+- The number 1 simbolizes a machine with GPU for the `Prover`.
 - The number 2 simbolizes a machine for the `sequencer`/L2 node itself.
 
-1. `prover_client`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
+1. `Prover`/`zkvm` &rarr; prover with gpu, make sure to have all the required dependencies described at the beginning of [Gpu Mode](#gpu-mode) section.
    1. `cd ethrex/crates/l2`
    2. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` and change the `prover_server_endpoint` with machine's `2` ip and make sure the port matches the one defined in machine 2.
 
@@ -153,10 +153,10 @@ The important variables are:
 prover_server_endpoint=<ip-address>:3900
 ```
 
-- `Finally`, to start the `prover_client`/`zkvm`, run:
+- `Finally`, to start the `Prover`/`zkvm`, run:
   - `make init-prover T=(sp1,risc0,pico) G=true`
 
-2. `prover_server`/`proposer` &rarr; this server just needs rust installed.
+2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
    1. `cd ethrex/crates/l2`
    2. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` and change the addresses and the following fields:
       - [prover_server]
@@ -184,14 +184,12 @@ prover_server_endpoint=<ip-address>:3900
 
 ## Configuration
 
-Configuration is done through environment variables. The easiest way to configure the ProverClient is by creating a `prover_client_config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
+Configuration is done through environment variables. The easiest way to configure the `Prover` is by creating a `prover_client_config.toml` file and setting the variables there. Then, at start, it will read the file and set the variables.
 
-The following environment variables are available to configure the Proposer consider looking at the provided [prover_client_config_example.toml](../configs/prover_client_config_example.toml):
-
-The following environment variables are used by the ProverClient:
+The following environment variables are available to configure the `Prover`, consider looking at the provided [prover_client_config_example.toml](../configs/prover_client_config_example.toml):
 
 - `CONFIGS_PATH`: The path where the `PROVER_CLIENT_CONFIG_FILE` is located at.
-- `PROVER_CLIENT_CONFIG_FILE`: The `.toml` that contains the config for the `prover_client`.
+- `PROVER_CLIENT_CONFIG_FILE`: The `.toml` that contains the config for the `Prover`.
 - `PROVER_ENV_FILE`: The name of the `.env` that has the parsed `.toml` configuration.
 - `PROVER_CLIENT_PROVER_SERVER_ENDPOINT`: Prover Server's Endpoint used to connect the Client to the Server.
 
