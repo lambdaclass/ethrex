@@ -10,6 +10,9 @@ const SEPOLIA_BOOTNODES_PATH: &str = "cmd/ethrex/networks/sepolia/bootnodes.json
 pub const HOODI_GENESIS_PATH: &str = "cmd/ethrex/networks/hoodi/genesis.json";
 const HOODI_BOOTNODES_PATH: &str = "cmd/ethrex/networks/hoodi/bootnodes.json";
 
+pub const MAINNET_GENESIS_PATH: &str = "cmd/ethrex/networks/mainnet/genesis.json";
+const MAINNET_BOOTNODES_PATH: &str = "cmd/ethrex/networks/mainnet/bootnodes.json";
+
 lazy_static! {
     pub static ref HOLESKY_BOOTNODES: Vec<Node> = serde_json::from_reader(
         std::fs::File::open(HOLESKY_BOOTNODES_PATH).expect("Failed to open holesky bootnodes file")
@@ -23,4 +26,8 @@ lazy_static! {
         std::fs::File::open(HOODI_BOOTNODES_PATH).expect("Failed to open hoodi bootnodes file")
     )
     .expect("Failed to parse hoodi bootnodes file");
+    pub static ref MAINNET_BOOTNODES: Vec<Node> = serde_json::from_reader(
+        std::fs::File::open(MAINNET_BOOTNODES_PATH).expect("Failed to open mainnet bootnodes file")
+    )
+    .expect("Failed to parse mainnet bootnodes file");
 }

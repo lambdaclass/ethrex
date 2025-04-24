@@ -5,7 +5,7 @@ use ethrex_blockchain::{
     payload::{create_payload, BuildPayloadArgs},
 };
 use ethrex_common::types::BlockHeader;
-use ethrex_p2p::sync_manager::SyncStatus;
+use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
@@ -210,61 +210,62 @@ async fn handle_forkchoice(
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash
     );
-    // Update fcu head in syncer
-    context.syncer.set_head(fork_choice_state.head_block_hash);
-    // Check if there is an ongoing sync before applying the forkchoice
-    let fork_choice_res = match context.syncer.status()? {
-        // Apply current fork choice
-        SyncStatus::Inactive => {
-            let Some(invalid_ancestors) = context.syncer.invalid_ancestors() else {
-                return Err(RpcErr::Internal("Internal error".into()));
-            };
 
-            // Check head block hash in invalid_ancestors
-            if let Some(latest_valid_hash) =
-                invalid_ancestors.get(&fork_choice_state.head_block_hash)
-            {
-                warn!(
-                    "Invalid fork choice state. Reason: Invalid ancestor {:#x}",
-                    latest_valid_hash
-                );
-                Err(InvalidForkChoice::InvalidAncestor(*latest_valid_hash))
-            } else {
-                // Check parent block hash in invalid_ancestors (if head block exists)
-                let check_parent = context
-                    .storage
-                    .get_block_header_by_hash(fork_choice_state.head_block_hash)?
-                    .and_then(|head_block| {
-                        warn!(
-                            "Checking parent for invalid ancestor {}",
-                            head_block.parent_hash
-                        );
-                        invalid_ancestors.get(&head_block.parent_hash).copied()
-                    });
+    if let Some(latest_valid_hash) = context
+        .storage
+        .get_latest_valid_ancestor(fork_choice_state.head_block_hash)
+        .await?
+    {
+        return Ok((
+            None,
+            ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                latest_valid_hash,
+                InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string(),
+            )),
+        ));
+    }
 
-                if let Some(latest_valid_hash) = check_parent {
-                    Err(InvalidForkChoice::InvalidAncestor(latest_valid_hash))
-                } else {
-                    // All checks passed, apply fork choice
-                    apply_fork_choice(
-                        &context.storage,
-                        fork_choice_state.head_block_hash,
-                        fork_choice_state.safe_block_hash,
-                        fork_choice_state.finalized_block_hash,
-                    )
-                    .await
-                }
-            }
+    // Check parent block hash in invalid_ancestors (if head block exists)
+    if let Some(head_block) = context
+        .storage
+        .get_block_header_by_hash(fork_choice_state.head_block_hash)?
+    {
+        if let Some(latest_valid_hash) = context
+            .storage
+            .get_latest_valid_ancestor(head_block.parent_hash)
+            .await?
+        {
+            return Ok((
+                None,
+                ForkChoiceResponse::from(PayloadStatus::invalid_with(
+                    latest_valid_hash,
+                    InvalidForkChoice::InvalidAncestor(latest_valid_hash).to_string(),
+                )),
+            ));
         }
-        // Restart sync if needed
-        _ => Err(InvalidForkChoice::Syncing),
-    };
+    }
 
-    match fork_choice_res {
+    if context.syncer.sync_mode() == SyncMode::Snap {
+        context.syncer.set_head(fork_choice_state.head_block_hash);
+        return Ok((None, PayloadStatus::syncing().into()));
+    }
+
+    match apply_fork_choice(
+        &context.storage,
+        fork_choice_state.head_block_hash,
+        fork_choice_state.safe_block_hash,
+        fork_choice_state.finalized_block_hash,
+    )
+    .await
+    {
         Ok(head) => {
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            match context.storage.get_block_by_hash(head.compute_block_hash()) {
+            match context
+                .storage
+                .get_block_by_hash(head.compute_block_hash())
+                .await
+            {
                 Ok(Some(block)) => {
                     for tx in &block.body.transactions {
                         context
@@ -295,7 +296,9 @@ async fn handle_forkchoice(
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
                     ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        latest_canonical_block_hash(&context.storage).unwrap(),
+                        latest_canonical_block_hash(&context.storage)
+                            .await
+                            .map_err(|e| RpcErr::Internal(e.to_string()))?,
                     ))
                 }
                 InvalidForkChoice::Syncing => {
@@ -305,6 +308,7 @@ async fn handle_forkchoice(
                         .update_sync_status(false)
                         .await
                         .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    context.syncer.set_head(fork_choice_state.head_block_hash);
                     context.syncer.start_sync();
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
@@ -323,10 +327,13 @@ async fn handle_forkchoice(
                         "Invalid fork choice payload. Reason: {}",
                         reason.to_string()
                     );
-                    let latest_valid_hash =
-                        context.storage.get_latest_canonical_block_hash()?.ok_or(
-                            RpcErr::Internal("Missing latest canonical block".to_owned()),
-                        )?;
+                    let latest_valid_hash = context
+                        .storage
+                        .get_latest_canonical_block_hash()
+                        .await?
+                        .ok_or(RpcErr::Internal(
+                            "Missing latest canonical block".to_owned(),
+                        ))?;
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(
                         latest_valid_hash,
                         reason.to_string(),

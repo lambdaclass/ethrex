@@ -31,11 +31,14 @@ pub fn main() {
     if !verify_db(&db, &state_trie, &storage_tries).expect("failed to validate database") {
         panic!("invalid database")
     };
+    let fork = db.chain_config.fork(block.header.timestamp);
 
     let mut evm = Evm::from_execution_db(db.clone());
     let result = evm.execute_block(&block).expect("failed to execute block");
     let receipts = result.receipts;
-    let account_updates = result.account_updates;
+    let account_updates = evm
+        .get_state_transitions(fork)
+        .expect("failed to get state transitions");
     validate_gas_used(&receipts, &block.header).expect("invalid gas used");
 
     // Output gas for measurement purposes

@@ -6,15 +6,19 @@ use std::sync::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::{error::StoreError, Store};
-use tokio::sync::Mutex;
+use tokio::{
+    sync::Mutex,
+    time::{sleep, Duration},
+};
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::{
     kademlia::KademliaTable,
     sync::{SyncMode, Syncer},
 };
 
+#[derive(Debug)]
 pub enum SyncStatus {
     Active(SyncMode),
     Inactive,
@@ -32,7 +36,7 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
-    pub fn new(
+    pub async fn new(
         peer_table: Arc<Mutex<KademliaTable>>,
         sync_mode: SyncMode,
         cancel_token: CancellationToken,
@@ -46,12 +50,22 @@ impl SyncManager {
             cancel_token,
             blockchain,
         )));
-        Self {
+        let sync_manager = Self {
             snap_enabled,
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
-            store,
+            store: store.clone(),
+        };
+        // If the node was in the middle of a sync and then re-started we must resume syncing
+        // Otherwise we will incorreclty assume the node is already synced and work on invalid state
+        if store
+            .get_header_download_checkpoint()
+            .await
+            .is_ok_and(|res| res.is_some())
+        {
+            sync_manager.start_sync();
         }
+        sync_manager
     }
 
     /// Creates a dummy SyncManager for tests where syncing is not needed
@@ -90,12 +104,14 @@ impl SyncManager {
     pub fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
-        let Ok(Some(current_head)) = self.store.get_latest_canonical_block_hash() else {
-            tracing::error!("Failed to fecth latest canonical block, unable to sync");
-            return;
-        };
         let sync_head = self.last_fcu_head.clone();
+
         tokio::spawn(async move {
+            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
+                tracing::error!("Failed to fecth latest canonical block, unable to sync");
+                return;
+            };
+
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             let Ok(mut syncer) = syncer.try_lock() else {
                 return;
@@ -109,6 +125,12 @@ impl SyncManager {
                     };
                     *sync_head
                 };
+                // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start
+                if sync_head.is_zero() {
+                    info!("Resuming sync after node restart, waiting for next FCU");
+                    sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
                 // Start the sync cycle
                 syncer
                     .start_sync(current_head, sync_head, store.clone())
@@ -116,6 +138,7 @@ impl SyncManager {
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
                     .get_header_download_checkpoint()
+                    .await
                     .ok()
                     .flatten()
                     .is_none()
@@ -127,29 +150,11 @@ impl SyncManager {
     }
 
     /// Returns the syncer's current syncmode (either snap or full)
-    fn sync_mode(&self) -> SyncMode {
+    pub fn sync_mode(&self) -> SyncMode {
         if self.snap_enabled.load(Ordering::Relaxed) {
             SyncMode::Snap
         } else {
             SyncMode::Full
         }
-    }
-
-    /// TODO: Very dirty method that should be removed asap once we move invalid ancestors to the store
-    /// Returns a copy of the invalid ancestors if the syncer is not busy
-    pub fn invalid_ancestors(&self) -> Option<std::collections::HashMap<H256, H256>> {
-        self.syncer
-            .try_lock()
-            .map(|syncer| syncer.invalid_ancestors.clone())
-            .ok()
-    }
-
-    /// TODO: Very dirty method that should be removed asap once we move invalid ancestors to the store
-    /// Adds a key value pair to invalid ancestors if the syncer is not busy
-    pub fn add_invalid_ancestor(&self, k: H256, v: H256) -> bool {
-        self.syncer
-            .try_lock()
-            .map(|mut syncer| syncer.invalid_ancestors.insert(k, v))
-            .is_ok()
     }
 }

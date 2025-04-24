@@ -65,7 +65,8 @@ pub async fn re_run_failed_ef_test(
                 EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(_) => continue,
                 EFTestRunnerError::VMInitializationFailed(_)
                 | EFTestRunnerError::ExecutionFailedUnexpectedly(_)
-                | EFTestRunnerError::FailedToEnsurePreState(_) => continue,
+                | EFTestRunnerError::FailedToEnsurePreState(_)
+                | EFTestRunnerError::EIP7702ShouldNotBeCreateType => continue,
                 EFTestRunnerError::VMExecutionMismatch(reason) => return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
                     format!("VM execution mismatch errors should only happen when running with revm. This failed during levm's execution: {reason}"), re_run_report.clone()))),
                 EFTestRunnerError::Internal(reason) => return Err(EFTestRunnerError::Internal(reason.to_owned())),
@@ -115,8 +116,8 @@ pub fn prepare_revm_for_tx<'state>(
         None
     } else {
         Some(BlobExcessGasAndPrice {
-            blob_gasprice: 0,
             excess_blob_gas: test.env.current_excess_blob_gas.unwrap().as_u64(),
+            blob_gasprice: 0,
         })
     };
     let block_env = RevmBlockEnv {
@@ -185,8 +186,8 @@ pub fn prepare_revm_for_tx<'state>(
         },
         value: RevmU256::from_limbs(tx.value.0),
         data: tx.data.to_vec().into(),
-        nonce: Some(tx.nonce.as_u64()),
-        chain_id: Some(chain_spec.chain_id), //TODO: See what to do with this... ChainId test fails IDK why.
+        nonce: Some(tx.nonce),
+        chain_id: Some(chain_spec.chain_id),
         access_list: revm_access_list,
         gas_priority_fee: tx
             .max_priority_fee_per_gas
@@ -372,7 +373,7 @@ pub async fn compare_levm_revm_account_updates(
             let account = Account::new(
                 pre_state_value.balance,
                 pre_state_value.code.clone(),
-                pre_state_value.nonce.as_u64(),
+                pre_state_value.nonce,
                 account_storage,
             );
             (*account_address, account)
@@ -381,14 +382,11 @@ pub async fn compare_levm_revm_account_updates(
     initial_accounts
         .entry(test.env.current_coinbase)
         .or_default();
-    let levm_updated_accounts = levm_account_updates
-        .iter()
-        .map(|account_update| account_update.address)
-        .collect::<HashSet<Address>>();
-    let revm_updated_accounts = revm_account_updates
-        .iter()
-        .map(|account_update| account_update.address)
-        .collect::<HashSet<Address>>();
+
+    let (levm_updated_accounts, revm_updated_accounts): (HashSet<_>, HashSet<_>) = (
+        levm_account_updates.iter().map(|u| u.address).collect(),
+        revm_account_updates.iter().map(|u| u.address).collect(),
+    );
 
     ComparisonReport {
         levm_post_state_root,
@@ -397,18 +395,9 @@ pub async fn compare_levm_revm_account_updates(
         expected_post_state_root: test.post.vector_post_value(vector, *fork).hash,
         levm_account_updates: levm_account_updates.to_vec(),
         revm_account_updates: revm_account_updates.to_vec(),
-        levm_updated_accounts_only: levm_updated_accounts
-            .difference(&revm_updated_accounts)
-            .cloned()
-            .collect::<HashSet<Address>>(),
-        revm_updated_accounts_only: revm_updated_accounts
-            .difference(&levm_updated_accounts)
-            .cloned()
-            .collect::<HashSet<Address>>(),
-        shared_updated_accounts: levm_updated_accounts
-            .intersection(&revm_updated_accounts)
-            .cloned()
-            .collect::<HashSet<Address>>(),
+        levm_updated_accounts_only: &levm_updated_accounts - &revm_updated_accounts,
+        revm_updated_accounts_only: &revm_updated_accounts - &levm_updated_accounts,
+        shared_updated_accounts: &levm_updated_accounts & &revm_updated_accounts,
     }
 }
 
@@ -463,6 +452,11 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
                     return Err(EFTestRunnerError::Internal(InternalError::MainRunnerInternal(
                         "The ExpectedExceptionDoesNotMatchReceived error should only happen when executing Levm, the errors matching is not implemented in Revm"
                             .to_owned(),
+                    )));
+                }
+                Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => {
+                    return Err(EFTestRunnerError::Internal(InternalError::Custom(
+                        "This case should not happen".to_owned(),
                     )));
                 }
             }
@@ -521,12 +515,7 @@ pub async fn _ensure_post_state_revm(
                     let expected_post_state_root_hash =
                         test.post.vector_post_value(vector, *fork).hash;
                     if expected_post_state_root_hash != pos_state_root {
-                        println!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-                        );
-                        let error_reason = format!(
-                            "Post-state root mismatch: expected {expected_post_state_root_hash:#x}, got {pos_state_root:#x}",
-                        );
+                        println!("Post-state root mismatch",);
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             ExecutionReport {
                                 result: TxResult::Success,
@@ -536,7 +525,7 @@ pub async fn _ensure_post_state_revm(
                                 output: Bytes::new(),
                             },
                             //TODO: This is not a TransactionReport because it is REVM
-                            error_reason,
+                            "Post-state root mismatch".to_string(),
                             HashMap::new(),
                         ));
                     }

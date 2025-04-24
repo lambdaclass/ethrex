@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity =0.8.29;
 
 import "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import "../../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
@@ -71,27 +71,60 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         return depositLogs;
     }
 
-    /// @inheritdoc ICommonBridge
-    function deposit(address to) public payable {
+    function _deposit(DepositValues memory depositValues) private {
         require(msg.value > 0, "CommonBridge: amount to deposit is zero");
 
-        // TODO: Build the tx.
-        bytes32 l2MintTxHash = keccak256(abi.encodePacked("dummyl2MintTxHash"));
+        bytes32 l2MintTxHash = keccak256(
+            abi.encodePacked(
+                msg.sender,
+                depositValues.to,
+                depositValues.recipient,
+                msg.value,
+                depositValues.gasLimit,
+                depositId,
+                depositValues.data
+            )
+        );
+
         depositLogs.push(
             keccak256(
                 bytes.concat(
-                    bytes20(to),
+                    bytes20(depositValues.to),
                     bytes32(msg.value),
-                    bytes32(depositId)
+                    bytes32(depositId),
+                    bytes20(depositValues.recipient),
+                    bytes20(msg.sender),
+                    bytes32(depositValues.gasLimit),
+                    bytes32(keccak256(depositValues.data))
                 )
             )
         );
-        emit DepositInitiated(msg.value, to, depositId, l2MintTxHash);
+        emit DepositInitiated(
+            msg.value,
+            depositValues.to,
+            depositId,
+            depositValues.recipient,
+            msg.sender,
+            depositValues.gasLimit,
+            depositValues.data,
+            l2MintTxHash
+        );
         depositId += 1;
     }
 
+    /// @inheritdoc ICommonBridge
+    function deposit(DepositValues calldata depositValues) public payable {
+        _deposit(depositValues);
+    }
+
     receive() external payable {
-        deposit(msg.sender);
+        DepositValues memory depositValues = DepositValues({
+            to: msg.sender,
+            recipient: msg.sender,
+            gasLimit: 21000 * 5,
+            data: bytes("")
+        });
+        _deposit(depositValues);
     }
 
     /// @inheritdoc ICommonBridge
