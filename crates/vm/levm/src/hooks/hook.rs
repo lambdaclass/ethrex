@@ -1,5 +1,4 @@
 use crate::{
-    call_frame::CallFrame,
     errors::{ExecutionReport, VMError},
     vm::VM,
 };
@@ -10,7 +9,6 @@ pub trait Hook {
     fn finalize_execution(
         &self,
         vm: &mut VM<'_>,
-        initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError>;
 }
