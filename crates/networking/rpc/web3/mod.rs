@@ -11,7 +11,7 @@ const ETHREX_RUSTC_VERSION: &str = env!("VERGEN_RUSTC_SEMVER");
 
 pub fn client_version(_req: &RpcRequest, _store: Store) -> Result<Value, RpcErr> {
     Ok(Value::String(format!(
-        "{}/v{}-{}/{}/rustc-v{}",
+        "{}/v{}-develop-{}/{}/rustc-v{}",
         ETHREX_PKG_NAME,
         ETHREX_PKG_VERSION,
         &ETHREX_COMMIT_HASH[0..6],
