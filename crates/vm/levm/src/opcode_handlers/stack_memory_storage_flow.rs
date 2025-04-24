@@ -157,8 +157,6 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
-    // SSTORE operation
-    // TODO: https://github.com/lambdaclass/ethrex/issues/1087
     pub fn op_sstore(&mut self) -> Result<OpcodeResult, VMError> {
         if self.current_call_frame()?.is_static {
             return Err(VMError::OpcodeNotAllowedInStaticContext);
