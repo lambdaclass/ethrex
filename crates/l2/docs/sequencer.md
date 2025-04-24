@@ -21,7 +21,7 @@ Creates Blocks with a connection to the `auth.rpc` port.
 
 ### L1 Watcher
 
-This component handles the L1->L2 messages. Without rest, it is always watching the L1 for new deposit events defined as `DepositInitiated()` that contain the deposit transaction to be executed on the L2. Once a new deposit event is detected, it will insert the deposit transaction into the L2.
+This component handles the L1->L2 messages. Without rest for every interval defined in the config file, it is always watching the L1 for new deposit events defined as `DepositInitiated()` that contain the deposit transaction to be executed on the L2. Once a new deposit event is detected, it will insert the deposit transaction into the L2.
 
 In the future, it will also be watching for other L1->L2 messages.
 
@@ -53,8 +53,8 @@ The following environment variables are available to configure the Proposer cons
 
 - Under the `[deployer]` section:
 
-  - `l1_address`: L1 account which will deploy the common bridge contracts in L1.
-  - `l1_private key`: Its private key.
+  - `l1_address`: L1 account which will deploy the common bridge contracts in L1 with funds available for deployments.
+  - `l1_private key`: Private key corresponding to the above address.
   - `pico_contract_verifier`: Address which will verify the `pico` proofs.
   - `pico_deploy_verifier`: Whether to deploy the `pico` verifier contract or not.
   - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
@@ -64,22 +64,23 @@ The following environment variables are available to configure the Proposer cons
 
 - Under the `[watcher]` section:
 
-  - `bridge_address`: Address of the bridge contract on L1.
-  - `check_interval_ms`: Interval in milliseconds to check for new events.
-  - `max_block_step`: Maximum number of blocks to look for when checking for new events.
-  - `l2_proposer_private_key`: Private key of the L2 proposer.
+  - `bridge_address`: Address of the bridge contract on L1. This address is used to retrieve logs emitted by deposit events.
+  - `check_interval_ms`: Interval in milliseconds to check for new events. If no new events or messages are detected, it does nothing.
+  - `max_block_step`: Defines the maximum range of blocks to scan for new events during each polling cycle. Specifically, events are queried from last_block_fetched up to last_block_fetched + max_block_step. If the chain hasn’t progressed that far yet, the scan will end at the current latest block instead. This ensures we only query blocks that actually exist.
+  - `l2_proposer_private_key`: Private key of the L2 proposer. 
 
 - Under the `[proposer]` section:
 
-  - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
+  - `interval_ms`: Interval in milliseconds at which the proposer wakes up to produce a new block.
   - `coinbase address`: Address which will receive the execution fees.
 
 - Under the `[committer]` section:
 
-  - `l1_address`: Address of the L1 committer.
+  - `l1_address`: Address of a funded account that it will be used to send commit transactions to the L1.
   - `l1_private_key`: Its private key.
-  - `commit_time_ms`: Sleep time after sending the commit transaction.
+  - `commit_time_ms`: Sleep time after sending the commit transaction with the proofs to the L1. If no new block has been fetched, we wait another `commit_time_ms` and check again.
   - `on_chain_proposer_address`: Address of the on-chain committer.
+  - `arbitrary_base_blob_gas_price`: The base gas price that serves as the minimum price for blob transactions.
 
 - Under the `[prover_server]` section:
 
