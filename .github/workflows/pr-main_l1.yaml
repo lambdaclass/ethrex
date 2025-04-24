@@ -212,7 +212,7 @@ jobs:
       
       - name: Set eest fixture file env var
         run: |
-          if [ "${{ matrix.simulation }}" != "ethereum/eest/consume-engine" ]; then
+          if [ "${{ matrix.simulation }}" == "ethereum/eest/consume-engine" ]; then
             EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
             echo "HIVE_FALGS="--sim.buildarg fixtures=$EEST_FIXTURES"" >> $GITHUB_ENV
           else
