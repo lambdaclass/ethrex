@@ -164,41 +164,38 @@ impl ProofCoordinator {
         );
 
         loop {
-            tokio::select! {
-                res = listener.accept() => {
-                    match res {
-                        Ok((stream, addr)) => {
-
-                            match sem.clone().try_acquire_owned(){
-                                Ok(permit) => {
-                                    // Cloning the ProverServer structure to use the handle_connection() fn
-                                    // in every spawned task.
-                                    // The important fields are `Store` and `EthClient`
-                                    // Both fields are wrapped with an Arc, making it possible to clone
-                                    // the entire structure.
-                                    let self_clone = self.clone();
-                                    tokio::task::spawn(async move {
-                                        if let Err(e) = self_clone.handle_connection(stream).await {
-                                            error!("Error handling connection from {addr}: {e}");
-                                        } else {
-                                            debug!("Connection from {addr} handled successfully");
-                                        }
-                                        drop(permit);
-                                    });
-                                },
-                                Err(e) => {
-                                    match e {
-                                        TryAcquireError::Closed => error!("Fatal error the semaphore has been closed: {e}"),
-                                        TryAcquireError::NoPermits => warn!("Connection limit reached. Closing connection from {addr}."),
-                                    }
+            let res = listener.accept().await;
+            match res {
+                Ok((stream, addr)) => {
+                    match sem.clone().try_acquire_owned() {
+                        Ok(permit) => {
+                            // Cloning the ProverServer structure to use the handle_connection() fn
+                            // in every spawned task.
+                            // The important fields are `Store` and `EthClient`
+                            // Both fields are wrapped with an Arc, making it possible to clone
+                            // the entire structure.
+                            let self_clone = self.clone();
+                            tokio::task::spawn(async move {
+                                if let Err(e) = self_clone.handle_connection(stream).await {
+                                    error!("Error handling connection from {addr}: {e}");
+                                } else {
+                                    debug!("Connection from {addr} handled successfully");
                                 }
+                                drop(permit);
+                            });
+                        }
+                        Err(e) => match e {
+                            TryAcquireError::Closed => {
+                                error!("Fatal error the semaphore has been closed: {e}")
                             }
-
-                        }
-                        Err(e) => {
-                            error!("Failed to accept connection: {e}");
-                        }
+                            TryAcquireError::NoPermits => {
+                                warn!("Connection limit reached. Closing connection from {addr}.")
+                            }
+                        },
                     }
+                }
+                Err(e) => {
+                    error!("Failed to accept connection: {e}");
                 }
             }
         }
