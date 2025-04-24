@@ -163,13 +163,10 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             blockNumber == lastCommittedBlock + 1,
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
-
-        if (!VALIDIUM) {
-            require(
-                blockCommitments[blockNumber].newStateRoot == bytes32(0),
-                "OnChainProposer: block already committed"
-            );
-        }
+        require(
+            blockCommitments[blockNumber].newStateRoot == bytes32(0),
+            "OnChainProposer: tried to commit an already committed block"
+        );
 
         // Check if commitment is equivalent to blob's KZG commitment.
 
@@ -227,14 +224,10 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             blockNumber == lastVerifiedBlock + 1,
             "OnChainProposer: block already verified"
         );
-
-        if (!VALIDIUM) {
-            require(
-                blockCommitments[blockNumber].stateDiffKZGVersionedHash !=
-                    bytes32(0),
-                "OnChainProposer: block not committed"
-            );
-        }
+        require(
+            blockCommitments[blockNumber].newStateRoot != bytes32(0),
+            "OnChainProposer: cannot verify an uncommitted block"
+        );
 
         if (PICOVERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
