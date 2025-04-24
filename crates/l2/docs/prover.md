@@ -282,7 +282,7 @@ These three components are specific additions for ethrex's L2 protocol, layered 
 For more details, refer to [Overview](overview.md), [Withdrawals](withdrawals.md), and [State diffs](state_diffs.md).
 
 #### Step 1: initial state validation
-The program validates the `ExecutionDB` by iterating over each provided state value and verifying its MPT proof against the initial state hash (obtained from the parent block header input).
+The program validates the `ExecutionDB` by iterating over each provided state value (stored in hash maps) and verifying its MPT proof against the initial state hash (obtained from the parent block header input). This is the role of the `verify_db()` function (to link the values with the proofs). We could instead directly decode the data from the MPT proofs on each EVM read/write, although this would incur performance costs.
 
 Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries – a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.
 
