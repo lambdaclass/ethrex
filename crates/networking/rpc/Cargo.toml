@@ -57,4 +57,4 @@ based = ["l2", "dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:st
 l2 = []
 
 [build-dependencies]
-vergen = { version = "9.0.0", features = ["build", "cargo", "rustc", "si"] }    
+vergen = { version = "9.0.0", features = ["rustc"] }    
