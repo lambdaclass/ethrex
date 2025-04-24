@@ -164,7 +164,7 @@ jobs:
             ethrex_flags: ""
           - name: "Paris Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-api/RPC|Re-org to Previously Validated Sidechain Payload|Re-Org Back into Canonical Chain, Depth=5|Safe Re-Org|Transaction Re-Org|Inconsistent|Suggested Fee|PrevRandao Opcode Transactions|Fork ID|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique Payload ID|Re-Execute Payload|Multiple New Payloads|NewPayload with|Payload Build|Build Payload|Invalid PayloadAttributes|Unknown HeadBlockHash|Valid NewPayload->ForkchoiceUpdated|Invalid NewPayload, ParentHash|Bad Hash on NewPayload|Invalid P9|In-Order Consecutive Payload Execution|Re-Org Back to Canonical Chain"
+            test_pattern: "engine-api/RPC|Re-org to Previously Validated Sidechain Payload|Re-Org Back into Canonical Chain, Depth=5|Safe Re-Org|Transaction Re-Org|Inconsistent|Suggested Fee|PrevRandao Opcode Transactions|Fork ID|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique Payload ID|Re-Execute Payload|Multiple New Payloads|NewPayload with|Payload Build|Build Payload|Invalid PayloadAttributes|Unknown HeadBlockHash|Valid NewPayload->ForkchoiceUpdated|Invalid NewPayload, ParentHash|Bad Hash on NewPayload|In-Order Consecutive Payload Execution|Re-Org Back to Canonical Chain" # |Invalid P9 -> flaky
             ethrex_flags: ""
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
