@@ -56,6 +56,11 @@ pub fn init_tracing(opts: &Options) {
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+    tracing::info!(
+        "Starting metrics server on {}:{}",
+        opts.metrics_addr,
+        opts.metrics_port
+    );
     let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
@@ -257,6 +262,9 @@ pub fn get_network(opts: &Options) -> String {
     if network == "hoodi" {
         network = String::from(networks::HOODI_GENESIS_PATH);
     }
+    if network == "mainnet" {
+        network = String::from(networks::MAINNET_GENESIS_PATH);
+    }
 
     network
 }
@@ -278,6 +286,11 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
     if network == networks::HOODI_GENESIS_PATH {
         info!("Adding hoodi preset bootnodes");
         bootnodes.extend(networks::HOODI_BOOTNODES.iter());
+    }
+
+    if network == networks::MAINNET_GENESIS_PATH {
+        info!("Adding mainnet preset bootnodes");
+        bootnodes.extend(networks::MAINNET_BOOTNODES.iter());
     }
 
     if bootnodes.is_empty() {

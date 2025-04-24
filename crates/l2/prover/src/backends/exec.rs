@@ -1,4 +1,4 @@
-use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_blockchain::validate_block;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
 use ethrex_vm::Evm;
@@ -54,11 +54,12 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     if !verify_db(&db, &state_trie, &storage_tries)? {
         return Err("invalid database".to_string().into());
     };
+    let fork = db.chain_config.fork(block.header.timestamp);
 
     let mut vm = Evm::from_execution_db(db.clone());
-    let result = vm.execute_block(&block)?;
-    let receipts = result.receipts;
-    let account_updates = result.account_updates;
+    let _result = vm.execute_block(&block)?;
+    // let receipts = result.receipts;
+    let account_updates = vm.get_state_transitions(fork)?;
     // validate_gas_used(&receipts, &block.header)?;
 
     // Update state trie

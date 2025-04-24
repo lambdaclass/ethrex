@@ -40,6 +40,7 @@ impl TryFrom<String> for EvmEngine {
     }
 }
 
+#[derive(Clone)]
 pub enum Evm {
     REVM { state: EvmState },
     LEVM { db: GeneralizedDatabase },
@@ -285,5 +286,4 @@ impl Evm {
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
-    pub account_updates: Vec<AccountUpdate>,
 }
