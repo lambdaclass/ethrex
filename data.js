@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745514607056,
+  "lastUpdate": 1745524100196,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4255,6 +4255,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179858713379,
             "range": "± 992177586",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "214e3538a6bedec40d1949abd5e06a30482a1848",
+          "message": "fix(levm): change CI check for EFTests because London doesn't pass 100% now (#2568)\n\n**Motivation**\n\n- Fix CI \n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- London tests don't pass 100% because new tests have been added and it\nseems that there is an edge case we are not currently passing. For now I\nwanted to disable the check that sees if all tests from Prague to London\npassed and set it to look only for Prague to Paris.\n- Added `workflow_dispatch` to this workflow so that we can run it\nmanually.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-24T18:58:51Z",
+          "tree_id": "a39d89520f475a92c876dd4d5be84807e522357f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/214e3538a6bedec40d1949abd5e06a30482a1848"
+        },
+        "date": 1745524097884,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181497989700,
+            "range": "± 4677402185",
             "unit": "ns/iter"
           }
         ]
