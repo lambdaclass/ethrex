@@ -198,12 +198,10 @@ impl L1Watcher {
                 .concat(),
             );
 
-            let deposit_already_processed = blockchain
-                .mempool
+            let deposit_already_processed = store
                 .get_transaction_by_hash(deposit_hash)
-                .map_err(|_| {
-                    L1WatcherError::Custom("Failed to get deposit tx from the mempool".to_string())
-                })?
+                .await
+                .map_err(L1WatcherError::FailedAccessingStore)?
                 .is_some();
 
             if deposit_already_processed {
