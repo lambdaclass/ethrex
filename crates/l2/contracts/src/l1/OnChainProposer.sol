@@ -13,9 +13,16 @@ import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 /// @title OnChainProposer contract.
 /// @author LambdaClass
 contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
+    /// @notice Committed blocks data.
+    /// @dev This struct holds the information about the committed blocks.
+    /// @dev processedDepositLogsRollingHash is the Merkle root of the logs of the
+    /// deposits that were processed in the block being committed. The amount of
+    /// logs that is encoded in this root are to be removed from the
+    /// pendingDepositLogs queue of the CommonBridge contract.
     struct BlockCommitmentInfo {
-        bytes32 commitmentHash;
-        bytes32 depositLogs;
+        bytes32 newStateRoot;
+        bytes32 stateDiffKZGVersionedHash;
+        bytes32 processedDepositLogsRollingHash;
     }
 
     /// @notice The commitments of the committed blocks.
@@ -137,25 +144,29 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @inheritdoc IOnChainProposer
     function commit(
         uint256 blockNumber,
-        bytes32 commitment,
+        bytes32 newStateRoot,
+        bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 depositLogs
+        bytes32 processedDepositLogsRollingHash
     ) external override onlySequencer {
         require(
             blockNumber == lastCommittedBlock + 1,
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
         require(
-            blockCommitments[blockNumber].commitmentHash == bytes32(0),
+            blockCommitments[blockNumber].newStateRoot == bytes32(0),
             "OnChainProposer: block already committed"
         );
+
         // Check if commitment is equivalent to blob's KZG commitment.
 
-        if (depositLogs != bytes32(0)) {
-            bytes32 savedDepositLogs = ICommonBridge(BRIDGE)
-                .getDepositLogsVersionedHash(uint16(bytes2(depositLogs)));
+        if (processedDepositLogsRollingHash != bytes32(0)) {
+            bytes32 claimedProcessedDepositLogs = ICommonBridge(BRIDGE)
+                .getPendingDepositLogsVersionedHash(
+                    uint16(bytes2(processedDepositLogsRollingHash))
+                );
             require(
-                savedDepositLogs == depositLogs,
+                claimedProcessedDepositLogs == processedDepositLogsRollingHash,
                 "OnChainProposer: invalid deposit logs"
             );
         }
@@ -166,11 +177,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
         }
         blockCommitments[blockNumber] = BlockCommitmentInfo(
-            commitment,
-            depositLogs
+            newStateRoot,
+            stateDiffKZGVersionedHash,
+            processedDepositLogsRollingHash
         );
         lastCommittedBlock = blockNumber;
-        emit BlockCommitted(commitment);
+        emit BlockCommitted(newStateRoot);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -202,7 +214,8 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         );
 
         require(
-            blockCommitments[blockNumber].commitmentHash != bytes32(0),
+            blockCommitments[blockNumber].stateDiffKZGVersionedHash !=
+                bytes32(0),
             "OnChainProposer: block not committed"
         );
 
@@ -236,10 +249,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         lastVerifiedBlock = blockNumber;
         // The first 2 bytes are the number of deposits.
         uint16 deposits_amount = uint16(
-            bytes2(blockCommitments[blockNumber].depositLogs)
+            bytes2(
+                blockCommitments[blockNumber].processedDepositLogsRollingHash
+            )
         );
         if (deposits_amount > 0) {
-            ICommonBridge(BRIDGE).removeDepositLogs(deposits_amount);
+            ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
         }
 
         // Remove previous block commitment as it is no longer needed.

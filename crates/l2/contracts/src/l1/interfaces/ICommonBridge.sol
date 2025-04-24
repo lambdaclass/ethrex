@@ -58,10 +58,10 @@ interface ICommonBridge {
         bytes data;
     }
 
-    /// @notice Method to retrieve all the deposit logs hashes.
-    /// @dev This method is used by the L2 L1_Watcher to get the remaining
-    /// deposit logs to be processed.
-    function getDepositLogs() external view returns (bytes32[] memory);
+    /// @notice Method to retrieve all the pending deposit logs hashes.
+    /// @dev This method is used by the L2 L1_Watcher to get the pending deposit
+    /// logs to be processed.
+    function getPendingDepositLogs() external view returns (bytes32[] memory);
 
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
@@ -76,19 +76,30 @@ interface ICommonBridge {
     /// @param depositValues the values needed to create the deposit.
     function deposit(DepositValues calldata depositValues) external payable;
 
-    /// @notice Method to retrieve the versioned hash of the first `number` deposit logs.
-    /// @param number of deposit logs to retrieve the versioned hash.
-    function getDepositLogsVersionedHash(
+    /// @notice Method to retrieve the versioned hash of the first `number`
+    /// pending deposit logs.
+    /// @param number of pending deposit logs to retrieve the versioned hash.
+    function getPendingDepositLogsVersionedHash(
         uint16 number
     ) external view returns (bytes32);
 
-    /// @notice Remove deposit from depositLogs queue.
-    /// @dev This method is used by the L2 OnChainOperator to remove the deposit
-    /// logs from the queue after the deposit is verified.
-    /// @param number of deposit logs to remove.
+    /// @notice Remove pending deposit from the pendingDepositLogs queue.
+    /// @dev This method is used by the L2 OnChainOperator to remove the pending
+    /// deposit logs from the queue after the deposit is verified.
+    /// @param number of pending deposit logs to remove.
     /// As deposits are processed in order, we don't need to specify
-    /// the deposit logs to remove, only the number of them.
-    function removeDepositLogs(uint16 number) external;
+    /// the pending deposit logs to remove, only the number of them.
+    function removePendingDepositLogs(uint16 number) external;
+
+    /// @notice Method to retrieve the merkle root of the withdrawal logs of a
+    /// given block.
+    /// @dev This method is used by the L2 OnChainOperator at the verify stage.
+    /// @param blockNumber the block number in L2 where the withdrawal logs were
+    /// emitted.
+    /// @return the merkle root of the withdrawal logs of the given block.
+    function getWithdrawalLogsMerkleRoot(
+        uint256 blockNumber
+    ) external view returns (bytes32);
 
     /// @notice Publishes the L2 withdrawals on L1.
     /// @dev This method is used by the L2 OnChainOperator to publish the L2

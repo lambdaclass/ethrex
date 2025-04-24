@@ -91,7 +91,7 @@ impl L1Watcher {
     }
 
     pub async fn get_pending_deposit_logs(&self) -> Result<Vec<H256>, L1WatcherError> {
-        let selector = keccak(b"getDepositLogs()")
+        let selector = keccak(b"getPendingDepositLogs()")
             .as_bytes()
             .get(..4)
             .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
