@@ -147,6 +147,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [docker_build, setup-hive]
     if: ${{ github.event_name != 'merge_group' }}
+    inputs:
+      eest_fixtures: $(cat cmd/ef_tests/blockchain/.fixtures_url)
     strategy:
       matrix:
         include:
@@ -189,17 +191,17 @@ jobs:
             simulation: ethereum/eest/consume-engine
             test_pattern: ".*tests/prague.*"
             ethrex_flags: ""
-            hive_flags: --sim.buildarg fixtures=${{ env.EEST_FIXTURES }}
+            hive_flags: --sim.buildarg fixtures=${{ inputs.eest_fixtures }}
           - name: "Eest Consume-Engine (Cancun)"
             simulation: ethereum/eest/consume-engine
             test_pattern: ".*tests/cancun.*"
             ethrex_flags: ""
-            hive_flags: --sim.buildarg fixtures=${{ env.EEST_FIXTURES }}
+            hive_flags: --sim.buildarg fixtures=${{ inputs.eest_fixtures }}
           - name: "Eest Consume-Engine (Shanghai)"
             simulation: ethereum/eest/consume-engine
             test_pattern: ".*tests/shanghai.*"
             ethrex_flags: ""
-            hive_flags: --sim.buildarg fixtures=${{ env.EEST_FIXTURES }}
+            hive_flags: --sim.buildarg fixtures=${{ inputs.eest_fixtures }}
           # Flaky test, reenable when fixed
           # - name: "Sync snap"
           #   simulation: ethereum/sync
