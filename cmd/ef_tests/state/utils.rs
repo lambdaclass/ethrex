@@ -11,7 +11,6 @@ use ethrex_vm::{
     backends::revm::db::{evm_state, EvmState},
     StoreWrapper,
 };
-use spinoff::Spinner;
 
 /// Loads initial state, used for REVM as it contains EvmState.
 pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
@@ -44,22 +43,6 @@ pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     };
 
     GeneralizedDatabase::new(Arc::new(store), CacheDB::new())
-}
-
-pub fn spinner_update_text_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {
-    if !spinner_enabled {
-        println!("{}", text);
-    } else {
-        spinner.update_text(text);
-    }
-}
-
-pub fn spinner_success_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {
-    if !spinner_enabled {
-        println!("{}", text);
-    } else {
-        spinner.success(&text);
-    }
 }
 
 // If gas price is not provided, calculate it with current base fee and priority fee
