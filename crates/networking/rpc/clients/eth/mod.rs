@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt};
+use std::fmt;
 
 use crate::{
     types::{
@@ -899,24 +899,6 @@ impl EthClient {
             on_chain_proposer_address,
         )
         .await
-    }
-
-    pub async fn get_verifier_contracts(
-        eth_client: &EthClient,
-        verifier_selectors: &[&str],
-        on_chain_proposer_address: Address,
-    ) -> Result<HashMap<String, Address>, EthClientError> {
-        let mut map: HashMap<_, _> = HashMap::new();
-        for selector in verifier_selectors.iter() {
-            let addr = Self::_call_address_variable(
-                eth_client,
-                selector.as_bytes(),
-                on_chain_proposer_address,
-            )
-            .await?;
-            map.insert(selector.to_string(), addr);
-        }
-        Ok(map)
     }
 
     pub async fn get_last_fetched_l1_block(

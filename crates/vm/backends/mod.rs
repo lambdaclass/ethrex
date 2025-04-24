@@ -201,16 +201,10 @@ impl Evm {
 
     /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
-    pub fn process_withdrawals(
-        &mut self,
-        withdrawals: &[Withdrawal],
-        block_header: &BlockHeader,
-    ) -> Result<(), StoreError> {
+    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), StoreError> {
         match self {
             Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
-            Evm::LEVM { db } => {
-                LEVM::process_withdrawals(db, withdrawals, block_header.parent_hash)
-            }
+            Evm::LEVM { db } => LEVM::process_withdrawals(db, withdrawals),
         }
     }
 
@@ -286,5 +280,4 @@ impl Evm {
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
-    pub account_updates: Vec<AccountUpdate>,
 }
