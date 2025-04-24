@@ -202,7 +202,10 @@ impl Hook for L2Hook {
         if !report.is_success() {
             // In a create if Tx was reverted the account won't even exist by this point.
             if !vm.is_create() {
-                vm.decrease_account_balance(vm.current_call_frame()?.to, vm.current_call_frame()?.msg_value)?;
+                vm.decrease_account_balance(
+                    vm.current_call_frame()?.to,
+                    vm.current_call_frame()?.msg_value,
+                )?;
             }
 
             vm.increase_account_balance(sender_address, vm.current_call_frame()?.msg_value)?;
