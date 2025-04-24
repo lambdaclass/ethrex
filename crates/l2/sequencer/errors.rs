@@ -1,6 +1,7 @@
 use crate::utils::config::errors::ConfigError;
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
+use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
@@ -60,6 +61,20 @@ pub enum ProverServerError {
     InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProofSenderError {
+    #[error("Failed because of an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Failed with a SaveStateError: {0}")]
+    SaveStateError(#[from] SaveStateError),
+    #[error("{0} proof is not present")]
+    ProofNotPresent(ProverType),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
 }
 
 #[derive(Debug, thiserror::Error)]
