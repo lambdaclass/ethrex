@@ -210,7 +210,7 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
       
-      - name: Set eest fixture file env var
+      - name: Set custom hive flags
         run: |
           if [ "${{ matrix.simulation }}" == "ethereum/eest/consume-engine" ]; then
             EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
