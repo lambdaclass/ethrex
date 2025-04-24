@@ -587,14 +587,9 @@ impl<'a> VM<'a> {
         // NOTE: ATTOW the default hook is created in VM::new(), so
         // (in theory) _at least_ the default finalize execution should
         // run
-        let call_frame = self
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         for hook in self.hooks.clone() {
-            hook.finalize_execution(self, &call_frame, report)?;
+            hook.finalize_execution(self, report)?;
         }
-        self.call_frames.push(call_frame);
 
         Ok(())
     }

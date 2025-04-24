@@ -1,6 +1,5 @@
 use crate::{
     account::Account,
-    call_frame::CallFrame,
     constants::*,
     errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
@@ -304,19 +303,21 @@ impl Hook for DefaultHook {
     fn finalize_execution(
         &self,
         vm: &mut VM<'_>,
-        initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
-        let sender_address = initial_call_frame.msg_sender;
+        let sender_address = vm.current_call_frame()?.msg_sender;
 
         // 1. Undo value transfer if Tx reverted
         if !report.is_success() {
             // In a create if Tx was reverted the account won't even exist by this point.
             if !vm.is_create() {
-                vm.decrease_account_balance(initial_call_frame.to, initial_call_frame.msg_value)?;
+                vm.decrease_account_balance(
+                    vm.current_call_frame()?.to,
+                    vm.current_call_frame()?.msg_value,
+                )?;
             }
 
-            vm.increase_account_balance(sender_address, initial_call_frame.msg_value)?;
+            vm.increase_account_balance(sender_address, vm.current_call_frame()?.msg_value)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
@@ -343,7 +344,7 @@ impl Hook for DefaultHook {
             .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
 
         let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
-            let minimum_gas_consumed = vm.get_min_gas_used(initial_call_frame)?;
+            let minimum_gas_consumed = vm.get_min_gas_used(vm.current_call_frame()?)?;
             exec_gas_consumed.max(minimum_gas_consumed)
         } else {
             exec_gas_consumed
