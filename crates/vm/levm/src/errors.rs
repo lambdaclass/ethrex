@@ -60,8 +60,6 @@ pub enum VMError {
     MemorySizeOverflow,
     #[error("Nonce overflowed")]
     NonceOverflow,
-    #[error("Nonce underflowed")]
-    NonceUnderflow,
     // OutOfGas
     #[error("Out Of Gas")]
     OutOfGas(#[from] OutOfGasError),
