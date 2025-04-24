@@ -9,6 +9,7 @@ use crate::constants::{
 };
 use crate::{EvmError, ExecutionDB, ExecutionDBError, ExecutionResult, StoreWrapper};
 use bytes::Bytes;
+use ethrex_common::measure;
 use ethrex_common::{
     types::{
         code_hash, requests::Requests, AccessList, AccountInfo, AuthorizationTuple, Block,
@@ -44,6 +45,7 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
     ) -> Result<BlockExecutionResult, EvmError> {
+        let pre_system_calls = measure::start_timer();
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 let chain_config = db.store.get_chain_config();
@@ -59,10 +61,12 @@ impl LEVM {
                 }
             }
         }
+        measure::stop_timer(pre_system_calls, "PRE SYSTEM CALLS");
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
+        let execute_the_txs = measure::start_timer();
         for (tx, tx_sender) in block.body.get_transactions_with_sender() {
             let report =
                 Self::execute_tx(tx, tx_sender, &block.header, db).map_err(EvmError::from)?;
@@ -77,6 +81,8 @@ impl LEVM {
 
             receipts.push(receipt);
         }
+        measure::stop_timer(execute_the_txs, "EXECUTE THE TXS");
+        let post_system_calls = measure::start_timer();
 
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
@@ -89,6 +95,8 @@ impl LEVM {
                 let requests = Default::default();
             }
         }
+
+        measure::stop_timer(post_system_calls, "POST SYSTEM CALLS");
 
         Ok(BlockExecutionResult { receipts, requests })
     }

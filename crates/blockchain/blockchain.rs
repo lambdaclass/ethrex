@@ -18,7 +18,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{BlobsBundle, Fork};
 
-use ethrex_common::{Address, H256};
+use ethrex_common::{measure, Address, H256};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::{ops::Div, time::Instant};
@@ -105,12 +105,16 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block(block, parent_header, chain_config)?;
 
+        let start_execute_block = measure::start_timer();
         let execution_result = vm.execute_block(block)?;
+        measure::stop_timer(start_execute_block, "BLOCK EXECUTION");
 
+        let block_validations = measure::start_timer();
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
+        measure::stop_timer(block_validations, "BLOCK VALIDATIONS");
 
         Ok(execution_result)
     }
@@ -216,6 +220,8 @@ impl Blockchain {
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
+        let start_block_execution = measure::start_timer();
+
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
             if is_crossing_spuriousdragon(fork, chain_config.fork(block.header.timestamp)) {
@@ -268,10 +274,11 @@ impl Blockchain {
             all_receipts.insert(block.hash(), receipts);
         }
 
+        measure::stop_timer(start_block_execution, "ALL BLOCKS EXECUTION");
+        let start_account_updates = measure::start_timer();
         let account_updates = vm
             .get_state_transitions(fork)
             .map_err(|err| (ChainError::EvmError(err), None))?;
-
         let Some(last_block) = blocks.last() else {
             return Err((ChainError::Custom("Last block not found".into()), None));
         };
@@ -302,6 +309,8 @@ impl Blockchain {
             let as_gigas = (total_gas_used as f64).div(10_f64.powf(9_f64));
             throughput = (as_gigas) / (elapsed_total as f64) * 1000_f64;
         }
+
+        measure::stop_timer(start_account_updates, "ACCOUNT UPDATES");
 
         info!(
             "[METRICS] Executed and stored: Range: {}, Total transactions: {}, Throughput: {} Gigagas/s",
