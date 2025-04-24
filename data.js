@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745528581890,
+  "lastUpdate": 1745530355568,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4315,6 +4315,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180929381801,
             "range": "± 352304824",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "125112044+cypherpepe@users.noreply.github.com",
+            "name": "Cypher Pepe",
+            "username": "cypherpepe"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7057773bcbf25b9e6df98e99f49c485b22b0165e",
+          "message": "docs(l2): fixed broken link in `state_diffs.md` (#2495)\n\n**Motivation**\n\nThe old link to the ZKsync pubdata spec was outdated due to recent file\nrestructuring in the MatterLabs repo.\n\n**Description**\n\nI fixed the link in `crates/l2/docs/state_diffs.md` to point to the new\npath:\nfrom  \n - `docs/src/specs/data_availability/pubdata.md`  \nto  \n-\n`docs/src/specs/contracts/settlement_contracts/data_availability/pubdata.md`\n\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-04-24T20:44:55Z",
+          "tree_id": "4384d24baf372d0f215cef5ac27991a01ac6c1a7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7057773bcbf25b9e6df98e99f49c485b22b0165e"
+        },
+        "date": 1745530353288,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181868933463,
+            "range": "± 840939804",
             "unit": "ns/iter"
           }
         ]
