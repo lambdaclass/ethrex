@@ -130,7 +130,7 @@ interface ICommonBridge {
     /// @param withdrawalProof the merkle path to the withdrawal log.
     /// @param withdrawalLogIndex the index of the withdrawal log in the block.
     /// This is the index of the withdraw transaction relative to the block's
-    /// withdrawal transctions.
+    /// withdrawal transactions.
     /// A pseudocode would be [tx if tx is withdrawx for tx in block.txs()].index(leaf_tx).
     /// @param l2WithdrawalBlockNumber the block number where the withdrawal log
     /// was emitted.
