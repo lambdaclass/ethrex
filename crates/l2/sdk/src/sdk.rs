@@ -159,7 +159,7 @@ pub async fn withdraw(
 
 pub async fn claim_withdraw(
     amount: U256,
-    tx_hash: H256,
+    l2_withdrawal_tx_hash: H256,
     from: Address,
     from_pk: SecretKey,
     eth_client: &EthClient,
@@ -171,7 +171,9 @@ pub async fn claim_withdraw(
         "claimWithdrawal(bytes32,uint256,uint256,uint256,bytes32[])";
 
     let calldata_values = vec![
-        Value::Uint(U256::from_big_endian(tx_hash.as_fixed_bytes())),
+        Value::Uint(U256::from_big_endian(
+            l2_withdrawal_tx_hash.as_fixed_bytes(),
+        )),
         Value::Uint(amount),
         Value::Uint(withdrawal_proof.batch_number.into()),
         Value::Uint(U256::from(withdrawal_proof.index)),
