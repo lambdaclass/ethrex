@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745524100196,
+  "lastUpdate": 1745528581890,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4285,6 +4285,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181497989700,
             "range": "± 4677402185",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f99ca4d7bb6182e3b1726872934667d1e34a2f4f",
+          "message": "fix(core): Made engine_forkchoiceUpdatedV3 second parameter optional (#2575)\n\n**Motivation**\n\nThis PR makes it so that when parsing engine_forkchoiceUpdatedV3 the\nsecond parameter isn't required. This came to light while testing\nodometer #2507, which sent the updates without the second parameter.\nThis change makes it more conforming with the spec.\n\n**Description**\n\nMade it so that the second optional parameter in\nengine_forkchoiceUpdatedV3 ( Payload attributes) isn't required to be\nsent in the post request.\n\nNote: this was already working if the second parameter was sent as a\nnull or had problems.",
+          "timestamp": "2025-04-24T20:15:34Z",
+          "tree_id": "7a969e5bdf99cc706aff3cf76164bf75a02ac450",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f99ca4d7bb6182e3b1726872934667d1e34a2f4f"
+        },
+        "date": 1745528579439,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180929381801,
+            "range": "± 352304824",
             "unit": "ns/iter"
           }
         ]
