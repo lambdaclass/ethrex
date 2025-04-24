@@ -73,6 +73,9 @@ pub struct EFTestRunnerOptions {
     /// For running tests ONLY with revm
     #[arg(long, value_name = "REVM", default_value = "false")]
     pub revm: bool,
+    /// For running tests ONLY with revm and showing those that fail.
+    #[arg(long, value_name = "REVM_FAILED", default_value = "false")]
+    pub revm_failed: bool,
 }
 
 pub async fn run_ef_tests(
@@ -152,12 +155,14 @@ async fn run_with_revm(
             println!("Running test: {:?}", test.name);
         }
         let total_tests = ef_tests.len();
-        println!(
-            "{} {}/{total_tests} - {}",
-            "Running all tests with REVM".bold(),
-            idx + 1,
-            format_duration_as_mm_ss(revm_run_time.elapsed())
-        );
+        if !opts.revm_failed{
+            println!(
+                "{} {}/{total_tests} - {}",
+                "Running all tests with REVM".bold(),
+                idx + 1,
+                format_duration_as_mm_ss(revm_run_time.elapsed())
+            );
+        }
         let ef_test_report = match revm_runner::_run_ef_test_revm(test).await {
             Ok(ef_test_report) => ef_test_report,
             Err(EFTestRunnerError::Internal(err)) => return Err(EFTestRunnerError::Internal(err)),
@@ -167,13 +172,29 @@ async fn run_with_revm(
                 ))))
             }
         };
+        let ef_tests_passed = ef_test_report.passed();
         reports.push(ef_test_report);
-        println!("{}", report::progress(reports, revm_run_time.elapsed()));
+        if opts.revm_failed {
+            if !ef_tests_passed{
+                println!("Running test: {:?}", test.name);
+                println!(
+                    "{} {}/{total_tests} - {}",
+                    "Running all tests with REVM".bold(),
+                    idx + 1,
+                    format_duration_as_mm_ss(revm_run_time.elapsed())
+                );
+                println!("{}", report::progress(reports, revm_run_time.elapsed()));
+            }
+        }else{
+            println!("{}", report::progress(reports, revm_run_time.elapsed()));
+        }
     }
     println!(
         "Ran all tests with REVM in {}",
         format_duration_as_mm_ss(revm_run_time.elapsed())
     );
+    println!("{}", report::progress(reports, revm_run_time.elapsed()));
+    if opts.revm_failed { write_report(reports)? };
     Ok(())
 }
 
