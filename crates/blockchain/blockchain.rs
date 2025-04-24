@@ -16,9 +16,9 @@ use ethrex_common::types::{
     validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::types::{BlobsBundle, ELASTICITY_MULTIPLIER};
+use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
 
-use ethrex_common::{Address, H160, H256};
+use ethrex_common::{Address, H256};
 use mempool::Mempool;
 use std::collections::HashMap;
 use std::{ops::Div, time::Instant};
@@ -62,7 +62,10 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
-    async fn execute_block(&self, block: &Block) -> Result<BlockExecutionResult, ChainError> {
+    async fn execute_block(
+        &self,
+        block: &Block,
+    ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -70,6 +73,7 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
         let chain_config = self.storage.get_chain_config()?;
+        let fork = chain_config.fork(block.header.timestamp);
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
@@ -80,13 +84,14 @@ impl Blockchain {
             block.header.parent_hash,
         );
         let execution_result = vm.execute_block(block)?;
+        let account_updates = vm.get_state_transitions(fork)?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
         validate_receipts_root(&block.header, &execution_result.receipts)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
 
-        Ok(execution_result)
+        Ok((execution_result, account_updates))
     }
 
     /// Executes a block from a given vm instance an does not clear its state
@@ -114,11 +119,12 @@ impl Blockchain {
         &self,
         block: &Block,
         execution_result: BlockExecutionResult,
+        account_updates: &[AccountUpdate],
     ) -> Result<(), ChainError> {
         // Apply the account updates over the last block's state and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(block.header.parent_hash, &execution_result.account_updates)
+            .apply_account_updates(block.header.parent_hash, account_updates)
             .await?
             .ok_or(ChainError::ParentStateNotFound)?;
 
@@ -137,9 +143,9 @@ impl Blockchain {
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let res = self.execute_block(block).await?;
+        let (res, updates) = self.execute_block(block).await?;
         let executed = Instant::now();
-        let result = self.store_block(block, res).await;
+        let result = self.store_block(block, res, &updates).await;
         let stored = Instant::now();
         Self::print_add_block_logs(block, since, executed, stored);
         result
@@ -197,6 +203,8 @@ impl Blockchain {
             .storage
             .get_chain_config()
             .map_err(|e| (e.into(), None))?;
+        let fork = chain_config.fork(first_block_header.timestamp);
+
         let mut vm = Evm::new(
             self.evm_engine,
             self.storage.clone(),
@@ -205,12 +213,20 @@ impl Blockchain {
 
         let blocks_len = blocks.len();
         let mut all_receipts: HashMap<BlockHash, Vec<Receipt>> = HashMap::new();
-        let mut all_account_updates: HashMap<H160, AccountUpdate> = HashMap::new();
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
         let interval = Instant::now();
         for (i, block) in blocks.iter().enumerate() {
+            if is_crossing_spuriousdragon(fork, chain_config.fork(block.header.timestamp)) {
+                return Err((
+                    ChainError::Custom("Crossing fork boundary in bulk mode".into()),
+                    Some(BatchBlockProcessingFailure {
+                        last_valid_hash,
+                        failed_block_hash: block.hash(),
+                    }),
+                ));
+            }
             // for the first block, we need to query the store
             let parent_header = if i == 0 {
                 let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
@@ -228,11 +244,12 @@ impl Blockchain {
                 blocks[i - 1].header.clone()
             };
 
-            let BlockExecutionResult {
-                receipts,
-                account_updates,
-                ..
-            } = match self.execute_block_from_state(&parent_header, block, &chain_config, &mut vm) {
+            let BlockExecutionResult { receipts, .. } = match self.execute_block_from_state(
+                &parent_header,
+                block,
+                &chain_config,
+                &mut vm,
+            ) {
                 Ok(result) => result,
                 Err(err) => {
                     return Err((
@@ -245,32 +262,15 @@ impl Blockchain {
                 }
             };
 
-            // Merge account updates
-            for account_update in account_updates {
-                let Some(cache) = all_account_updates.get_mut(&account_update.address) else {
-                    all_account_updates.insert(account_update.address, account_update);
-                    continue;
-                };
-
-                cache.removed = account_update.removed;
-                if let Some(code) = account_update.code {
-                    cache.code = Some(code);
-                };
-
-                if let Some(info) = account_update.info {
-                    cache.info = Some(info);
-                }
-
-                for (k, v) in account_update.added_storage.into_iter() {
-                    cache.added_storage.insert(k, v);
-                }
-            }
-
             last_valid_hash = block.hash();
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
             all_receipts.insert(block.hash(), receipts);
         }
+
+        let account_updates = vm
+            .get_state_transitions(fork)
+            .map_err(|err| (ChainError::EvmError(err), None))?;
 
         let Some(last_block) = blocks.last() else {
             return Err((ChainError::Custom("Last block not found".into()), None));
@@ -279,10 +279,7 @@ impl Blockchain {
         // Apply the account updates over all blocks and compute the new state root
         let new_state_root = self
             .storage
-            .apply_account_updates(
-                first_block_header.parent_hash,
-                &all_account_updates.into_values().collect::<Vec<_>>(),
-            )
+            .apply_account_updates(first_block_header.parent_hash, &account_updates)
             .await
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
@@ -653,6 +650,16 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
 /// Calculates the blob gas required by a transaction
 fn get_total_blob_gas(tx: &EIP4844Transaction) -> u64 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u64
+}
+
+fn is_crossing_spuriousdragon(from: Fork, to: Fork) -> bool {
+    if from >= Fork::SpuriousDragon {
+        return false;
+    }
+    if to < Fork::SpuriousDragon {
+        return false;
+    }
+    from != to
 }
 
 #[cfg(test)]

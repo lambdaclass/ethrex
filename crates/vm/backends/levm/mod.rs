@@ -20,7 +20,7 @@ use ethrex_common::{
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, GeneralizedDatabase, Substate, VM},
-    Account, AccountInfo as LevmAccountInfo, Environment,
+    Account, Environment,
 };
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
@@ -44,11 +44,11 @@ impl LEVM {
         block: &Block,
         db: &mut GeneralizedDatabase,
     ) -> Result<BlockExecutionResult, EvmError> {
-        let chain_config = db.store.get_chain_config();
-        let block_header = &block.header;
-        let fork = chain_config.fork(block_header.timestamp);
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
+                let chain_config = db.store.get_chain_config();
+                let block_header = &block.header;
+                let fork = chain_config.fork(block_header.timestamp);
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
                     Self::beacon_root_contract_call(block_header, db)?;
                 }
@@ -79,7 +79,7 @@ impl LEVM {
         }
 
         if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals, block.header.parent_hash)?;
+            Self::process_withdrawals(db, withdrawals)?;
         }
 
         cfg_if::cfg_if! {
@@ -90,13 +90,7 @@ impl LEVM {
             }
         }
 
-        let account_updates = Self::get_state_transitions(db, fork)?;
-
-        Ok(BlockExecutionResult {
-            receipts,
-            requests,
-            account_updates,
-        })
+        Ok(BlockExecutionResult { receipts, requests })
     }
 
     pub fn execute_tx(
@@ -249,7 +243,6 @@ impl LEVM {
     pub fn process_withdrawals(
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
-        parent_hash: H256,
     ) -> Result<(), ethrex_storage::error::StoreError> {
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
@@ -259,23 +252,13 @@ impl LEVM {
         {
             // We check if it was in block_cache, if not, we get it from DB.
             let mut account = db.cache.get(&address).cloned().unwrap_or({
-                let acc_info = db
+                let info = db
                     .store
-                    .get_account_info_by_hash(parent_hash, address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-                    .unwrap_or_default();
-                let acc_code = db
-                    .store
-                    .get_account_code(acc_info.code_hash)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-                    .unwrap_or_default();
+                    .get_account_info(address)
+                    .map_err(|e| StoreError::Custom(e.to_string()))?;
 
                 Account {
-                    info: LevmAccountInfo {
-                        balance: acc_info.balance,
-                        bytecode: acc_code,
-                        nonce: acc_info.nonce,
-                    },
+                    info,
                     // This is the added_storage for the withdrawal.
                     // If not involved in the TX, there won't be any updates in the storage
                     storage: HashMap::new(),
@@ -391,6 +374,7 @@ impl LEVM {
     ) -> Result<ExecutionDB, ExecutionDBError> {
         let parent_hash = block.header.parent_hash;
         let chain_config = store.get_chain_config()?;
+        let fork = chain_config.fork(block.header.timestamp);
 
         let logger = Arc::new(DatabaseLogger::new(Arc::new(StoreWrapper {
             store: store.clone(),
@@ -400,9 +384,8 @@ impl LEVM {
         let mut db = GeneralizedDatabase::new(logger, CacheDB::new());
 
         // pre-execute and get all state changes
-        let execution_updates = Self::execute_block(block, &mut db)
-            .map_err(Box::new)?
-            .account_updates;
+        let _ = Self::execute_block(block, &mut db);
+        let execution_updates = Self::get_state_transitions(&mut db, fork).map_err(Box::new)?;
 
         // index accessed account addresses and storage keys
         let state_accessed = logger_ref
