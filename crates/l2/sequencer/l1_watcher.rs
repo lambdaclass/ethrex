@@ -83,10 +83,7 @@ impl L1Watcher {
                 continue;
             }
 
-            let pending_deposit_logs = self.get_pending_deposit_logs().await?;
-            let _deposit_txs = self
-                .process_logs(logs, &pending_deposit_logs, store, blockchain)
-                .await?;
+            let _deposit_txs = self.process_logs(logs, store, blockchain).await?;
         }
     }
 
@@ -176,7 +173,6 @@ impl L1Watcher {
     pub async fn process_logs(
         &self,
         logs: Vec<RpcLog>,
-        pending_deposit_logs: &[H256],
         store: &Store,
         blockchain: &Blockchain,
     ) -> Result<Vec<H256>, L1WatcherError> {
@@ -210,7 +206,7 @@ impl L1Watcher {
                 })?
                 .is_some();
 
-            if !pending_deposit_logs.contains(&deposit_hash) || deposit_already_processed {
+            if deposit_already_processed {
                 warn!("Deposit already processed (to: {recipient:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
                 continue;
             }
