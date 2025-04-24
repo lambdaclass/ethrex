@@ -504,6 +504,7 @@ mod tests {
     use super::*;
     use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
     use ethrex_blockchain::Blockchain;
+    use ethrex_common::constants;
     use ethrex_common::{
         types::{ChainConfig, Genesis},
         H160,
@@ -565,7 +566,7 @@ mod tests {
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
             "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
         });
-        let json = serde_json::json!({
+        let mut json = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "result": {
@@ -573,7 +574,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
                 "ip": "127.0.0.1",
-                "name": "ethrex/0.1.0/rust1.82",
+                "name": {},
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303
@@ -608,8 +609,9 @@ mod tests {
                     }
                 },
             }
-        }).to_string();
-        let expected_response = to_rpc_response_success_value(&json);
+        });
+        json["result"]["name"] = serde_json::json!(constants::get_client_info());
+        let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 

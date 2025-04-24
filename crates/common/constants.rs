@@ -14,8 +14,7 @@ pub const ETHREX_RUSTC_VERSION: &str = env!("VERGEN_RUSTC_SEMVER");
 
 pub fn get_client_info() -> String {
     format!(
-        "{}/v{}-develop-{}/{}/rustc-v{}",
-        ETHREX_PKG_NAME,
+        "ethrex/v{}-develop-{}/{}/rustc-v{}",
         ETHREX_PKG_VERSION,
         &ETHREX_COMMIT_HASH[0..6],
         ETHREX_BUILD_OS,
