@@ -13,6 +13,7 @@ pub fn jwtsecret_file(file: &mut File) -> Bytes {
     if contents[0..2] == *"0x" {
         contents = contents[2..contents.len()].to_string();
     }
+    contents = contents.trim_end_matches('\n').to_string();
     hex::decode(contents)
         .expect("Secret should be hex encoded")
         .into()
