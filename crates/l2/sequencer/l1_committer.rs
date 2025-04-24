@@ -9,7 +9,6 @@ use crate::{
     },
 };
 
-use bytes::Bytes;
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block,
