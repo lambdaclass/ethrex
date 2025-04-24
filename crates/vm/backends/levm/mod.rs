@@ -83,12 +83,14 @@ impl LEVM {
             receipts.push(receipt);
         }
         measure::stop_timer(execute_the_txs, "EXECUTE THE TXS");
-        let post_system_calls = measure::start_timer();
 
+        let process_withdrawals = measure::start_timer();
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
         }
+        measure::stop_timer(process_withdrawals, "PROCESS WITHDRAWALS");
 
+        let extract_requests = measure::start_timer();
         cfg_if::cfg_if! {
             if #[cfg(not(feature = "l2"))] {
                 let requests = extract_all_requests_levm(&receipts, db, &block.header)?;
@@ -97,7 +99,7 @@ impl LEVM {
             }
         }
 
-        measure::stop_timer(post_system_calls, "POST SYSTEM CALLS");
+        measure::stop_timer(extract_requests, "EXTRACT REQUESTS");
 
         Ok(BlockExecutionResult { receipts, requests })
     }
