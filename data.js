@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745505325836,
+  "lastUpdate": 1745507087643,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4105,6 +4105,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180817164433,
             "range": "± 916976286",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "5c277318ab9bc576090ad2cda7a15c6f29b0e92a",
+          "message": "chore(l2): separete ProverServer and ProofSender (#2478)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nCurrently the ProverServer component have the responsibility for both\nact as a server for the ProverClient (i.e., send blocks to prove and\nreceive proofs) and send proofs to the L1 contract to verify blocks.\nThis tasks can be parallel and decoupled one from the other.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nA new struct `L1ProofSender` is created that periodically checks if\nthere're new proofs to send to the L1, removing that job from the\n`ProverServer`. Also, components were renamed for better clarity.\nNote that the config names were not changed as there's a WIP PR (#2501)\ndoing a full refactor of it\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-04-24T14:16:46Z",
+          "tree_id": "8aac0de34b34e464d4c735695c6172f469c18226",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5c277318ab9bc576090ad2cda7a15c6f29b0e92a"
+        },
+        "date": 1745507084798,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181778629387,
+            "range": "± 1292938979",
             "unit": "ns/iter"
           }
         ]
