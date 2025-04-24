@@ -26,6 +26,7 @@ async fn main() -> eyre::Result<()> {
     }
 
     let data_dir = set_datadir(&opts.datadir);
+
     let network = get_network(&opts);
 
     let store = init_store(&data_dir, &network).await;
