@@ -67,7 +67,7 @@ jobs:
 
       - name: Set custom hive flags
         run: |
-          if [ "${{ matrix.simulation }}" == "ethereum/eest/consume-engine" ]; then
+          if [ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" ]; then
             EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
             echo "HIVE_FLAGS="--sim.buildarg fixtures=$EEST_FIXTURES"" >> $GITHUB_ENV
           fi
