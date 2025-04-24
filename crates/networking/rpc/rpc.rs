@@ -64,7 +64,8 @@ use std::{
 };
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
-use tracing::info;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tracing::{info, Level, Span};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "l2")] {
@@ -195,6 +196,20 @@ pub async fn start_api(
 
     let http_router = Router::new()
         .route("/", post(handle_http_request))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|_request: &axum::http::Request<_>| {
+                    // Create a span with a simple name and the desired level
+                    // You can add static fields here if needed, but not dynamic ones from the body
+                    tracing::span!(Level::INFO, "rpc_request")
+                    // Or if you want to try and preserve some info, maybe just the URI path
+                    // tracing::span!(Level::INFO, "rpc_request", uri = %_request.uri().path())
+                })
+                // Customize when spans are created
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                // Customize when responses are logged
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
         .layer(cors)
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr).await.unwrap();
@@ -237,6 +252,8 @@ async fn handle_http_request(
 ) -> Json<Value> {
     let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
         Ok(RpcRequestWrapper::Single(request)) => {
+            info!(rpc.method = %request.method, "Handling RPC request");
+
             let res = map_http_requests(&request, service_context).await;
             rpc_response(request.id, res)
         }

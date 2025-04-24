@@ -66,11 +66,14 @@ impl RpcHandler for GetBlockByNumberRequest {
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
-        info!("Requested block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage).await? {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
+        info!(
+            "Requested block with id: {}, resolved block number: {}",
+            self.block, block_number
+        );
         let header = storage.get_block_header(block_number)?;
         let body = storage.get_block_body(block_number).await?;
         let (header, body) = match (header, body) {

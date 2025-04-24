@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 axum.workspace = true
-tower-http = { version = "0.6.2", features = ["cors"] }
+tower-http = { version = "0.6.2", features = ["cors", "trace"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
 tokio.workspace = true
@@ -40,9 +40,9 @@ keccak-hash.workspace = true
 cfg-if.workspace = true
 
 # Based
-ssz_types = { version = "0.10", optional = true}
-tree_hash = { version = "0.9.1", optional = true}
-tree_hash_derive = { version = "0.9.1", optional = true}
+ssz_types = { version = "0.10", optional = true }
+tree_hash = { version = "0.9.1", optional = true }
+tree_hash_derive = { version = "0.9.1", optional = true }
 strum_macros = { version = "0.24", optional = true }
 
 [dev-dependencies]
@@ -52,5 +52,11 @@ hex-literal = "0.4.1"
 path = "./lib.rs"
 
 [features]
-based = ["l2", "dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]
+based = [
+    "l2",
+    "dep:ssz_types",
+    "dep:tree_hash",
+    "dep:tree_hash_derive",
+    "dep:strum_macros",
+]
 l2 = []
