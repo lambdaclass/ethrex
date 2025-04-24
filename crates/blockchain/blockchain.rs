@@ -353,9 +353,6 @@ impl Blockchain {
         self.validate_transaction(&transaction, sender).await?;
 
         let hash = transaction.compute_hash();
-        if self.mempool.get_transaction_by_hash(hash)?.is_some() {
-            return Err(MempoolError::InvalidNonce);
-        }
 
         // Add transaction to storage
         self.mempool
