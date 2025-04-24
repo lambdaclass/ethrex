@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745449739192,
+  "lastUpdate": 1745455065478,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4045,6 +4045,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181072202781,
             "range": "± 397962718",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "df4953a92e31bc7f4d5d4d3b630c044bd70a1a6b",
+          "message": "fix(l2): uncomment final state check and validate gas in sp1 and exec (#2558)\n\n**Motivation**\n\nThese were commented in #2291 (merged to main), probably for test/dev\npurposes, and left like that",
+          "timestamp": "2025-04-23T23:50:12Z",
+          "tree_id": "7a78514818bcb29c10a493c7195e3ec00584b9d9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/df4953a92e31bc7f4d5d4d3b630c044bd70a1a6b"
+        },
+        "date": 1745455062971,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179654368637,
+            "range": "± 1325691899",
             "unit": "ns/iter"
           }
         ]
