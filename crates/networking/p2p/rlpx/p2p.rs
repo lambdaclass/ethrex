@@ -1,4 +1,5 @@
 use bytes::BufMut;
+use ethrex_common::constants;
 use ethrex_common::H512;
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -6,6 +7,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+
 use k256::PublicKey;
 
 use crate::rlpx::utils::{id2pubkey, snappy_decompress};
@@ -63,9 +65,17 @@ impl HelloMessage {
 
 impl RLPxMessage for HelloMessage {
     fn encode(&self, mut buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let client_id = format!(
+            "{}/v{}-develop-{}/{}/rustc-v{}",
+            constants::ETHREX_PKG_NAME,
+            constants::ETHREX_PKG_VERSION,
+            &constants::ETHREX_COMMIT_HASH[0..6],
+            constants::ETHREX_BUILD_OS,
+            constants::ETHREX_RUSTC_VERSION
+        );
         Encoder::new(&mut buf)
             .encode_field(&5_u8) // protocolVersion
-            .encode_field(&"Ethrex/0.1.0") // clientId
+            .encode_field(&client_id) // clientId
             .encode_field(&self.capabilities) // capabilities
             .encode_field(&0u8) // listenPort (ignored)
             .encode_field(&pubkey2id(&self.node_id)) // nodeKey
