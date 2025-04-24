@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
+use ethrex_common::types::Fork;
 use ethrex_common::Address;
 use ethrex_common::U256;
+use keccak_hash::H256;
 
 use crate::errors::InternalError;
 use crate::errors::VMError;
@@ -10,6 +12,7 @@ use crate::vm::Substate;
 use crate::vm::VM;
 use crate::Account;
 use crate::AccountInfo;
+use crate::StorageSlot;
 use std::collections::HashMap;
 
 use super::cache;
@@ -193,6 +196,72 @@ impl<'a> VM<'a> {
                 .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
         }
 
+        Ok(())
+    }
+
+    /// Accesses to an account's storage slot.
+    ///
+    /// Accessed storage slots are stored in the `touched_storage_slots` set.
+    /// Accessed storage slots take place in some gas cost computation.
+    pub fn access_storage_slot(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<(StorageSlot, bool), VMError> {
+        // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
+        let mut storage_slot_was_cold = false;
+        if self.env.config.fork >= Fork::Berlin {
+            storage_slot_was_cold = self
+                .accrued_substate
+                .touched_storage_slots
+                .entry(address)
+                .or_default()
+                .insert(key);
+        }
+        let storage_slot = match cache::get_account(&self.db.cache, &address) {
+            Some(account) => match account.storage.get(&key) {
+                Some(storage_slot) => storage_slot.clone(),
+                None => {
+                    let value = self.db.store.get_storage_slot(address, key)?;
+                    StorageSlot {
+                        original_value: value,
+                        current_value: value,
+                    }
+                }
+            },
+            None => {
+                let value = self.db.store.get_storage_slot(address, key)?;
+                StorageSlot {
+                    original_value: value,
+                    current_value: value,
+                }
+            }
+        };
+
+        // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account
+        // Note: We end up caching the account because it is the most straightforward way of doing it.
+        let account = self.get_account_mut(address)?;
+        account.storage.insert(key, storage_slot.clone());
+
+        Ok((storage_slot, storage_slot_was_cold))
+    }
+
+    pub fn update_account_storage(
+        &mut self,
+        address: Address,
+        key: H256,
+        new_value: U256,
+    ) -> Result<(), VMError> {
+        let account = self.get_account_mut(address)?;
+        let account_original_storage_slot_value = account
+            .storage
+            .get(&key)
+            .map_or(U256::zero(), |slot| slot.original_value);
+        let slot = account.storage.entry(key).or_insert(StorageSlot {
+            original_value: account_original_storage_slot_value,
+            current_value: new_value,
+        });
+        slot.current_value = new_value;
         Ok(())
     }
 }
