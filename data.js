@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745507087643,
+  "lastUpdate": 1745507655896,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4135,6 +4135,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181778629387,
             "range": "± 1292938979",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "fedacking@gmail.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3226f668d1a9e93b8462bc5eea917efe813ddb1d",
+          "message": "fix: Trimming newlines from jwt files (#2560)\n\n**Motivation**\n\njwt.hex files can end in newlines, in particular odometer's test jwt.\nThis change aims to handle that case.\n\n**Description**\n\nThis change executes `trim_end_matches` on the `contents` read from a\njwt.hex file passed to ethrex.",
+          "timestamp": "2025-04-24T14:26:38Z",
+          "tree_id": "9b12817878c2516cfefaa02630b1f7e04a9b309f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3226f668d1a9e93b8462bc5eea917efe813ddb1d"
+        },
+        "date": 1745507654049,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181446212274,
+            "range": "± 590523106",
             "unit": "ns/iter"
           }
         ]
