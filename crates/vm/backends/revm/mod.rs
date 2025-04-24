@@ -13,7 +13,7 @@ use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
 use db::EvmState;
 use ethrex_common::types::AccountInfo;
-use ethrex_common::{BigEndianHash, H256, U256};
+use ethrex_common::{measure, BigEndianHash, H256, U256};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
 use revm::db::states::bundle_state::BundleRetention;
@@ -54,6 +54,7 @@ impl REVM {
         block: &Block,
         state: &mut EvmState,
     ) -> Result<BlockExecutionResult, EvmError> {
+        let pre_system_calls = measure::start_timer();
         let block_header = &block.header;
         let spec_id: SpecId = spec_id(&state.chain_config()?, block_header.timestamp);
         cfg_if::cfg_if! {
@@ -68,10 +69,12 @@ impl REVM {
                 }
             }
         }
+        measure::stop_timer(pre_system_calls, "PRE SYSTEM CALLS");
 
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
+        let execute_the_txs = measure::start_timer();
         for (tx, sender) in block.body.get_transactions_with_sender() {
             let result = Self::execute_tx(tx, block_header, state, spec_id, sender)?;
             cumulative_gas_used += result.gas_used();
@@ -85,6 +88,8 @@ impl REVM {
             receipts.push(receipt);
         }
 
+        measure::stop_timer(execute_the_txs, "EXECUTE THE TXS");
+        let post_system_calls = measure::start_timer();
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(state, withdrawals)?;
         }
@@ -97,6 +102,7 @@ impl REVM {
             }
         }
 
+        measure::stop_timer(post_system_calls, "POST SYSTEM CALLS");
         Ok(BlockExecutionResult { receipts, requests })
     }
 
