@@ -335,6 +335,10 @@ pub fn block_number_has_state_file(
     let block_state_path = get_block_state_path(block_number)?;
     let file_name_to_seek: OsString = get_state_file_name(block_number, &state_file_type).into();
 
+    if !block_state_path.exists() {
+        return Ok(false);
+    }
+
     for entry in std::fs::read_dir(block_state_path)? {
         let entry = entry?;
         let file_name_stored = entry.file_name();
