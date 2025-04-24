@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745455065478,
+  "lastUpdate": 1745505325836,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4075,6 +4075,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179654368637,
             "range": "± 1325691899",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7de4cda33a31a6c1b7f2648e80dc139d59534f89",
+          "message": "docs(l1): add quick guide on how to sync with holesky (#2485)\n\n**Motivation**\nAdd instructions on how to set up ethrex along with a consensus node and\nstart syncing with holesky or other testnets\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-04-24T13:46:45Z",
+          "tree_id": "f9b23b1153bb8410eddceb7ff2b4209625962f47",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7de4cda33a31a6c1b7f2648e80dc139d59534f89"
+        },
+        "date": 1745505323939,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180817164433,
+            "range": "± 916976286",
             "unit": "ns/iter"
           }
         ]
