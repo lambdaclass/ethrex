@@ -23,6 +23,7 @@ ethereum-package/
 **/.DS_Store
 **/.vscode
 **/.idea
+**/.zed
 
 
 # EVM Mlir stuff
