@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use super::errors::ConfigError;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct EthConfig {
     pub rpc_url: String,
     pub max_fee_per_gas: u64,
