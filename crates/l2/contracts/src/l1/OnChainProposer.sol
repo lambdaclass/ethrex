@@ -159,6 +159,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash
     ) external override onlySequencer {
+        // TODO: Refactor validation
         require(
             blockNumber == lastCommittedBlock + 1,
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
@@ -218,6 +219,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes calldata picoPublicValues,
         uint256[8] calldata picoProof
     ) external override onlySequencer {
+        // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
         require(
