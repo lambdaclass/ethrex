@@ -68,7 +68,7 @@ pub fn main() {
             }
         }
 
-        // validate_gas_used(&receipts, &block.header).expect("invalid gas used");
+        validate_gas_used(&receipts, &block.header).expect("invalid gas used");
         parent_header = block.header;
     }
 
@@ -79,9 +79,9 @@ pub fn main() {
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
-    // if final_state_hash != block.header.state_root {
-    //     panic!("invalid final state trie");
-    // }
+    if final_state_hash != block.header.state_root {
+        panic!("invalid final state trie");
+    }
 
     // Output gas for measurement purposes
     sp1_zkvm::io::commit(&cumulative_gas_used);

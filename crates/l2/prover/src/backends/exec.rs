@@ -1,4 +1,4 @@
-use ethrex_blockchain::validate_block;
+use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::Address;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
@@ -66,8 +66,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
         // Execute block
         let mut vm = Evm::from_execution_db(db.clone());
-        let _result = vm.execute_block(&block)?;
-        // let receipts = result.receipts;
+        let result = vm.execute_block(&block)?;
+        let receipts = result.receipts;
         let account_updates = vm.get_state_transitions(fork)?;
 
         // Update db for the next block
@@ -83,7 +83,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
             }
         }
 
-        // validate_gas_used(&receipts, &block.header)?;
+        validate_gas_used(&receipts, &block.header)?;
         parent_header = block.header;
     }
 
@@ -93,9 +93,9 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
-    // if final_state_hash != block.header.state_root {
-    //     return Err("invalid final state trie".to_string().into());
-    // }
+    if final_state_hash != block.header.state_root {
+        return Err("invalid final state trie".to_string().into());
+    }
 
     Ok(ProgramOutput {
         initial_state_hash,
