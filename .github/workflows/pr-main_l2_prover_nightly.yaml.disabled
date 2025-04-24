@@ -1,3 +1,5 @@
+# DISABLED: Temporarily disabled due to Pico dependency issues
+
 # The reason this exists is because the Pico zkVM compiles in nightly only.
 name: L2 Prover (nightly)
 on:
@@ -7,6 +9,8 @@ on:
     branches: ["**"]
     paths:
       - "crates/l2/prover/**"
+      - "test_data/**"
+      - "crates/blockchain/dev/**"
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_l2_prover_nightly.yaml"
 

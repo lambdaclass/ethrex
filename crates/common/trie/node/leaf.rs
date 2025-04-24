@@ -101,7 +101,7 @@ impl LeafNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(self.encode_raw())
+        NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
     /// Encodes the node
@@ -118,7 +118,7 @@ impl LeafNode {
     /// Receives the offset that needs to be traversed to reach the leaf node from the canonical root, used to compute the node hash
     pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
         let hash = self.compute_hash();
-        state.insert_node(self.into(), hash.clone());
+        state.insert_node(self.into(), hash);
         Ok(hash)
     }
 
