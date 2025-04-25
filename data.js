@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745618533748,
+  "lastUpdate": 1745619533364,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4585,6 +4585,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179968799412,
             "range": "± 934948267",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7902f16f1bf9bd25d832a811197053961edcce60",
+          "message": "feat(l1, l1): make levm the default vm. (#2603)\n\n**Motivation**\nLevm is becoming more mature, and it needed for the L2. Let's set it as\ndefault across the board.",
+          "timestamp": "2025-04-25T21:31:17Z",
+          "tree_id": "523f551fc6a35f7572117fd202d7e0bd657cd48f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7902f16f1bf9bd25d832a811197053961edcce60"
+        },
+        "date": 1745619530880,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180504554495,
+            "range": "± 730769707",
             "unit": "ns/iter"
           }
         ]
