@@ -116,7 +116,7 @@ async fn claim_erc20_balances(
 ) -> eyre::Result<()> {
     let mut tasks = JoinSet::new();
 
-    for (_pk, sk) in accounts {
+    for (_, sk) in accounts {
         let contract = contract_address;
         let client = client.clone();
         let sk = *sk;
