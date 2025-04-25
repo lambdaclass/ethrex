@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
+use ethrex_common::types::Account;
 use ethrex_common::types::Fork;
 use ethrex_common::Address;
 use ethrex_common::U256;
@@ -10,10 +11,6 @@ use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::vm::Substate;
 use crate::vm::VM;
-use crate::Account;
-use crate::AccountInfo;
-use crate::StorageSlot;
-use std::collections::HashMap;
 
 use super::cache;
 use super::error::DatabaseError;
@@ -38,11 +35,7 @@ impl GeneralizedDatabase {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
             None => {
-                let account_info = self.store.get_account_info(address)?;
-                let account = Account {
-                    info: account_info,
-                    storage: HashMap::new(),
-                };
+                let account = self.store.get_account(address)?;
                 cache::insert_account(&mut self.cache, address, account.clone());
                 Ok(account)
             }
@@ -53,13 +46,7 @@ impl GeneralizedDatabase {
     pub fn get_account_no_push_cache(&self, address: Address) -> Result<Account, DatabaseError> {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
-            None => {
-                let account_info = self.store.get_account_info(address)?;
-                Ok(Account {
-                    info: account_info,
-                    storage: HashMap::new(),
-                })
-            }
+            None => self.store.get_account(address),
         }
     }
 
@@ -71,12 +58,10 @@ impl GeneralizedDatabase {
         &mut self,
         accrued_substate: &mut Substate,
         address: Address,
-    ) -> Result<(AccountInfo, bool), DatabaseError> {
+    ) -> Result<(Account, bool), DatabaseError> {
         let address_was_cold = accrued_substate.touched_accounts.insert(address);
-        let account = match cache::get_account(&self.cache, &address) {
-            Some(account) => account.info.clone(),
-            None => self.store.get_account_info(address)?,
-        };
+        let account = self.get_account(address)?;
+
         Ok((account, address_was_cold))
     }
 }
@@ -86,11 +71,7 @@ impl<'a> VM<'a> {
 
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
         if !cache::is_account_cached(&self.db.cache, &address) {
-            let account_info = self.db.store.get_account_info(address)?;
-            let account = Account {
-                info: account_info,
-                storage: HashMap::new(),
-            };
+            let account = self.db.store.get_account(address)?;
             cache::insert_account(&mut self.db.cache, address, account.clone());
         }
 
@@ -146,7 +127,7 @@ impl<'a> VM<'a> {
         new_bytecode: Bytes,
     ) -> Result<(), VMError> {
         let account = self.get_account_mut(address)?;
-        account.info.bytecode = new_bytecode;
+        account.code = new_bytecode;
         Ok(())
     }
 
@@ -207,7 +188,7 @@ impl<'a> VM<'a> {
         &mut self,
         address: Address,
         key: H256,
-    ) -> Result<(StorageSlot, bool), VMError> {
+    ) -> Result<(U256, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let mut storage_slot_was_cold = false;
         if self.env.config.fork >= Fork::Berlin {
@@ -221,21 +202,9 @@ impl<'a> VM<'a> {
         let storage_slot = match cache::get_account(&self.db.cache, &address) {
             Some(account) => match account.storage.get(&key) {
                 Some(storage_slot) => storage_slot.clone(),
-                None => {
-                    let value = self.db.store.get_storage_slot(address, key)?;
-                    StorageSlot {
-                        original_value: value,
-                        current_value: value,
-                    }
-                }
+                None => self.db.store.get_storage_slot(address, key)?,
             },
-            None => {
-                let value = self.db.store.get_storage_slot(address, key)?;
-                StorageSlot {
-                    original_value: value,
-                    current_value: value,
-                }
-            }
+            None => self.db.store.get_storage_slot(address, key)?,
         };
 
         // When updating account storage of an account that's not yet cached we need to store the StorageSlot in the account

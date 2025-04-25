@@ -2,7 +2,7 @@ use crate::{
     call_frame::CallFrame,
     constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_U64},
     errors::{InternalError, OutOfGasError, PrecompileError, VMError},
-    memory, StorageSlot,
+    memory,
 };
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions

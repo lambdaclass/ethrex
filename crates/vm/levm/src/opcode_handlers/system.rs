@@ -8,10 +8,9 @@ use crate::{
     precompiles::is_precompile,
     utils::{address_to_word, word_to_address, *},
     vm::{RetData, StateBackup, VM},
-    Account,
 };
 use bytes::Bytes;
-use ethrex_common::{types::Fork, Address, U256};
+use ethrex_common::{types::{Account, Fork}, Address, U256};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT
@@ -579,16 +578,16 @@ impl<'a> VM<'a> {
         };
         let fork = self.env.config.fork;
 
-        let (target_account_info, target_account_is_cold) = self
+        let (target_account, target_account_is_cold) = self
             .db
             .access_account(&mut self.accrued_substate, target_address)?;
 
-        let (current_account_info, _current_account_is_cold) =
+        let (current_account, _current_account_is_cold) =
             self.db.access_account(&mut self.accrued_substate, to)?;
-        let balance_to_transfer = current_account_info.balance;
+        let balance_to_transfer = current_account.info.balance;
 
         let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
-            target_account_info.is_empty()
+            target_account.is_empty()
         } else {
             !account_exists(self.db, target_address)
         };
@@ -630,7 +629,7 @@ impl<'a> VM<'a> {
 
             self.accrued_substate.selfdestruct_set.insert(to);
         }
-        if account_exists(self.db, target_address) && target_account_info.is_empty() {
+        if account_exists(self.db, target_address) && target_account.is_empty() {
             self.accrued_substate
                 .touched_accounts
                 .insert(target_address);
@@ -671,7 +670,7 @@ impl<'a> VM<'a> {
             (deployer_address, max_message_call_gas)
         };
 
-        let deployer_account_info = self
+        let deployer_account = self
             .db
             .access_account(&mut self.accrued_substate, deployer_address)?
             .0;
@@ -687,7 +686,7 @@ impl<'a> VM<'a> {
 
         let new_address = match salt {
             Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
-            None => calculate_create_address(deployer_address, deployer_account_info.nonce)?,
+            None => calculate_create_address(deployer_address, deployer_account.info.nonce)?,
         };
 
         // touch account
@@ -703,9 +702,9 @@ impl<'a> VM<'a> {
             // 1. Sender doesn't have enough balance to send value.
             // 2. Depth limit has been reached
             // 3. Sender nonce is max.
-            if deployer_account_info.balance < value_in_wei_to_send
+            if deployer_account.info.balance < value_in_wei_to_send
                 || new_depth > 1024
-                || deployer_account_info.nonce == u64::MAX
+                || deployer_account.info.nonce == u64::MAX
             {
                 // Return reserved gas
                 current_call_frame.gas_used = current_call_frame
@@ -808,7 +807,7 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation: bool,
     ) -> Result<OpcodeResult, VMError> {
-        let sender_account_info = self
+        let sender_account = self
             .db
             .access_account(&mut self.accrued_substate, msg_sender)?
             .0;
@@ -823,7 +822,7 @@ impl<'a> VM<'a> {
                     .to_vec();
 
             // 1. Validate sender has enough value
-            if should_transfer_value && sender_account_info.balance < value {
+            if should_transfer_value && sender_account.info.balance < value {
                 current_call_frame.gas_used = current_call_frame
                     .gas_used
                     .checked_sub(gas_limit)

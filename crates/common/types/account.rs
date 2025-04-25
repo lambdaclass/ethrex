@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
+use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
@@ -184,5 +185,49 @@ mod test {
             H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
                 .unwrap()
         )
+    }
+}
+
+impl AccountInfo {
+    pub fn is_empty(&self) -> bool {
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
+    }
+
+    pub fn has_code(&self) -> bool {
+        self.code_hash != *EMPTY_KECCACK_HASH
+    }
+
+    pub fn has_nonce(&self) -> bool {
+        self.nonce != 0
+    }
+}
+
+impl Account {
+    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: HashMap<H256, U256>) -> Self {
+        Self {
+            info: AccountInfo {
+                balance,
+                code_hash: keccak(&code.as_ref()).0.into(),
+                nonce,
+            },
+            code,
+            storage,
+        }
+    }
+
+    pub fn has_nonce(&self) -> bool {
+        self.info.has_nonce()
+    }
+
+    pub fn has_code(&self) -> bool {
+        self.info.has_code()
+    }
+
+    pub fn has_code_or_nonce(&self) -> bool {
+        self.has_code() || self.has_nonce()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.info.is_empty()
     }
 }
