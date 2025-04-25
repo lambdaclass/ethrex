@@ -42,7 +42,7 @@ For more information on how to run the L2 node with the prover attached to it, t
 
 ## Bridge Assets
 
-Funding an L2 Account from L1
+### Funding an L2 Account from L1
 
 To transfer ETH from Ethereum L1 to your L2 account:
 
@@ -69,6 +69,30 @@ To transfer ETH from Ethereum L1 to your L2 account:
 
 For more information on what you can do with the CommonBridge see [here](./contracts.md).
 
+### Withdrawing fund from the L2 to L1
+
+1. Prerequisites:
+   - An L2 account with sufficient ETH balance
+   - The address of the deployed CommonBridge L2 contract (note here that we are calling the L2 contract instead of the L1 as in the deposit case)
+   - An Ethereum utility tool like [Rex](https://github.com/lambdaclass/rex)
+
+2. Make the Withdrawal:
+
+   Here we want to call the function `withdraw(address)` with the selector being `0x96131049`
+
+   ```cli
+   # Format: rex send <CommonBridgeL2Address> <AmountInWei> <L2PrivateKey> <L2_RPC_URL> --calldata <selector || RecipientAddress> --gas-limit <Value>
+
+   rex send 0x000000000000000000000000000000000000ffff 5000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 "http://localhost:1729" --calldata "0x961310490000000000000000000000008943545177806ed17b9f23f0a21ee5948ecaa776" --gas-limit 30000
+   ```
+
+3. Verification:
+
+   Once the withdrawal is made you can verify the balance has decrease with:
+   ```cli
+   # Format: rex balance <L2Address> <L2_RPC_URL>
+   rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 "http://localhost:1729"
+   ```
 ## Configuration
 
 Configuration consists of two steps, the parsing of a `.toml` config file and the creation and modification of a `.env` file, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
