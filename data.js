@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745620967991,
+  "lastUpdate": 1745621277772,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4735,6 +4735,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180780280087,
             "range": "± 716073227",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "07399376fc90f6026f1eab5d904bd81325ef71af",
+          "message": "refactor(levm): implement cache rollback (#2417)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Implement cache rollback for avoiding cloning the cache during the\nexecution of a transaction.\n\n**Description**\n\n- Now callframe has `cache_backup`, that stores the pre-write state of\nthe account that the callframe is trying to mutate. If the context\nreverts that state is restored in the cache. Otherwise, the parent call\nframe inherits the changes of the child of the accounts that only the\nchild has modified, so that if the parent callframe reverts it can\nrevert what the child did.\n- Move some database related functions that don't need backup to\n`GeneralizedDatabase`\n- Move some database related functions that need backup `VM`. Basically\nit accesses the database backup up if there's a callframe available for\ndoing so.\n- Stop popping callframe whenever possible\n\nSome other changes that it makes:\n- Simplify `finalize_execution`. Specifically the reversion of value\ntransfer and removal of check for coinbase transfer of gas fee.\n- Move some things to `utils.rs` and `gen_db.rs` so that `vm.rs` keeps\nmain functionalities.\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Tomás Paradelo <tomas.paradelo@lambdaclass.com>\nCo-authored-by: Julian Ventura <43799596+JulianVentura@users.noreply.github.com>\nCo-authored-by: Avila Gastón <72628438+avilagaston9@users.noreply.github.com>\nCo-authored-by: fmoletta <99273364+fmoletta@users.noreply.github.com>\nCo-authored-by: Matías Onorato <onoratomatias@gmail.com>\nCo-authored-by: Edgar <git@edgl.dev>\nCo-authored-by: Tomás Arjovsky <tomas.arjovsky@lambdaclass.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: Estéfano Bargas <estefano.bargas@fing.edu.uy>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: VolodymyrBg <aqdrgg19@gmail.com>\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>\nCo-authored-by: Mauro Toscano <12560266+MauroToscano@users.noreply.github.com>\nCo-authored-by: Cypher Pepe <125112044+cypherpepe@users.noreply.github.com>",
+          "timestamp": "2025-04-25T22:00:51Z",
+          "tree_id": "e4b4d5e4cee78b4bd5642f0cb8691dce93f0897f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/07399376fc90f6026f1eab5d904bd81325ef71af"
+        },
+        "date": 1745621275272,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177866198277,
+            "range": "± 532002286",
             "unit": "ns/iter"
           }
         ]
