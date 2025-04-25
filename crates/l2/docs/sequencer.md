@@ -37,7 +37,7 @@ Verify transactions are sent by the Proposer after the prover has successfully g
 
 The Proof Coordinator is a simple TCP server that manages communication with a component called the `Proof Sender`. The Proof Sender acts as a simple TCP client, handling incoming requests to prove a block. It then "calls" a zkVM, generates the Groth16 proof, and sends it back to the Coordinator. In this setup, the state is managed solely by the Proof Coordinator, which, in theory, makes it less error-prone than the zkVMs.
 
-For more information about the Proof Sender, the [Prover Docs](./prover.md) provides more insight.
+For more information about the Proof Coordinator, the Proof Sender, and the proving process itself, see the [Prover Docs](./prover.md).
 
 ## Configuration
 
