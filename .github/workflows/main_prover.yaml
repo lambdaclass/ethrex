@@ -15,7 +15,6 @@ env:
 jobs:
   test:
     name: Integration Test Prover SP1
-    if: ${{ always() && github.event_name == 'merge_group' }}
     runs-on: gpu
     steps:
       - name: Checkout sources
@@ -25,20 +24,24 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Rust cache
+        if: ${{ always() && github.event_name == 'merge_group' }}
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: "true"
 
       - name: RISC-V SP1 toolchain install
+        if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           . "$HOME/.cargo/env"
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up --version 4.1.0
 
       - name: Set up Docker Buildx
+        if: ${{ always() && github.event_name == 'merge_group' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Bake docker images
+        if: ${{ always() && github.event_name == 'merge_group' }}
         uses: docker/bake-action@v6
         with:
           workdir: "crates/l2"
@@ -49,15 +52,18 @@ jobs:
             *.cache-from=type=gha
 
       - name: Build prover
+        if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
           make build-prover
 
       - name: Build test
+        if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cargo test l2 --no-run --release
 
       - name: Run test
+        if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
@@ -73,12 +79,3 @@ jobs:
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-
-      - name: Report Status
-        if: always()
-        uses: ravsamhq/notify-slack-action@v2
-        with:
-          status: ${{ job.status }}
-          notify_when: 'failure'
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
