@@ -61,6 +61,10 @@ Then run any of the targets:
 - `make perf-risc0`
 - `make perf-sp1`
 
+### L1 block proving
+
+ethrex-prover is able to generate execution proofs of Ethereum Mainnet/Testnet blocks. An example binary was created for this purpose in `crates/l2/prover/bench`. Refer to its README for usage.
+
 ### Dev Mode
 
 To run the blockchain (`proposer`) and prover in conjunction, start the `prover_client`, use the following command:
