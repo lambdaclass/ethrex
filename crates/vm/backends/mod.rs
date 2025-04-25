@@ -149,6 +149,37 @@ impl Evm {
         }
     }
 
+    pub fn execute_tx_diff_size(
+        &mut self,
+        tx: &Transaction,
+        block_header: &BlockHeader,
+        remaining_gas: &mut u64,
+        sender: Address,
+        left_size: usize,
+    ) -> Result<(Receipt, u64), EvmError> {
+        match self {
+            Evm::REVM { .. } => todo!(),
+            Evm::LEVM { db } => {
+                let execution_report = LEVM::execute_tx(tx, sender, block_header, db)?;
+
+                *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
+
+                let receipt = Receipt::new(
+                    tx.tx_type(),
+                    execution_report.is_success(),
+                    block_header.gas_limit - *remaining_gas,
+                    execution_report.logs.clone(),
+                );
+
+                let fork = db.store.get_chain_config().fork(block_header.timestamp);
+
+                let st = LEVM::get_state_transitions_no_drain(db, fork)?;
+
+                Ok((receipt, execution_report.gas_used))
+            }
+        }
+    }
+
     /// Wraps [REVM::beacon_root_contract_call], [REVM::process_block_hash_history]
     /// and [LEVM::beacon_root_contract_call], [LEVM::process_block_hash_history].
     /// This function is used to run/apply all the system contracts to the state.
@@ -196,6 +227,16 @@ impl Evm {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
             Evm::LEVM { db } => LEVM::get_state_transitions(db, fork),
+        }
+    }
+
+    pub fn get_state_transitions_no_drain(
+        &self,
+        fork: Fork,
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
+        match self {
+            Evm::REVM { .. } => todo!(),
+            Evm::LEVM { db } => LEVM::get_state_transitions_no_drain(db, fork),
         }
     }
 

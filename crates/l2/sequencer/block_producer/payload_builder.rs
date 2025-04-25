@@ -162,8 +162,11 @@ pub async fn fill_transactions(
 
         let previous_context = context.clone();
 
+        let left_size = SAFE_BYTES_PER_BLOB - acc_state_diff_size;
+        dbg!(left_size);
+
         // Execute tx
-        let receipt = match blockchain.apply_transaction(&head_tx, context) {
+        let receipt = match blockchain.apply_transaction(&head_tx, context, left_size) {
             Ok(receipt) => {
                 // This call is the part that differs from the original `fill_transactions`.
                 if !update_state_diff_size(
@@ -271,18 +274,17 @@ async fn update_state_diff_size(
     Ok(true)
 }
 
-async fn calc_modified_accounts_size(
-    context: &mut PayloadBuildContext,
+pub async fn calc_modified_accounts_size(
+    context: &PayloadBuildContext,
     accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
 ) -> Result<usize, BlockProducerError> {
     let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
 
     // We use a temporary_context because `get_state_transitions` mutates it.
-    let mut temporary_context = context.clone();
 
     let chain_config = &context.store.get_chain_config()?;
     let fork = chain_config.fork(context.payload.header.timestamp);
-    let account_updates = temporary_context.vm.get_state_transitions(fork)?;
+    let account_updates = context.vm.get_state_transitions_no_drain(fork)?;
     for account_update in account_updates {
         modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
         if account_update.info.is_some() {
