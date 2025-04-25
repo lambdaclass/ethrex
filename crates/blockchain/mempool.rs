@@ -13,7 +13,6 @@ use ethrex_common::{
     types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
     Address, H256, U256,
 };
-use ethrex_storage::error::StoreError;
 
 #[derive(Debug, Default)]
 pub struct Mempool {
@@ -114,35 +113,29 @@ impl Mempool {
     }
 
     /// Gets hashes from possible_hashes that are not already known in the mempool.
-    pub fn filter_unknown_transactions(
-        &self,
-        possible_hashes: &[H256],
-    ) -> Result<Vec<H256>, StoreError> {
+    pub fn filter_unknown_transactions(&self, possible_hashes: &[H256]) -> Vec<H256> {
         let tx_set: HashSet<_> = self
             .transaction_pool
             .iter()
             .map(|item| *item.key())
             .collect();
-        Ok(possible_hashes
+        possible_hashes
             .iter()
             .filter(|hash| !tx_set.contains(hash))
             .copied()
-            .collect())
+            .collect()
     }
 
-    pub fn get_transaction_by_hash(
-        &self,
-        transaction_hash: H256,
-    ) -> Result<Option<Transaction>, StoreError> {
+    pub fn get_transaction_by_hash(&self, transaction_hash: H256) -> Option<Transaction> {
         let tx = self
             .transaction_pool
             .get(&transaction_hash)
             .map(|e| e.value().clone().into());
 
-        Ok(tx)
+        tx
     }
 
-    pub fn get_nonce(&self, address: &Address) -> Result<Option<u64>, MempoolError> {
+    pub fn get_nonce(&self, address: &Address) -> Option<u64> {
         let pending_filter = PendingTxFilter {
             min_tip: None,
             base_fee: None,
@@ -157,7 +150,7 @@ impl Mempool {
             None => None,
         };
 
-        Ok(nonce)
+        nonce
     }
 }
 

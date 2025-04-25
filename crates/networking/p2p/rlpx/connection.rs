@@ -493,7 +493,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             {
                 //TODO(#1415): evaluate keeping track of requests to avoid sending the same twice.
                 let hashes =
-                    new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain)?;
+                    new_pooled_transaction_hashes.get_transactions_to_request(&self.blockchain);
 
                 //TODO(#1416): Evaluate keeping track of the request-id.
                 let request = GetPooledTransactions::new(random(), hashes);

@@ -109,10 +109,7 @@ impl NewPooledTransactionHashes {
         })
     }
 
-    pub fn get_transactions_to_request(
-        &self,
-        blockchain: &Blockchain,
-    ) -> Result<Vec<H256>, StoreError> {
+    pub fn get_transactions_to_request(&self, blockchain: &Blockchain) -> Vec<H256> {
         blockchain
             .mempool
             .filter_unknown_transactions(&self.transaction_hashes)
@@ -200,7 +197,7 @@ impl GetPooledTransactions {
         hash: &H256,
         blockchain: &Blockchain,
     ) -> Result<Option<P2PTransaction>, StoreError> {
-        let Some(tx) = blockchain.mempool.get_transaction_by_hash(*hash)? else {
+        let Some(tx) = blockchain.mempool.get_transaction_by_hash(*hash) else {
             return Ok(None);
         };
         let result = match tx {
