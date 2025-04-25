@@ -87,35 +87,6 @@ impl L1Watcher {
         }
     }
 
-    pub async fn get_pending_deposit_logs(&self) -> Result<Vec<H256>, L1WatcherError> {
-        let selector = keccak(b"getDepositLogs()")
-            .as_bytes()
-            .get(..4)
-            .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
-            .to_vec();
-
-        Ok(hex::decode(
-            self.eth_client
-                .call(
-                    self.address,
-                    Bytes::copy_from_slice(&selector),
-                    Overrides::default(),
-                )
-                .await?
-                .get(2..)
-                .ok_or(L1WatcherError::FailedToDeserializeLog(
-                    "Not a valid hex string".to_string(),
-                ))?,
-        )
-        .map_err(|_| L1WatcherError::FailedToDeserializeLog("Not a valid hex string".to_string()))?
-        .chunks(32)
-        .map(H256::from_slice)
-        .collect::<Vec<H256>>()
-        .split_at(2) // Two first words are index and length abi encode
-        .1
-        .to_vec())
-    }
-
     pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
         if self.last_block_fetched.is_zero() {
             self.last_block_fetched =
