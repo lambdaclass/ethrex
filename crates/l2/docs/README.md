@@ -78,13 +78,11 @@ For more information on what you can do with the CommonBridge see [here](./contr
 
 2. Make the Withdrawal:
 
-   Here we want to call the function `withdraw(address)` with the selector being `0x96131049`
-
-   ```cli
-   # Format: rex send <CommonBridgeL2Address> <AmountInWei> <L2PrivateKey> <L2_RPC_URL> --calldata <selector || RecipientAddress> --gas-limit <Value>
-
-   rex send 0x000000000000000000000000000000000000ffff 5000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 "http://localhost:1729" --calldata "0x961310490000000000000000000000008943545177806ed17b9f23f0a21ee5948ecaa776" --gas-limit 30000
-   ```
+    Using Rex we simply use the `rex l2 withdraw` command.
+    ```Shell
+    # Format: rex l2 withdraw <AMOUNT> <PRIVATE_KEY> [RPC_URL]
+    rex l2 withdraw 5000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+    ```
 
 3. Verification:
 
