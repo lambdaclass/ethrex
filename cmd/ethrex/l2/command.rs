@@ -1,14 +1,16 @@
 use crate::{
-    cli::{self as ethrex_cli, Options},
+    cli::{self as ethrex_cli, Options as NodeOptions},
     initializers::{
         get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_network,
         init_rpc_api, init_store,
     },
-    utils::{self, set_datadir, store_known_peers},
+    l2::options::Options,
+    utils::{set_datadir, store_known_peers},
     DEFAULT_L2_DATADIR,
 };
-use clap::{Parser, Subcommand};
+use clap::Subcommand;
 use ethrex_common::{Address, U256};
+use ethrex_l2::SequencerConfig;
 use ethrex_p2p::network::peer_table;
 use ethrex_rpc::{
     clients::{beacon::BeaconClient, eth::BlockByNumber},
@@ -17,7 +19,6 @@ use ethrex_rpc::{
 use eyre::OptionExt;
 use keccak_hash::keccak;
 use reqwest::Url;
-use secp256k1::SecretKey;
 use std::{fs::create_dir_all, future::IntoFuture, path::PathBuf, time::Duration};
 use tokio_util::task::TaskTracker;
 use tracing::info;
@@ -28,7 +29,7 @@ pub enum Command {
     #[clap(about = "Initialize an ethrex L2 node", visible_alias = "i")]
     Init {
         #[command(flatten)]
-        opts: L2Options,
+        opts: Options,
     },
     #[clap(name = "removedb", about = "Remove the database", visible_aliases = ["rm", "clean"])]
     RemoveDB {
@@ -52,68 +53,6 @@ pub enum Command {
         #[clap(short = 'b', long)]
         l1_beacon_rpc: Url,
     },
-}
-
-#[derive(Parser, Default)]
-pub struct L2Options {
-    #[command(flatten)]
-    pub node_opts: Options,
-    #[arg(
-        long = "sponsorable-addresses",
-        value_name = "SPONSORABLE_ADDRESSES_PATH",
-        help = "Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs",
-        help_heading = "L2 options"
-    )]
-    pub sponsorable_addresses_file_path: Option<String>,
-    #[arg(long, value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
-    pub sponsor_private_key: Option<SecretKey>,
-    #[cfg(feature = "based")]
-    #[command(flatten)]
-    pub based_opts: BasedOptions,
-}
-
-#[cfg(feature = "based")]
-#[derive(Parser, Default)]
-pub struct BasedOptions {
-    #[arg(
-        long = "gateway.addr",
-        default_value = "0.0.0.0",
-        value_name = "GATEWAY_ADDRESS",
-        env = "GATEWAY_ADDRESS",
-        help_heading = "Based options"
-    )]
-    pub gateway_addr: String,
-    #[arg(
-        long = "gateway.eth_port",
-        default_value = "8546",
-        value_name = "GATEWAY_ETH_PORT",
-        env = "GATEWAY_ETH_PORT",
-        help_heading = "Based options"
-    )]
-    pub gateway_eth_port: String,
-    #[arg(
-        long = "gateway.auth_port",
-        default_value = "8553",
-        value_name = "GATEWAY_AUTH_PORT",
-        env = "GATEWAY_AUTH_PORT",
-        help_heading = "Based options"
-    )]
-    pub gateway_auth_port: String,
-    #[arg(
-        long = "gateway.jwtsecret",
-        default_value = "jwt.hex",
-        value_name = "GATEWAY_JWTSECRET_PATH",
-        env = "GATEWAY_JWTSECRET_PATH",
-        help_heading = "Based options"
-    )]
-    pub gateway_jwtsecret: String,
-    #[arg(
-        long = "gateway.pubkey",
-        value_name = "GATEWAY_PUBKEY",
-        env = "GATEWAY_PUBKEY",
-        help_heading = "Based options"
-    )]
-    pub gateway_pubkey: String,
 }
 
 impl Command {
@@ -174,7 +113,10 @@ impl Command {
                     info!("P2P is disabled");
                 }
 
-                let l2_sequencer = ethrex_l2::start_l2(store, blockchain).into_future();
+                let l2_sequencer_cfg = SequencerConfig::from(opts.sequencer_opts);
+
+                let l2_sequencer =
+                    ethrex_l2::start_l2(store, blockchain, l2_sequencer_cfg).into_future();
 
                 tracker.spawn(l2_sequencer);
 
@@ -193,7 +135,7 @@ impl Command {
             Self::RemoveDB { datadir, force } => {
                 Box::pin(async {
                     ethrex_cli::Subcommand::RemoveDB { datadir, force }
-                        .run(&Options::default()) // This is not used by the RemoveDB command.
+                        .run(&NodeOptions::default()) // This is not used by the RemoveDB command.
                         .await
                 })
                 .await?

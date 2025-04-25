@@ -30,11 +30,7 @@ use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 #[cfg(feature = "l2")]
 use crate::l2::L2Options;
 #[cfg(feature = "l2")]
-use ::{
-    ethrex_common::Address,
-    ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
-    secp256k1::SecretKey,
-};
+use ::{ethrex_common::Address, secp256k1::SecretKey};
 
 #[cfg(feature = "based")]
 use crate::l2::BasedOptions;
@@ -396,15 +392,5 @@ pub fn get_sponsor_pk(opts: &L2Options) -> SecretKey {
     if let Some(pk) = opts.sponsor_private_key {
         return pk;
     }
-
-    warn!("Sponsor private key not provided. Trying to read from the .env file.");
-
-    if let Err(e) = read_env_file_by_config(ConfigMode::Sequencer) {
-        panic!("Failed to read .env file: {e}");
-    }
-    let pk = std::env::var("L1_WATCHER_L2_PROPOSER_PRIVATE_KEY").unwrap_or_default();
-    pk.strip_prefix("0x")
-        .unwrap_or(&pk)
-        .parse::<SecretKey>()
-        .expect("Failed to parse a secret key to sponsor transactions")
+    opts.sequencer_opts.watcher_opts.l2_proposer_private_key
 }
