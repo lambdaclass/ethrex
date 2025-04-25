@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745620945049,
+  "lastUpdate": 1745620967991,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4705,6 +4705,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178362957327,
             "range": "± 745995947",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "098a15222ac85f6b87c650eeda89b02ef72eab12",
+          "message": "feat(l1): improve rebuilding speed during snap sync (#2447)\n\n**Motivation**\nAfter recent changes in main, rebuilding now takes a lot longer than\nstate sync. This PR aims to mitigate this hit by introducing other\nperformance upgrades\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Increase parallelism when rebuilding storages\n* Reduce intermediate hashing when rebuilding state tries\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nThese changes have increased storage rebuild speed to around the same as\nbefore the changes to store, and has reduced time estimates for state\nrebuild, but doesn't manage to make the state rebuild keep up with the\nstate sync. These changes have not affected state sync speed\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-25T21:55:36Z",
+          "tree_id": "a737a894a650aeb03062dc2338cf952fc01b33c2",
+          "url": "https://github.com/lambdaclass/ethrex/commit/098a15222ac85f6b87c650eeda89b02ef72eab12"
+        },
+        "date": 1745620965639,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180780280087,
+            "range": "± 716073227",
             "unit": "ns/iter"
           }
         ]
