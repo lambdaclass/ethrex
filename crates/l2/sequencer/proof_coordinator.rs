@@ -109,9 +109,13 @@ pub async fn start_proof_coordinator(
     store: Store,
     cfg: Arc<SequencerConfig>,
 ) -> Result<(), SequencerError> {
-    let prover_server =
-        ProofCoordinator::new_from_config(&cfg.proof_coordinator, &cfg.committer, &cfg.eth, store)
-            .await?;
+    let prover_server = ProofCoordinator::new_from_config(
+        &cfg.proof_coordinator,
+        &cfg.l1_committer,
+        &cfg.eth,
+        store,
+    )
+    .await?;
     prover_server.run().await;
 
     Ok(())

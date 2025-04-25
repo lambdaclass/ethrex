@@ -24,8 +24,8 @@ pub enum SequencerError {
     CommitterError(#[from] CommitterError),
     #[error("Failed to start ProofSender: {0}")]
     ProofSenderError(#[from] ProofSenderError),
-    // #[error("Failed to start MetricsGatherer: {0}")]
-    // MetricsGathererError(#[from] MetricsGathererError),
+    #[error("Failed to start MetricsGatherer: {0}")]
+    MetricsGathererError(#[from] MetricsGathererError),
 }
 
 #[derive(Debug, thiserror::Error)]

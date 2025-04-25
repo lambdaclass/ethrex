@@ -29,7 +29,8 @@ const VERIFY_FUNCTION_SIGNATURE: &str =
     "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 pub async fn start_l1_proof_sender(cfg: Arc<SequencerConfig>) -> Result<(), SequencerError> {
-    let proof_sender = L1ProofSender::new(&cfg.proof_coordinator, &cfg.committer, &cfg.eth).await?;
+    let proof_sender =
+        L1ProofSender::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
     proof_sender.run().await;
     Ok(())
 }

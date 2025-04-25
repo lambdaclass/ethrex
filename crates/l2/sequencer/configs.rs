@@ -5,7 +5,7 @@ use std::net::IpAddr;
 pub struct SequencerConfig {
     // pub proposer: ProposerConfig,
     pub block_producer: BlockProducerConfig,
-    pub committer: CommitterConfig,
+    pub l1_committer: CommitterConfig,
     pub eth: EthConfig,
     pub l1_watcher: L1WatcherConfig,
     pub proof_coordinator: ProofCoordinatorConfig,

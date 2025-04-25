@@ -53,7 +53,7 @@ pub async fn start_l1_committer(
     cfg: Arc<SequencerConfig>,
 ) -> Result<(), SequencerError> {
     let mut committer =
-        Committer::new_from_config(&cfg.committer, &cfg.eth, store, execution_cache);
+        Committer::new_from_config(&cfg.l1_committer, &cfg.eth, store, execution_cache);
     committer.run().await;
     Ok(())
 }

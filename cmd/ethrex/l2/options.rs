@@ -50,7 +50,7 @@ impl From<SequencerOptions> for SequencerConfig {
                 block_time_ms: opts.proposer_opts.block_time_ms,
                 coinbase_address: opts.proposer_opts.coinbase_address,
             },
-            committer: CommitterConfig {
+            l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address,
                 l1_address: get_address_from_secret_key(
                     &opts.committer_opts.committer_l1_private_key,
