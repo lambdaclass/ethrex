@@ -61,6 +61,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
+    /// @notice Indicates whether the contract operates in validium mode.
+    /// @dev This value is immutable and can only be set during contract deployment.
+    bool public immutable VALIDIUM;
+
+    /// @notice Constructor to initialize the immutable validium value.
+    /// @param _validium A boolean indicating if the contract operates in validium mode.
+    constructor(bool _validium) {
+        VALIDIUM = _validium;
+    }
+
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -150,13 +160,14 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash
     ) external override onlySequencer {
+        // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
             "OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch"
         );
         require(
             batchCommitments[batchNumber].newStateRoot == bytes32(0),
-            "OnChainProposer: batch already committed"
+            "OnChainProposer: tried to commit an already committed batch"
         );
 
         // Check if commitment is equivalent to blob's KZG commitment.
@@ -182,8 +193,9 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             stateDiffKZGVersionedHash,
             processedDepositLogsRollingHash
         );
-        lastCommittedBatch = batchNumber;
         emit BatchCommitted(newStateRoot);
+
+        lastCommittedBatch = batchNumber;
     }
 
     /// @inheritdoc IOnChainProposer
@@ -207,17 +219,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes calldata picoPublicValues,
         uint256[8] calldata picoProof
     ) external override onlySequencer {
+        // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
         require(
             batchNumber == lastVerifiedBatch + 1,
             "OnChainProposer: batch already verified"
         );
-
         require(
-            batchCommitments[batchNumber].stateDiffKZGVersionedHash !=
-                bytes32(0),
-            "OnChainProposer: batch not committed"
+            batchCommitments[batchNumber].newStateRoot != bytes32(0),
+            "OnChainProposer: cannot verify an uncommitted batch"
         );
 
         if (PICOVERIFIER != DEV_MODE) {
