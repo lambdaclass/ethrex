@@ -76,7 +76,7 @@ For more information on what you can do with the CommonBridge see [here](./contr
    - The address of the deployed CommonBridge L2 contract (note here that we are calling the L2 contract instead of the L1 as in the deposit case)
    - An Ethereum utility tool like [Rex](https://github.com/lambdaclass/rex)
 
-2. Make the Withdrawal:
+2. Make the Withdraw:
 
     Using Rex we simply use the `rex l2 withdraw` command.
     ```Shell
@@ -84,13 +84,28 @@ For more information on what you can do with the CommonBridge see [here](./contr
     rex l2 withdraw 5000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
     ```
 
-3. Verification:
+3. Claim the Withdraw:
+
+   After making the withdraw it has to be claimed in the L1. This is done with the L1 CommonBridge contract. We can use the Rex command `rex l2 claim-withdraw`. Here we have to use the tx hash obtained in the previous step. Also, it is necessary to wait for the block that includes the withdraw to be committed.
+
+   ```Shell
+   # Format: rex l2 claim-withdraw <L2_WITHDRAWAL_TX_HASH> <PRIVATE_KEY> <BRIDGE_ADDRESS>
+   rex l2 <L2_WITHDRAWAL_TX_HASH> 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x65dd6dc5df74b7e08e92c910122f91d7b2d5184f
+   ```
+
+4. Verification:
 
    Once the withdrawal is made you can verify the balance has decrease with:
    ```Shell
    # Format: rex l2 balance <L2Address> [L2_RPC_URL]
    rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
    ```
+
+   And also increased in the L1:
+   ```Shell
+   rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
+   ```
+
 ## Configuration
 
 Configuration consists of two steps, the parsing of a `.toml` config file and the creation and modification of a `.env` file, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
