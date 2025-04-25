@@ -71,8 +71,8 @@ l2 = [
     "dep:secp256k1",
     "ethrex-storage-rollup"
 ]
-rollup-storage-libmdbx = ["ethrex-storage-rollup/libmdbx"]
-rollup-storage-redb = ["ethrex-storage-rollup/redb"]
+rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
+rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 based = ["l2", "ethrex-rpc/based"]
 
 

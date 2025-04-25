@@ -96,23 +96,16 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
 
 #[cfg(feature = "l2")]
 pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
-    let path = PathBuf::from(data_dir);
-    if path.ends_with("memory") {
-        StoreRollup::new(data_dir, EngineTypeRollup::InMemory)
-            .expect("Failed to create StoreRollup")
-    } else {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "rollup_storage_redb")] {
-                let engine_type = EngineTypeRollup::RedB;
-            } else if #[cfg(feature = "rollup_storage_libmdbx")] {
-                let engine_type = EngineTypeRollup::Libmdbx;
-            } else {
-                error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
-                panic!("Specify the desired database engine.");
-            }
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "rollup_storage_redb")] {
+            let engine_type = EngineTypeRollup::RedB;
+        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
+            let engine_type = EngineTypeRollup::Libmdbx;
+        } else {
+            let engine_type = EngineTypeRollup::InMemory;
         }
-        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup")
     }
+    StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup")
 }
 
 pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
