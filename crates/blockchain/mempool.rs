@@ -41,13 +41,10 @@ impl Mempool {
 
     /// Remove a transaction from the pool
     pub fn remove_transaction(&self, hash: &H256) {
-        if let Some(tx) = self.transaction_pool.get(hash) {
+        if let Some((_, tx)) = self.transaction_pool.remove(hash) {
             if matches!(tx.tx_type(), TxType::EIP4844) {
                 self.blobs_bundle_pool.remove(&tx.compute_hash());
             }
-
-            drop(tx); // need to drop ref to tx before remove to avoid deadlock.
-            self.transaction_pool.remove(hash);
         };
     }
 
