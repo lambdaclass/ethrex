@@ -69,7 +69,7 @@ To transfer ETH from Ethereum L1 to your L2 account:
 
 For more information on what you can do with the CommonBridge see [here](./contracts.md).
 
-### Withdrawing fund from the L2 to L1
+### Withdrawing funds from the L2 to L1
 
 1. Prerequisites:
    - An L2 account with sufficient ETH balance
