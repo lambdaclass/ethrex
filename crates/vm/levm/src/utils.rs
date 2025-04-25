@@ -436,19 +436,6 @@ pub fn increment_account_nonce(
     Ok(account.info.nonce)
 }
 
-pub fn decrement_account_nonce(
-    db: &mut GeneralizedDatabase,
-    address: Address,
-) -> Result<(), VMError> {
-    let account = get_account_mut_vm(db, address)?;
-    account.info.nonce = account
-        .info
-        .nonce
-        .checked_sub(1)
-        .ok_or(VMError::NonceUnderflow)?;
-    Ok(())
-}
-
 // ==================== Word related functions =======================
 pub fn word_to_address(word: U256) -> Address {
     Address::from_slice(&word.to_big_endian()[12..])
