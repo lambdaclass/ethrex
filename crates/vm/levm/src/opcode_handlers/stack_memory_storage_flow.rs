@@ -153,7 +153,7 @@ impl<'a> VM<'a> {
 
         current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold, fork)?)?;
 
-        current_call_frame.stack.push(storage_slot.current_value)?;
+        current_call_frame.stack.push(storage_slot)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
@@ -200,27 +200,28 @@ impl<'a> VM<'a> {
                 _ => (4800, 19900, 2800),
             };
 
+        let original_value = self.get_original_storage(to, key)?;
+        let current_value = storage_slot;
+
         if self.env.config.fork < Fork::Istanbul && self.env.config.fork != Fork::Constantinople {
-            if !storage_slot.current_value.is_zero() && new_storage_slot_value.is_zero() {
+            if !current_value.is_zero() && new_storage_slot_value.is_zero() {
                 gas_refunds = gas_refunds
                     .checked_add(15000)
                     .ok_or(VMError::GasRefundsOverflow)?;
             }
         } else if (self.env.config.fork == Fork::Constantinople
             || self.env.config.fork >= Fork::Istanbul)
-            && new_storage_slot_value != storage_slot.current_value
+            && new_storage_slot_value != current_value
         {
-            if storage_slot.current_value == storage_slot.original_value {
-                if storage_slot.original_value != U256::zero()
-                    && new_storage_slot_value == U256::zero()
-                {
+            if current_value == original_value {
+                if original_value != U256::zero() && new_storage_slot_value == U256::zero() {
                     gas_refunds = gas_refunds
                         .checked_add(remove_slot_cost)
                         .ok_or(VMError::GasRefundsOverflow)?;
                 }
             } else {
-                if storage_slot.original_value != U256::zero() {
-                    if storage_slot.current_value == U256::zero() {
+                if original_value != U256::zero() {
+                    if current_value == U256::zero() {
                         gas_refunds = gas_refunds
                             .checked_sub(remove_slot_cost)
                             .ok_or(VMError::GasRefundsUnderflow)?;
@@ -230,8 +231,8 @@ impl<'a> VM<'a> {
                             .ok_or(VMError::GasRefundsUnderflow)?;
                     }
                 }
-                if new_storage_slot_value == storage_slot.original_value {
-                    if storage_slot.original_value == U256::zero() {
+                if new_storage_slot_value == original_value {
+                    if original_value == U256::zero() {
                         gas_refunds = gas_refunds
                             .checked_add(restore_empty_slot_cost)
                             .ok_or(VMError::GasRefundsUnderflow)?;
@@ -249,7 +250,8 @@ impl<'a> VM<'a> {
 
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::sstore(
-                &storage_slot,
+                original_value,
+                current_value,
                 new_storage_slot_value,
                 storage_slot_was_cold,
                 fork,

@@ -454,7 +454,8 @@ pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
 }
 
 pub fn sstore(
-    storage_slot: &StorageSlot,
+    original_value: U256,
+    current_value: U256,
     new_value: U256,
     storage_slot_was_cold: bool,
     fork: Fork,
@@ -463,7 +464,7 @@ pub fn sstore(
     // Petersburg removes EIP-1283
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1716.md
     if fork <= Fork::Byzantium || fork == Fork::Petersburg {
-        if storage_slot.current_value.is_zero() && !new_value.is_zero() {
+        if current_value.is_zero() && !new_value.is_zero() {
             Ok(SSTORE_PRE_BERLIN_NON_ZERO)
         } else {
             Ok(SSTORE_PRE_BERLIN)
@@ -489,10 +490,10 @@ pub fn sstore(
             SSTORE_STORAGE_MODIFICATION
         };
 
-        let mut base_dynamic_gas = if new_value == storage_slot.current_value {
+        let mut base_dynamic_gas = if new_value == current_value {
             default_dynamic
-        } else if storage_slot.current_value == storage_slot.original_value {
-            if storage_slot.original_value.is_zero() {
+        } else if current_value == original_value {
+            if original_value.is_zero() {
                 SSTORE_STORAGE_CREATION
             } else {
                 dynamic_gas_modification

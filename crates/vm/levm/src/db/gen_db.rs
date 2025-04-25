@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -180,6 +181,28 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    pub fn get_original_storage(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
+        // Warning: Don't use the cache for this.
+        let value_pre_tx = match self.storage_pre_tx.get_mut(&address) {
+            Some(account) => match account.get(&key) {
+                Some(value) => value.clone(),
+                None => {
+                    let value = self.db.store.get_storage_slot(address, key)?;
+                    account.insert(key, value);
+                    value
+                }
+            },
+            None => {
+                let value = self.db.store.get_storage_slot(address, key)?;
+                let mut account_storage = HashMap::new();
+                account_storage.insert(key, value);
+                self.storage_pre_tx.insert(address, account_storage);
+                value
+            }
+        };
+        Ok(value_pre_tx)
+    }
+
     /// Accesses to an account's storage slot.
     ///
     /// Accessed storage slots are stored in the `touched_storage_slots` set.
@@ -222,15 +245,7 @@ impl<'a> VM<'a> {
         new_value: U256,
     ) -> Result<(), VMError> {
         let account = self.get_account_mut(address)?;
-        let account_original_storage_slot_value = account
-            .storage
-            .get(&key)
-            .map_or(U256::zero(), |slot| slot.original_value);
-        let slot = account.storage.entry(key).or_insert(StorageSlot {
-            original_value: account_original_storage_slot_value,
-            current_value: new_value,
-        });
-        slot.current_value = new_value;
+        account.storage.insert(key, new_value);
         Ok(())
     }
 }
