@@ -63,7 +63,7 @@ jobs:
 
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           ETHREX_PROPOSER_BLOCK_TIME_MS=12000 \
-          CI_ETHREX_PROOF_COORDINATOR_LISTEN_IP=0.0.0.0 \
+          ETHREX_PROOF_COORDINATOR_LISTEN_IP=0.0.0.0 \
           ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=true \
           make integration-test-gpu
 
