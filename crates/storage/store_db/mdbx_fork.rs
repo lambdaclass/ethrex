@@ -110,6 +110,9 @@ impl MDBXFork {
         tx.create_db(Some("StateSnapShot"), DatabaseFlags::DUP_SORT)
             .unwrap();
 
+        tx.create_db(Some("StorageSnapShot"), DatabaseFlags::DUP_SORT)
+            .unwrap();
+
         tx.commit().unwrap();
 
         let env_account_trie = DatabaseEnv::open(
@@ -277,6 +280,7 @@ tables! {
     table SnapState<Key = u8, Value = Vec<u8>>;
     table Payloads<Key = u64, Value = Vec<u8>>;
     table StateSnapShot<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
+    table StorageSnapshot<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
 }
 
 impl StoreEngine for MDBXFork {
@@ -899,15 +903,16 @@ impl StoreEngine for MDBXFork {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<ChainData>(ChainDataIndex::IsSynced as u8, status.encode_to_vec())
             .unwrap();
-        tx.commit();
+        tx.commit().unwrap();
         Ok(())
     }
 
     fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         let encoded = paths.encode_to_vec();
         let tx = self.env.tx_mut().unwrap();
-        tx.put::<SnapState>(SnapStateIndex::StateHealPaths as u8, encoded);
-        tx.commit();
+        tx.put::<SnapState>(SnapStateIndex::StateHealPaths as u8, encoded)
+            .unwrap();
+        tx.commit().unwrap();
         Ok(())
     }
 
@@ -992,7 +997,7 @@ impl StoreEngine for MDBXFork {
 
         // Now perform all DB operations in one quick sequence
         let tx = self.env.tx_mut().unwrap();
-        let mut cursor = tx.cursor_dup_write::<StateSnapShot>().unwrap();
+        let mut cursor = tx.cursor_dup_write::<StorageSnapshot>().unwrap();
 
         for (encoded_hash, encoded_pairs) in pre_encoded {
             cursor.seek_exact(encoded_hash.clone()).unwrap();
@@ -1008,32 +1013,87 @@ impl StoreEngine for MDBXFork {
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        todo!()
+        let encoded = (checkpoint.0, checkpoint.1.to_vec()).encode_to_vec();
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<SnapState>(SnapStateIndex::StateTrieRebuildCheckpoint as u8, encoded)
+            .unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let Some(encoded) = tx
+            .get::<SnapState>(SnapStateIndex::StateTrieRebuildCheckpoint as u8)
+            .unwrap()
+        else {
+            return Ok(None);
+        };
+        let (root, checkpoints): (H256, Vec<H256>) = RLPDecode::decode(&encoded).unwrap();
+        Ok(Some((root, checkpoints.try_into().unwrap())))
     }
 
     fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
-        todo!()
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<SnapState>(
+            SnapStateIndex::StorageTrieRebuildPending as u8,
+            pending.encode_to_vec(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let Some(encoded) = tx
+            .get::<SnapState>(SnapStateIndex::StorageTrieRebuildPending as u8)
+            .unwrap()
+        else {
+            return Ok(None);
+        };
+        let decoded: Vec<(H256, H256)> = RLPDecode::decode(&encoded).unwrap();
+        Ok(Some(decoded))
     }
 
     fn clear_snapshot(&self) -> Result<(), StoreError> {
-        todo!()
+        let tx = self.env.tx_mut().unwrap();
+        tx.clear::<StateSnapShot>().unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn read_account_snapshot(&self, start: H256) -> Result<Vec<(H256, AccountState)>, StoreError> {
-        todo!()
+        let key = start.encode_to_vec();
+        let mut results = vec![];
+        {
+            let tx = self.env.tx().unwrap();
+            let mut cursor = tx.cursor_read::<StateSnapShot>().unwrap();
+            cursor.seek_exact(key).unwrap();
+            let mut readings = 0;
+            while readings < MAX_SNAPSHOT_READS {
+                let Some((encoded_key, encoded_value)) = cursor.next_dup().unwrap() else {
+                    break;
+                };
+                results.push((encoded_key, encoded_value));
+                readings += 1;
+            }
+        }
+        let results = results
+            .into_iter()
+            .map(|(ref encoded_k, ref encoded_v)| {
+                (
+                    H256::decode(encoded_k).unwrap(),
+                    AccountState::decode(encoded_v).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        Ok(results)
     }
 
     fn read_storage_snapshot(
@@ -1041,6 +1101,30 @@ impl StoreEngine for MDBXFork {
         account_hash: H256,
         start: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
-        todo!()
+        let key = start.encode_to_vec();
+        let mut results = vec![];
+        {
+            let tx = self.env.tx().unwrap();
+            let mut cursor = tx.cursor_read::<StateSnapShot>().unwrap();
+            cursor.seek_exact(key).unwrap();
+            let mut readings = 0;
+            while readings < MAX_SNAPSHOT_READS {
+                let Some((encoded_key, encoded_value)) = cursor.next_dup().unwrap() else {
+                    break;
+                };
+                results.push((encoded_key, encoded_value));
+                readings += 1;
+            }
+        }
+        let results = results
+            .into_iter()
+            .map(|(ref encoded_k, ref encoded_v)| {
+                (
+                    H256::decode(encoded_k).unwrap(),
+                    U256::decode(encoded_v).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        Ok(results)
     }
 }
