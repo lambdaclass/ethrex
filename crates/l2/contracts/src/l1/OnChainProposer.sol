@@ -60,6 +60,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
 
+    /// @notice Indicates whether the contract operates in validium mode.
+    /// @dev This value is immutable and can only be set during contract deployment.
+    bool public immutable VALIDIUM;
+
+    /// @notice Constructor to initialize the immutable validium value.
+    /// @param _validium A boolean indicating if the contract operates in validium mode.
+    constructor(bool _validium) {
+        VALIDIUM = _validium;
+    }
+
     modifier onlySequencer() {
         require(
             authorizedSequencerAddresses[msg.sender],
@@ -149,13 +159,14 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash
     ) external override onlySequencer {
+        // TODO: Refactor validation
         require(
             blockNumber == lastCommittedBlock + 1,
             "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
         );
         require(
             blockCommitments[blockNumber].newStateRoot == bytes32(0),
-            "OnChainProposer: block already committed"
+            "OnChainProposer: tried to commit an already committed block"
         );
 
         // Check if commitment is equivalent to blob's KZG commitment.
@@ -176,13 +187,15 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
                 withdrawalsLogsMerkleRoot
             );
         }
+
         blockCommitments[blockNumber] = BlockCommitmentInfo(
             newStateRoot,
             stateDiffKZGVersionedHash,
             processedDepositLogsRollingHash
         );
-        lastCommittedBlock = blockNumber;
         emit BlockCommitted(newStateRoot);
+
+        lastCommittedBlock = blockNumber;
     }
 
     /// @inheritdoc IOnChainProposer
@@ -206,17 +219,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes calldata picoPublicValues,
         uint256[8] calldata picoProof
     ) external override onlySequencer {
+        // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
         require(
             blockNumber == lastVerifiedBlock + 1,
             "OnChainProposer: block already verified"
         );
-
         require(
-            blockCommitments[blockNumber].stateDiffKZGVersionedHash !=
-                bytes32(0),
-            "OnChainProposer: block not committed"
+            blockCommitments[blockNumber].newStateRoot != bytes32(0),
+            "OnChainProposer: cannot verify an uncommitted block"
         );
 
         if (PICOVERIFIER != DEV_MODE) {
@@ -247,6 +259,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
 
         lastVerifiedBlock = blockNumber;
+
         // The first 2 bytes are the number of deposits.
         uint16 deposits_amount = uint16(
             bytes2(
@@ -256,7 +269,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         if (deposits_amount > 0) {
             ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
         }
-
         // Remove previous block commitment as it is no longer needed.
         delete blockCommitments[blockNumber - 1];
 
