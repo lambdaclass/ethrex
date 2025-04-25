@@ -5,7 +5,6 @@ use k256::{
 };
 use std::sync::LazyLock;
 
-pub const WORD_SIZE_IN_BYTES: U256 = U256([32, 0, 0, 0]);
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
 pub const WORD_SIZE_IN_BYTES_U64: u64 = 32;
 
@@ -15,8 +14,6 @@ pub const CREATE_DEPLOYMENT_FAIL: U256 = U256::zero();
 pub const WORD_SIZE: usize = 32;
 
 pub const STACK_LIMIT: usize = 1024;
-
-pub const GAS_REFUND_DENOMINATOR: u64 = 5;
 
 pub const EMPTY_CODE_HASH: H256 = H256([
     0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
@@ -30,7 +27,6 @@ pub const TX_BASE_COST: u64 = 21000;
 
 pub const MAX_CODE_SIZE: usize = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
-pub const MAX_CREATE_CODE_SIZE: usize = 2 * MAX_CODE_SIZE;
 
 pub const INVALID_CONTRACT_PREFIX: u8 = 0xef;
 
@@ -65,7 +61,6 @@ pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
 
 // Block constants
 pub const LAST_AVAILABLE_BLOCK_LIMIT: U256 = U256([256, 0, 0, 0]);
-pub const MAX_BLOCK_GAS_LIMIT: U256 = U256([30_000_000, 0, 0, 0]);
 
 // EIP7702 - EOA Load Code
 pub static SECP256K1_ORDER: LazyLock<U256> =
