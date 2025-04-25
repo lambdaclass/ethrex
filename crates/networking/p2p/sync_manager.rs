@@ -74,11 +74,20 @@ impl SyncManager {
         }
     }
 
-    /// Sets the latest fcu head and starts the next sync cycle if the syncer is currenlty inactive
+    /// Sets the latest fcu head and starts the next sync cycle if the syncer is currently inactive
     pub fn sync_to_head(&self, fcu_head: H256) {
         self.set_head(fcu_head);
         if !self.is_active() {
             self.start_sync();
+        }
+    }
+
+    /// Returns the syncer's current syncmode (either snap or full)
+    pub fn sync_mode(&self) -> SyncMode {
+        if self.snap_enabled.load(Ordering::Relaxed) {
+            SyncMode::Snap
+        } else {
+            SyncMode::Full
         }
     }
 
@@ -99,7 +108,7 @@ impl SyncManager {
     /// Attempts to sync to the last received fcu head
     /// Will do nothing if the syncer is already involved in a sync process
     /// If the sync process would require multiple sync cycles (such as snap sync), starts all required sync cycles until the sync is complete
-    pub fn start_sync(&self) {
+    fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
         let sync_head = self.last_fcu_head.clone();
@@ -145,14 +154,5 @@ impl SyncManager {
                 }
             }
         });
-    }
-
-    /// Returns the syncer's current syncmode (either snap or full)
-    pub fn sync_mode(&self) -> SyncMode {
-        if self.snap_enabled.load(Ordering::Relaxed) {
-            SyncMode::Snap
-        } else {
-            SyncMode::Full
-        }
     }
 }
