@@ -2,13 +2,14 @@ use crate::{config::EthrexL2Config, utils::config::confirm};
 use clap::Subcommand;
 use ethrex_common::{
     types::{bytes_from_blob, BlockHeader, BYTES_PER_BLOB},
-    Address,
+    Address, H160,
 };
 use ethrex_l2::sequencer::state_diff::StateDiff;
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{error::StoreError, EngineType, Store};
 use ethrex_storage_l2::{EngineTypeRollup, StoreRollup};
 use eyre::ContextCompat;
 use itertools::Itertools;
+use keccak_hash::H256;
 use secp256k1::SecretKey;
 use std::{
     fs::read_dir,
@@ -259,39 +260,19 @@ impl Command {
                             )
                         })
                         .collect();
-
                     // Get the first block of the batch
                     let first_block_number = last_block_number + 1;
 
-                    // Iterate over all blocks in the batch except the last one
-                    while last_block_number + 1 < state_diff.last_header.number {
-                        // Build header of current block
-                        let new_block = BlockHeader {
-                            coinbase,
-                            number: last_block_number + 1,
-                            parent_hash: last_hash,
-                            state_root: last_state_root,
-                            ..Default::default()
-                        };
-                        let new_block_hash = new_block.compute_block_hash();
-
-                        // Store current block
-                        store.add_block_header(new_block_hash, new_block).await?;
-                        store
-                            .add_block_number(new_block_hash, last_block_number + 1)
-                            .await?;
-                        store
-                            .set_canonical_block(last_block_number + 1, new_block_hash)
-                            .await?;
-                        println!(
-                            "Stored block {} With state_root {}",
-                            last_block_number + 1,
-                            last_state_root
-                        );
-
-                        last_block_number += 1;
-                        last_hash = new_block_hash;
-                    }
+                    // Store all blocks in batch except the last one
+                    store_empty_blocks(
+                        first_block_number,
+                        state_diff.last_header.number,
+                        state_diff.last_header.coinbase,
+                        last_state_root,
+                        &mut last_hash,
+                        &store,
+                    )
+                    .await?;
 
                     // Build the header of the last block.
                     // Note that its state_root is the root of new_trie.
@@ -304,7 +285,9 @@ impl Command {
 
                     // Store last block.
                     let new_block_hash = new_block.compute_block_hash();
-                    store.add_block_header(new_block_hash, new_block).await?;
+                    store
+                        .add_block_header(new_block_hash, new_block.clone())
+                        .await?;
                     store
                         .add_block_number(new_block_hash, state_diff.last_header.number)
                         .await?;
@@ -312,13 +295,12 @@ impl Command {
                         .set_canonical_block(state_diff.last_header.number, new_block_hash)
                         .await?;
                     println!(
-                        "Stored last header of blob. Block {}. State root {}",
-                        last_block_number + 1,
-                        state_diff.last_header.state_root
+                        "Stored last block of blob. Block {}. State root {}",
+                        new_block.number, new_block.state_root
                     );
-                    last_block_number += 1;
+                    last_block_number = new_block.number;
                     last_hash = new_block_hash;
-                    last_state_root = state_diff.last_header.state_root;
+                    last_state_root = new_block.state_root;
 
                     // Store batch info in L2 storage
                     rollup_store
@@ -336,6 +318,46 @@ impl Command {
         }
         Ok(())
     }
+}
+
+/// Stores blocks without state changes. When reconstructing the state, we apply all AccountUpdates
+/// to the last block of the batch.
+/// Updates the parent_hash for use by the calling function.
+async fn store_empty_blocks(
+    mut current_block: u64,
+    last_block: u64,
+    coinbase: H160,
+    state_root: H256,
+    parent_hash: &mut H256,
+    store: &Store,
+) -> Result<(), StoreError> {
+    while current_block < last_block {
+        let new_block = BlockHeader {
+            coinbase,
+            number: current_block,
+            parent_hash: *parent_hash,
+            state_root,
+            ..Default::default()
+        };
+        let new_block_hash = new_block.compute_block_hash();
+
+        // Store current block
+        store.add_block_header(new_block_hash, new_block).await?;
+        store
+            .add_block_number(new_block_hash, current_block)
+            .await?;
+        store
+            .set_canonical_block(current_block, new_block_hash)
+            .await?;
+        println!(
+            "Stored block {} With state_root {}",
+            current_block, state_root
+        );
+
+        current_block += 1;
+        *parent_hash = new_block_hash;
+    }
+    Ok(())
 }
 
 fn deploy_l1(
