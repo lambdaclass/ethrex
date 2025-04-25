@@ -900,15 +900,7 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
-    pub fn handle_return(
-        &mut self,
-        call_frame: &CallFrame,
-        tx_report: &ExecutionReport,
-    ) -> Result<bool, VMError> {
-        if call_frame.depth == 0 {
-            self.call_frames.push(call_frame.clone());
-            return Ok(false);
-        }
+    pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<bool, VMError> {
         let retdata = self
             .return_data
             .pop()
@@ -916,18 +908,19 @@ impl<'a> VM<'a> {
         if retdata.is_create {
             self.handle_return_create(tx_report, retdata)?;
         } else {
-            self.handle_return_call(call_frame, tx_report, retdata)?;
+            self.handle_return_call(tx_report, retdata)?;
         }
         Ok(true)
     }
+
     pub fn handle_return_call(
         &mut self,
-        call_frame: &CallFrame,
         tx_report: &ExecutionReport,
         retdata: RetData,
     ) -> Result<(), VMError> {
         // Return gas left from subcontext
-        let gas_left_from_new_call_frame = call_frame
+        let gas_left_from_new_call_frame = self
+            .current_call_frame_mut()?
             .gas_limit
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
