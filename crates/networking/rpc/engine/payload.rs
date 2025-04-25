@@ -698,9 +698,7 @@ async fn try_execute_payload(
                 .update_sync_status(false)
                 .await
                 .map_err(|e| RpcErr::Internal(e.to_string()))?;
-            context.syncer.set_head(block_hash);
-            context.syncer.start_sync();
-
+            context.syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }
         // Under the current implementation this is not possible: we always calculate the state
