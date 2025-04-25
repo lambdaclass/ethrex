@@ -1,9 +1,7 @@
 use crate::{
     account::Account,
-    call_frame::CallFrame,
     constants::*,
-    db::cache::{insert_account, remove_account},
-    errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
+    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
@@ -28,28 +26,18 @@ impl Hook for DefaultHook {
     /// - It adds value to receiver balance.
     /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
     ///   See 'docs' for more information about validations.
-    fn prepare_execution(
-        &self,
-        vm: &mut VM<'_>,
-        initial_call_frame: &mut CallFrame,
-    ) -> Result<(), VMError> {
+    fn prepare_execution(&self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let sender_account = get_account(vm.db, sender_address)?;
+        let sender_account = vm.db.get_account(sender_address)?;
 
         if vm.env.config.fork >= Fork::Prague {
             // check for gas limit is grater or equal than the minimum required
-            let intrinsic_gas: u64 = get_intrinsic_gas(
-                vm.is_create(),
-                vm.env.config.fork,
-                &vm.access_list,
-                &vm.authorization_list,
-                initial_call_frame,
-            )?;
+            let calldata = vm.current_call_frame()?.calldata.clone();
+            let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
             // calldata_cost = tokens_in_calldata * 4
             let calldata_cost: u64 =
-                gas_cost::tx_calldata(&initial_call_frame.calldata, vm.env.config.fork)
-                    .map_err(VMError::OutOfGas)?;
+                gas_cost::tx_calldata(&calldata, vm.env.config.fork).map_err(VMError::OutOfGas)?;
 
             // same as calculated in gas_used()
             let tokens_in_calldata: u64 = calldata_cost
@@ -64,7 +52,7 @@ impl Hook for DefaultHook {
                 .ok_or(VMError::Internal(InternalError::GasOverflow))?;
 
             let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
-            if initial_call_frame.gas_limit < min_gas_limit {
+            if vm.current_call_frame()?.gas_limit < min_gas_limit {
                 return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
             }
         }
@@ -79,7 +67,7 @@ impl Hook for DefaultHook {
             ))?;
 
         // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
-        let value = initial_call_frame.msg_value;
+        let value = vm.current_call_frame()?.msg_value;
 
         // blob gas cost = max fee per blob gas * blob gas used
         // https://eips.ethereum.org/EIPS/eip-4844
@@ -145,7 +133,7 @@ impl Hook for DefaultHook {
         // technically, the sender will not be able to pay it.
 
         // (3) INSUFFICIENT_ACCOUNT_FUNDS
-        decrease_account_balance(vm.db, sender_address, up_front_cost)
+        vm.decrease_account_balance(sender_address, up_front_cost)
             .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
 
         // (4) INSUFFICIENT_MAX_FEE_PER_GAS
@@ -158,7 +146,7 @@ impl Hook for DefaultHook {
         // (5) INITCODE_SIZE_EXCEEDED
         if vm.is_create() {
             // [EIP-3860] - INITCODE_SIZE_EXCEEDED
-            if initial_call_frame.calldata.len() > INIT_CODE_MAX_SIZE
+            if vm.current_call_frame()?.calldata.len() > INIT_CODE_MAX_SIZE
                 && vm.env.config.fork >= Fork::Shanghai
             {
                 return Err(VMError::TxValidation(
@@ -168,16 +156,10 @@ impl Hook for DefaultHook {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        add_intrinsic_gas(
-            vm.is_create(),
-            vm.env.config.fork,
-            initial_call_frame,
-            &vm.access_list,
-            &vm.authorization_list,
-        )?;
+        vm.add_intrinsic_gas()?;
 
         // (7) NONCE_IS_MAX
-        increment_account_nonce(vm.db, sender_address)
+        vm.increment_account_nonce(sender_address)
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
@@ -293,25 +275,22 @@ impl Hook for DefaultHook {
                 ));
             }
 
-            vm.env.refunded_gas = eip7702_set_access_code(
-                vm.db,
-                vm.env.chain_id,
-                &mut vm.accrued_substate,
-                // TODO: avoid clone()
-                vm.authorization_list.clone(),
-                initial_call_frame,
-            )?;
+            vm.eip7702_set_access_code()?;
         }
 
         if vm.is_create() {
             // Assign bytecode to context and empty calldata
-            initial_call_frame.bytecode = std::mem::take(&mut initial_call_frame.calldata);
-            initial_call_frame.valid_jump_destinations =
-                get_valid_jump_destinations(&initial_call_frame.bytecode).unwrap_or_default();
+            vm.current_call_frame_mut()?.bytecode =
+                std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
+            vm.current_call_frame_mut()?.valid_jump_destinations =
+                get_valid_jump_destinations(&vm.current_call_frame()?.bytecode).unwrap_or_default();
         } else {
             // Transfer value to receiver
             // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
-            increase_account_balance(vm.db, initial_call_frame.to, initial_call_frame.msg_value)?;
+            vm.increase_account_balance(
+                vm.current_call_frame()?.to,
+                vm.current_call_frame()?.msg_value,
+            )?;
         }
         Ok(())
     }
@@ -324,39 +303,21 @@ impl Hook for DefaultHook {
     fn finalize_execution(
         &self,
         vm: &mut VM<'_>,
-        initial_call_frame: &CallFrame,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
-        // POST-EXECUTION Changes
-        let sender_address = initial_call_frame.msg_sender;
-        let receiver_address = initial_call_frame.to;
+        let sender_address = vm.current_call_frame()?.msg_sender;
 
-        // 1. Undo value transfer if the transaction has reverted
-        if let TxResult::Revert(_) = report.result {
-            let existing_account = get_account(vm.db, receiver_address)?; //TO Account
-
-            if has_delegation(&existing_account.info)? {
-                // This is the case where the "to" address and the
-                // "signer" address are the same. We are setting the code
-                // and sending some balance to the "to"/"signer"
-                // address.
-                // See https://eips.ethereum.org/EIPS/eip-7702#behavior (last sentence).
-
-                // If transaction execution results in failure (any
-                // exceptional condition or code reverting), setting
-                // delegation designations is not rolled back.
-                decrease_account_balance(vm.db, receiver_address, initial_call_frame.msg_value)?;
-            } else {
-                // If the receiver of the transaction was in the cache before the transaction we restore it's state,
-                // but if it wasn't then we remove the account from cache like nothing happened.
-                if let Some(receiver_account) = vm.cache_backup.get(&receiver_address) {
-                    insert_account(&mut vm.db.cache, receiver_address, receiver_account.clone());
-                } else {
-                    remove_account(&mut vm.db.cache, &receiver_address);
-                }
+        // 1. Undo value transfer if Tx reverted
+        if !report.is_success() {
+            // In a create if Tx was reverted the account won't even exist by this point.
+            if !vm.is_create() {
+                vm.decrease_account_balance(
+                    vm.current_call_frame()?.to,
+                    vm.current_call_frame()?.msg_value,
+                )?;
             }
 
-            increase_account_balance(vm.db, sender_address, initial_call_frame.msg_value)?;
+            vm.increase_account_balance(sender_address, vm.current_call_frame()?.msg_value)?;
         }
 
         // 2. Return unused gas + gas refunds to the sender.
@@ -383,7 +344,7 @@ impl Hook for DefaultHook {
             .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
 
         let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
-            let minimum_gas_consumed = vm.get_min_gas_used(initial_call_frame)?;
+            let minimum_gas_consumed = vm.get_min_gas_used()?;
             exec_gas_consumed.max(minimum_gas_consumed)
         } else {
             exec_gas_consumed
@@ -406,7 +367,7 @@ impl Hook for DefaultHook {
             .checked_mul(U256::from(gas_to_return))
             .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
-        increase_account_balance(vm.db, sender_address, wei_return_amount)?;
+        vm.increase_account_balance(sender_address, wei_return_amount)?;
 
         // 3. Pay coinbase fee
         let coinbase_address = vm.env.coinbase;
@@ -420,15 +381,13 @@ impl Hook for DefaultHook {
             .checked_mul(priority_fee_per_gas)
             .ok_or(VMError::BalanceOverflow)?;
 
-        if coinbase_fee != U256::zero() {
-            increase_account_balance(vm.db, coinbase_address, coinbase_fee)?;
-        };
+        vm.increase_account_balance(coinbase_address, coinbase_fee)?;
 
         // 4. Destruct addresses in vm.selfdestruct set.
         // In Cancun the only addresses destroyed are contracts created in this transaction
         let selfdestruct_set = vm.accrued_substate.selfdestruct_set.clone();
         for address in selfdestruct_set {
-            let account_to_remove = get_account_mut_vm(vm.db, address)?;
+            let account_to_remove = vm.get_account_mut(address)?;
             *account_to_remove = Account::default();
         }
 
