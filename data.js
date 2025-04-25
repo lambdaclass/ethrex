@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745621277772,
+  "lastUpdate": 1745622592760,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4765,6 +4765,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177866198277,
             "range": "± 532002286",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "470a3acfd9e7bd2831dd1afc4e09c0db46318e65",
+          "message": "refactor(l2): use deposit hash as the tx hash for l2 txs (#2562)\n\n**Motivation**\n\nHere we want to not process the same deposit to the L2 as two different\ntransactions.\n\n**Description**\n\n* Change the transaction hash of the `PrivilegedL2Transaction` to the\ndeposit hash (instead of the hash of the entire tx) . The one that is\nemitted when the deposit is done\n* In the `l1_watcher` skip transactions that are already on the store.\n\nCloses #2552",
+          "timestamp": "2025-04-25T22:21:28Z",
+          "tree_id": "98a609a09857cd7baedf9485d321f1906f2697cc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/470a3acfd9e7bd2831dd1afc4e09c0db46318e65"
+        },
+        "date": 1745622590892,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177148559142,
+            "range": "± 1230424192",
             "unit": "ns/iter"
           }
         ]
