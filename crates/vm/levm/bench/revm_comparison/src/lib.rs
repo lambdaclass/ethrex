@@ -4,15 +4,15 @@ use ethrex_common::{
     Address as EthrexAddress, U256,
 };
 use ethrex_levm::{
-    db::{cache, gen_db::GeneralizedDatabase, CacheDB},
+    db::{gen_db::GeneralizedDatabase, CacheDB},
     errors::{TxResult, VMError},
     vm::VM,
     Environment,
 };
 use ethrex_vm::db::ExecutionDB;
 use revm::{
-    db::BenchmarkDB,
-    primitives::{address, Address, Bytecode, TransactTo},
+    db::CacheDB as RevmCacheDB,
+    primitives::{alloy_primitives::U160, Address, TransactTo},
     Evm,
 };
 use sha3::{Digest, Keccak256};
@@ -20,119 +20,61 @@ use std::hint::black_box;
 use std::io::Read;
 use std::{collections::HashMap, fs::File, sync::Arc};
 
+const SENDER_ADDRESS: u64 = 0x64;
+const CONTRACT_ADDRESS: u64 = 0x2A;
+
 pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
-    let bytecode = Bytes::from(hex::decode(program).unwrap());
     let calldata = Bytes::from(hex::decode(calldata).unwrap());
 
-    let code_hash = code_hash(&bytecode);
-    let sender_address = EthrexAddress::from_low_u64_be(100);
-    let accounts = [
-        // This is the contract account that is going to be executed
-        (
-            EthrexAddress::from_low_u64_be(42),
-            Account {
-                info: AccountInfo {
-                    nonce: 0,
-                    balance: U256::MAX,
-                    code_hash,
-                },
-                storage: HashMap::new(),
-                code: bytecode.clone(),
-            },
-        ),
-        (
-            // This is the sender account
-            sender_address,
-            Account {
-                info: AccountInfo {
-                    nonce: 0,
-                    balance: U256::MAX,
-                    code_hash,
-                },
-                storage: HashMap::new(),
-                code: Bytes::new(),
-            },
-        ),
-    ];
-
-    let mut execution_db = ExecutionDB::default();
-
-    accounts.iter().for_each(|(address, account)| {
-        execution_db.accounts.insert(*address, account.info.clone());
-    });
+    let sender_address = EthrexAddress::from_low_u64_be(SENDER_ADDRESS);
+    let bytecode = Bytes::from(hex::decode(program).unwrap());
+    let execution_db = setup_execution_db(sender_address, bytecode);
 
     let mut db = GeneralizedDatabase::new(Arc::new(execution_db), CacheDB::new());
 
-    cache::insert_account(
-        &mut db.cache,
-        accounts[0].0,
-        ethrex_levm::Account::new(
-            accounts[0].1.info.balance,
-            accounts[0].1.code.clone(),
-            accounts[0].1.info.nonce,
-            HashMap::new(),
-        ),
-    );
-    cache::insert_account(
-        &mut db.cache,
-        accounts[1].0,
-        ethrex_levm::Account::new(
-            accounts[1].1.info.balance,
-            accounts[1].1.code.clone(),
-            accounts[1].1.info.nonce,
-            HashMap::new(),
-        ),
-    );
-
     // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
-    for _nonce in 0..runs - 1 {
+    for _nonce in 0..runs {
         let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
         vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
         vm.env.gas_limit = u64::MAX - 1;
         vm.env.block_gas_limit = u64::MAX;
         let tx_report = black_box(vm.stateless_execute().unwrap());
         assert!(tx_report.result == TxResult::Success);
-    }
-    let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
-    vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
-    vm.env.gas_limit = u64::MAX - 1;
-    vm.env.block_gas_limit = u64::MAX;
-    let tx_report = black_box(vm.stateless_execute().unwrap());
-    assert!(tx_report.result == TxResult::Success);
 
-    match tx_report.result {
-        TxResult::Success => {
-            println!("output: \t\t0x{}", hex::encode(tx_report.output));
+        if _nonce == runs - 1 {
+            println!("LEVM output: 0x{}", hex::encode(tx_report.output));
         }
-        TxResult::Revert(error) => panic!("Execution failed: {:?}", error),
     }
 }
 
 pub fn run_with_revm(program: &str, runs: u64, calldata: &str) {
-    let rich_acc_address = address!("1000000000000000000000000000000000000000");
-    let bytes = hex::decode(program).unwrap();
-    let raw = Bytecode::new_raw(bytes.clone().into());
+    let sender_address = EthrexAddress::from_low_u64_be(SENDER_ADDRESS);
+    let bytecode = Bytes::from(hex::decode(program).unwrap());
 
-    let mut evm = Evm::builder()
-        .modify_tx_env(|tx| {
-            tx.caller = rich_acc_address;
-            tx.transact_to = TransactTo::Call(Address::ZERO);
-            tx.data = hex::decode(calldata).unwrap().into();
-        })
-        .with_db(BenchmarkDB::new_bytecode(raw))
-        .build();
+    let execution_db = setup_execution_db(sender_address, bytecode);
 
-    let result = evm.transact().unwrap();
-    assert!(result.result.is_success());
+    let mut revm_cache_db = RevmCacheDB::new(execution_db);
 
-    for _ in 0..runs - 1 {
+    for i in 0..runs {
+        let mut evm = Evm::builder()
+            .modify_tx_env(|tx| {
+                tx.caller = Address::from(sender_address.0);
+                tx.transact_to = TransactTo::Call(Address::from(U160::from(CONTRACT_ADDRESS)));
+                tx.data = hex::decode(calldata).unwrap().into();
+            })
+            .with_db(&mut revm_cache_db)
+            .build();
+
         let result = black_box(evm.transact()).unwrap();
         assert!(result.result.is_success());
-    }
-    let result = black_box(evm.transact()).unwrap();
-    assert!(result.result.is_success());
 
-    println!("output: \t\t{}", result.result.into_output().unwrap());
+        if i == runs - 1 {
+            println!(
+                "REVM output: 0x{}",
+                hex::encode(result.result.into_output().unwrap())
+            );
+        }
+    }
 }
 
 pub fn generate_calldata(function: &str, n: u64) -> String {
@@ -172,7 +114,7 @@ fn load_file_bytecode(path: &str) -> String {
 }
 
 pub fn new_vm_with_bytecode(db: &mut GeneralizedDatabase, nonce: u64) -> Result<VM, VMError> {
-    new_vm_with_ops_addr_bal_db(EthrexAddress::from_low_u64_be(100), nonce, db)
+    new_vm_with_ops_addr_bal_db(EthrexAddress::from_low_u64_be(SENDER_ADDRESS), nonce, db)
 }
 
 /// This function is for testing purposes only.
@@ -193,4 +135,54 @@ fn new_vm_with_ops_addr_bal_db(
         ..Default::default()
     });
     VM::new(env, db, &tx)
+}
+
+fn setup_execution_db(sender_address: EthrexAddress, bytecode: Bytes) -> ExecutionDB {
+    let mut execution_db = ExecutionDB::default();
+
+    let code_hash = code_hash(&bytecode);
+    let accounts = [
+        // This is the contract account that is going to be executed
+        (
+            EthrexAddress::from_low_u64_be(CONTRACT_ADDRESS),
+            Account {
+                info: AccountInfo {
+                    nonce: 0,
+                    balance: U256::MAX,
+                    code_hash,
+                },
+                storage: HashMap::new(),
+                code: bytecode.clone(),
+            },
+        ),
+        (
+            // This is the sender account
+            sender_address,
+            Account {
+                info: AccountInfo {
+                    nonce: 0,
+                    balance: U256::MAX,
+                    code_hash: ethrex_common::types::code_hash(&Bytes::new()),
+                },
+                storage: HashMap::new(),
+                code: Bytes::new(),
+            },
+        ),
+    ];
+
+    accounts.iter().for_each(|(address, account)| {
+        execution_db.accounts.insert(*address, account.info.clone());
+        execution_db
+            .code
+            .insert(account.info.code_hash, account.code.clone());
+        execution_db.storage.insert(
+            *address,
+            account.storage.iter().map(|(k, v)| (*k, *v)).collect(),
+        );
+        execution_db
+            .block_hashes
+            .insert(0, *ethrex_common::types::EMPTY_TRIE_HASH);
+    });
+
+    execution_db
 }
