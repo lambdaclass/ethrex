@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745619533364,
+  "lastUpdate": 1745619767634,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4615,6 +4615,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180504554495,
             "range": "± 730769707",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "521a9b6de6c82177d11268bc2e93d90129f0422d",
+          "message": "fix(l1): fcu not triggering sync if snap is enabled + re-enable snap sync hive test (#2605)\n\n**Motivation**\nPR #2426 changed how fork choice & new payload interact with the syncer\nand also introduced a bug. If snap sync is enabled, then fork choice\nupdate will never attempt to trigger a sync, so the sync process never\ngets started.\nThis PR fixes the bug and also refactors the sync manager api to better\nsuit the new use cases\n<!-- Why does this pull request exist? What are its goals? -->\n* Combine commonly used together `SyncManager` methods `set_head` &\n`start_sync` into `sync_to_head`\n* Remove unused `SyncManager` method `status` and associated struct\n* Make sure sync is triggered during fcu when needed even if snap sync\nis enabled\n* Re-enable snap sync hive test suite\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2521",
+          "timestamp": "2025-04-25T21:35:13Z",
+          "tree_id": "3a6d17f13666e6990e2a51d4b34764f01ced878c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/521a9b6de6c82177d11268bc2e93d90129f0422d"
+        },
+        "date": 1745619765341,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180123755475,
+            "range": "± 1237834244",
             "unit": "ns/iter"
           }
         ]
