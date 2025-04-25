@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745612223708,
+  "lastUpdate": 1745618533748,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4555,6 +4555,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179093631965,
             "range": "± 960705176",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7f1cd7165f019cf50c555bd7dd8240a2a79a27a0",
+          "message": "ci(core): make sure clippy catches warnings. (#2506)\n\n**Motivation**\nThere has been warnings that slip through the cracks, specifically the\nones that trigger if a specific combination of flags is\nenabled/disabled. This PR aims to catch most of these.",
+          "timestamp": "2025-04-25T21:14:41Z",
+          "tree_id": "8fdb0bf167f5df9d1c3f84fc161166a97acf99c3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7f1cd7165f019cf50c555bd7dd8240a2a79a27a0"
+        },
+        "date": 1745618531861,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179968799412,
+            "range": "± 934948267",
             "unit": "ns/iter"
           }
         ]
