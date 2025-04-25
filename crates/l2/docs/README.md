@@ -55,8 +55,8 @@ To transfer ETH from Ethereum L1 to your L2 account:
 
    Using Rex is as simple as:
    ```cli
-   # Format: rex send <CommonBridgeAddress> <AmountInWei> <L1PrivateKey>
-   rex send 0x65dd6dc5df74b7e08e92c910122f91d7b2d5184f 50000000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+   # rex l2 deposit <AMOUNT> <PRIVATE_KEY> <BRIDGE_ADDRESS> [L2_RPC_URL]
+   rex l2 deposit 50000000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 0x65dd6dc5df74b7e08e92c910122f91d7b2d5184f
    ```
 
 3. Verification:
