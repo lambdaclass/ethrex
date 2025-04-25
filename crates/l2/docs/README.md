@@ -60,6 +60,7 @@ To transfer ETH from Ethereum L1 to your L2 account:
    ```
 
 3. Verification:
+
    Once the deposit is made you can verify the balance has increase with:
    ```cli
    # Format: rex balance <L2Address> <L2_RPC_URL>
