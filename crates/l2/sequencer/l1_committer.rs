@@ -3,10 +3,8 @@ use crate::{
         errors::CommitterError,
         state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::{
-        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
-        helpers::is_withdrawal_l2,
-    },
+    utils::helpers::is_withdrawal_l2,
+    CommitterConfig, EthConfig, SequencerConfig,
 };
 
 use ethrex_common::{
@@ -29,7 +27,11 @@ use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
+use super::{
+    errors::{BlobEstimationError, SequencerError},
+    execution_cache::ExecutionCache,
+    utils::sleep_random,
+};
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32,bytes32)";
 
@@ -48,12 +50,10 @@ pub struct Committer {
 pub async fn start_l1_committer(
     store: Store,
     execution_cache: Arc<ExecutionCache>,
-) -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    let committer_config = CommitterConfig::from_env()?;
-
+    cfg: Arc<SequencerConfig>,
+) -> Result<(), SequencerError> {
     let mut committer =
-        Committer::new_from_config(&committer_config, eth_config, store, execution_cache);
+        Committer::new_from_config(&cfg.committer, &cfg.eth, store, execution_cache);
     committer.run().await;
     Ok(())
 }
@@ -61,7 +61,7 @@ pub async fn start_l1_committer(
 impl Committer {
     pub fn new_from_config(
         committer_config: &CommitterConfig,
-        eth_config: EthConfig,
+        eth_config: &EthConfig,
         store: Store,
         execution_cache: Arc<ExecutionCache>,
     ) -> Self {

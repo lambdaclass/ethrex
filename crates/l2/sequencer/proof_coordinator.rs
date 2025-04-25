@@ -1,14 +1,9 @@
 use crate::sequencer::errors::ProverServerError;
+use crate::utils::prover::proving_systems::ProofCalldata;
 use crate::utils::prover::save_state::{
     block_number_has_state_file, write_state, StateFileType, StateType,
 };
-use crate::utils::{
-    config::{
-        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        proof_coordinator::ProofCoordinatorConfig,
-    },
-    prover::proving_systems::ProofCalldata,
-};
+use crate::{CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address,
@@ -17,6 +12,7 @@ use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_vm::{Evm, EvmError, ExecutionDB};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{fmt::Debug, net::IpAddr};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -25,6 +21,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+use super::errors::SequencerError;
 use super::utils::sleep_random;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -108,17 +105,13 @@ impl ProofData {
     }
 }
 
-pub async fn start_proof_coordinator(store: Store) -> Result<(), ConfigError> {
-    let server_config = ProofCoordinatorConfig::from_env()?;
-    let eth_config = EthConfig::from_env()?;
-    let committer_config = CommitterConfig::from_env()?;
-    let prover_server = ProofCoordinator::new_from_config(
-        server_config.clone(),
-        &committer_config,
-        eth_config.clone(),
-        store,
-    )
-    .await?;
+pub async fn start_proof_coordinator(
+    store: Store,
+    cfg: Arc<SequencerConfig>,
+) -> Result<(), SequencerError> {
+    let prover_server =
+        ProofCoordinator::new_from_config(&cfg.proof_coordinator, &cfg.committer, &cfg.eth, store)
+            .await?;
     prover_server.run().await;
 
     Ok(())
@@ -126,11 +119,11 @@ pub async fn start_proof_coordinator(store: Store) -> Result<(), ConfigError> {
 
 impl ProofCoordinator {
     pub async fn new_from_config(
-        config: ProofCoordinatorConfig,
+        config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
-        eth_config: EthConfig,
+        eth_config: &EthConfig,
         store: Store,
-    ) -> Result<Self, ConfigError> {
+    ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 

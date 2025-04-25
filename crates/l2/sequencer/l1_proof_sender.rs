@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
@@ -12,19 +12,14 @@ use tracing::{debug, error, info};
 
 use crate::{
     sequencer::errors::ProofSenderError,
-    utils::{
-        config::{
-            committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-            proof_coordinator::ProofCoordinatorConfig,
-        },
-        prover::{
-            proving_systems::ProverType,
-            save_state::{block_number_has_all_needed_proofs, read_proof, StateFileType},
-        },
+    utils::prover::{
+        proving_systems::ProverType,
+        save_state::{block_number_has_all_needed_proofs, read_proof, StateFileType},
     },
+    CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 
-use super::utils::sleep_random;
+use super::{errors::SequencerError, utils::sleep_random};
 
 const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -33,15 +28,9 @@ const DEV_MODE_ADDRESS: H160 = H160([
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
-pub async fn start_l1_proof_sender() -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    let committer_config = CommitterConfig::from_env()?;
-    let proof_sender_config = ProofCoordinatorConfig::from_env()?;
-
-    let proof_sender =
-        L1ProofSender::new(&proof_sender_config, &committer_config, &eth_config).await?;
+pub async fn start_l1_proof_sender(cfg: Arc<SequencerConfig>) -> Result<(), SequencerError> {
+    let proof_sender = L1ProofSender::new(&cfg.proof_coordinator, &cfg.committer, &cfg.eth).await?;
     proof_sender.run().await;
-
     Ok(())
 }
 
@@ -56,14 +45,14 @@ struct L1ProofSender {
 
 impl L1ProofSender {
     async fn new(
-        config: &ProofCoordinatorConfig,
-        committer_config: &CommitterConfig,
-        eth_config: &EthConfig,
-    ) -> Result<Self, ConfigError> {
-        let eth_client = EthClient::new(&eth_config.rpc_url);
+        cfg: &ProofCoordinatorConfig,
+        committer_cfg: &CommitterConfig,
+        eth_cfg: &EthConfig,
+    ) -> Result<Self, ProofSenderError> {
+        let eth_client = EthClient::new(&eth_cfg.rpc_url);
 
         let mut needed_proof_types = vec![];
-        if !config.dev_mode {
+        if !cfg.dev_mode {
             for prover_type in ProverType::all() {
                 let Some(getter) = prover_type.verifier_getter() else {
                     continue;
@@ -72,13 +61,14 @@ impl L1ProofSender {
 
                 let response = eth_client
                     .call(
-                        committer_config.on_chain_proposer_address,
+                        committer_cfg.on_chain_proposer_address,
                         calldata.into(),
                         Overrides::default(),
                     )
                     .await?;
-                let address = Address::from_str(&response)
-                    .map_err(|_| ConfigError::HexParsingError(response))?;
+                let address = Address::from_str(&response).map_err(|_| {
+                    ProofSenderError::FailedToParseOnChainProposerResponse(response)
+                })?;
 
                 if address != DEV_MODE_ADDRESS {
                     info!("{prover_type} proof needed");
@@ -91,11 +81,11 @@ impl L1ProofSender {
 
         Ok(Self {
             eth_client,
-            l1_address: config.l1_address,
-            l1_private_key: config.l1_private_key,
-            on_chain_proposer_address: committer_config.on_chain_proposer_address,
+            l1_address: cfg.l1_address,
+            l1_private_key: cfg.l1_private_key,
+            on_chain_proposer_address: committer_cfg.on_chain_proposer_address,
             needed_proof_types,
-            proof_send_interval_ms: config.proof_send_interval_ms,
+            proof_send_interval_ms: cfg.proof_send_interval_ms,
         })
     }
 
