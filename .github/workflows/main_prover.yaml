@@ -12,7 +12,8 @@ env:
 
 jobs:
   test:
-    name: Integration Test
+    name: Integration Test Prover SP1
+    if: ${{ always() && github.event_name == 'merge_group' }}
     runs-on: gpu
     steps:
       - name: Checkout sources
