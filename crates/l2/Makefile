@@ -52,7 +52,6 @@ ethrex_METRICS_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/dock
 ethrex_METRICS_OVERRIDES_L1_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l1-dev.overrides.yaml
 ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain/metrics/docker-compose-metrics-l2.overrides.yaml
 CI_ETHREX_WORKDIR := /usr/local/bin
-CI_ETHREX_PROOF_COORDINATOR_LISTEN_IP := 0.0.0.0
 
 ethrex_L2_CONFIGS_PATH=$(shell pwd)/configs
 ethrex_L2_SEQUENCER_CONFIG_FILE=sequencer_config.toml
@@ -215,8 +214,8 @@ integration-test: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
 	touch .env
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} CI_ETHREX_PROOF_COORDINATOR_LISTEN_IP=${CI_ETHREX_PROOF_COORDINATOR_LISTEN_IP} ETHREX_COMMITTER_VALIDIUM=${VALIDIUM} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} CI_ETHREX_PROOF_COORDINATOR_LISTEN_IP=${CI_ETHREX_PROOF_COORDINATOR_LISTEN_IP} ETHREX_COMMITTER_VALIDIUM=${VALIDIUM} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} ETHREX_COMMITTER_VALIDIUM=${VALIDIUM} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} ETHREX_COMMITTER_VALIDIUM=${VALIDIUM} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover
 

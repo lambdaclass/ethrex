@@ -100,7 +100,7 @@ jobs:
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           cp configs/sequencer_config_example.toml configs/sequencer_config.toml
-          make integration-test VALIDIUM=${{ matrix.validium }}
+          ETHREX_PROOF_COORDINATOR_LISTEN_IP=0.0.0.0 make integration-test VALIDIUM=${{ matrix.validium }}
 
   state-diff-test:
     # "State Reconstruction Tests" is a required check, don't change the name
