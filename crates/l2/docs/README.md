@@ -88,8 +88,8 @@ For more information on what you can do with the CommonBridge see [here](./contr
 
    Once the withdrawal is made you can verify the balance has decrease with:
    ```Shell
-   # Format: rex balance <L2Address> <L2_RPC_URL>
-   rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 "http://localhost:1729"
+   # Format: rex l2 balance <L2Address> [L2_RPC_URL]
+   rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
    ```
 ## Configuration
 
