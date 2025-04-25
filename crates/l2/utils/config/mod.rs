@@ -3,14 +3,8 @@ use std::{
     io::{BufRead, Write},
     path::{Path, PathBuf},
 };
-
 use tracing::{debug, info};
 
-pub mod block_producer;
-pub mod committer;
-pub mod eth;
-pub mod l1_watcher;
-pub mod proof_coordinator;
 pub mod prover;
 
 pub mod errors;

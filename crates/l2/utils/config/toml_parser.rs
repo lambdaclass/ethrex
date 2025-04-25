@@ -63,9 +63,6 @@ impl Eth {
 #[derive(Deserialize, Debug)]
 struct Watcher {
     bridge_address: String,
-    check_interval_ms: u64,
-    max_block_step: u64,
-    l2_proposer_private_key: String,
 }
 
 impl Watcher {
@@ -74,44 +71,16 @@ impl Watcher {
         format!(
             "
 {prefix}_BRIDGE_ADDRESS={}
-{prefix}_CHECK_INTERVAL_MS={}
-{prefix}_MAX_BLOCK_STEP={}
-{prefix}_L2_PROPOSER_PRIVATE_KEY={}
 ",
             self.bridge_address,
-            self.check_interval_ms,
-            self.max_block_step,
-            self.l2_proposer_private_key
-        )
-    }
-}
-
-#[derive(Deserialize, Debug)]
-struct Proposer {
-    block_time_ms: u64,
-    coinbase_address: String,
-}
-
-impl Proposer {
-    fn to_env(&self) -> String {
-        let prefix = "PROPOSER";
-        format!(
-            "
-{prefix}_BLOCK_TIME_MS={}
-{prefix}_COINBASE_ADDRESS={}
-",
-            self.block_time_ms, self.coinbase_address,
         )
     }
 }
 
 #[derive(Deserialize, Debug)]
 struct Committer {
-    on_chain_proposer_address: String,
     l1_address: String,
-    l1_private_key: String,
-    commit_time_ms: u64,
-    arbitrary_base_blob_gas_price: u64,
+    on_chain_proposer_address: String,
     validium: bool,
 }
 
@@ -120,19 +89,11 @@ impl Committer {
         let prefix = "COMMITTER";
         format!(
             "
-{prefix}_ON_CHAIN_PROPOSER_ADDRESS={}
 {prefix}_L1_ADDRESS={}
-{prefix}_L1_PRIVATE_KEY={}
-{prefix}_COMMIT_TIME_MS={}
-{prefix}_ARBITRARY_BASE_BLOB_GAS_PRICE={}
+{prefix}_ON_CHAIN_PROPOSER_ADDRESS={}
 {prefix}_VALIDIUM={}
 ",
-            self.on_chain_proposer_address,
-            self.l1_address,
-            self.l1_private_key,
-            self.commit_time_ms,
-            self.arbitrary_base_blob_gas_price,
-            self.validium,
+            self.l1_address, self.on_chain_proposer_address, self.validium
         )
     }
 }
@@ -158,11 +119,6 @@ impl ProverClient {
 #[derive(Deserialize, Debug)]
 struct ProverServer {
     l1_address: String,
-    l1_private_key: String,
-    listen_ip: String,
-    listen_port: u64,
-    dev_mode: bool,
-    proof_send_interval_ms: u64,
 }
 
 impl ProverServer {
@@ -171,18 +127,8 @@ impl ProverServer {
         format!(
             "
 {prefix}_L1_ADDRESS={}
-{prefix}_L1_PRIVATE_KEY={}
-{prefix}_LISTEN_IP={}
-{prefix}_LISTEN_PORT={}
-{prefix}_DEV_MODE={}
-{prefix}_PROOF_SEND_INTERVAL_MS={}
 ",
             self.l1_address,
-            self.l1_private_key,
-            self.listen_ip,
-            self.listen_port,
-            self.dev_mode,
-            self.proof_send_interval_ms
         )
     }
 }
@@ -192,7 +138,6 @@ struct L2Config {
     deployer: Deployer,
     eth: Eth,
     watcher: Watcher,
-    proposer: Proposer,
     committer: Committer,
     prover_server: ProverServer,
 }
@@ -204,7 +149,6 @@ impl L2Config {
         env_representation.push_str(&self.deployer.to_env());
         env_representation.push_str(&self.eth.to_env());
         env_representation.push_str(&self.watcher.to_env());
-        env_representation.push_str(&self.proposer.to_env());
         env_representation.push_str(&self.committer.to_env());
         env_representation.push_str(&self.prover_server.to_env());
 
