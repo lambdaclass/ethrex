@@ -103,28 +103,43 @@ Finally, here is an example of how you could build a network and see how they co
 We'll have three nodes: `a`, `b`, and `c`, we'll start `a`, then `b` setting `a` as a bootnode, and finally we'll start `c` with `b` as bootnode we should see that `c` connects to both `a` and `b` and so all the network should be connected.
 
 **node a**:
-`cargo run --bin ethrex --network test_data/kurtosis.json`
+```bash
+cargo run --bin ethrex -- --network test_data/genesis-kurtosis.json
+```
 
-We get the `enode` by querying the node_info:
-`curl http://localhost:8545 \
-  -X POST \
-  -H "Content-Type: application/json" \
-  --data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}'`
+We get the `enode` by querying the node_info and using jq:
+```bash
+curl -s http://localhost:8545 \
+-X POST \
+-H "Content-Type: application/json" \
+--data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' \
+| jq '.result.enode'
+```
 
 **node b**
-We start a new server passing the `node_a` `enode` as bootnodes
+We start a new server passing the enode from node A `a` as argument. Also changing the database dir and the ports is needed to avoid conflicts.
 
 ```bash
-cargo run --bin ethrex --network ./test_data/kurtosis.json --bootnodes=`NODE_A_ENODE` \
---authrpc.port=8552 --http.port=8546 --p2p.port=30305 --discovery.port=3036
+cargo run --bin ethrex -- --network ./test_data/genesis-kurtosis.json --bootnodes=`NODE_A_ENODE` \
+--datadir=ethrex_b --authrpc.port=8552 --http.port=8546 --p2p.port=30305 --discovery.port=30306
 ```
 
 **node c**
 Finally, with `node_c` we connect to `node_b`. When the lookup runs, `node_c` should end up connecting to `node_a`:
 
 ```bash
- cargo run --bin ethrex --network ./test_data/kurtosis.json --bootnodes=`NODE_B_ENODE`" \
---authrpc.port=8553 --http.port=8547 --p2p.port=30308 --discovery.port=30310
+cargo run --bin ethrex -- --network ./test_data/genesis-kurtosis.json --bootnodes=`NODE_B_ENODE` \
+--datadir=ethrex_c --authrpc.port=8553 --http.port=8547 --p2p.port=30308 --discovery.port=30310
+```
+
+You can get the enode form node `b` using:
+We get the `enode` by querying the node_info and using jq:
+```bash
+curl -s http://localhost:8546 \
+-X POST \
+-H "Content-Type: application/json" \
+--data '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}' \
+| jq '.result.enode'
 ```
 
 You could also spawn nodes from other clients and it should work as well.
