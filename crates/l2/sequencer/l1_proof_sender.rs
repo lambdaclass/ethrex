@@ -77,7 +77,11 @@ impl L1ProofSender {
                         Overrides::default(),
                     )
                     .await?;
-                let address = Address::from_str(&response)
+
+                // remove leading zeros
+                let trimmed_response = response.trim_start_matches("0x").trim_start_matches("0");
+
+                let address = Address::from_str(&format!("0x{trimmed_response}"))
                     .map_err(|_| ConfigError::HexParsingError(response))?;
 
                 if address != DEV_MODE_ADDRESS {
