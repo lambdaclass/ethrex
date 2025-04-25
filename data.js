@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745596039400,
+  "lastUpdate": 1745596689710,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4465,6 +4465,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177697617762,
             "range": "± 1030206806",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2fc4b21a88a5b9f26c1fc5aeffb4de1afcd15547",
+          "message": "chore(l1): update execution spec tests 4.0.0 -> 4.3.0 (#2586)\n\n**Motivation**\n\nA new\n[release](https://github.com/ethereum/execution-spec-tests/releases/tag/v4.3.0)\non the execution spec tests introduces more coverage for Prague EIPs.\n\n**Description**\n\nWhen executing `make tests` now the new 4.3.0 version of the tests is\nused. As more tests where added in this version, some of them failed so\nthey where added to the skipped array.\n\nCloses #2513",
+          "timestamp": "2025-04-25T15:10:53Z",
+          "tree_id": "03b597d26a9ab28da51eff1570e37d21fac073c9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2fc4b21a88a5b9f26c1fc5aeffb4de1afcd15547"
+        },
+        "date": 1745596687243,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178920983018,
+            "range": "± 1376402875",
             "unit": "ns/iter"
           }
         ]
