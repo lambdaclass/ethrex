@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use error::DatabaseError;
-use ethrex_common::{types::{Account, ChainConfig}, Address, H256, U256};
+use ethrex_common::{
+    types::{Account, ChainConfig},
+    Address, H256, U256,
+};
 
 pub mod cache;
 pub use cache::CacheDB;

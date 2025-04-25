@@ -10,7 +10,10 @@ use crate::{
     vm::{RetData, StateBackup, VM},
 };
 use bytes::Bytes;
-use ethrex_common::{types::{Account, Fork}, Address, U256};
+use ethrex_common::{
+    types::{Account, Fork},
+    Address, U256,
+};
 
 // System Operations (10)
 // Opcodes: CREATE, CALL, CALLCODE, RETURN, DELEGATECALL, CREATE2, STATICCALL, REVERT, INVALID, SELFDESTRUCT

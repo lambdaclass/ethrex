@@ -1,6 +1,9 @@
 use std::cmp::max;
 
-use ethrex_common::{types::{Account, Fork}, Address, U256};
+use ethrex_common::{
+    types::{Account, Fork},
+    Address, U256,
+};
 
 use crate::{
     constants::{INIT_CODE_MAX_SIZE, TX_BASE_COST, VALID_BLOB_PREFIXES},
