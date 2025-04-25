@@ -135,6 +135,14 @@ update-system-contracts:
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
+# Helper to read COMMITTER_ON_CHAIN_PROPOSER_ADDRESS from .env
+on-chain-proposer-address:
+	@grep '^COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=' .env | sed 's/^COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=//'
+
+# Helper to read L1_WATCHER_BRIDGE_ADDRESS from .env
+bridge-address:
+	@grep '^L1_WATCHER_BRIDGE_ADDRESS=' .env | sed 's/^L1_WATCHER_BRIDGE_ADDRESS=//'
+
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
 		FEATURES="l2,metrics"; \
@@ -151,7 +159,9 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--evm levm \
-	--datadir ${ethrex_L2_DEV_LIBMDBX}
+	--datadir ${ethrex_L2_DEV_LIBMDBX} \
+	--bridge-address $(shell make bridge-address) \
+	--on-chain-proposer-address $(shell make on-chain-proposer-address)
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
