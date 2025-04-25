@@ -1,5 +1,7 @@
 use crate::utils::config::errors::ConfigError;
+use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
+use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
@@ -60,6 +62,20 @@ pub enum ProverServerError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum ProofSenderError {
+    #[error("Failed because of an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Failed with a SaveStateError: {0}")]
+    SaveStateError(#[from] SaveStateError),
+    #[error("{0} proof is not present")]
+    ProofNotPresent(ProverType),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum BlockProducerError {
     #[error("Block Producer failed because of an EngineClient error: {0}")]
     EngineClientError(#[from] EngineClientError),
@@ -83,6 +99,12 @@ pub enum BlockProducerError {
     FailedToDecodeJWT(#[from] hex::FromHexError),
     #[error("Block Producer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
+    #[error("Interval does not fit in u64")]
+    TryIntoError(#[from] std::num::TryFromIntError),
+    #[error("{0}")]
+    Custom(String),
+    #[error("Failed to parse withdrawal: {0}")]
+    FailedToParseWithdrawal(#[from] UtilsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -97,8 +119,6 @@ pub enum CommitterError {
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]
     FailedToRetrieveDataFromStorage,
-    #[error("Committer registered a negative nonce in AccountUpdate")]
-    FailedToCalculateNonce,
     #[error("Committer failed to generate blobs bundle: {0}")]
     FailedToGenerateBlobsBundle(#[from] BlobsBundleError),
     #[error("Committer failed to get information from storage")]
@@ -125,6 +145,8 @@ pub enum CommitterError {
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
+    #[error("Failed to get withdrawals: {0}")]
+    FailedToGetWithdrawals(#[from] UtilsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -159,6 +181,10 @@ pub enum StateDiffError {
     LengthTooBig(#[from] core::num::TryFromIntError),
     #[error("DB Error: {0}")]
     DbError(#[from] TrieError),
+    #[error("Store Error: {0}")]
+    StoreError(#[from] StoreError),
+    #[error("New nonce is lower than the previous one")]
+    FailedToCalculateNonce,
 }
 
 #[derive(Debug, thiserror::Error)]

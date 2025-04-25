@@ -5,7 +5,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{StoreWrapper, ToExecDB};
+use ethrex_vm::Evm;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -33,11 +33,11 @@ pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
 /// Place this in the `proposer/mod.rs` file,
 /// specifically in the `start` function,
 /// before calling `send_commitment()` to send the block commitment.
-pub fn generate_rlp(
+pub async fn generate_rlp(
     up_to_block_number: u64,
     store: &Store,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if store.get_latest_block_number()? == up_to_block_number {
+    if store.get_latest_block_number().await? == up_to_block_number {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let file_name = "l2-test.rlp";
 
@@ -45,7 +45,7 @@ pub fn generate_rlp(
 
         let mut file = std::fs::File::create(path.to_str().unwrap())?;
         for i in 1..up_to_block_number {
-            let body = store.get_block_body(i)?.unwrap();
+            let body = store.get_block_body(i).await?.unwrap();
             let header = store.get_block_header(i)?.unwrap();
 
             let block = Block::new(header, body);
@@ -58,7 +58,7 @@ pub fn generate_rlp(
     Ok(())
 }
 
-pub fn generate_program_input(
+pub async fn generate_program_input(
     genesis: Genesis,
     chain: Vec<Block>,
     block_number: usize,
@@ -83,11 +83,7 @@ pub fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    let store = StoreWrapper {
-        store,
-        block_hash: parent_hash,
-    };
-    let db = store.to_exec_db(&block)?;
+    let db = Evm::to_execution_db(&store, &block).await?;
 
     Ok(ProgramInput {
         db,

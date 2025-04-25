@@ -1,7 +1,7 @@
 use crate::{prove, to_calldata};
 use ethrex_l2::{
-    sequencer::prover_server::ProofData,
-    utils::{config::prover_client::ProverClientConfig, prover::proving_systems::ProofCalldata},
+    sequencer::proof_coordinator::ProofData,
+    utils::{config::prover::ProverConfig, prover::proving_systems::ProofCalldata},
 };
 use std::time::Duration;
 use tokio::{
@@ -12,9 +12,9 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 use zkvm_interface::io::ProgramInput;
 
-pub async fn start_proof_data_client(config: ProverClientConfig) {
-    let proof_data_client = ProverClient::new(config);
-    proof_data_client.start().await;
+pub async fn start_prover(config: ProverConfig) {
+    let prover_worker = Prover::new(config);
+    prover_worker.start().await;
 }
 
 struct ProverData {
@@ -22,13 +22,13 @@ struct ProverData {
     input: ProgramInput,
 }
 
-struct ProverClient {
+struct Prover {
     prover_server_endpoint: String,
     proving_time_ms: u64,
 }
 
-impl ProverClient {
-    pub fn new(config: ProverClientConfig) -> Self {
+impl Prover {
+    pub fn new(config: ProverConfig) -> Self {
         Self {
             prover_server_endpoint: config.prover_server_endpoint,
             proving_time_ms: config.proving_time_ms,
@@ -66,13 +66,13 @@ impl ProverClient {
 
     async fn request_new_input(&self) -> Result<ProverData, String> {
         // Request the input with the correct block_number
-        let request = ProofData::request();
+        let request = ProofData::block_request();
         let response = connect_to_prover_server_wr(&self.prover_server_endpoint, &request)
             .await
             .map_err(|e| format!("Failed to get Response: {e}"))?;
 
         match response {
-            ProofData::Response {
+            ProofData::BlockResponse {
                 block_number,
                 input,
             } => match (block_number, input) {
@@ -102,14 +102,14 @@ impl ProverClient {
         block_number: u64,
         proving_output: ProofCalldata,
     ) -> Result<(), String> {
-        let submit = ProofData::submit(block_number, proving_output);
+        let submit = ProofData::proof_submit(block_number, proving_output);
 
         let submit_ack = connect_to_prover_server_wr(&self.prover_server_endpoint, &submit)
             .await
             .map_err(|e| format!("Failed to get SubmitAck: {e}"))?;
 
         match submit_ack {
-            ProofData::SubmitAck { block_number } => {
+            ProofData::ProofSubmitACK { block_number } => {
                 info!("Received submit ack for block_number: {}", block_number);
                 Ok(())
             }
@@ -122,6 +122,7 @@ async fn connect_to_prover_server_wr(
     addr: &str,
     write: &ProofData,
 ) -> Result<ProofData, Box<dyn std::error::Error>> {
+    debug!("Connecting with {addr}");
     let mut stream = TcpStream::connect(addr).await?;
     debug!("Connection established!");
 
@@ -130,6 +131,7 @@ async fn connect_to_prover_server_wr(
 
     let mut buffer = Vec::new();
     stream.read_to_end(&mut buffer).await?;
+    debug!("Got response {}", hex::encode(&buffer));
 
     let response: Result<ProofData, _> = serde_json::from_slice(&buffer);
     Ok(response?)

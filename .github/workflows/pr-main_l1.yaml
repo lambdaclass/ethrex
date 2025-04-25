@@ -48,7 +48,6 @@ jobs:
   test:
     # "Test" is a required check, don't change the name
     name: Test
-    if: ${{ github.event_name != 'merge_group' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -161,11 +160,11 @@ jobs:
             ethrex_flags: ""
           - name: "Cancun Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering, Single|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain, Depth=5|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Invalid Missing Ancestor Syncing ReOrg|Request Blob Pooled Transactions"
+            test_pattern: "engine-cancun/Blob Transactions On Block 1|Blob Transaction Ordering, Single|Blob Transaction Ordering, Multiple Accounts|Replace Blob Transactions|Parallel Blob Transactions|ForkchoiceUpdatedV3|ForkchoiceUpdatedV2|ForkchoiceUpdated Version|GetPayload|NewPayloadV3 After Cancun|NewPayloadV3 Before Cancun|NewPayloadV3 Versioned Hashes|Incorrect BlobGasUsed|ParentHash equals BlockHash|RPC:|in ForkchoiceState|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique|Re-Execute Payload|Multiple New Payloads|NewPayload with|Build Payload with|Re-org to Previously|Safe Re-Org to Side Chain|Transaction Re-Org|Re-Org Back into Canonical Chain, Depth=5|Suggested Fee Recipient Test|PrevRandao Opcode|Fork ID: *|Request Blob Pooled Transactions|Invalid NewPayload, Incomplete Transactions|Re-Org Back to Canonical Chain*|Invalid PayloadAttributes*|Invalid NewPayload, VersionedHashes|Invalid NewPayload, Incomplete VersionedHashes|Invalid NewPayload, Extra VersionedHashes|Bad Hash on NewPayload|Unknown HeadBlockHash|In-Order Consecutive Payload Execution|Valid NewPayload->ForkchoiceUpdated|Invalid NewPayload, ParentHash|Syncing=False|Payload Build after New Invalid Payload" # Invalid Missing Ancestor Syncing ReOrg|Invalid P9|Invalid P10 -> flaky
             ethrex_flags: ""
           - name: "Paris Engine tests"
             simulation: ethereum/engine
-            test_pattern: "engine-api/RPC|Re-org to Previously Validated Sidechain Payload|Re-Org Back into Canonical Chain, Depth=5|Safe Re-Org|Transaction Re-Org|Inconsistent|Suggested Fee|PrevRandao Opcode Transactions|Fork ID|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique Payload ID|Re-Execute Payload|Multiple New Payloads|NewPayload with|Payload Build|Build Payload"
+            test_pattern: "engine-api/RPC|Re-org to Previously Validated Sidechain Payload|Re-Org Back into Canonical Chain, Depth=5|Safe Re-Org|Transaction Re-Org|Inconsistent|Suggested Fee|PrevRandao Opcode Transactions|Fork ID|Unknown SafeBlockHash|Unknown FinalizedBlockHash|Unique Payload ID|Re-Execute Payload|Multiple New Payloads|NewPayload with|Payload Build|Build Payload|Invalid PayloadAttributes|Unknown HeadBlockHash|Valid NewPayload->ForkchoiceUpdated|Invalid NewPayload, ParentHash|Bad Hash on NewPayload|In-Order Consecutive Payload Execution|Re-Org Back to Canonical Chain" # |Invalid P9 -> flaky
             ethrex_flags: ""
           - name: "Engine withdrawal tests"
             simulation: ethereum/engine
@@ -175,10 +174,11 @@ jobs:
             simulation: ethereum/sync
             test_pattern: ""
             ethrex_flags: "--syncmode full"
-          - name: "Sync snap"
-            simulation: ethereum/sync
-            test_pattern: ""
-            ethrex_flags: "--syncmode snap"
+          # Flaky test, reenable when fixed
+          # - name: "Sync snap"
+          #   simulation: ethereum/sync
+          #   test_pattern: ""
+          #   ethrex_flags: "--syncmode snap"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4

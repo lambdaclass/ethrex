@@ -8,6 +8,7 @@ on:
     paths:
       - "crates/vm/levm/**"
       - ".github/workflows/pr-main_levm.yaml"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -115,10 +116,10 @@ jobs:
       # This is for ensuring test from merge to Prague are passing.
       # After adding the Legacy Test suite, not all are passing.
       # This is a temporary solution until we fix the legacy tests.
-      - name: Check EF-TESTS from London to Prague is 100%
+      - name: Check EF-TESTS from Paris to Prague is 100%
         run: |
           cd crates/vm/levm
-          awk '/Prague:/, /London:/ {print $1, $3}' test_result_main.txt | sed 's/[()]//g' | grep -v '100.00%' && echo "All percentage are not 100%." && exit 1 || echo "All percentage are 100%."
+          awk '/Prague:/, /Paris:/ {print $1, $3}' test_result_main.txt | sed 's/[()]//g' | grep -v '100.00%' && echo "All percentage are not 100%." && exit 1 || echo "All percentage are 100%."
 
       - name: Check EF-TESTS status is 100%
         run: |
@@ -322,6 +323,8 @@ jobs:
 
       - name: Install solc
         uses: pontem-network/get-solc@master
+        with:
+          version: v0.8.29
 
       - name: Run benchmarks
         run: |

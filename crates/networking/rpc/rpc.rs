@@ -198,26 +198,31 @@ pub async fn start_api(
         .layer(cors)
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr).await.unwrap();
-
-    // We need a lambda with an async block because async lambdas are not supported
-    let authrpc_handler = |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
-    let authrpc_router = Router::new()
-        .route("/", post(authrpc_handler))
-        .with_state(service_context);
-    let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
-
-    let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .into_future();
     let http_server = axum::serve(http_listener, http_router)
         .with_graceful_shutdown(shutdown_signal())
         .into_future();
-
     info!("Starting HTTP server at {http_addr}");
-    info!("Starting Auth-RPC server at {}", authrpc_addr);
 
-    let _ = tokio::try_join!(authrpc_server, http_server)
-        .inspect_err(|e| info!("Error shutting down servers: {:?}", e));
+    if cfg!(any(feature = "l2", feature = "based")) {
+        info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
+
+        let _ = tokio::try_join!(http_server)
+            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+    } else {
+        let authrpc_handler =
+            |ctx, auth, body| async { handle_authrpc_request(ctx, auth, body).await };
+        let authrpc_router = Router::new()
+            .route("/", post(authrpc_handler))
+            .with_state(service_context);
+        let authrpc_listener = TcpListener::bind(authrpc_addr).await.unwrap();
+        let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
+            .with_graceful_shutdown(shutdown_signal())
+            .into_future();
+        info!("Starting Auth-RPC server at {authrpc_addr}");
+
+        let _ = tokio::try_join!(authrpc_server, http_server)
+            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+    }
 }
 
 async fn shutdown_signal() {
@@ -339,13 +344,13 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_estimateGas" => EstimateGasRequest::call(req, context).await,
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
-            NewFilterRequest::stateful_call(req, context.storage, context.active_filters)
+            NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
         }
         "eth_uninstallFilter" => {
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
         }
         "eth_getFilterChanges" => {
-            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters)
+            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters).await
         }
         "eth_sendRawTransaction" => {
             cfg_if::cfg_if! {
@@ -392,16 +397,16 @@ pub async fn map_engine_requests(
                 }
             }
         }
-        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
-        "engine_newPayloadV3" => {
+        "engine_newPayloadV4" => {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "based")] {
-                    NewPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
+                    NewPayloadV4Request::relay_to_gateway_or_fallback(req, context).await
                 } else {
-                    NewPayloadV3Request::call(req, context).await
+                    NewPayloadV4Request::call(req, context).await
                 }
             }
         }
+        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
         "engine_exchangeTransitionConfigurationV1" => {
@@ -450,6 +455,7 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
+        "net_peerCount" => net::peer_count(req, contex),
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
 }

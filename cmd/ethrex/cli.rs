@@ -5,6 +5,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
+use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_p2p::{sync::SyncMode, types::Node};
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
@@ -36,8 +37,9 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. This is the only argument which is required. You can look at some example genesis files at `test_data/genesis*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia and hoodi.",
-        help_heading = "Node options"
+        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet.",
+        help_heading = "Node options",
+        env = "ETHREX_NETWORK"
     )]
     pub network: Option<String>,
     #[arg(long = "bootnodes", value_parser = clap::value_parser!(Node), value_name = "BOOTNODE_LIST", value_delimiter = ',', num_args = 1.., help = "Comma separated enode URLs for P2P discovery bootstrap.", help_heading = "P2P options")]
@@ -49,11 +51,12 @@ pub struct Options {
         default_value = DEFAULT_DATADIR,
         help = "Receives the name of the directory where the Database is located.",
         long_help = "If the datadir is the word `memory`, ethrex will use the `InMemory Engine`.",
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_DATADIR"
     )]
     pub datadir: String,
     #[arg(
-        long = "force", 
+        long = "force",
         help = "Force remove the database",
         long_help = "Delete the database without confirmation.",
         action = clap::ArgAction::SetTrue,
@@ -73,9 +76,17 @@ pub struct Options {
         long = "metrics.port",
         value_name = "PROMETHEUS_METRICS_PORT",
         default_value = "9090", // Default Prometheus port (https://prometheus.io/docs/tutorials/getting_started/#show-me-how-it-is-done).
-        help_heading = "Node options"
+        help_heading = "Node options",
+        env = "ETHREX_METRICS_PORT"
     )]
     pub metrics_port: String,
+    #[arg(
+        long = "metrics",
+        action = ArgAction::SetTrue,
+        help = "Enable metrics collection and exposition",
+        help_heading = "Node options"
+    )]
+    pub metrics_enabled: bool,
     #[arg(
         long = "dev",
         action = ArgAction::SetTrue,
@@ -90,17 +101,24 @@ pub struct Options {
         value_name = "EVM_BACKEND",
         help = "Has to be `levm` or `revm`",
         value_parser = utils::parse_evm_engine,
-        help_heading = "Node options"
-    )]
+        help_heading = "Node options",
+        env = "ETHREX_EVM")]
     pub evm: EvmEngine,
-    #[arg(long = "log.level", default_value_t = Level::INFO, value_name = "LOG_LEVEL", help = "The verbosity level used for logs.", long_help = "Possible values: info, debug, trace, warn, error",help_heading = "Node options")]
+    #[arg(
+        long = "log.level",
+        default_value_t = Level::INFO,
+        value_name = "LOG_LEVEL",
+        help = "The verbosity level used for logs.",
+        long_help = "Possible values: info, debug, trace, warn, error",
+        help_heading = "Node options")]
     pub log_level: Level,
     #[arg(
         long = "http.addr",
         default_value = "localhost",
         value_name = "ADDRESS",
         help = "Listening address for the http rpc server.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_HTTP_ADDR"
     )]
     pub http_addr: String,
     #[arg(
@@ -108,7 +126,8 @@ pub struct Options {
         default_value = "8545",
         value_name = "PORT",
         help = "Listening port for the http rpc server.",
-        help_heading = "RPC options"
+        help_heading = "RPC options",
+        env = "ETHREX_HTTP_PORT"
     )]
     pub http_port: String,
     #[arg(
@@ -189,6 +208,7 @@ impl Default for Options {
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
+            metrics_enabled: Default::default(),
             dev: Default::default(),
             evm: Default::default(),
             force: false,
@@ -262,7 +282,7 @@ pub fn remove_db(datadir: &str, force: bool) {
     if path.exists() {
         if force {
             std::fs::remove_dir_all(path).expect("Failed to remove data directory");
-            println!("Database removed successfully.");
+            info!("Database removed successfully.");
         } else {
             print!("Are you sure you want to remove the database? (y/n): ");
             io::stdout().flush().unwrap();
@@ -287,7 +307,7 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
 
     let store = init_store(&data_dir, network).await;
 
-    let blockchain = init_blockchain(evm, store);
+    let blockchain = init_blockchain(evm, store.clone());
 
     let path_metadata = metadata(path).expect("Failed to read path");
     let blocks = if path_metadata.is_dir() {
@@ -306,5 +326,32 @@ pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEn
         info!("Importing blocks from chain file: {path}");
         utils::read_chain_file(path)
     };
-    blockchain.import_blocks(&blocks).await;
+
+    let size = blocks.len();
+
+    for block in &blocks {
+        let hash = block.hash();
+
+        info!(
+            "Adding block {} with hash {:#x}.",
+            block.header.number, hash
+        );
+
+        if let Err(error) = blockchain.add_block(block).await {
+            warn!(
+                "Failed to add block {} with hash {:#x}: {}.",
+                block.header.number, hash, error
+            );
+            return;
+        }
+    }
+
+    if let Some(last_block) = blocks.last() {
+        let hash = last_block.hash();
+        if let Err(error) = apply_fork_choice(&store, hash, hash, hash).await {
+            warn!("Failed to apply fork choice: {}", error);
+        }
+    }
+
+    info!("Added {size} blocks to blockchain");
 }

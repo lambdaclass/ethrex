@@ -1,14 +1,37 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::types::{BlockWithRLP, TestUnit};
+use crate::{
+    network::Network,
+    types::{BlockWithRLP, TestUnit},
+};
 use ethrex_blockchain::{fork_choice::apply_fork_choice, Blockchain};
 use ethrex_common::types::{
-    Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
+    Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader, EMPTY_KECCACK_HASH,
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::EvmEngine;
 
-pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
+pub fn parse_and_execute(path: &Path, evm: EvmEngine, skipped_tests: Option<&[&str]>) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let tests = parse_test_file(path);
+
+    for (test_key, test) in tests {
+        let should_skip_test = test.network < Network::Merge
+            || skipped_tests
+                .map(|skipped| skipped.contains(&test_key.as_str()))
+                .unwrap_or(false);
+
+        if should_skip_test {
+            // Discard this test
+            continue;
+        }
+
+        rt.block_on(run_ef_test(&test_key, &test, evm));
+    }
+}
+
+pub async fn run_ef_test(test_key: &str, test: &TestUnit, evm: EvmEngine) {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
     let decoded_block = CoreBlock::decode(&genesis_rlp).unwrap();
@@ -20,7 +43,7 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
     // Check world_state
     check_prestate_against_db(test_key, test, &store);
 
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Blockchain::new(evm, store.clone());
     // Execute all blocks in test
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
@@ -54,15 +77,39 @@ pub async fn run_ef_test(test_key: &str, test: &TestUnit) {
             }
         }
     }
-    check_poststate_against_db(test_key, test, &store)
+    check_poststate_against_db(test_key, test, &store).await
 }
 
 /// Tests the rlp decoding of a block
 fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
-    let expects_rlp_exception = block_fixture
-        .expect_exception
-        .as_ref()
-        .map_or(false, |s| s.starts_with("BlockException.RLP_"));
+    let decoding_exception_cases = [
+        "BlockException.RLP_",
+        // NOTE: There is a test which validates that an EIP-7702 transaction is not allowed to
+        // have the "to" field set to null (create).
+        // This test expects an exception to be thrown AFTER the Block RLP decoding, when the
+        // transaction is validated. This would imply allowing the "to" field of the
+        // EIP-7702 transaction to be null and validating it on the `prepare_execution` LEVM hook.
+        //
+        // Instead, this approach is taken, which allows for the exception to be thrown on
+        // RLPDecoding, so the data type EIP7702Transaction correctly describes the requirement of
+        // "to" field to be an Address
+        // For more information, please read:
+        // - https://eips.ethereum.org/EIPS/eip-7702
+        // - https://github.com/lambdaclass/ethrex/pull/2425
+        //
+        // There is another test which validates the same exact thing, but for an EIP-4844 tx.
+        // That test also allows for a "BlockException.RLP_..." error to happen, and that's what is being
+        // caught.
+        "TransactionException.TYPE_4_TX_CONTRACT_CREATION",
+    ];
+
+    let expects_rlp_exception = decoding_exception_cases.iter().any(|&case| {
+        block_fixture
+            .expect_exception
+            .as_ref()
+            .map_or(false, |s| s.starts_with(case))
+    });
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
@@ -112,13 +159,14 @@ fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
 /// Checks that all accounts in the post-state are present and have the correct values in the DB
 /// Panics if any comparison fails
 /// Tests that previously failed the validation stage shouldn't be executed with this function.
-fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
-    let latest_block_number = db.get_latest_block_number().unwrap();
+async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
+    let latest_block_number = db.get_latest_block_number().await.unwrap();
     for (addr, account) in &test.post_state {
         let expected_account: CoreAccount = account.clone().into();
         // Check info
         let db_account_info = db
             .get_account_info(latest_block_number, *addr)
+            .await
             .expect("Failed to read from DB")
             .unwrap_or_else(|| {
                 panic!("Account info for address {addr} not found in DB, test:{test_key}")
@@ -129,20 +177,24 @@ fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
         );
         // Check code
         let code_hash = expected_account.info.code_hash;
-        let db_account_code = db
-            .get_account_code(code_hash)
-            .expect("Failed to read from DB")
-            .unwrap_or_else(|| {
-                panic!("Account code for code hash {code_hash} not found in DB test:{test_key}")
-            });
-        assert_eq!(
-            db_account_code, expected_account.code,
-            "Mismatched account code for code hash {code_hash} test:{test_key}"
-        );
+        if code_hash != *EMPTY_KECCACK_HASH {
+            // We don't want to get account code if there's no code.
+            let db_account_code = db
+                .get_account_code(code_hash)
+                .expect("Failed to read from DB")
+                .unwrap_or_else(|| {
+                    panic!("Account code for code hash {code_hash} not found in DB test:{test_key}")
+                });
+            assert_eq!(
+                db_account_code, expected_account.code,
+                "Mismatched account code for code hash {code_hash} test:{test_key}"
+            );
+        }
         // Check storage
         for (key, value) in expected_account.storage {
             let db_storage_value = db
                 .get_storage_at(latest_block_number, *addr, key)
+                .await
                 .expect("Failed to read from DB")
                 .unwrap_or_else(|| {
                     panic!("Storage missing for address {addr} key {key} in DB test:{test_key}")
@@ -154,7 +206,7 @@ fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
         }
     }
     // Check lastblockhash is in store
-    let last_block_number = db.get_latest_block_number().unwrap();
+    let last_block_number = db.get_latest_block_number().await.unwrap();
     let last_block_hash = db
         .get_block_header(last_block_number)
         .unwrap()

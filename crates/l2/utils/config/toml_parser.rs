@@ -112,6 +112,7 @@ struct Committer {
     l1_private_key: String,
     commit_time_ms: u64,
     arbitrary_base_blob_gas_price: u64,
+    validium: bool,
 }
 
 impl Committer {
@@ -124,12 +125,14 @@ impl Committer {
 {prefix}_L1_PRIVATE_KEY={}
 {prefix}_COMMIT_TIME_MS={}
 {prefix}_ARBITRARY_BASE_BLOB_GAS_PRICE={}
+{prefix}_VALIDIUM={}
 ",
             self.on_chain_proposer_address,
             self.l1_address,
             self.l1_private_key,
             self.commit_time_ms,
             self.arbitrary_base_blob_gas_price,
+            self.validium,
         )
     }
 }
@@ -137,8 +140,6 @@ impl Committer {
 #[derive(Deserialize, Debug)]
 struct ProverClient {
     prover_server_endpoint: String,
-    sp1_prover: String,
-    risc0_dev_mode: u64,
     proving_time_ms: u64,
 }
 
@@ -148,10 +149,8 @@ impl ProverClient {
         format!(
             "{prefix}_PROVER_SERVER_ENDPOINT={}
 {prefix}_PROVING_TIME_MS={}
-RISC0_DEV_MODE={}
-SP1_PROVER={}
 ",
-            self.prover_server_endpoint, self.proving_time_ms, self.risc0_dev_mode, self.sp1_prover
+            self.prover_server_endpoint, self.proving_time_ms
         )
     }
 }
@@ -163,7 +162,7 @@ struct ProverServer {
     listen_ip: String,
     listen_port: u64,
     dev_mode: bool,
-    dev_interval_ms: u64,
+    proof_send_interval_ms: u64,
 }
 
 impl ProverServer {
@@ -176,14 +175,14 @@ impl ProverServer {
 {prefix}_LISTEN_IP={}
 {prefix}_LISTEN_PORT={}
 {prefix}_DEV_MODE={}
-{prefix}_DEV_INTERVAL_MS={}
+{prefix}_PROOF_SEND_INTERVAL_MS={}
 ",
             self.l1_address,
             self.l1_private_key,
             self.listen_ip,
             self.listen_port,
             self.dev_mode,
-            self.dev_interval_ms
+            self.proof_send_interval_ms
         )
     }
 }

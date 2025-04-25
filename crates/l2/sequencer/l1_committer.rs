@@ -1,9 +1,12 @@
 use crate::{
     sequencer::{
         errors::CommitterError,
-        state_diff::{AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
+        state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
+    utils::{
+        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
+        helpers::is_withdrawal_l2,
+    },
 };
 
 use ethrex_common::{
@@ -15,20 +18,20 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize, COMMON_BRIDGE_L2_ADDRESS};
+use ethrex_l2_sdk::{get_withdrawal_hash, merkle_tree::merkelize};
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction,
 };
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_vm::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -39,6 +42,7 @@ pub struct Committer {
     commit_time_ms: u64,
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
+    validium: bool,
 }
 
 pub async fn start_l1_committer(
@@ -70,6 +74,7 @@ impl Committer {
             commit_time_ms: committer_config.commit_time_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
+            validium: committer_config.validium,
         }
     }
 
@@ -93,6 +98,7 @@ impl Committer {
         let Some(block_to_commit_body) = self
             .store
             .get_block_body(block_number)
+            .await
             .map_err(CommitterError::from)?
         else {
             debug!("No new block to commit, skipping..");
@@ -111,7 +117,8 @@ impl Committer {
         for (index, tx) in block_to_commit_body.transactions.iter().enumerate() {
             let receipt = self
                 .store
-                .get_receipt(block_number, index.try_into()?)?
+                .get_receipt(block_number, index.try_into()?)
+                .await?
                 .ok_or(CommitterError::InternalError(
                     "Transactions in a block should have a receipt".to_owned(),
                 ))?;
@@ -145,26 +152,44 @@ impl Committer {
                 warn!(
                             "Could not find execution cache result for block {block_number}, falling back to re-execution"
                         );
-                Evm::default(self.store.clone(), block_to_commit.header.parent_hash)
-                    .execute_block(&block_to_commit)
-                    .map(|result| result.account_updates)?
+                let mut vm = Evm::default(self.store.clone(), block_to_commit.header.parent_hash);
+                vm.execute_block(&block_to_commit)?;
+                let fork = self
+                    .store
+                    .get_chain_config()?
+                    .fork(block_to_commit.header.timestamp);
+                vm.get_state_transitions(fork)?
             }
         };
 
-        let state_diff = self.prepare_state_diff(
-            &block_to_commit,
-            self.store.clone(),
-            withdrawals,
-            deposits,
-            &account_updates,
-        )?;
+        let new_state_root = self
+            .store
+            .state_trie(block_to_commit.hash())?
+            .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                "Failed to get state root from storage".to_owned(),
+            ))?
+            .hash_no_commit();
 
-        let blobs_bundle = self.generate_blobs_bundle(&state_diff)?;
+        let blobs_bundle = if !self.validium {
+            let state_diff = self
+                .prepare_state_diff(
+                    &block_to_commit,
+                    self.store.clone(),
+                    withdrawals,
+                    deposits,
+                    &account_updates,
+                )
+                .await?;
+            self.generate_blobs_bundle(&state_diff)?
+        } else {
+            BlobsBundle::default()
+        };
 
         let head_block_hash = block_to_commit.hash();
         match self
             .send_commitment(
                 block_to_commit.header.number,
+                new_state_root,
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
@@ -185,26 +210,13 @@ impl Committer {
         &self,
         txs_and_receipts: &[(Transaction, Receipt)],
     ) -> Result<Vec<(H256, Transaction)>, CommitterError> {
-        // WithdrawalInitiated(address,address,uint256)
-        let withdrawal_event_selector: H256 =
-            H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2").map_err(|_| CommitterError::InternalError("Failed to convert WithdrawalInitiated event selector to H256. This should never happen.".to_owned()))?;
         let mut ret = vec![];
 
         for (tx, receipt) in txs_and_receipts {
-            match tx.to() {
-                TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => {
-                    if receipt.logs.iter().any(|log| {
-                        log.topics
-                            .iter()
-                            .any(|topic| *topic == withdrawal_event_selector)
-                    }) {
-                        ret.push((tx.compute_hash(), tx.clone()))
-                    }
-                }
-                _ => continue,
+            if is_withdrawal_l2(tx, receipt)? {
+                ret.push((tx.compute_hash(), tx.clone()))
             }
         }
-
         Ok(ret)
     }
 
@@ -262,7 +274,7 @@ impl Committer {
     }
 
     /// Prepare the state diff for the block.
-    fn prepare_state_diff(
+    async fn prepare_state_diff(
         &self,
         block: &Block,
         store: Store,
@@ -274,32 +286,18 @@ impl Committer {
 
         let mut modified_accounts = HashMap::new();
         for account_update in account_updates {
-            let prev_nonce = match store
-                // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
-                // and we may have to keep track of the latestCommittedBlock (last block of the batch),
-                // the batch_size and the latestCommittedBatch in the contract.
-                .get_account_info(block.header.number - 1, account_update.address)
-                .map_err(StoreError::from)?
-            {
-                Some(acc) => acc.nonce,
-                None => 0,
-            };
-
-            let new_nonce = if let Some(info) = &account_update.info {
-                info.nonce
-            } else {
-                prev_nonce
-            };
+            // If we want the state_diff of a batch, we will have to change the -1 with the `batch_size`
+            // and we may have to keep track of the latestCommittedBlock (last block of the batch),
+            // the batch_size and the latestCommittedBatch in the contract.
+            let nonce_diff = get_nonce_diff(account_update, &store, None, block.header.number)
+                .await
+                .map_err(CommitterError::from)?;
 
             modified_accounts.insert(
                 account_update.address,
                 AccountStateDiff {
                     new_balance: account_update.info.clone().map(|info| info.balance),
-                    nonce_diff: new_nonce
-                        .checked_sub(prev_nonce)
-                        .ok_or(CommitterError::FailedToCalculateNonce)?
-                        .try_into()
-                        .map_err(CommitterError::from)?,
+                    nonce_diff,
                     storage: account_update.added_storage.clone().into_iter().collect(),
                     bytecode: account_update.code.clone(),
                     bytecode_hash: None,
@@ -350,39 +348,34 @@ impl Committer {
     async fn send_commitment(
         &self,
         block_number: u64,
+        new_state_root: H256,
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, CommitterError> {
         info!("Sending commitment for block {block_number}");
 
-        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+        let state_diff_kzg_versioned_hash = if !self.validium {
+            let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+            *blob_versioned_hashes
+                .first()
+                .ok_or(BlobsBundleError::BlobBundleEmptyError)
+                .map_err(CommitterError::from)?
+                .as_fixed_bytes()
+        } else {
+            [0u8; 32] // Validium doesn't send state_diff_kzg_versioned_hash.
+        };
+
         let calldata_values = vec![
             Value::Uint(U256::from(block_number)),
-            Value::FixedBytes(
-                blob_versioned_hashes
-                    .first()
-                    .ok_or(BlobsBundleError::BlobBundleEmptyError)
-                    .map_err(CommitterError::from)?
-                    .as_fixed_bytes()
-                    .to_vec()
-                    .into(),
-            ),
+            Value::FixedBytes(new_state_root.0.to_vec().into()),
+            Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
         ];
 
         let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let le_bytes = estimate_blob_gas(
-            &self.eth_client,
-            self.arbitrary_base_blob_gas_price,
-            20, // 20% of headroom
-        )
-        .await?
-        .to_le_bytes();
-
-        let gas_price_per_blob = U256::from_little_endian(&le_bytes);
         let gas_price = self
             .eth_client
             .get_gas_price_with_extra(20)
@@ -392,25 +385,58 @@ impl Committer {
                 CommitterError::InternalError("Failed to convert gas_price to a u64".to_owned())
             })?;
 
-        let wrapped_tx = self
-            .eth_client
-            .build_eip4844_transaction(
-                self.on_chain_proposer_address,
-                self.l1_address,
-                calldata.into(),
-                Overrides {
-                    from: Some(self.l1_address),
-                    gas_price_per_blob: Some(gas_price_per_blob),
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-                blobs_bundle,
+        // Validium: EIP1559 Transaction.
+        // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
+        let mut tx = if !self.validium {
+            let le_bytes = estimate_blob_gas(
+                &self.eth_client,
+                self.arbitrary_base_blob_gas_price,
+                20, // 20% of headroom
             )
-            .await
-            .map_err(CommitterError::from)?;
+            .await?
+            .to_le_bytes();
 
-        let mut tx = WrappedTransaction::EIP4844(wrapped_tx);
+            let gas_price_per_blob = U256::from_little_endian(&le_bytes);
+
+            let wrapped_tx = self
+                .eth_client
+                .build_eip4844_transaction(
+                    self.on_chain_proposer_address,
+                    self.l1_address,
+                    calldata.into(),
+                    Overrides {
+                        from: Some(self.l1_address),
+                        gas_price_per_blob: Some(gas_price_per_blob),
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
+                        ..Default::default()
+                    },
+                    blobs_bundle,
+                )
+                .await
+                .map_err(CommitterError::from)?;
+
+            WrappedTransaction::EIP4844(wrapped_tx)
+        } else {
+            let wrapped_tx = self
+                .eth_client
+                .build_eip1559_transaction(
+                    self.on_chain_proposer_address,
+                    self.l1_address,
+                    calldata.into(),
+                    Overrides {
+                        from: Some(self.l1_address),
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(CommitterError::from)?;
+
+            WrappedTransaction::EIP1559(wrapped_tx)
+        };
+
         self.eth_client
             .set_gas_for_wrapped_tx(&mut tx, self.l1_address)
             .await?;

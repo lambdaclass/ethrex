@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity =0.8.29;
 
 /// @title Interface for the OnChainProposer contract.
 /// @author LambdaClass
@@ -16,7 +16,8 @@ interface IOnChainProposer {
 
     /// @notice A block has been committed.
     /// @dev Event emitted when a block is committed.
-    event BlockCommitted(bytes32 indexed currentBlockCommitment);
+    /// @param newStateRoot The new state root of the block that was committed.
+    event BlockCommitted(bytes32 indexed newStateRoot);
 
     /// @notice A block has been verified.
     /// @dev Event emitted when a block is verified.
@@ -40,15 +41,18 @@ interface IOnChainProposer {
     /// @dev Committing to an L2 block means to store the block's commitment
     /// and to publish withdrawals if any.
     /// @param blockNumber the number of the block to be committed.
-    /// @param commitment of the block to be committed.
+    /// @param newStateRoot the new state root of the block to be committed.
+    /// @param stateDiffKZGVersionedHash of the block to be committed.
     /// @param withdrawalsLogsMerkleRoot the merkle root of the withdrawal logs
     /// of the block to be committed.
-    /// @param depositLogs the deposit logs of the block to be committed.
+    /// @param processedDepositLogsRollingHash the rolling hash of the processed
+    /// deposits logs of the block to be committed.
     function commit(
         uint256 blockNumber,
-        bytes32 commitment,
+        bytes32 newStateRoot,
+        bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
-        bytes32 depositLogs
+        bytes32 processedDepositLogsRollingHash
     ) external;
 
     /// @notice Method used to verify an L2 block proof.

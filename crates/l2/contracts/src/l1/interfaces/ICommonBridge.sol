@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity =0.8.29;
 
 /// @title Interface for the CommonBridge contract.
 /// @author LambdaClass
@@ -9,16 +9,24 @@ interface ICommonBridge {
     /// @notice A deposit to L2 has initiated.
     /// @dev Event emitted when a deposit is initiated.
     /// @param amount the amount of tokens being deposited.
-    /// @param to the address in L2 to which the tokens will be minted to.
+    /// @param to the address that will be called in the L2.
+    /// @param depositId Id used to differentiate deposits with same amount and recipient.
+    /// @param recipient the address that initiated the deposit and will receive the tokens.
+    /// @param from the address that initiated the deposit.
+    /// @param gasLimit the gas limit for the deposit transaction.
+    /// @param data The calldata of the deposit transaction.
     /// @param l2MintTxHash the hash of the transaction that will finalize the
     /// deposit in L2. Could be used to track the status of the deposit finalization
     /// on L2. You can use this hash to retrive the tx data.
     /// It is the result of keccak(abi.encode(transaction)).
-    /// @param depositId Id used to differentiate deposits with same amount and recipient.
     event DepositInitiated(
         uint256 indexed amount,
         address indexed to,
         uint256 indexed depositId,
+        address recipient,
+        address from,
+        uint256 gasLimit,
+        bytes data,
         bytes32 l2MintTxHash
     );
 
@@ -43,10 +51,17 @@ interface ICommonBridge {
         uint256 indexed claimedAmount
     );
 
-    /// @notice Method to retrieve all the deposit logs hashes.
-    /// @dev This method is used by the L2 L1_Watcher to get the remaining
-    /// deposit logs to be processed.
-    function getDepositLogs() external view returns (bytes32[] memory);
+    struct DepositValues {
+        address to;
+        address recipient;
+        uint256 gasLimit;
+        bytes data;
+    }
+
+    /// @notice Method to retrieve all the pending deposit logs hashes.
+    /// @dev This method is used by the L2 L1_Watcher to get the pending deposit
+    /// logs to be processed.
+    function getPendingDepositLogs() external view returns (bytes32[] memory);
 
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
@@ -58,22 +73,33 @@ interface ICommonBridge {
     /// @dev The deposit process starts here by emitting a DepositInitiated
     /// event. This event will later be intercepted by the L2 operator to
     /// finalize the deposit.
-    /// @param to, the address in L2 to which the tokens will be minted to.
-    function deposit(address to) external payable;
+    /// @param depositValues the values needed to create the deposit.
+    function deposit(DepositValues calldata depositValues) external payable;
 
-    /// @notice Method to retrieve the versioned hash of the first `number` deposit logs.
-    /// @param number of deposit logs to retrieve the versioned hash.
-    function getDepositLogsVersionedHash(
+    /// @notice Method to retrieve the versioned hash of the first `number`
+    /// pending deposit logs.
+    /// @param number of pending deposit logs to retrieve the versioned hash.
+    function getPendingDepositLogsVersionedHash(
         uint16 number
     ) external view returns (bytes32);
 
-    /// @notice Remove deposit from depositLogs queue.
-    /// @dev This method is used by the L2 OnChainOperator to remove the deposit
-    /// logs from the queue after the deposit is verified.
-    /// @param number of deposit logs to remove.
+    /// @notice Remove pending deposit from the pendingDepositLogs queue.
+    /// @dev This method is used by the L2 OnChainOperator to remove the pending
+    /// deposit logs from the queue after the deposit is verified.
+    /// @param number of pending deposit logs to remove.
     /// As deposits are processed in order, we don't need to specify
-    /// the deposit logs to remove, only the number of them.
-    function removeDepositLogs(uint16 number) external;
+    /// the pending deposit logs to remove, only the number of them.
+    function removePendingDepositLogs(uint16 number) external;
+
+    /// @notice Method to retrieve the merkle root of the withdrawal logs of a
+    /// given block.
+    /// @dev This method is used by the L2 OnChainOperator at the verify stage.
+    /// @param blockNumber the block number in L2 where the withdrawal logs were
+    /// emitted.
+    /// @return the merkle root of the withdrawal logs of the given block.
+    function getWithdrawalLogsMerkleRoot(
+        uint256 blockNumber
+    ) external view returns (bytes32);
 
     /// @notice Publishes the L2 withdrawals on L1.
     /// @dev This method is used by the L2 OnChainOperator to publish the L2

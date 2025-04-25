@@ -1,7 +1,5 @@
 pub mod db;
 pub mod helpers;
-#[cfg(feature = "l2")]
-mod mods;
 
 use super::BlockExecutionResult;
 use crate::constants::{
@@ -68,6 +66,7 @@ impl REVM {
                 }
             }
         }
+
         let mut receipts = Vec::new();
         let mut cumulative_gas_used = 0;
 
@@ -80,6 +79,7 @@ impl REVM {
                 cumulative_gas_used,
                 result.logs(),
             );
+
             receipts.push(receipt);
         }
 
@@ -95,13 +95,7 @@ impl REVM {
             }
         }
 
-        let account_updates = Self::get_state_transitions(state);
-
-        Ok(BlockExecutionResult {
-            receipts,
-            requests,
-            account_updates,
-        })
+        Ok(BlockExecutionResult { receipts, requests })
     }
 
     pub fn execute_tx(
@@ -416,21 +410,6 @@ fn run_evm(
             .with_external_context(
                 TracerEip3155::new(Box::new(std::io::stderr())).without_summary(),
             );
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "l2")] {
-                use revm::{Handler, primitives::{CancunSpec, HandlerCfg}};
-                use std::sync::Arc;
-
-                evm_builder = evm_builder.with_handler({
-                    let mut evm_handler = Handler::new(HandlerCfg::new(SpecId::LATEST));
-                    evm_handler.pre_execution.deduct_caller = Arc::new(mods::deduct_caller::<CancunSpec, _, _>);
-                    evm_handler.validation.tx_against_state = Arc::new(mods::validate_tx_against_state::<CancunSpec, _, _>);
-                    // TODO: Override `end` function. We should deposit even if we revert.
-                    // evm_handler.pre_execution.end
-                    evm_handler
-                });
-            }
-        }
 
         match state {
             EvmState::Store(db) => {
@@ -469,10 +448,7 @@ pub fn tx_env(tx: &Transaction, sender: Address) -> TxEnv {
         .max_fee_per_blob_gas()
         .map(|x| RevmU256::from_be_bytes(x.to_big_endian()));
     TxEnv {
-        caller: match tx {
-            Transaction::PrivilegedL2Transaction(_tx) => RevmAddress::ZERO,
-            _ => RevmAddress(sender.0.into()),
-        },
+        caller: RevmAddress(sender.0.into()),
         gas_limit: tx.gas_limit(),
         gas_price: RevmU256::from(tx.gas_price()),
         transact_to: match tx.to() {
