@@ -63,8 +63,8 @@ To transfer ETH from Ethereum L1 to your L2 account:
 
    Once the deposit is made you can verify the balance has increase with:
    ```cli
-   # Format: rex balance <L2Address> <L2_RPC_URL>
-   rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 "http://localhost:1729"
+   # Format: rex l2 balance <Address> [RPC_URL]
+   rex l2 balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776
    ```
 
 For more information on what you can do with the CommonBridge see [here](./contracts.md).
