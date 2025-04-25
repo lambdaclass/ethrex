@@ -4,7 +4,7 @@ use crate::utils::config::{read_env_file_by_config, ConfigMode};
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
-use ethrex_storage_l2::StoreRollup;
+use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
 use tokio::task::JoinSet;
 use tracing::{error, info};

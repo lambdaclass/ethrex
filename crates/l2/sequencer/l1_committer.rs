@@ -26,7 +26,7 @@ use ethrex_rpc::{
     utils::get_withdrawal_hash,
 };
 use ethrex_storage::{AccountUpdate, Store};
-use ethrex_storage_l2::StoreRollup;
+use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::Evm;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;

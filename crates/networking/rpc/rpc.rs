@@ -71,7 +71,7 @@ cfg_if::cfg_if! {
         use crate::l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
-        use ethrex_storage_l2::StoreRollup;
+        use ethrex_storage_rollup::StoreRollup;
     }
 }
 

@@ -15,7 +15,7 @@ use ethrex_common::{
 };
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
-use ethrex_storage_l2::StoreRollup;
+use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError, ExecutionDB};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr};

@@ -1,5 +1,5 @@
 [package]
-name = "ethrex-storage-l2"
+name = "ethrex-storage-rollup"
 version.workspace = true
 edition.workspace = true
 
@@ -26,7 +26,7 @@ redb = ["dep:redb", "dep:tokio"]
 l2 = []
 
 [lib]
-name = "ethrex_storage_l2"
+name = "ethrex_storage_rollup"
 path = "src/lib.rs"
 
 [lints.clippy]

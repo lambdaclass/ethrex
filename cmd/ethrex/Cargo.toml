@@ -13,7 +13,7 @@ ethrex-p2p.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
-ethrex-storage-l2 = { workspace = true, optional = true }
+ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 
 bytes.workspace = true
@@ -60,8 +60,8 @@ c-kzg = [
   "ethrex-p2p/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics"]
-libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-l2/libmdbx"]
-redb = ["dep:redb", "ethrex-storage/redb", "ethrex-storage-l2/redb"]
+libmdbx = ["ethrex-storage/libmdbx", "ethrex-storage-rollup/libmdbx"]
+redb = ["dep:redb", "ethrex-storage/redb", "ethrex-storage-rollup/redb"]
 blst = ["ethrex-vm/blst"]
 l2 = [
     "dep:ethrex-l2",
@@ -69,7 +69,7 @@ l2 = [
     "ethrex-blockchain/l2",
     "ethrex-rpc/l2",
     "dep:secp256k1",
-    "ethrex-storage-l2"
+    "ethrex-storage-rollup"
 ]
 based = ["l2", "ethrex-rpc/based"]
 

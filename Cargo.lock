@@ -3010,7 +3010,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
- "ethrex-storage-l2",
+ "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
  "hex",
@@ -3113,7 +3113,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "ethrex-storage",
- "ethrex-storage-l2",
+ "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
  "hex",
@@ -3264,7 +3264,7 @@ dependencies = [
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
- "ethrex-storage-l2",
+ "ethrex-storage-rollup",
  "ethrex-vm",
  "hex",
  "hex-literal",
@@ -3338,7 +3338,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-storage-l2"
+name = "ethrex-storage-rollup"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3444,7 +3444,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "ethrex-storage",
- "ethrex-storage-l2",
+ "ethrex-storage-rollup",
  "eyre",
  "hex",
  "itertools 0.13.0",

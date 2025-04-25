@@ -49,7 +49,7 @@ ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
-ethrex-storage-l2 = { path = "./crates/l2/storage" }
+ethrex-storage-rollup = { path = "./crates/l2/storage" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }

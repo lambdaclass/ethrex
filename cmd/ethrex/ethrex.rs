@@ -15,7 +15,7 @@ use tracing::info;
 #[cfg(any(feature = "l2", feature = "based"))]
 use ethrex::l2::L2Options;
 #[cfg(feature = "l2")]
-use ethrex_storage_l2::StoreRollup;
+use ethrex_storage_rollup::StoreRollup;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {

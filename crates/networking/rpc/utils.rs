@@ -354,7 +354,7 @@ pub mod test_utils {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     #[cfg(feature = "l2")]
-    use ethrex_storage_l2::{EngineTypeRollup, StoreRollup};
+    use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
     #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
 

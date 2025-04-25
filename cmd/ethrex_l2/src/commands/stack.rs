@@ -6,7 +6,7 @@ use ethrex_common::{
 };
 use ethrex_l2::sequencer::state_diff::StateDiff;
 use ethrex_storage::{error::StoreError, EngineType, Store};
-use ethrex_storage_l2::{EngineTypeRollup, StoreRollup};
+use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::ContextCompat;
 use itertools::Itertools;
 use keccak_hash::H256;
