@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: ["**"]
     paths-ignore:
-      - "crates/vm/levm/**" # We run this in a separate workflow
       - "crates/l2/**" # Behind a feature flag not used in this workflow
 
 concurrency:
@@ -31,14 +30,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
-        run: cargo check
-
-      - name: Run cargo build
-        run: |
-          cargo build
+        run: cargo check --workspace
 
       - name: Run cargo clippy
         run: |
+          cargo clippy --workspace -- -D warnings
           cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
 
       - name: Run cargo fmt
@@ -64,7 +60,6 @@ jobs:
           make test
 
   docker_build:
-    # "Build Docker" is a required check, don't change the name
     name: Build Docker
     runs-on: ubuntu-latest
     steps:
@@ -174,11 +169,10 @@ jobs:
             simulation: ethereum/sync
             test_pattern: ""
             ethrex_flags: "--syncmode full"
-          # Flaky test, reenable when fixed
-          # - name: "Sync snap"
-          #   simulation: ethereum/sync
-          #   test_pattern: ""
-          #   ethrex_flags: "--syncmode snap"
+          - name: "Sync snap"
+            simulation: ethereum/sync
+            test_pattern: ""
+            ethrex_flags: "--syncmode snap"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -198,7 +192,6 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      # By default ethrex uses revm as evm backend.
       - name: Run Hive Simulation
         run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16
 
