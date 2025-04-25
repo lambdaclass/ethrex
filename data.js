@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745597847404,
+  "lastUpdate": 1745612223708,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4525,6 +4525,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179487683201,
             "range": "± 670448361",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4ea9264a5131eac6dec15e65a50f7eddfebe7e7f",
+          "message": "docs(l2): add prover docs (#2511)\n\n**Motivation**\n\nWe were lacking detailed documentation about how ethrex-prover works.\n\nCloses #2600\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>",
+          "timestamp": "2025-04-25T19:28:19Z",
+          "tree_id": "6270cb995644be723635c599c4731069fc8a1335",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4ea9264a5131eac6dec15e65a50f7eddfebe7e7f"
+        },
+        "date": 1745612221797,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179093631965,
+            "range": "± 960705176",
             "unit": "ns/iter"
           }
         ]
