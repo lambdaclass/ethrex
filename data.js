@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745532145222,
+  "lastUpdate": 1745592373629,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4375,6 +4375,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178540899928,
             "range": "± 756117182",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "69900a49fbc75b02d340d181db4c7e50b3de6c19",
+          "message": "chore(levm): remove unused code (#2585)\n\n**Motivation**\n\nCleaning up the codebase.\n\n**Description**\n\nRemoved functions that weren't part of the interface nor used anywhere\nin the code. Also removed an outdated TODO comment.\n\nCloses issue [2544](https://github.com/lambdaclass/ethrex/issues/2544).",
+          "timestamp": "2025-04-25T13:58:51Z",
+          "tree_id": "26b99a2690fe8158e8a558774e461fb132ff54d7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/69900a49fbc75b02d340d181db4c7e50b3de6c19"
+        },
+        "date": 1745592371186,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 176117755615,
+            "range": "± 570695607",
             "unit": "ns/iter"
           }
         ]
