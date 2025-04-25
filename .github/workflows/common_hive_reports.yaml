@@ -12,9 +12,6 @@ on:
         required: true
         type: string
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   run-hive:
     name: Hive (${{ inputs.evm }}) - ${{ matrix.test.name }}

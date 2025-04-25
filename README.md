@@ -235,7 +235,7 @@ Node options:
           Has to be `levm` or `revm`
 
           [env: ETHREX_EVM=]
-          [default: revm]
+          [default: levm]
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
@@ -248,11 +248,11 @@ P2P options:
 
       --syncmode <SYNC_MODE>
           Can be either "full" or "snap" with "full" as default value.
-          
+
           [default: full]
 
       --p2p.enabled
-          
+
 
       --p2p.addr <ADDRESS>
           [default: 0.0.0.0]
@@ -262,12 +262,12 @@ P2P options:
 
       --discovery.addr <ADDRESS>
           UDP address for P2P discovery.
-          
+
           [default: 0.0.0.0]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
-          
+
           [default: 30303]
 
 RPC options:
@@ -285,17 +285,17 @@ RPC options:
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
-          
+
           [default: localhost]
 
       --authrpc.port <PORT>
           Listening port for the authenticated rpc server.
-          
+
           [default: 8551]
 
       --authrpc.jwtsecret <JWTSECRET_PATH>
           Receives the jwt secret used for authenticated rpc requests.
-          
+
           [default: jwt.hex]
 ```
 <!-- END_CLI_HELP -->
