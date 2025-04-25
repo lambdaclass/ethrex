@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745620916188,
+  "lastUpdate": 1745620945049,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4675,6 +4675,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178501452158,
             "range": "± 373701351",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "64bca8af4b6266c197fe91a78249a1f22272aa3c",
+          "message": "refactor(l1): implement code method for RLPxMessage enum and use it for encoding/decoding (#2454)\n\n**Motivation**\nImplements the refactor specified in the linked issues. Adding a single\n`code` method for the RLPxMessage enum was not enough for both encoding\nand decoding (as we would need to create the struct to call the method)\nso an associated constant was also added to support both needs.\nThis solution fulfills the purpose of the issue, to have only one\ninstance of each message code that we can use for encoding/decoding of\nmessages, but its implementation is more complex than what we would have\nliked. If the complexity is not acceptable, we should close both this PR\nand the originating issue.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Implement `code` method for `RLPxMessage`\n* Add `CODE` associated constant to `RLPxEncode` trait\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #1035  (Also #1034)",
+          "timestamp": "2025-04-25T21:56:00Z",
+          "tree_id": "17efe8b774bb727673048afc9863d3561999a0ce",
+          "url": "https://github.com/lambdaclass/ethrex/commit/64bca8af4b6266c197fe91a78249a1f22272aa3c"
+        },
+        "date": 1745620943011,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178362957327,
+            "range": "± 745995947",
             "unit": "ns/iter"
           }
         ]
