@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745594225754,
+  "lastUpdate": 1745596039400,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4435,6 +4435,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179871691798,
             "range": "± 442490815",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "09e7db7745d819c253b85bb01b107f9b37e3fd00",
+          "message": "feat(l2): add validium mode (#2365)\n\nValidium is a [scaling\nsolution](https://ethereum.org/en/developers/docs/scaling/) that\nenforces integrity of transactions using validity proofs like\n[ZK-rollups](https://ethereum.org/en/developers/docs/scaling/zk-rollups/),\nbut doesn’t store transaction data on the Ethereum Mainnet.\n\n**Description**\n- Replace EIP 4844 transactions for EIP 1559\n- Modify OnChainProposer contract so that it supports validium. It is\nnot the most efficient way of doing it but the simplest.\n- Now the config.toml has a validium field.\n\nNote: I'm not 100% sure about the changes that I made to the\nOnChainProposer, there may be a mistake in the additions that I made. I\nwill review it though but I still consider worth opening this PR.\n\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2313\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-04-25T15:00:11Z",
+          "tree_id": "10f190d348d63ce751ceece38c6bc46c616e082d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/09e7db7745d819c253b85bb01b107f9b37e3fd00"
+        },
+        "date": 1745596037447,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177697617762,
+            "range": "± 1030206806",
             "unit": "ns/iter"
           }
         ]
