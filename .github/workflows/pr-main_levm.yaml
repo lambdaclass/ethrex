@@ -17,9 +17,6 @@ concurrency:
 permissions:
   pull-requests: write
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   ef-test:
     if: ${{ github.event_name != 'merge_group' }}
@@ -199,86 +196,17 @@ jobs:
             Same results between main branch and the current PR.
           edit-mode: replace
 
-  hive-report-creation:
-    uses: ./.github/workflows/common_hive_reports.yaml
-    with:
-      evm: levm
-      job_type: trigger
-
-  hive-report-creation-main:
-    uses: ./.github/workflows/common_hive_reports.yaml
-    with:
-      evm: levm
-      job_type: main
-
-  # Check we don't have a regression against main
-  hive-test:
-    if: ${{ github.event_name != 'merge_group' }}
-    name: Hive Tests Check
-    needs: [hive-report-creation, hive-report-creation-main]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Download results (pr)
-        uses: actions/download-artifact@v4
-        with:
-          name: results_levm_trigger.md
-
-      - name: Rename result (1)
-        run: |
-          cp results.md results_levm.md
-          echo "RESULTS:"
-          cat results_levm.md
-
-      - name: Download results (main)
-        uses: actions/download-artifact@v4
-        with:
-          name: results_levm_main.md
-        # If we don't have the file it will use the result(1) file
-        continue-on-error: true
-
-      - name: Rename result (2)
-        run: |
-          cp results.md results_levm_main.md
-          echo "RESULTS:"
-          cat results_levm_main.md
-
-      - name: Create diff message
-        run: |
-          bash .github/scripts/hive_levm_revm_diff.sh results_levm_main.md results_levm.md >> diff.md
-          cat diff.md >> $GITHUB_STEP_SUMMARY
-          echo "SUMMARY:"
-          cat diff.md
-
-      - name: Check Regression
-        run: |
-          if grep -q "No differences found" diff.md; then
-            echo "No differences found."
-          elif ! grep -q "regression" diff.md; then
-            echo "No regression found."
-          else
-            echo "Differences found."
-            exit 1
-          fi
-
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [hive-test, ef-test]
+    needs: [ef-test]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ always() && needs.hive-test.result != 'skipped' && needs.ef-test.result != 'skipped' }}
+    if: ${{ always() && needs.ef-test.result != 'skipped' }}
     steps:
       - name: Check if any job failed
         run: |
-          if [ "${{ needs.hive-test.result }}" != "success" ]; then
-            echo "Job Hive Tests Check failed"
-            exit 1
-          fi
-
           if [ "${{ needs.ef-test.result }}" != "success" ]; then
             echo "Job EF Tests Check failed"
             exit 1
@@ -330,38 +258,3 @@ jobs:
         run: |
           cd crates/vm/levm
           make revm-comparison
-  lint:
-    # "Lint" is a required check, don't change the name
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Rustup toolchain install
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run cargo check
-        run: |
-          cd crates/vm/levm
-          cargo check
-
-      - name: Run cargo build
-        run: |
-          cd crates/vm/levm
-          cargo build
-
-      - name: Run cargo clippy
-        run: |
-          cd crates/vm/levm
-          cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Run cargo fmt
-        run: |
-          cd crates/vm/levm
-          cargo fmt --all -- --check

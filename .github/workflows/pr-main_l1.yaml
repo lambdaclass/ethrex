@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: ["**"]
     paths-ignore:
-      - "crates/vm/levm/**" # We run this in a separate workflow
       - "crates/l2/**" # Behind a feature flag not used in this workflow
 
 concurrency:
@@ -198,7 +197,6 @@ jobs:
         run: |
           docker load --input /tmp/ethrex_image.tar
 
-      # By default ethrex uses revm as evm backend.
       - name: Run Hive Simulation
         run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16
 
