@@ -86,7 +86,7 @@ impl L1Watcher {
             let _deposit_txs = self.process_logs(logs, store, blockchain).await?;
         }
     }
-  
+
     pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
         if self.last_block_fetched.is_zero() {
             self.last_block_fetched =
