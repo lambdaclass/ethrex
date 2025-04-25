@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745592373629,
+  "lastUpdate": 1745594225754,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4405,6 +4405,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 176117755615,
             "range": "± 570695607",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dab0e8859bc604399b859acfd9a8f4248ce18546",
+          "message": "chore(l2): remove unused revm modules (#2587)\n\n**Motivation**\n\nNow that the L2 has fully defaulted to levm, both for execution and\nproving, these modules became unused.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-25T14:29:55Z",
+          "tree_id": "337feed959ee08adf526c1bcb05341646daf6fdf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/dab0e8859bc604399b859acfd9a8f4248ce18546"
+        },
+        "date": 1745594223306,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179871691798,
+            "range": "± 442490815",
             "unit": "ns/iter"
           }
         ]
