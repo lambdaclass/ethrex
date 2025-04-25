@@ -1,19 +1,15 @@
 use crate::{
     sequencer::errors::{MetricsGathererError, SequencerError},
-    utils::config::{
-        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        l1_watcher::L1WatcherConfig,
-    },
-    SequencerConfig,
+    CommitterConfig, EthConfig, L1WatcherConfig, SequencerConfig,
 };
 use ethereum_types::Address;
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
-use ethrex_rpc::clients::eth::{errors::EthClientError, EthClient};
-use std::time::Duration;
+use ethrex_rpc::clients::eth::EthClient;
+use std::{sync::Arc, time::Duration};
 use tokio::time::sleep;
 use tracing::{debug, error};
 
-pub async fn start_metrics_gatherer(cfg: &SequencerConfig) -> Result<(), SequencerError> {
+pub async fn start_metrics_gatherer(cfg: Arc<SequencerConfig>) -> Result<(), SequencerError> {
     let mut metrics_gatherer =
         MetricsGatherer::new_from_config(&cfg.l1_watcher, &cfg.l1_committer, &cfg.eth).await?;
     metrics_gatherer.run().await;
@@ -32,7 +28,7 @@ impl MetricsGatherer {
         watcher_config: &L1WatcherConfig,
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
-    ) -> Result<Self, EthClientError> {
+    ) -> Result<Self, MetricsGathererError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         Ok(Self {
             eth_client,

@@ -53,7 +53,7 @@ pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>, cfg: SequencerC
         cfg.clone(),
     ));
     #[cfg(feature = "metrics")]
-    task_set.spawn(metrics::start_metrics_gatherer());
+    task_set.spawn(metrics::start_metrics_gatherer(cfg.clone()));
 
     while let Some(res) = task_set.join_next().await {
         match res {
