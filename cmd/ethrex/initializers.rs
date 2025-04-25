@@ -102,9 +102,9 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
             .expect("Failed to create StoreRollup")
     } else {
         cfg_if::cfg_if! {
-            if #[cfg(feature = "redb")] {
+            if #[cfg(feature = "rollup_storage_redb")] {
                 let engine_type = EngineTypeRollup::RedB;
-            } else if #[cfg(feature = "libmdbx")] {
+            } else if #[cfg(feature = "rollup_storage_libmdbx")] {
                 let engine_type = EngineTypeRollup::Libmdbx;
             } else {
                 error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
