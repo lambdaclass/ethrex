@@ -9,7 +9,7 @@ pub struct TrieIterator {
 impl TrieIterator {
     pub(crate) fn new(trie: Trie) -> Self {
         let stack = if let Some(root) = &trie.root {
-            vec![(Nibbles::default(), root.clone())]
+            vec![(Nibbles::default(), *root)]
         } else {
             vec![]
         };
@@ -34,7 +34,7 @@ impl Iterator for TrieIterator {
                     if child.is_valid() {
                         let mut child_path = path.clone();
                         child_path.append(choice as u8);
-                        self.stack.push((child_path, child.clone()))
+                        self.stack.push((child_path, *child))
                     }
                 }
             }
@@ -42,8 +42,7 @@ impl Iterator for TrieIterator {
                 // Update path
                 path.extend(&extension_node.prefix);
                 // Add child to the stack
-                self.stack
-                    .push((path.clone(), extension_node.child.clone()));
+                self.stack.push((path.clone(), extension_node.child));
             }
             Node::Leaf(leaf) => {
                 path.extend(&leaf.partial);
