@@ -78,8 +78,8 @@ impl L1ProofSender {
                     )
                     .await?;
 
-                // remove leading zeros
-                let trimmed_response = response.trim_start_matches("0x").trim_start_matches("0");
+                // trim to 20 bytes, also removes 0x prefix
+                let trimmed_response = &response[26..];
 
                 let address = Address::from_str(&format!("0x{trimmed_response}"))
                     .map_err(|_| ConfigError::HexParsingError(response))?;
