@@ -40,6 +40,34 @@ Make sure docker is running!
 
 For more information on how to run the L2 node with the prover attached to it, the [Prover Docs](./prover.md) provides more insight.
 
+## Bridge Assets
+
+Funding an L2 Account from L1
+
+To transfer ETH from Ethereum L1 to your L2 account:
+
+1. Prerequisites:
+   - An L1 account with sufficient ETH balance
+   - The address of the deployed CommonBridge contract
+   - An Ethereum utility tool like [Rex](https://github.com/lambdaclass/rex)
+
+2. Make a deposit:
+
+   Using Rex is as simple as:
+```cli
+# Format: rex send <CommonBridgeAddress> <AmountInWei> <L1PrivateKey>
+rex send 0x65dd6dc5df74b7e08e92c910122f91d7b2d5184f 50000000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+```
+
+3. Verification:
+   Once the deposit is made you can verify the balance has increase with:
+```cli
+# Format: rex balance <L2Address> <L2_RPC_URL>
+rex balance 0x8943545177806ed17b9f23f0a21ee5948ecaa776 "http://localhost:1729"
+```
+
+For more information on what you can do with the CommonBridge see [here](./contracts.md).
+
 ## Configuration
 
 Configuration consists of two steps, the parsing of a `.toml` config file and the creation and modification of a `.env` file, then each component reads the `.env` to load the environment variables. A detailed list is available in each part documentation.
