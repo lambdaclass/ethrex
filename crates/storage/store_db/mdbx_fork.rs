@@ -1,6 +1,7 @@
 use ethrex_trie::InMemoryTrieDB;
 use reth_db::table::DupSort;
 use reth_provider::providers::StaticFileProvider;
+use serde_json::value;
 use std::cell::{Cell, LazyCell, OnceCell};
 use std::marker::PhantomData;
 use std::path::Path;
@@ -84,7 +85,7 @@ impl MDBXFork {
 
         tx.create_db(Some("StorageTrie"), DatabaseFlags::default())
             .unwrap();
-        tx.create_db(Some("TransactionLocations"), DatabaseFlags::default())
+        tx.create_db(Some("TransactionLocations"), DatabaseFlags::DUP_SORT)
             .unwrap();
         tx.create_db(Some("Bodies"), DatabaseFlags::default())
             .unwrap();
@@ -104,6 +105,9 @@ impl MDBXFork {
             .unwrap();
 
         tx.create_db(Some("Payloads"), DatabaseFlags::default())
+            .unwrap();
+
+        tx.create_db(Some("StateSnapShot"), DatabaseFlags::DUP_SORT)
             .unwrap();
 
         tx.commit().unwrap();
@@ -128,68 +132,6 @@ impl MDBXFork {
             account_trie,
             storage_trie,
         })
-    }
-}
-
-// Blame the orphan rule
-fn ethrex_header_to_ret_header(header: BlockHeader) -> Header {
-    Header {
-        parent_hash: header.parent_hash.0.into(),
-        ommers_hash: header.ommers_hash.0.into(),
-        beneficiary: header.coinbase.0.into(),
-        state_root: header.state_root.0.into(),
-        transactions_root: header.transactions_root.0.into(),
-        receipts_root: header.receipts_root.0.into(),
-        withdrawals_root: header.withdrawals_root.map(|root| root.0.into()),
-        logs_bloom: header.logs_bloom.0.into(),
-        // FIXME: Review this later
-        difficulty: Default::default(),
-        number: header.number,
-        gas_limit: header.gas_limit,
-        gas_used: header.gas_used,
-        timestamp: header.timestamp,
-        mix_hash: header.prev_randao.0.into(),
-        nonce: header.nonce.to_be_bytes().into(),
-        base_fee_per_gas: header.base_fee_per_gas,
-        blob_gas_used: header.blob_gas_used,
-        excess_blob_gas: header.excess_blob_gas,
-        parent_beacon_block_root: header.parent_beacon_block_root.map(|root| root.0.into()),
-        requests_root: header.requests_hash.map(|hash| hash.0.into()),
-        extra_data: header.extra_data.into(),
-    }
-}
-pub fn ethrex_withdrawal_to_reth_withdrawal(original: Withdrawal) -> RethWithdrawal {
-    RethWithdrawal {
-        index: original.index,
-        validator_index: original.validator_index,
-        address: original.address.0.into(),
-        amount: original.amount,
-    }
-}
-fn reth_header_to_ethrex_header(header: Header) -> BlockHeader {
-    BlockHeader {
-        parent_hash: H256(header.parent_hash.0),
-        ommers_hash: H256(header.ommers_hash.0),
-        coinbase: H160(header.beneficiary.0 .0),
-        state_root: H256(header.state_root.0),
-        transactions_root: H256(header.transactions_root.0),
-        receipts_root: H256(header.receipts_root.0),
-        withdrawals_root: header.withdrawals_root.map(|root| H256(root.0)),
-        logs_bloom: ethrex_common::Bloom(*header.logs_bloom.0),
-        // FIXME: Review this later
-        difficulty: Default::default(),
-        number: header.number,
-        gas_limit: header.gas_limit,
-        gas_used: header.gas_used,
-        timestamp: header.timestamp,
-        extra_data: header.extra_data.into(),
-        prev_randao: H256(header.mix_hash.0),
-        nonce: u64::from_be_bytes(header.nonce.0),
-        base_fee_per_gas: header.base_fee_per_gas,
-        blob_gas_used: header.blob_gas_used,
-        excess_blob_gas: header.excess_blob_gas,
-        parent_beacon_block_root: header.parent_beacon_block_root.map(|root| H256(root.0)),
-        requests_hash: header.requests_root.map(|hash| H256(hash.0)),
     }
 }
 
@@ -334,6 +276,7 @@ tables! {
     table ChainData<Key = u8, Value = Vec<u8>>;
     table SnapState<Key = u8, Value = Vec<u8>>;
     table Payloads<Key = u64, Value = Vec<u8>>;
+    table StateSnapShot<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
 }
 
 impl StoreEngine for MDBXFork {
@@ -540,14 +483,25 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<(), StoreError> {
-        todo!()
+        let value = (block_number, block_hash, index).encode_to_vec();
+        let key = transaction_hash.encode_to_vec();
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<TransactionLocations>(key, value).unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        todo!()
+        let key = transaction_hash.encode_to_vec();
+        let tx = self.env.tx().unwrap();
+        let Some(encoded_tuple) = tx.get::<TransactionLocations>(key).unwrap() else {
+            return Ok(None);
+        };
+        let decoded = <(BlockNumber, BlockHash, Index)>::decode(&encoded_tuple).unwrap();
+        Ok(Some(decoded))
     }
 
     fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
@@ -737,7 +691,12 @@ impl StoreEngine for MDBXFork {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
-        todo!()
+        let (_block_number, block_hash, index) =
+            match self.get_transaction_location(transaction_hash)? {
+                Some(location) => location,
+                None => return Ok(None),
+            };
+        self.get_transaction_by_location(block_hash, index)
     }
 
     fn get_transaction_by_location(
@@ -745,7 +704,14 @@ impl StoreEngine for MDBXFork {
         block_hash: H256,
         index: u64,
     ) -> Result<Option<Transaction>, StoreError> {
-        todo!()
+        let block_body = match self.get_block_body_by_hash(block_hash)? {
+            Some(body) => body,
+            None => return Ok(None),
+        };
+        Ok(index
+            .try_into()
+            .ok()
+            .and_then(|index: usize| block_body.transactions.get(index).cloned()))
     }
 
     fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
@@ -779,14 +745,32 @@ impl StoreEngine for MDBXFork {
     }
 
     fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
-        todo!()
+        let encoded_hash = block_hash.encode_to_vec();
+        let tx = self.env.tx().unwrap();
+        let Some(encoded_block) = tx.get::<PendingBlocks>(encoded_hash).unwrap() else {
+            return Ok(None);
+        };
+        Ok(Some(Block::decode(&encoded_block).unwrap()))
     }
 
     fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        todo!()
+        let key_values = locations
+            .into_iter()
+            .map(|(tx_hash, block_number, block_hash, index)| {
+                (
+                    tx_hash.encode_to_vec(),
+                    (block_number, block_hash, index).encode_to_vec(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let tx = self.env.tx_mut().unwrap();
+        for (k, v) in key_values {
+            tx.put::<TransactionLocations>(k, v).unwrap();
+        }
+        Ok(())
     }
 
     fn add_receipts(
@@ -940,8 +924,10 @@ impl StoreEngine for MDBXFork {
     }
 
     fn clear_snap_state(&self) -> Result<(), StoreError> {
-        // See how to drop a table
-        todo!()
+        let tx = self.env.tx_mut().unwrap();
+        tx.clear::<SnapState>().unwrap();
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn write_snapshot_account_batch(
@@ -949,7 +935,17 @@ impl StoreEngine for MDBXFork {
         account_hashes: Vec<H256>,
         account_states: Vec<AccountState>,
     ) -> Result<(), StoreError> {
-        todo!()
+        let key_values: Vec<_> = account_hashes
+            .into_iter()
+            .map(|h| h.encode_to_vec())
+            .zip(account_states.into_iter().map(|a| a.encode_to_vec()))
+            .collect();
+        let tx = self.env.tx_mut().unwrap();
+        for (k, v) in key_values {
+            tx.put::<StateSnapShot>(k, v).unwrap();
+        }
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn write_snapshot_storage_batch(
@@ -958,7 +954,19 @@ impl StoreEngine for MDBXFork {
         storage_keys: Vec<H256>,
         storage_values: Vec<U256>,
     ) -> Result<(), StoreError> {
-        todo!()
+        let encoded_hash = account_hash.encode_to_vec();
+        let encoded_values = storage_keys
+            .into_iter()
+            .zip(storage_values.into_iter())
+            .map(|v| v.encode_to_vec())
+            .collect::<Vec<_>>();
+        let tx = self.env.tx_mut().unwrap();
+        let mut cursor = tx.cursor_dup_write::<StateSnapShot>().unwrap();
+        cursor.seek_exact(encoded_hash.clone()).unwrap();
+        for v in encoded_values {
+            cursor.append_dup(encoded_hash.clone(), v).unwrap();
+        }
+        Ok(())
     }
 
     fn write_snapshot_storage_batches(
@@ -967,7 +975,33 @@ impl StoreEngine for MDBXFork {
         storage_keys: Vec<Vec<H256>>,
         storage_values: Vec<Vec<U256>>,
     ) -> Result<(), StoreError> {
-        todo!()
+        // Pre-encode all data before starting DB interaction
+        let pre_encoded: Vec<(Vec<u8>, Vec<Vec<u8>>)> = account_hashes
+            .into_iter()
+            .zip(storage_keys.into_iter().zip(storage_values.into_iter()))
+            .map(|(account_hash, (keys, values))| {
+                let encoded_hash = account_hash.encode_to_vec();
+                let encoded_pairs = keys
+                    .into_iter()
+                    .zip(values.into_iter())
+                    .map(|(k, v)| (k, v).encode_to_vec())
+                    .collect();
+                (encoded_hash, encoded_pairs)
+            })
+            .collect();
+
+        // Now perform all DB operations in one quick sequence
+        let tx = self.env.tx_mut().unwrap();
+        let mut cursor = tx.cursor_dup_write::<StateSnapShot>().unwrap();
+
+        for (encoded_hash, encoded_pairs) in pre_encoded {
+            cursor.seek_exact(encoded_hash.clone()).unwrap();
+            for pair in encoded_pairs {
+                cursor.append_dup(encoded_hash.clone(), pair).unwrap();
+            }
+        }
+
+        Ok(())
     }
 
     fn set_state_trie_rebuild_checkpoint(
