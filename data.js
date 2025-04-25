@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745619767634,
+  "lastUpdate": 1745620916188,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4645,6 +4645,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180123755475,
             "range": "± 1237834244",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9c4574bfa540589b0eed7667ec05ca6680fb637f",
+          "message": "fix(l1): bug in storage healer (#2468)\n\n**Motivation**\nThere is currently a bug in the storage healer causing fetched paths to\nnot be properly updated. This makes storage healing virtually infinite\nas fetched paths are constantly being added back to the queue.\nThis fix should restore regular storage healing behaviour\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Fix logic error when updating pending paths for the next fetch during\nstorage healing\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n**Other info**\nThis bug was unknowingly introduced by #2288 \n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-25T21:55:22Z",
+          "tree_id": "4dd8cb615b7bbb29962acb2657fc60f08e177084",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9c4574bfa540589b0eed7667ec05ca6680fb637f"
+        },
+        "date": 1745620914566,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178501452158,
+            "range": "± 373701351",
             "unit": "ns/iter"
           }
         ]
