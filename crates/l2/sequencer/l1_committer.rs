@@ -31,7 +31,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
 
-const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32)";
+const COMMIT_FUNCTION_SIGNATURE: &str = "commit(uint256,bytes32,bytes32,bytes32,bytes32)";
 
 pub struct Committer {
     eth_client: EthClient,
@@ -42,6 +42,7 @@ pub struct Committer {
     commit_time_ms: u64,
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
+    validium: bool,
 }
 
 pub async fn start_l1_committer(
@@ -73,6 +74,7 @@ impl Committer {
             commit_time_ms: committer_config.commit_time_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
+            validium: committer_config.validium,
         }
     }
 
@@ -160,22 +162,34 @@ impl Committer {
             }
         };
 
-        let state_diff = self
-            .prepare_state_diff(
-                &block_to_commit,
-                self.store.clone(),
-                withdrawals,
-                deposits,
-                &account_updates,
-            )
-            .await?;
+        let new_state_root = self
+            .store
+            .state_trie(block_to_commit.hash())?
+            .ok_or(CommitterError::FailedToGetInformationFromStorage(
+                "Failed to get state root from storage".to_owned(),
+            ))?
+            .hash_no_commit();
 
-        let blobs_bundle = self.generate_blobs_bundle(&state_diff)?;
+        let blobs_bundle = if !self.validium {
+            let state_diff = self
+                .prepare_state_diff(
+                    &block_to_commit,
+                    self.store.clone(),
+                    withdrawals,
+                    deposits,
+                    &account_updates,
+                )
+                .await?;
+            self.generate_blobs_bundle(&state_diff)?
+        } else {
+            BlobsBundle::default()
+        };
 
         let head_block_hash = block_to_commit.hash();
         match self
             .send_commitment(
                 block_to_commit.header.number,
+                new_state_root,
                 withdrawal_logs_merkle_root,
                 deposit_logs_hash,
                 blobs_bundle,
@@ -334,39 +348,34 @@ impl Committer {
     async fn send_commitment(
         &self,
         block_number: u64,
+        new_state_root: H256,
         withdrawal_logs_merkle_root: H256,
         deposit_logs_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, CommitterError> {
         info!("Sending commitment for block {block_number}");
 
-        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+        let state_diff_kzg_versioned_hash = if !self.validium {
+            let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+            *blob_versioned_hashes
+                .first()
+                .ok_or(BlobsBundleError::BlobBundleEmptyError)
+                .map_err(CommitterError::from)?
+                .as_fixed_bytes()
+        } else {
+            [0u8; 32] // Validium doesn't send state_diff_kzg_versioned_hash.
+        };
+
         let calldata_values = vec![
             Value::Uint(U256::from(block_number)),
-            Value::FixedBytes(
-                blob_versioned_hashes
-                    .first()
-                    .ok_or(BlobsBundleError::BlobBundleEmptyError)
-                    .map_err(CommitterError::from)?
-                    .as_fixed_bytes()
-                    .to_vec()
-                    .into(),
-            ),
+            Value::FixedBytes(new_state_root.0.to_vec().into()),
+            Value::FixedBytes(state_diff_kzg_versioned_hash.to_vec().into()),
             Value::FixedBytes(withdrawal_logs_merkle_root.0.to_vec().into()),
             Value::FixedBytes(deposit_logs_hash.0.to_vec().into()),
         ];
 
         let calldata = encode_calldata(COMMIT_FUNCTION_SIGNATURE, &calldata_values)?;
 
-        let le_bytes = estimate_blob_gas(
-            &self.eth_client,
-            self.arbitrary_base_blob_gas_price,
-            20, // 20% of headroom
-        )
-        .await?
-        .to_le_bytes();
-
-        let gas_price_per_blob = U256::from_little_endian(&le_bytes);
         let gas_price = self
             .eth_client
             .get_gas_price_with_extra(20)
@@ -376,25 +385,58 @@ impl Committer {
                 CommitterError::InternalError("Failed to convert gas_price to a u64".to_owned())
             })?;
 
-        let wrapped_tx = self
-            .eth_client
-            .build_eip4844_transaction(
-                self.on_chain_proposer_address,
-                self.l1_address,
-                calldata.into(),
-                Overrides {
-                    from: Some(self.l1_address),
-                    gas_price_per_blob: Some(gas_price_per_blob),
-                    max_fee_per_gas: Some(gas_price),
-                    max_priority_fee_per_gas: Some(gas_price),
-                    ..Default::default()
-                },
-                blobs_bundle,
+        // Validium: EIP1559 Transaction.
+        // Rollup: EIP4844 Transaction -> For on-chain Data Availability.
+        let mut tx = if !self.validium {
+            let le_bytes = estimate_blob_gas(
+                &self.eth_client,
+                self.arbitrary_base_blob_gas_price,
+                20, // 20% of headroom
             )
-            .await
-            .map_err(CommitterError::from)?;
+            .await?
+            .to_le_bytes();
 
-        let mut tx = WrappedTransaction::EIP4844(wrapped_tx);
+            let gas_price_per_blob = U256::from_little_endian(&le_bytes);
+
+            let wrapped_tx = self
+                .eth_client
+                .build_eip4844_transaction(
+                    self.on_chain_proposer_address,
+                    self.l1_address,
+                    calldata.into(),
+                    Overrides {
+                        from: Some(self.l1_address),
+                        gas_price_per_blob: Some(gas_price_per_blob),
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
+                        ..Default::default()
+                    },
+                    blobs_bundle,
+                )
+                .await
+                .map_err(CommitterError::from)?;
+
+            WrappedTransaction::EIP4844(wrapped_tx)
+        } else {
+            let wrapped_tx = self
+                .eth_client
+                .build_eip1559_transaction(
+                    self.on_chain_proposer_address,
+                    self.l1_address,
+                    calldata.into(),
+                    Overrides {
+                        from: Some(self.l1_address),
+                        max_fee_per_gas: Some(gas_price),
+                        max_priority_fee_per_gas: Some(gas_price),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(CommitterError::from)?;
+
+            WrappedTransaction::EIP1559(wrapped_tx)
+        };
+
         self.eth_client
             .set_gas_for_wrapped_tx(&mut tx, self.l1_address)
             .await?;
