@@ -47,6 +47,8 @@ services:
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
       - ENV_FILE=/.env
+      - ETHREX_PROOF_COORDINATOR_LISTEN_IP=${CI_ETHREX_PROOF_COORDINATOR_LISTEN_IP}
+      - ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM}
     volumes:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
       - ./.env:/.env:ro
