@@ -230,4 +230,9 @@ impl Account {
     pub fn is_empty(&self) -> bool {
         self.info.is_empty()
     }
+
+    pub fn set_code(&mut self, code: Bytes) {
+        self.code = code.clone();
+        self.info.code_hash = keccak(&code.as_ref()).0.into();
+    }
 }

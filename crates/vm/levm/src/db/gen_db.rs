@@ -128,7 +128,7 @@ impl<'a> VM<'a> {
         new_bytecode: Bytes,
     ) -> Result<(), VMError> {
         let account = self.get_account_mut(address)?;
-        account.code = new_bytecode;
+        account.set_code(new_bytecode);
         Ok(())
     }
 

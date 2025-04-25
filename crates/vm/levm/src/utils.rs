@@ -440,11 +440,12 @@ impl<'a> VM<'a> {
             // Clear the account’s code and reset the account’s code hash to the empty hash.
             let auth_account = self.get_account_mut(authority_address)?;
 
-            auth_account.code = if auth_tuple.address != Address::zero() {
+            let code = if auth_tuple.address != Address::zero() {
                 delegation_bytes.into()
             } else {
                 Bytes::new()
             };
+            auth_account.set_code(code);
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)

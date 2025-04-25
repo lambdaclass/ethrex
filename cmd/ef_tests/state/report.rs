@@ -713,6 +713,8 @@ impl fmt::Display for ComparisonReport {
                     continue;
                 }
 
+                // dbg!(levm_account_update);
+
                 if levm_account_update.removed != revm_account_update.removed {
                     writeln!(
                         f,
