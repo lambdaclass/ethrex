@@ -31,14 +31,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
-        run: cargo check
-
-      - name: Run cargo build
-        run: |
-          cargo build
+        run: cargo check --workspace
 
       - name: Run cargo clippy
         run: |
+          cargo clippy --workspace -- -D warnings
           cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
 
       - name: Run cargo fmt
@@ -64,7 +61,6 @@ jobs:
           make test
 
   docker_build:
-    # "Build Docker" is a required check, don't change the name
     name: Build Docker
     runs-on: ubuntu-latest
     steps:
