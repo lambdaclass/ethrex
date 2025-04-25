@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745596689710,
+  "lastUpdate": 1745597847404,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4495,6 +4495,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178920983018,
             "range": "± 1376402875",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "67846b794d5b0a3beaa02e6f54dca7d862a64001",
+          "message": "feat(levm): check logs when running ef tests (#2593)\n\n**Motivation**\n\n- We were just checking that the post state root matched. This checks\nthat logs match too.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n- This PR for now just compares the logs root hash with the provided by\nthe `EFTest` but we might also want to compare against REVM's logs so\nthat the log diff is debuggable in a follow up. This has to be added.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-04-25T15:30:08Z",
+          "tree_id": "5c6871e9c3d4a115dfe16d1c9978011528d0218c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/67846b794d5b0a3beaa02e6f54dca7d862a64001"
+        },
+        "date": 1745597845386,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179487683201,
+            "range": "± 670448361",
             "unit": "ns/iter"
           }
         ]
