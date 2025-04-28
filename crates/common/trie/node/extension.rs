@@ -7,6 +7,7 @@ use crate::ValueRLP;
 use crate::{cache::CacheKey, error::TrieError};
 
 use super::{BranchNode, Node};
+use bytes::BytesMut;
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
@@ -134,14 +135,18 @@ impl ExtensionNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self, state: &TrieState) -> NodeHash {
-        NodeHash::from_encoded_raw(self.encode_raw(state))
+        NodeHash::from_encoded_raw(&self.encode_raw(state))
     }
 
     /// Encodes the node
     pub fn encode_raw(&self, state: &TrieState) -> Vec<u8> {
         let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
-        encoder = state[self.child].encode(encoder);
+
+        let mut buf2 = BytesMut::new();
+        state[self.child].encode(&mut buf2, state);
+        encoder = encoder.encode_raw(&buf2);
+
         encoder.finish();
         buf
     }

@@ -180,7 +180,7 @@ impl BranchNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self, state: &TrieState) -> NodeHash {
-        NodeHash::from_encoded_raw(self.encode_raw(state))
+        NodeHash::from_encoded_raw(&self.encode_raw(state))
     }
 
     /// Encodes the node
@@ -190,7 +190,7 @@ impl BranchNode {
         for child in self.choices.iter().copied() {
             match state[child].compute_hash(state) {
                 NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
-                NodeHash::Inline(data) if !data.is_empty() => encoder = encoder.encode_raw(&data),
+                NodeHash::Inline((data, len)) if len > 0 => encoder = encoder.encode_raw(&data),
                 _ => encoder = encoder.encode_bytes(&[]),
             }
         }
