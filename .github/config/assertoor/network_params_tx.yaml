@@ -12,6 +12,13 @@ participants:
 additional_services:
   - assertoor
   - dora
+  - spamoor
+
+spamoor_params:
+  spammers:
+    - scenario: blobs
+      config:
+        throughput: 6
 
 network_params:
   electra_fork_epoch: 1
