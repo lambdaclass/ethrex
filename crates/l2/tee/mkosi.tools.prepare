@@ -1,0 +1,4 @@
+#!/bin/sh
+git clone https://github.com/canonical/tdx.git
+cd tdx
+./setup-tdx-guest.sh
