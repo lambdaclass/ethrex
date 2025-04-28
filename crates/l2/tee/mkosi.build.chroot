@@ -1,0 +1,8 @@
+#!/bin/bash
+source /.cargo/env
+cd /work/src/ethrex
+cargo build --release --manifest-path Cargo.toml --bin ethrex --features "dev"
+cp target/release/ethrex /work/dest/ethrex_l1
+cargo build --release --manifest-path Cargo.toml --bin ethrex --features l2
+cp target/release/ethrex /work/dest/ethrex_l2
+bash

@@ -1,0 +1,11 @@
+[package]
+name = "quote-gen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+configfs-tsm = "0.0.1"
+dcap-qvl = "0.2"
+tokio = { version = "1.41.1", features = ["full"] }
+
+[workspace]
