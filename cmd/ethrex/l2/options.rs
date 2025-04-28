@@ -329,7 +329,7 @@ impl Default for CommitterOptions {
 #[derive(Parser)]
 pub struct ProofCoordinatorOptions {
     #[arg(
-        long = "prover-server-l1-private-key",
+        long = "proof-coordinator-l1-private-key",
         default_value = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
@@ -339,7 +339,7 @@ pub struct ProofCoordinatorOptions {
     )]
     pub proof_coordinator_l1_private_key: SecretKey,
     #[arg(
-        long = "prover-server-l1-eth-rpc",
+        long = "proof-coordinator-listen-ip",
         default_value = "127.0.0.1",
         value_name = "IP_ADDRESS",
         env = "ETHREX_PROOF_COORDINATOR_LISTEN_IP",
@@ -348,7 +348,7 @@ pub struct ProofCoordinatorOptions {
     )]
     pub listen_ip: IpAddr,
     #[arg(
-        long = "prover-server-listen-port",
+        long = "proof-coordinator-listen-port",
         default_value = "3900",
         value_name = "UINT16",
         env = "ETHREX_PROOF_COORDINATOR_LISTEN_PORT",
@@ -364,7 +364,7 @@ pub struct ProofCoordinatorOptions {
     )]
     pub proof_send_interval_ms: u64,
     #[clap(
-        long = "prover-server-dev-mode",
+        long = "proof-coordinator-dev-mode",
         default_value = "true",
         value_name = "BOOLEAN",
         env = "ETHREX_PROOF_COORDINATOR_DEV_MODE",
