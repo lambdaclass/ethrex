@@ -15,7 +15,7 @@ use ethrex_levm::db::CacheDB;
 use ethrex_levm::vm::GeneralizedDatabase;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use levm::LEVM;
+use levm::{update_state_diff_size, LEVM};
 use revm::db::EvmState;
 use revm::REVM;
 use std::sync::Arc;
@@ -145,7 +145,7 @@ impl Evm {
                     execution_report.logs.clone(),
                 );
 
-                levm::update_state_diff_size(acc_state_diff_size, tx, &receipt, db, block_header)?;
+                update_state_diff_size(acc_state_diff_size, tx, &receipt, db, block_header)?;
 
                 Ok((receipt, execution_report.gas_used))
             }
