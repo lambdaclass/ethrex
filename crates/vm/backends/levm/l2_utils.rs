@@ -4,7 +4,7 @@ use ethrex_common::{
     types::{BlockHeader, Receipt, Transaction, TxKind, SAFE_BYTES_PER_BLOB},
     H256,
 };
-use ethrex_levm::vm::GeneralizedDatabase;
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_storage::AccountUpdate;
 
 use crate::{
