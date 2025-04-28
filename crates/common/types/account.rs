@@ -170,24 +170,6 @@ impl From<&GenesisAccount> for AccountState {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use std::str::FromStr;
-
-    use super::*;
-
-    #[test]
-    fn test_code_hash() {
-        let empty_code = Bytes::new();
-        let hash = code_hash(&empty_code);
-        assert_eq!(
-            hash,
-            H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
-                .unwrap()
-        )
-    }
-}
-
 impl Account {
     pub fn new(balance: U256, code: Bytes, nonce: u64, storage: HashMap<H256, U256>) -> Self {
         Self {
@@ -222,5 +204,23 @@ impl Account {
     pub fn set_code(&mut self, code: Bytes) {
         self.code = code.clone();
         self.info.code_hash = keccak(code.as_ref()).0.into();
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn test_code_hash() {
+        let empty_code = Bytes::new();
+        let hash = code_hash(&empty_code);
+        assert_eq!(
+            hash,
+            H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
+                .unwrap()
+        )
     }
 }
