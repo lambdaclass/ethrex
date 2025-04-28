@@ -9,10 +9,10 @@ use ethrex_trie::Trie;
 
 use super::errors::StateDiffError;
 
-// transactions_root(H256) + receipts_root(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64)
+// transactions_root(H256) + receipts_root(H256) + parent_hash(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64)
 // block_number(u64) + base_fee_per_gas(u64)
-// 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes + 8bytes
-pub const LAST_HEADER_FIELDS_SIZE: usize = 104;
+// 32bytes + 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes + 8bytes
+pub const LAST_HEADER_FIELDS_SIZE: usize = 136;
 
 // address(H160) + amount(U256) + tx_hash(H256).
 // 20bytes + 32bytes + 32bytes.
@@ -125,6 +125,7 @@ impl StateDiff {
         // Last header fields
         encoded.extend(self.last_header.transactions_root.0);
         encoded.extend(self.last_header.receipts_root.0);
+        encoded.extend(self.last_header.parent_hash.0);
         encoded.extend(self.last_header.gas_limit.to_be_bytes());
         encoded.extend(self.last_header.gas_used.to_be_bytes());
         encoded.extend(self.last_header.timestamp.to_be_bytes());
@@ -175,6 +176,7 @@ impl StateDiff {
         let last_header = BlockHeader {
             transactions_root: decoder.get_h256()?,
             receipts_root: decoder.get_h256()?,
+            parent_hash: decoder.get_h256()?,
             gas_limit: decoder.get_u64()?,
             gas_used: decoder.get_u64()?,
             timestamp: decoder.get_u64()?,

@@ -22,7 +22,7 @@ The full state diff sent for each batch will then be a sequence of bytes encoded
 
 - The first byte is a `u8`: the version header. For now it should always be one, but we reserve it for future changes to the encoding/compression format.
 - Next come the block header info of the last block in the batch:
-  - The `tx_root` and `receipts_root` are `u256` values.
+  - The `tx_root`, `receipts_root` and `parent_hash` are `u256` values.
   - The `gas_limit`, `gas_used`, `timestamp`,  `block_number` and `base_fee_per_gas` are `u64` values.
 - Next the `ModifiedAccounts` list. The first two bytes (`u16`) are the amount of element it has, followed by its entries. Each entry correspond to an altered address and has the form:
   - The first byte is the `type` of the modification. The value is a `u8`, constrained to the range `[1; 23]`, computed by adding the following values:
@@ -49,7 +49,7 @@ To recap, using `||` for byte concatenation and `[]` for optional parameters, th
 ```jsx
 version_header_u8 ||
 // Last Block Header info
-tx_root_u256 || receipts_root_u256 ||
+tx_root_u256 || receipts_root_u256 || parent_hash_u256 ||
 gas_limit_u64 || gas_used_u64 || timestamp_u64 ||
 block_number_u64 || base_fee_per_gas_u64
 // Modified Accounts
