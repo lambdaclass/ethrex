@@ -4,6 +4,7 @@ use reth_provider::providers::StaticFileProvider;
 use serde_json::value;
 use std::cell::{Cell, LazyCell, OnceCell};
 use std::marker::PhantomData;
+use std::ops::Div;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
@@ -56,7 +57,9 @@ use reth_primitives::{
 use reth_primitives_traits::SealedHeader;
 use reth_provider::BlockWriter;
 use reth_storage_api::DBProvider;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+
+const DB_DUPSORT_MAX_SIZE: OnceCell<usize> = OnceCell::new();
 
 pub struct MDBXFork {
     env: DatabaseEnv,
@@ -75,6 +78,11 @@ impl MDBXFork {
         let client_version = Default::default();
         let db_args = DatabaseArguments::new(client_version);
         let env = init_db(path, db_args).expect("Failed to initialize MDBX Fork");
+        // https://libmdbx.dqdkfa.ru/intro.html#autotoc_md5
+        // Value size: minimum 0, maximum 2146435072 (0x7FF00000) bytes for maps,
+        // ≈½ pagesize for multimaps (2022 bytes for default 4K pagesize,
+        // 32742 bytes for 64K pagesize).
+        DB_DUPSORT_MAX_SIZE.get_or_init(|| page_size::get().div(2));
 
         let tx = env.begin_rw_txn().unwrap();
 
@@ -783,19 +791,34 @@ impl StoreEngine for MDBXFork {
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
         let main_key = block_hash.encode_to_vec();
-        let key_values = receipts
-            .into_iter()
-            .enumerate()
-            .map(|receipt| (main_key.clone(), receipt.encode_to_vec()))
-            .collect::<Vec<_>>();
+        let mut chunks = BTreeMap::new();
+        const TERMINATOR_MARKER: u64 = u32::MAX as u64;
 
+        for (receipt_idx, receipt) in receipts.into_iter().enumerate() {
+            let receipt_data = receipt.encode_to_vec();
+
+            // Store data chunks
+            for (chunk_idx, chunk) in receipt_data
+                .chunks(
+                    *DB_DUPSORT_MAX_SIZE
+                        .get()
+                        .expect("Fatal: Dupsort constant not initialized"),
+                )
+                .enumerate()
+            {
+                let subkey = ((receipt_idx as u64) << 32) | chunk_idx as u64;
+                chunks.insert(subkey, chunk.to_vec());
+            }
+
+            let terminator = ((receipt_idx as u64) << 32) | TERMINATOR_MARKER;
+            chunks.insert(terminator, vec![]);
+        }
         let tx = self.env.tx_mut().unwrap();
         let mut cursor = tx.cursor_dup_write::<Receipts>().unwrap();
 
-        cursor.seek_exact(main_key).unwrap();
-
-        for (k, v) in key_values {
-            cursor.append_dup(k, v).unwrap();
+        for (subkey, chunk) in chunks {
+            cursor.seek_by_key_subkey(main_key.clone(), subkey).unwrap();
+            cursor.append_dup(main_key.clone(), chunk).unwrap();
         }
 
         tx.commit().unwrap();
@@ -806,23 +829,64 @@ impl StoreEngine for MDBXFork {
         &self,
         receipts: std::collections::HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
-        // See how to handle indexed chunks
-        todo!()
+        for (block_hash, receipts) in receipts {
+            self.add_receipts(block_hash, receipts).unwrap();
+        }
+        Ok(())
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
         let main_key = block_hash.encode_to_vec();
         let tx = self.env.tx().unwrap();
         let mut cursor = tx.cursor_dup_read::<Receipts>().unwrap();
-        cursor.seek_exact(main_key).unwrap();
-        let mut receipts = vec![];
-        while let Some((_, receipt)) = cursor.next_dup().unwrap() {
-            receipts.push(receipt);
+
+        // Map to track receipt_idx -> (chunks, has_terminator)
+        let mut receipt_states = BTreeMap::new();
+
+        if cursor.seek_exact(main_key).unwrap().is_some() {
+            while let Some((subkey, chunk)) = cursor.next_dup().unwrap() {
+                let subkey = u64::decode(&subkey).unwrap();
+                let receipt_idx = (subkey >> 32) as u32;
+                let chunk_info = subkey as u32;
+
+                let state = receipt_states
+                    .entry(receipt_idx)
+                    .or_insert_with(|| (BTreeMap::new(), false));
+
+                if chunk_info == u32::MAX {
+                    state.1 = true;
+                } else {
+                    let chunk_idx = chunk_info;
+                    state.0.insert(chunk_idx, chunk);
+                }
+            }
         }
-        Ok(receipts
-            .into_iter()
-            .map(|encoded_receipt| Receipt::decode(&encoded_receipt).unwrap())
-            .collect())
+
+        let mut receipts = Vec::new();
+        for (_receipt_idx, (chunks, has_terminator)) in receipt_states {
+            if !has_terminator || chunks.is_empty() {
+                continue;
+            }
+
+            let chunk_indices: Vec<u32> = chunks.keys().copied().collect();
+            let expected_indices: Vec<u32> = (0..chunks.len() as u32).collect();
+
+            if chunk_indices != expected_indices {
+                continue;
+            }
+
+            let full_data = chunks
+                .into_values()
+                .flat_map(|chunk| chunk.into_iter())
+                .collect::<Vec<u8>>();
+
+            match Receipt::decode(&full_data) {
+                Ok(receipt) => receipts.push(receipt),
+                Err(_) => continue,
+            }
+        }
+
+        Ok(receipts)
     }
 
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {

@@ -3530,6 +3530,7 @@ dependencies = [
  "hex-literal",
  "lazy_static",
  "libmdbx",
+ "page_size",
  "redb",
  "reth-blockchain-tree-api",
  "reth-chainspec",
