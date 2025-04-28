@@ -77,7 +77,11 @@ impl L1ProofSender {
                         Overrides::default(),
                     )
                     .await?;
-                let address = Address::from_str(&response)
+
+                // trim to 20 bytes, also removes 0x prefix
+                let trimmed_response = &response[26..];
+
+                let address = Address::from_str(&format!("0x{trimmed_response}"))
                     .map_err(|_| ConfigError::HexParsingError(response))?;
 
                 if address != DEV_MODE_ADDRESS {
