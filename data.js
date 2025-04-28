@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745869728678,
+  "lastUpdate": 1745879108769,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4945,6 +4945,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 184135010188,
             "range": "± 888348559",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49721261+cdiielsi@users.noreply.github.com",
+            "name": "cdiielsi",
+            "username": "cdiielsi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b421c5fbc464658db6307a612539822cbaf655af",
+          "message": "fix(l1): blob transaction init for revm ef tests (#2588)\n\n**Motivation**\n\nFixing REVM tests as specified in issue #2491.\n\n**Description**\n\nThis pr changes the `blob_excess_gas_and_price` variable initialization\nin the `prepare_revm_for_tx` function. Now instead of setting gas price\nin 0 I use the `new` function associated to the `BlobExcessGasAndPrice`\nstruct that sets the gas price by itself with a particular function that\ncalculates it.\n\nThis change drops the failing amount of tests from 2009 to 829.\n\nThis pr solves part of the issue #2491.",
+          "timestamp": "2025-04-28T21:14:06Z",
+          "tree_id": "bb01d9da7a6c7f67923f3fde238e13d8e67f51a8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b421c5fbc464658db6307a612539822cbaf655af"
+        },
+        "date": 1745879106302,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180214468361,
+            "range": "± 691072243",
             "unit": "ns/iter"
           }
         ]
