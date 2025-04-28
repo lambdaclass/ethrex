@@ -35,7 +35,7 @@ jobs:
       - name: Run cargo clippy
         run: |
           cargo clippy --workspace --exclude ethrex-prover-bench -- -D warnings
-          cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude ethrex-prover-bench --exclude zkvm_interface -- -D warnings
+          make lint
 
       - name: Run cargo fmt
         run: |

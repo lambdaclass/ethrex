@@ -9,7 +9,7 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface --exclude ethrex-prover-bench -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
