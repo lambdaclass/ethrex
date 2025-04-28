@@ -325,18 +325,22 @@ impl Hook for DefaultHook {
         // a. Calculate refunded gas
         let gas_used_without_refunds = report.gas_used;
 
-        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
-        let refund_quotient = if vm.env.config.fork < Fork::London {
-            MAX_REFUND_QUOTIENT_PRE_LONDON
+        let refunded_gas = if report.is_success() {
+            // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
+            // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
+            let refund_quotient = if vm.env.config.fork < Fork::London {
+                MAX_REFUND_QUOTIENT_PRE_LONDON
+            } else {
+                MAX_REFUND_QUOTIENT
+            };
+            report.gas_refunded.min(
+                gas_used_without_refunds
+                    .checked_div(refund_quotient)
+                    .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
+            )
         } else {
-            MAX_REFUND_QUOTIENT
+            0
         };
-        let refunded_gas = report.gas_refunded.min(
-            gas_used_without_refunds
-                .checked_div(refund_quotient)
-                .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
-        );
 
         // b. Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
         let exec_gas_consumed = gas_used_without_refunds
