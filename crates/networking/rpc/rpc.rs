@@ -569,7 +569,7 @@ mod tests {
             "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
             "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 }
         });
-        let mut json = serde_json::json!({
+        let json = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "result": {
@@ -577,7 +577,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
                 "ip": "127.0.0.1",
-                "name": {},
+                "name": "ethrex/test",
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303
@@ -613,7 +613,6 @@ mod tests {
                 },
             }
         });
-        json["result"]["name"] = serde_json::json!("constants::get_client_info()".to_string());
         let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
