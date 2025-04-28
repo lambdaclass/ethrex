@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745858949662,
+  "lastUpdate": 1745865840659,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4885,6 +4885,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179478989639,
             "range": "± 929432664",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "56402156+fkrause98@users.noreply.github.com",
+            "name": "Francisco Krause Arnim",
+            "username": "fkrause98"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7d56f67ba73ef58038d2fa1b43936757478e4819",
+          "message": "ci(l1,l2): pause flamegraph ci (#2622)\n\n**Motivation**\n\nThe current state of this job shows the CI check as failing, which is\nnot necessarily true.\n\n**Description**\n- Comment the 'on' condition to run this workflow on merge to main.",
+          "timestamp": "2025-04-28T17:31:29Z",
+          "tree_id": "021279c9d09a29907524ef5e465b31a9d1de5b54",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7d56f67ba73ef58038d2fa1b43936757478e4819"
+        },
+        "date": 1745865838984,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179360843225,
+            "range": "± 760788254",
             "unit": "ns/iter"
           }
         ]
