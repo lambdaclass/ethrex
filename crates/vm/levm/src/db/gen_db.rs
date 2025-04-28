@@ -185,7 +185,7 @@ impl<'a> VM<'a> {
         // Add it to the original values if it wasn't already there
         self.storage_original_values
             .entry(address)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(key)
             .or_insert(value_pre_tx);
 
