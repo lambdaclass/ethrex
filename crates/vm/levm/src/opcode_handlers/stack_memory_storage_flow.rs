@@ -181,10 +181,10 @@ impl<'a> VM<'a> {
             return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
         }
 
-        // Convert key from U256 to H256
+        // Get current and original (pre-tx) values.
         let key = H256::from(storage_slot_key.to_big_endian());
-
-        let (storage_slot, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
+        let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
+        let original_value = self.get_original_storage(to, key)?;
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
@@ -198,9 +198,6 @@ impl<'a> VM<'a> {
                 // https://eips.ethereum.org/EIPS/eip-2929
                 _ => (4800, 19900, 2800),
             };
-
-        let original_value = self.get_original_storage(to, key)?;
-        let current_value = storage_slot;
 
         if self.env.config.fork < Fork::Istanbul && self.env.config.fork != Fork::Constantinople {
             if !current_value.is_zero() && new_storage_slot_value.is_zero() {

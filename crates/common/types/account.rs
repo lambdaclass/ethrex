@@ -188,20 +188,6 @@ mod test {
     }
 }
 
-impl AccountInfo {
-    pub fn is_empty(&self) -> bool {
-        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
-    }
-
-    pub fn has_code(&self) -> bool {
-        self.code_hash != *EMPTY_KECCACK_HASH
-    }
-
-    pub fn has_nonce(&self) -> bool {
-        self.nonce != 0
-    }
-}
-
 impl Account {
     pub fn new(balance: U256, code: Bytes, nonce: u64, storage: HashMap<H256, U256>) -> Self {
         Self {
@@ -216,11 +202,11 @@ impl Account {
     }
 
     pub fn has_nonce(&self) -> bool {
-        self.info.has_nonce()
+        self.info.nonce != 0
     }
 
     pub fn has_code(&self) -> bool {
-        self.info.has_code()
+        self.info.code_hash != *EMPTY_KECCACK_HASH
     }
 
     pub fn has_code_or_nonce(&self) -> bool {
@@ -228,7 +214,9 @@ impl Account {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.info.is_empty()
+        self.info.balance.is_zero()
+            && self.info.nonce == 0
+            && self.info.code_hash == *EMPTY_KECCACK_HASH
     }
 
     pub fn set_code(&mut self, code: Bytes) {
