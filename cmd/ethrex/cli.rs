@@ -97,7 +97,7 @@ pub struct Options {
     pub dev: bool,
     #[arg(
         long = "evm",
-        default_value = "levm",
+        default_value = EvmEngine::default().to_string(),
         value_name = "EVM_BACKEND",
         help = "Has to be `levm` or `revm`",
         value_parser = utils::parse_evm_engine,

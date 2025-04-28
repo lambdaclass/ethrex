@@ -23,8 +23,8 @@ use std::sync::Arc;
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum EvmEngine {
     #[default]
-    REVM,
     LEVM,
+    REVM,
 }
 
 // Allow conversion from string for backward compatibility

@@ -4,6 +4,7 @@ use ethrex::{
     utils::set_datadir,
     DEFAULT_DATADIR,
 };
+use ethrex_vm::EvmEngine;
 
 #[inline]
 fn block_import() {
@@ -11,7 +12,7 @@ fn block_import() {
     set_datadir(data_dir);
     remove_db(data_dir, true);
 
-    let evm_engine = "revm".to_owned().try_into().unwrap();
+    let evm_engine = EvmEngine::default();
 
     let network = "../../test_data/genesis-l2-ci.json";
 
