@@ -84,7 +84,7 @@ pub(crate) struct RLPxConnection<S> {
     next_periodic_ping: Instant,
     next_tx_broadcast: Instant,
     broadcasted_txs: HashSet<H256>,
-    client_info: String,
+    client_version: String,
     /// Send end of the channel used to broadcast messages
     /// to other connected peers, is ok to have it here,
     /// since internally it's an Arc.
@@ -105,7 +105,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         codec: RLPxCodec,
         storage: Store,
         blockchain: Arc<Blockchain>,
-        client_info: String,
+        client_version: String,
         connection_broadcast: RLPxConnBroadcastSender,
     ) -> Self {
         Self {
@@ -120,7 +120,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
             broadcasted_txs: HashSet::new(),
-            client_info,
+            client_version,
             connection_broadcast_send: connection_broadcast,
         }
     }
@@ -249,7 +249,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
         let hello_msg = Message::Hello(p2p::HelloMessage::new(
             SUPPORTED_CAPABILITIES.to_vec(),
             PublicKey::from(self.signer.verifying_key()),
-            self.client_info.clone(),
+            self.client_version.clone(),
         ));
 
         self.send(hello_msg).await?;

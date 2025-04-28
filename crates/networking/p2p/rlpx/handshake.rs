@@ -59,7 +59,7 @@ where
         codec,
         context.storage,
         context.blockchain,
-        context.client_info,
+        context.client_version,
         context.broadcast,
     ))
 }
@@ -87,7 +87,7 @@ where
         codec,
         context.storage,
         context.blockchain,
-        context.client_info,
+        context.client_version,
         context.broadcast,
     ))
 }

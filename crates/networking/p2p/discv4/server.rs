@@ -701,7 +701,7 @@ pub(super) mod tests {
             storage,
             blockchain,
             broadcast,
-            client_info: "ethrex/test".to_string(),
+            client_version: "ethrex/test".to_string(),
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;
