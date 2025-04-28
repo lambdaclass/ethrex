@@ -21,6 +21,7 @@ services:
       - ../../test_data/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
     environment:
       - ETH_RPC_URL=http://ethrex_l1:8545
+      - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those
       # specified in the `volumes:` section
       - DEPLOYER_CONTRACTS_PATH=${CI_ETHREX_WORKDIR}/contracts
@@ -46,6 +47,7 @@ services:
       - 127.0.0.1:3900:3900
     environment: # Default values are taken from cmd/ethrex/l2/options.rs defaults.
       - ETH_RPC_URL=http://ethrex_l1:8545
+      - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       - ENV_FILE=/.env
       - ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM:-false}
       - ETHREX_PROPOSER_BLOCK_TIME_MS=${ETHREX_PROPOSER_BLOCK_TIME_MS:-5000}
