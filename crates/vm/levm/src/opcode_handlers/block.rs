@@ -128,7 +128,9 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
-        let balance = get_account(self.db, self.current_call_frame()?.to)?
+        let balance = self
+            .db
+            .get_account(self.current_call_frame()?.to)?
             .info
             .balance;
 
