@@ -38,6 +38,8 @@ pub enum L1WatcherError {
     FailedToDeserializePrivateKey(String),
     #[error("L1Watcher failed to retrieve chain config: {0}")]
     FailedToRetrieveChainConfig(String),
+    #[error("L1Watcher failed to access Store: {0}")]
+    FailedAccessingStore(#[from] StoreError),
     #[error("{0}")]
     Custom(String),
 }

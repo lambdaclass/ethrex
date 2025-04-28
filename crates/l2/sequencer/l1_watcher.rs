@@ -6,7 +6,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::{types::Transaction, H160};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
-    clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient},
+    clients::eth::{eth_sender::Overrides, EthClient},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
