@@ -7,4 +7,4 @@ cargo build --release --manifest-path Cargo.toml --bin ethrex --features l2
 cp target/release/ethrex /work/dest/ethrex_l2
 cd crates/l2/tee/quote-gen
 cargo build --release
-cp target/release/ethrex /work/dest/quote-gen
+cp target/release/quote-gen /work/dest/quote-gen
