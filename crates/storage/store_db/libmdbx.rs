@@ -768,8 +768,8 @@ impl StoreEngine for Store {
         }
     }
 
-    async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.write::<ChainData>(ChainDataIndex::IsSynced, status.encode_to_vec())
+    async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
+        self.write::<ChainData>(ChainDataIndex::IsSynced, is_synced.encode_to_vec())
             .await
     }
 

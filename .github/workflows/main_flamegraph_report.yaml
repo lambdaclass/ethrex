@@ -429,6 +429,9 @@ jobs:
           cp -r flamegraph_ethrex.svg flamegraphs/
           cp -r flamegraph_reth.svg flamegraphs/
 
+          # Fix flamegraphs width
+          sed -i 's|frames.attributes.width.value = |// |' flamegraphs/flamegraph_*.svg
+
           # ETHREX HTML
           sed -i "s/{{LAST_UPDATE}}/$(TZ='Etc/GMT+3' date +'%Y-%m-%dT%H:%M:%S')/g" templates/index.html
           sed -i "s/{{ETHREX_TIME}}/${{ needs.flamegraph-ethrex.outputs.time }}/g" templates/index.html

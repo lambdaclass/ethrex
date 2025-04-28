@@ -335,6 +335,10 @@ pub fn block_number_has_state_file(
     let block_state_path = get_block_state_path(block_number)?;
     let file_name_to_seek: OsString = get_state_file_name(block_number, &state_file_type).into();
 
+    if !block_state_path.exists() {
+        return Ok(false);
+    }
+
     for entry in std::fs::read_dir(block_state_path)? {
         let entry = entry?;
         let file_name_stored = entry.file_name();
@@ -384,6 +388,7 @@ pub fn block_number_has_all_needed_proofs(
 #[allow(clippy::expect_used)]
 mod tests {
     use ethrex_blockchain::Blockchain;
+    use ethrex_levm::db::gen_db::GeneralizedDatabase;
     use ethrex_storage::{EngineType, Store};
     use ethrex_vm::{
         backends::levm::{CacheDB, LEVM},
@@ -392,7 +397,6 @@ mod tests {
 
     use super::*;
     use crate::utils::test_data_io;
-    use ethrex_levm::vm::GeneralizedDatabase;
     use std::{
         fs::{self},
         sync::Arc,
@@ -454,9 +458,9 @@ mod tests {
                 block_hash: block.hash(),
             };
             let mut db = GeneralizedDatabase::new(Arc::new(store.clone()), CacheDB::new());
-            let account_updates = LEVM::execute_block(blocks.last().unwrap(), &mut db)
-                .unwrap()
-                .account_updates;
+            LEVM::execute_block(blocks.last().unwrap(), &mut db)?;
+            let fork = db.store.get_chain_config().fork(block.header.timestamp);
+            let account_updates = LEVM::get_state_transitions(&mut db, fork)?;
 
             account_updates_vec.push(account_updates.clone());
 
