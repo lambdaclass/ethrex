@@ -128,7 +128,6 @@ jobs:
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           cp configs/sequencer_config_example.toml configs/sequencer_config.toml
-          ETHREX_PROOF_COORDINATOR_LISTEN_IP=0.0.0.0 \
           ETHREX_COMMITTER_VALIDIUM=${{ matrix.validium }} \
           make integration-test
 
@@ -176,7 +175,7 @@ jobs:
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           cp configs/sequencer_config_example.toml configs/sequencer_config.toml
-          ETHREX_PROOF_COORDINATOR_LISTEN_IP=0.0.0.0 make state-diff-test
+          make state-diff-test
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
