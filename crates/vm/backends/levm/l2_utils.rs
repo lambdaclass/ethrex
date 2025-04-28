@@ -93,38 +93,36 @@ pub fn get_nonce_diff(
 /// | Deposits          |
 /// +-------------------+
 pub fn update_state_diff_size(
-    acc_state_diff_size: &mut usize,
+    acc_state_diff_size: &mut Option<usize>,
     tx: &Transaction,
     receipt: &Receipt,
     db: &GeneralizedDatabase,
     block_header: &BlockHeader,
 ) -> Result<(), EvmError> {
-    #[cfg(not(feature = "l2"))]
-    return Ok(());
-    #[cfg(feature = "l2")]
-    {
-        let mut actual_size = 0;
-        if is_withdrawal_l2(tx, receipt)? {
-            actual_size += L2_WITHDRAWAL_SIZE;
-        }
-        if is_deposit_l2(tx) {
-            actual_size += L2_DEPOSIT_SIZE;
-        }
-
-        let fork = db.store.get_chain_config().fork(block_header.timestamp);
-        let account_updates = LEVM::get_state_transitions_no_drain(db, fork)?;
-
-        let modified_accounts_size = calc_modified_accounts_size(&account_updates, db)?;
-
-        let current_state_diff_size =
-            1 /* version (u8) */ + HEADER_FIELDS_SIZE + actual_size + modified_accounts_size;
-
-        if current_state_diff_size > SAFE_BYTES_PER_BLOB {
-            return Err(EvmError::StateDiffSizeError);
-        }
-        *acc_state_diff_size = current_state_diff_size; // update the accumulated size
-        Ok(())
+    if acc_state_diff_size.is_none() {
+        return Ok(());
     }
+    let mut actual_size = 0;
+    if is_withdrawal_l2(tx, receipt)? {
+        actual_size += L2_WITHDRAWAL_SIZE;
+    }
+    if is_deposit_l2(tx) {
+        actual_size += L2_DEPOSIT_SIZE;
+    }
+
+    let fork = db.store.get_chain_config().fork(block_header.timestamp);
+    let account_updates = LEVM::get_state_transitions_no_drain(db, fork)?;
+
+    let modified_accounts_size = calc_modified_accounts_size(&account_updates, db)?;
+
+    let current_state_diff_size =
+        1 /* version (u8) */ + HEADER_FIELDS_SIZE + actual_size + modified_accounts_size;
+
+    if current_state_diff_size > SAFE_BYTES_PER_BLOB {
+        return Err(EvmError::StateDiffSizeError);
+    }
+    *acc_state_diff_size = Some(current_state_diff_size); // update the accumulated size
+    Ok(())
 }
 
 fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> Result<bool, EvmError> {

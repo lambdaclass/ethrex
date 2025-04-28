@@ -109,7 +109,7 @@ impl Evm {
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
         sender: Address,
-        acc_state_diff_size: &mut usize,
+        acc_state_diff_size: &mut Option<usize>,
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
             Evm::REVM { state } => {

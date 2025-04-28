@@ -14,7 +14,7 @@ use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRI
 use ethrex_storage::Store;
 use std::ops::Div;
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::sequencer::errors::BlockProducerError;
 
@@ -33,7 +33,7 @@ pub async fn build_payload(
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
 
-    debug!("Building payload");
+    debug!("Building payload on L2");
     let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, store)?;
 
     blockchain.apply_withdrawals(&mut context)?;
@@ -43,12 +43,17 @@ pub async fn build_payload(
 
     let interval = Instant::now().duration_since(since).as_millis();
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
+
     #[allow(clippy::as_conversions)]
     if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
         let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
         if interval != 0 {
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
+            tracing::info!(
+                "[METRIC] BLOCK BUILDING PAYLOAD SIZE: {}",
+                context.payload.body.transactions.len()
+            );
             tracing::info!(
                 "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
@@ -67,7 +72,7 @@ pub async fn fill_transactions(
 ) -> Result<(), BlockProducerError> {
     // Two bytes for the len
     // 2 bytes for withdrawals + 2 bytes for deposits
-    let mut acc_state_diff_size = 4;
+    context.acc_state_diff_size = Some(4);
 
     let chain_config = store.get_chain_config()?;
     let max_blob_number_per_block: usize = chain_config
@@ -89,6 +94,11 @@ pub async fn fill_transactions(
         };
 
         // Check if we have enough space for the StateDiff to run more transactions
+        let acc_state_diff_size = context
+            .acc_state_diff_size
+            .ok_or(BlockProducerError::Custom(
+                "L2 should have access to accumulated state diff size".to_owned(),
+            ))?;
         if acc_state_diff_size + TX_STATE_DIFF_SIZE > SAFE_BYTES_PER_BLOB {
             debug!("No more StateDiff space to run transactions");
             break;
@@ -142,40 +152,39 @@ pub async fn fill_transactions(
         metrics!(METRICS_TX.inc_tx());
 
         // Execute tx
-        let receipt =
-            match blockchain.apply_transaction(&head_tx, context, &mut acc_state_diff_size) {
-                Ok(receipt) => {
-                    txs.shift()?;
-                    // Pull transaction from the mempool
-                    blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+        let receipt = match blockchain.apply_transaction(&head_tx, context) {
+            Ok(receipt) => {
+                txs.shift()?;
+                // Pull transaction from the mempool
+                blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
-                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                        MetricsTxStatus::Succeeded,
-                        MetricsTxType(head_tx.tx_type())
-                    ));
-                    receipt
-                }
-                // This call is the part that differs from the original `fill_transactions`.
-                Err(ChainError::EvmError(ethrex_vm::EvmError::StateDiffSizeError)) => {
-                    debug!(
-                        "Skipping transaction: {}, doesn't fit in blob_size",
-                        head_tx.tx.compute_hash()
-                    );
-                    // We don't have enough space in the blob for the transaction, so we skip all txs from this account
-                    txs.pop();
-                    continue;
-                }
-                // Ignore following txs from sender
-                Err(e) => {
-                    debug!("Failed to execute transaction: {}, {e}", tx_hash);
-                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                        MetricsTxStatus::Failed,
-                        MetricsTxType(head_tx.tx_type())
-                    ));
-                    txs.pop();
-                    continue;
-                }
-            };
+                metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                    MetricsTxStatus::Succeeded,
+                    MetricsTxType(head_tx.tx_type())
+                ));
+                receipt
+            }
+            // This call is the part that differs from the original `fill_transactions`.
+            Err(ChainError::EvmError(ethrex_vm::EvmError::StateDiffSizeError)) => {
+                debug!(
+                    "Skipping transaction: {}, doesn't fit in blob_size",
+                    tx_hash
+                );
+                // We don't have enough space in the blob for the transaction, so we skip all txs from this account
+                txs.pop();
+                continue;
+            }
+            // Ignore following txs from sender
+            Err(e) => {
+                error!("Failed to execute transaction: {}, {e}", tx_hash);
+                metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                    MetricsTxStatus::Failed,
+                    MetricsTxType(head_tx.tx_type())
+                ));
+                txs.pop();
+                continue;
+            }
+        };
         // Add transaction to block
         debug!("Adding transaction: {} to payload", tx_hash);
         context.payload.body.transactions.push(head_tx.into());
