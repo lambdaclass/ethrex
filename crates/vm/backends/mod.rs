@@ -13,13 +13,11 @@ use ethrex_common::types::{
 use ethrex_common::{Address, H256};
 use ethrex_levm::db::CacheDB;
 use ethrex_levm::vm::GeneralizedDatabase;
-use ethrex_levm::AccountInfo;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
@@ -111,6 +109,7 @@ impl Evm {
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
         sender: Address,
+        left_size: &mut usize,
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
             Evm::REVM { state } => {
@@ -146,41 +145,7 @@ impl Evm {
                     execution_report.logs.clone(),
                 );
 
-                Ok((receipt, execution_report.gas_used))
-            }
-        }
-    }
-
-    pub fn execute_tx_diff_size(
-        &mut self,
-        tx: &Transaction,
-        block_header: &BlockHeader,
-        remaining_gas: &mut u64,
-        sender: Address,
-        left_size: usize,
-    ) -> Result<(Receipt, u64), EvmError> {
-        match self {
-            Evm::REVM { .. } => self.execute_tx(tx, block_header, remaining_gas, sender),
-            Evm::LEVM { db } => {
-                let execution_report = LEVM::execute_tx(tx, sender, block_header, db)?;
-
-                *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
-
-                let receipt = Receipt::new(
-                    tx.tx_type(),
-                    execution_report.is_success(),
-                    block_header.gas_limit - *remaining_gas,
-                    execution_report.logs.clone(),
-                );
-
-                let fork = db.store.get_chain_config().fork(block_header.timestamp);
-                let st = LEVM::get_state_transitions_no_drain(db, fork)?;
-
-                let a = LEVM::calc_modified_accounts_size(&st, db)?;
-                dbg!(a);
-                if a > left_size {
-                    return Err(EvmError::Custom("Transaction size too big".to_string()));
-                }
+                LEVM::update_state_diff_size(left_size, tx, &receipt, db, block_header)?;
 
                 Ok((receipt, execution_report.gas_used))
             }

@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     ops::Div,
     time::Instant,
-    usize,
 };
 
 use ethrex_common::{
@@ -412,7 +411,7 @@ impl Blockchain {
             metrics!(METRICS_TX.inc_tx());
 
             // Execute tx
-            let receipt = match self.apply_transaction(&head_tx, context, usize::MAX) {
+            let receipt = match self.apply_transaction(&head_tx, context, &mut usize::MAX) {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
@@ -450,7 +449,7 @@ impl Blockchain {
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
-        left_size: usize,
+        left_size: &mut usize,
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
@@ -482,7 +481,7 @@ impl Blockchain {
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
         // Apply transaction
-        let receipt = self.apply_plain_transaction(head, context, usize::MAX)?;
+        let receipt = self.apply_plain_transaction(head, context, &mut usize::MAX)?;
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
@@ -496,9 +495,9 @@ impl Blockchain {
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
-        left_size: usize,
+        left_size: &mut usize,
     ) -> Result<Receipt, ChainError> {
-        let (report, gas_used) = context.vm.execute_tx_diff_size(
+        let (report, gas_used) = context.vm.execute_tx(
             &head.tx,
             &context.payload.header,
             &mut context.remaining_gas,

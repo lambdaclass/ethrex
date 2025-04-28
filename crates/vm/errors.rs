@@ -26,6 +26,8 @@ pub enum EvmError {
     Custom(String),
     #[error("Levm Database error: {0}")]
     LevmDatabaseError(#[from] DatabaseError),
+    #[error("Error on state diff size")]
+    StateDiffSizeError,
 }
 
 #[derive(Debug, Error)]

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use ethrex_blockchain::{
     constants::TX_GAS_COST,
+    error::ChainError,
     payload::{PayloadBuildContext, PayloadBuildResult},
     Blockchain,
 };
@@ -84,9 +85,8 @@ pub async fn fill_transactions(
     store: &Store,
 ) -> Result<(), BlockProducerError> {
     // Two bytes for the len
-    let (mut acc_withdrawals_size, mut acc_deposits_size): (usize, usize) = (2, 2);
-    let mut acc_state_diff_size = 0;
-    let mut accounts_info_cache = HashMap::new();
+    // let (mut acc_withdrawals_size, mut acc_deposits_size): (usize, usize) = (2, 2);
+    let mut acc_state_diff_size = 4; // 2 bytes for withdrawals + 2 bytes for deposits
 
     let chain_config = store.get_chain_config()?;
     let max_blob_number_per_block: usize = chain_config
@@ -167,20 +167,21 @@ pub async fn fill_transactions(
         dbg!(left_size);
 
         // Execute tx
-        let receipt = match blockchain.apply_transaction(&head_tx, context, left_size) {
-            Ok(receipt) => {
-                // This call is the part that differs from the original `fill_transactions`.
-                if !update_state_diff_size(
-                    &mut acc_withdrawals_size,
-                    &mut acc_deposits_size,
-                    &mut acc_state_diff_size,
-                    head_tx.clone().into(),
-                    &receipt,
-                    context,
-                    &mut accounts_info_cache,
-                )
-                .await?
-                {
+        let receipt =
+            match blockchain.apply_transaction(&head_tx, context, &mut acc_state_diff_size) {
+                Ok(receipt) => {
+                    // This call is the part that differs from the original `fill_transactions`.
+                    txs.shift()?;
+                    // Pull transaction from the mempool
+                    blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+
+                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                        MetricsTxStatus::Succeeded,
+                        MetricsTxType(head_tx.tx_type())
+                    ));
+                    receipt
+                }
+                Err(ChainError::EvmError(ethrex_vm::EvmError::StateDiffSizeError)) => {
                     debug!(
                         "Skipping transaction: {}, doesn't fit in blob_size",
                         head_tx.tx.compute_hash()
@@ -190,31 +191,21 @@ pub async fn fill_transactions(
                     *context = previous_context.clone();
                     continue;
                 }
-                txs.shift()?;
-                // Pull transaction from the mempool
-                blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
-
-                metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                    MetricsTxStatus::Succeeded,
-                    MetricsTxType(head_tx.tx_type())
-                ));
-                receipt
-            }
-            // Ignore following txs from sender
-            Err(e) => {
-                error!(
-                    "Failed to execute transaction (State diff too big): {}, {e}",
-                    tx_hash
-                );
-                debug!("Failed to execute transaction: {}, {e}", tx_hash);
-                metrics!(METRICS_TX.inc_tx_with_status_and_type(
-                    MetricsTxStatus::Failed,
-                    MetricsTxType(head_tx.tx_type())
-                ));
-                txs.pop();
-                continue;
-            }
-        };
+                // Ignore following txs from sender
+                Err(e) => {
+                    error!(
+                        "Failed to execute transaction (State diff too big): {}, {e}",
+                        tx_hash
+                    );
+                    debug!("Failed to execute transaction: {}, {e}", tx_hash);
+                    metrics!(METRICS_TX.inc_tx_with_status_and_type(
+                        MetricsTxStatus::Failed,
+                        MetricsTxType(head_tx.tx_type())
+                    ));
+                    txs.pop();
+                    continue;
+                }
+            };
         // Add transaction to block
         debug!("Adding transaction: {} to payload", tx_hash);
         context.payload.body.transactions.push(head_tx.into());
@@ -284,8 +275,6 @@ pub async fn calc_modified_accounts_size(
     accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
 ) -> Result<usize, BlockProducerError> {
     let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
-
-    // We use a temporary_context because `get_state_transitions` mutates it.
 
     let chain_config = &context.store.get_chain_config()?;
     let fork = chain_config.fork(context.payload.header.timestamp);
