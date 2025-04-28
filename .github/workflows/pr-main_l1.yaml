@@ -30,12 +30,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run cargo check
-        run: cargo check --workspace
+        run: cargo check --workspace --exclude ethrex-prover-bench
 
       - name: Run cargo clippy
         run: |
-          cargo clippy --workspace -- -D warnings
-          cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+          cargo clippy --workspace --exclude ethrex-prover-bench -- -D warnings
+          cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude ethrex-prover-bench --exclude zkvm_interface -- -D warnings
 
       - name: Run cargo fmt
         run: |
