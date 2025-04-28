@@ -43,7 +43,7 @@ impl BranchNode {
     }
 
     /// Creates a new branch node given its children and value
-    pub fn new_with_value(choices: Box<[NodeHash; 16]>, value: ValueRLP) -> Self {
+    pub const fn new_with_value(choices: Box<[NodeHash; 16]>, value: ValueRLP) -> Self {
         Self { choices, value }
     }
 
@@ -61,7 +61,7 @@ impl BranchNode {
             let child_hash = &self.choices[choice];
             if child_hash.is_valid() {
                 let child_node = state
-                    .get_node(child_hash.clone())?
+                    .get_node(*child_hash)?
                     .ok_or(TrieError::InconsistentTree)?;
                 child_node.get(state, path)
             } else {
@@ -93,7 +93,7 @@ impl BranchNode {
                 // Insert into existing child and then update it
                 choice_hash => {
                     let child_node = state
-                        .get_node(choice_hash.clone())?
+                        .get_node(*choice_hash)?
                         .ok_or(TrieError::InconsistentTree)?;
 
                     let child_node = child_node.insert(state, path, value)?;
@@ -138,7 +138,7 @@ impl BranchNode {
         let value = if let Some(choice_index) = path.next_choice() {
             if self.choices[choice_index].is_valid() {
                 let child_node = state
-                    .get_node(self.choices[choice_index].clone())?
+                    .get_node(self.choices[choice_index])?
                     .ok_or(TrieError::InconsistentTree)?;
                 // Remove value from child node
                 let (child_node, old_value) = child_node.remove(state, path.clone())?;
@@ -179,15 +179,14 @@ impl BranchNode {
             (1, false) => {
                 let (choice_index, child_hash) = children[0];
                 let child = state
-                    .get_node(child_hash.clone())?
+                    .get_node(*child_hash)?
                     .ok_or(TrieError::InconsistentTree)?;
                 match child {
                     // Replace self with an extension node leading to the child
-                    Node::Branch(_) => ExtensionNode::new(
-                        Nibbles::from_hex(vec![choice_index as u8]),
-                        child_hash.clone(),
-                    )
-                    .into(),
+                    Node::Branch(_) => {
+                        ExtensionNode::new(Nibbles::from_hex(vec![choice_index as u8]), *child_hash)
+                            .into()
+                    }
                     // Replace self with the child extension node, updating its path in the process
                     Node::Extension(mut extension_node) => {
                         extension_node.prefix.prepend(choice_index as u8);
@@ -207,7 +206,7 @@ impl BranchNode {
 
     /// Computes the node's hash
     pub fn compute_hash(&self) -> NodeHash {
-        NodeHash::from_encoded_raw(self.encode_raw())
+        NodeHash::from_encoded_raw(&self.encode_raw())
     }
 
     /// Encodes the node
@@ -217,7 +216,7 @@ impl BranchNode {
         for child in self.choices.iter() {
             match child {
                 NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
-                NodeHash::Inline(raw) if !raw.is_empty() => encoder = encoder.encode_raw(raw),
+                NodeHash::Inline(raw) if raw.1 != 0 => encoder = encoder.encode_raw(child.as_ref()),
                 _ => encoder = encoder.encode_bytes(&[]),
             }
         }
@@ -229,7 +228,7 @@ impl BranchNode {
     /// Inserts the node into the state and returns its hash
     pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
         let hash = self.compute_hash();
-        state.insert_node(self.into(), hash.clone());
+        state.insert_node(self.into(), hash);
         Ok(hash)
     }
 
@@ -253,7 +252,7 @@ impl BranchNode {
             let child_hash = &self.choices[choice];
             if child_hash.is_valid() {
                 let child_node = state
-                    .get_node(child_hash.clone())?
+                    .get_node(*child_hash)?
                     .ok_or(TrieError::InconsistentTree)?;
                 child_node.get_path(state, path, node_path)?;
             }

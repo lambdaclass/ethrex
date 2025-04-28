@@ -57,6 +57,15 @@ struct Cli {
         help = "Number of transactions to send for each account."
     )]
     tx_amount: u64,
+
+    // Amount of minutes to wait before exiting. If the value is 0, the program will wait indefinitely. If not present, the program will not wait for transactions to be included in blocks.
+    #[arg(
+        long,
+        short = 'w',
+        default_value_t = 0,
+        help = "Timeout to wait for all transactions to be included. If 0 is specified, wait indefinitely."
+    )]
+    wait: u64,
 }
 
 #[derive(ValueEnum, Clone, Debug)] // Derive ValueEnum for TestType
@@ -263,6 +272,49 @@ async fn load_test(
     Ok(())
 }
 
+// Waits until the nonce of each account has reached the tx_amount.
+async fn wait_until_all_included(
+    client: EthClient,
+    wait: Option<Duration>,
+    accounts: &[Account],
+    tx_amount: u64,
+) -> Result<(), String> {
+    let start_time = tokio::time::Instant::now();
+
+    for (pk, _) in accounts {
+        let pk = *pk;
+        let client = client.clone();
+        let src = address_from_pub_key(pk);
+        let encoded_src: String = src.encode_hex();
+        loop {
+            let elapsed = start_time.elapsed();
+            let nonce = client.get_nonce(src, BlockByNumber::Latest).await.unwrap();
+            if nonce >= tx_amount {
+                println!(
+                    "All transactions sent from {} have been included in blocks. Nonce: {}",
+                    encoded_src, nonce
+                );
+                break;
+            } else {
+                println!(
+                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%. Elapsed time: {}s.",
+                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0, elapsed.as_secs()
+                );
+            }
+
+            if let Some(wait) = wait {
+                if elapsed > wait {
+                    return Err("Timeout reached for transactions to be included".to_string());
+                }
+            }
+
+            sleep(Duration::from_secs(5)).await;
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_pk_file(path: &Path) -> eyre::Result<Vec<Account>> {
     let pkeys_content = fs::read_to_string(path).expect("Unable to read private keys file");
     let accounts: Vec<Account> = pkeys_content
@@ -334,6 +386,12 @@ async fn main() {
         }
     };
 
+    println!(
+        "Starting load test with {} transactions per account",
+        cli.tx_amount
+    );
+    let time_now = tokio::time::Instant::now();
+
     load_test(
         cli.tx_amount,
         &accounts,
@@ -343,4 +401,22 @@ async fn main() {
     )
     .await
     .expect("Failed to load test");
+
+    let wait_time = if cli.wait > 0 {
+        Some(Duration::from_secs(cli.wait * 60))
+    } else {
+        None
+    };
+
+    println!("Waiting for all transactions to be included in blocks...");
+    wait_until_all_included(client, wait_time, &accounts, cli.tx_amount)
+        .await
+        .unwrap();
+
+    let elapsed_time = time_now.elapsed();
+
+    println!(
+        "Load test finished. Elapsed time: {} seconds",
+        elapsed_time.as_secs()
+    );
 }

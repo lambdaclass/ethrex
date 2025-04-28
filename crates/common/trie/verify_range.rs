@@ -153,7 +153,7 @@ fn fill_node(
     let node = proof_nodes.get_node(node_hash)?;
     let child_hash = get_child(path, &node);
     if let Some(ref child_hash) = child_hash {
-        trie_state.insert_node(node, node_hash.clone());
+        trie_state.insert_node(node, *node_hash);
         fill_node(path, child_hash, trie_state, proof_nodes)
     } else {
         let value = match &node {
@@ -163,7 +163,7 @@ fn fill_node(
                 .then_some(n.value.clone())
                 .unwrap_or_default(),
         };
-        trie_state.insert_node(node, node_hash.clone());
+        trie_state.insert_node(node, *node_hash);
         Ok(value)
     }
 }
@@ -174,12 +174,12 @@ fn get_child<'a>(path: &'a mut Nibbles, node: &'a Node) -> Option<NodeHash> {
         Node::Branch(n) => {
             if let Some(choice) = path.next_choice() {
                 if n.choices[choice].is_valid() {
-                    return Some(n.choices[choice].clone());
+                    return Some(n.choices[choice]);
                 }
             }
             None
         }
-        Node::Extension(n) => path.skip_prefix(&n.prefix).then_some(n.child.clone()),
+        Node::Extension(n) => path.skip_prefix(&n.prefix).then_some(n.child),
         Node::Leaf(_) => None,
     }
 }
@@ -202,7 +202,7 @@ fn has_right_element_inner(
     mut path: Nibbles,
     trie_state: &TrieState,
 ) -> Result<bool, TrieError> {
-    let Ok(Some(node)) = trie_state.get_node(node_hash.clone()) else {
+    let Ok(Some(node)) = trie_state.get_node(node_hash) else {
         return Ok(false);
     };
     match node {
@@ -212,7 +212,7 @@ fn has_right_element_inner(
                 if n.choices[choice + 1..].iter().any(|child| child.is_valid()) {
                     return Ok(true);
                 } else if n.choices[choice].is_valid() {
-                    return has_right_element_inner(n.choices[choice].clone(), path, trie_state);
+                    return has_right_element_inner(n.choices[choice], path, trie_state);
                 }
             }
         }
@@ -261,7 +261,7 @@ fn remove_internal_references_inner(
         return Ok(true);
     }
     // We already looked up the nodes when filling the state so this shouldn't fail
-    let node = trie_state.get_node(node_hash.clone())?.unwrap();
+    let node = trie_state.get_node(node_hash)?.unwrap();
     match node {
         Node::Branch(mut n) => {
             // If none of the paths have a next choice nibble then it means that this is the end of the path
@@ -276,7 +276,7 @@ fn remove_internal_references_inner(
                 // Keep going
                 // Check if the child extension node should be removed as a result of this process
                 let should_remove = remove_internal_references_inner(
-                    n.choices[left_choice].clone(),
+                    n.choices[left_choice],
                     left_path,
                     right_path,
                     trie_state,
@@ -295,13 +295,9 @@ fn remove_internal_references_inner(
                 }
                 // Remove nodes on the left and right choice's subtries
                 let should_remove_left =
-                    remove_node(n.choices[left_choice].clone(), left_path, false, trie_state);
-                let should_remove_right = remove_node(
-                    n.choices[right_choice].clone(),
-                    right_path,
-                    true,
-                    trie_state,
-                );
+                    remove_node(n.choices[left_choice], left_path, false, trie_state);
+                let should_remove_right =
+                    remove_node(n.choices[right_choice], right_path, true, trie_state);
                 // Remove left and right child nodes if their subtries where wiped in the process
                 if should_remove_left {
                     n.choices[left_choice] = NodeHash::default();
@@ -373,7 +369,7 @@ fn remove_node(
         return false;
     }
     // We already looked up the nodes when filling the state so this shouldn't fail
-    let node = trie_state.get_node(node_hash.clone()).unwrap().unwrap();
+    let node = trie_state.get_node(node_hash).unwrap().unwrap();
     match node {
         Node::Branch(mut n) => {
             // Remove child nodes
@@ -391,8 +387,7 @@ fn remove_node(
                 }
             }
             // Remove nodes to the left/right of the choice's subtrie
-            let should_remove =
-                remove_node(n.choices[choice].clone(), path, remove_left, trie_state);
+            let should_remove = remove_node(n.choices[choice], path, remove_left, trie_state);
             if should_remove {
                 n.choices[choice] = NodeHash::default();
             }
@@ -440,10 +435,10 @@ impl<'a> ProofNodeStorage<'a> {
                 let Some(encoded) = self.nodes.get(hash.as_bytes()) else {
                     return Err(TrieError::Verify(format!("proof node missing: {hash}")));
                 };
-                *encoded
+                encoded.as_slice()
             }
 
-            NodeHash::Inline(ref encoded) => encoded,
+            NodeHash::Inline(_) => hash.as_ref(),
         };
         Ok(Node::decode_raw(encoded)?)
     }

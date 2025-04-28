@@ -4,10 +4,11 @@ use crate::{
     memory::Memory,
     opcodes::Opcode,
     utils::get_valid_jump_destinations,
+    Account,
 };
 use bytes::Bytes;
 use ethrex_common::{types::Log, Address, U256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Stack {
@@ -85,19 +86,13 @@ pub struct CallFrame {
     pub valid_jump_destinations: HashSet<usize>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
+    /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
+    pub cache_backup: CacheBackup,
 }
 
-impl CallFrame {
-    pub fn new_from_bytecode(bytecode: Bytes) -> Self {
-        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
-        Self {
-            gas_limit: u64::MAX,
-            bytecode,
-            valid_jump_destinations,
-            ..Default::default()
-        }
-    }
+pub type CacheBackup = HashMap<Address, Option<Account>>;
 
+impl CallFrame {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         msg_sender: Address,
@@ -130,7 +125,7 @@ impl CallFrame {
         }
     }
 
-    pub fn next_opcode(&mut self) -> Opcode {
+    pub fn next_opcode(&self) -> Opcode {
         match self.bytecode.get(self.pc).copied().map(Opcode::from) {
             Some(opcode) => opcode,
             None => Opcode::STOP,
@@ -143,10 +138,6 @@ impl CallFrame {
             .checked_add(count)
             .ok_or(VMError::Internal(InternalError::PCOverflowed))?;
         Ok(())
-    }
-
-    pub fn increment_pc(&mut self) -> Result<(), VMError> {
-        self.increment_pc_by(1)
     }
 
     pub fn pc(&self) -> usize {

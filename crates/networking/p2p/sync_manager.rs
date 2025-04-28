@@ -5,7 +5,7 @@ use std::sync::{
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
-use ethrex_storage::{error::StoreError, Store};
+use ethrex_storage::Store;
 use tokio::{
     sync::Mutex,
     time::{sleep, Duration},
@@ -17,11 +17,6 @@ use crate::{
     kademlia::KademliaTable,
     sync::{SyncMode, Syncer},
 };
-
-pub enum SyncStatus {
-    Active(SyncMode),
-    Inactive,
-}
 
 /// Abstraction to interact with the active sync process without disturbing it
 #[derive(Debug)]
@@ -62,7 +57,7 @@ impl SyncManager {
             .await
             .is_ok_and(|res| res.is_some())
         {
-            sync_manager.start_sync().await;
+            sync_manager.start_sync();
         }
         sync_manager
     }
@@ -79,8 +74,25 @@ impl SyncManager {
         }
     }
 
+    /// Sets the latest fcu head and starts the next sync cycle if the syncer is currently inactive
+    pub fn sync_to_head(&self, fcu_head: H256) {
+        self.set_head(fcu_head);
+        if !self.is_active() {
+            self.start_sync();
+        }
+    }
+
+    /// Returns the syncer's current syncmode (either snap or full)
+    pub fn sync_mode(&self) -> SyncMode {
+        if self.snap_enabled.load(Ordering::Relaxed) {
+            SyncMode::Snap
+        } else {
+            SyncMode::Full
+        }
+    }
+
     /// Updates the last fcu head. This may be used on the next sync cycle if needed
-    pub fn set_head(&self, fcu_head: H256) {
+    fn set_head(&self, fcu_head: H256) {
         if let Ok(mut latest_fcu_head) = self.last_fcu_head.try_lock() {
             *latest_fcu_head = fcu_head;
         } else {
@@ -88,27 +100,25 @@ impl SyncManager {
         }
     }
 
-    /// Returns the current sync status, either active or inactive and what the current syncmode is in the case of active
-    pub fn status(&self) -> Result<SyncStatus, StoreError> {
-        Ok(if self.syncer.try_lock().is_err() {
-            SyncStatus::Active(self.sync_mode())
-        } else {
-            SyncStatus::Inactive
-        })
+    /// Returns true is the syncer is active
+    fn is_active(&self) -> bool {
+        self.syncer.try_lock().is_err()
     }
 
     /// Attempts to sync to the last received fcu head
     /// Will do nothing if the syncer is already involved in a sync process
     /// If the sync process would require multiple sync cycles (such as snap sync), starts all required sync cycles until the sync is complete
-    pub async fn start_sync(&self) {
+    fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
-        let Ok(Some(current_head)) = self.store.get_latest_canonical_block_hash().await else {
-            tracing::error!("Failed to fecth latest canonical block, unable to sync");
-            return;
-        };
         let sync_head = self.last_fcu_head.clone();
+
         tokio::spawn(async move {
+            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
+                tracing::error!("Failed to fetch latest canonical block, unable to sync");
+                return;
+            };
+
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             let Ok(mut syncer) = syncer.try_lock() else {
                 return;
@@ -144,14 +154,5 @@ impl SyncManager {
                 }
             }
         });
-    }
-
-    /// Returns the syncer's current syncmode (either snap or full)
-    fn sync_mode(&self) -> SyncMode {
-        if self.snap_enabled.load(Ordering::Relaxed) {
-            SyncMode::Snap
-        } else {
-            SyncMode::Full
-        }
     }
 }
