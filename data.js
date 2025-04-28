@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745622592760,
+  "lastUpdate": 1745853184735,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4795,6 +4795,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177148559142,
             "range": "± 1230424192",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9d91f1d39ea186cbab6abf1a83dd5196195d0d08",
+          "message": "chore(core): add leftover `Cargo.lock` change (#2620)",
+          "timestamp": "2025-04-28T14:24:39Z",
+          "tree_id": "84cabcfb60f1b2291d5be33ed072a7e8c4211a7f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9d91f1d39ea186cbab6abf1a83dd5196195d0d08"
+        },
+        "date": 1745853182831,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181402721317,
+            "range": "± 1529816863",
             "unit": "ns/iter"
           }
         ]
