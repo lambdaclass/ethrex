@@ -73,6 +73,30 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+  build-prover:
+    name: Build Prover
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build prover
+        run: |
+          cd crates/l2
+          make build-prover
+
+      - name: Upload Prover Binary
+        uses: actions/upload-artifact@v3
+        with:
+          name: ethrex_prover
+          path: target/release/ethrex_prover
+
   integration-test:
     name: Integration Test - ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -83,7 +107,7 @@ jobs:
             validium: true
           - name: "Vanilla"
             validium: false
-    needs: [docker-bake]
+    needs: [docker-bake, build-prover]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -114,10 +138,11 @@ jobs:
             ethrex_l2.cache-from=type=local,src=/tmp/buildx-cache/ethrex_l2
             contract_deployer.cache-from=type=local,src=/tmp/buildx-cache/contract_deployer
 
-      - name: Build prover
-        run: |
-          cd crates/l2
-          make build-prover
+      - name: Download Prover Binary
+        uses: actions/download-artifact@v3
+        with:
+          name: ethrex_prover
+          path: target/release/ethrex_prover
 
       - name: Build test
         run: |
