@@ -624,7 +624,7 @@ impl LEVM {
         })
     }
 
-    pub fn calc_modified_accounts_size(
+    fn calc_modified_accounts_size(
         account_updates: &[AccountUpdate],
         db: &GeneralizedDatabase,
     ) -> Result<usize, EvmError> {
@@ -677,22 +677,20 @@ impl LEVM {
         // Calculate nonce diff
         let nonce_diff = new_nonce
             .checked_sub(prev_nonce)
-            .ok_or(EvmError::Custom("underflow nonce".to_owned()))?
+            .ok_or(EvmError::Custom(
+                "Underflow on calculating nonce diff".to_owned(),
+            ))?
             .try_into()
-            .map_err(|_| EvmError::Custom("from error".to_owned()))?;
+            .map_err(|_| EvmError::Custom("Nonce diff to high".to_owned()))?;
 
         Ok(nonce_diff)
     }
 
     /// Calculates the size of the current `StateDiff` of the block.
-    /// If the current size exceeds the blob size limit, returns `Ok(false)`.
-    /// If there is still space in the blob, returns `Ok(true)`.
-    /// Updates the following mutable variables in the process:
-    /// - `acc_withdrawals_size`: Accumulated size of withdrawals (incremented by L2_WITHDRAWAL_SIZE if tx is withdrawal)
-    /// - `acc_deposits_size`: Accumulated size of deposits (incremented by L2_DEPOSIT_SIZE if tx is deposit)
+    /// If the current size exceeds the blob size limit, returns `Err(EvmError::StateDiffSizeError)`.
+    /// If there is still space in the blob, returns `Ok(())`.
+    /// Updates the following mutable variable in the process:
     /// - `acc_state_diff_size`: Set to current total state diff size if within limit
-    /// - `context`: Must be mutable because `get_state_transitions` requires mutable access
-    /// - `accounts_info_cache`: When calculating account updates, we store account info in the cache if it's not already present
     ///
     ///  StateDiff:
     /// +-------------------+
@@ -711,38 +709,30 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         #[cfg(not(feature = "l2"))]
         return Ok(());
-        let mut actual_size = 0;
-        if is_withdrawal_l2(tx, receipt)? {
-            actual_size += L2_WITHDRAWAL_SIZE;
+        #[cfg(feature = "l2")]
+        {
+            let mut actual_size = 0;
+            if is_withdrawal_l2(tx, receipt)? {
+                actual_size += L2_WITHDRAWAL_SIZE;
+            }
+            if is_deposit_l2(tx) {
+                actual_size += L2_DEPOSIT_SIZE;
+            }
+
+            let fork = db.store.get_chain_config().fork(block_header.timestamp);
+            let account_updates = Self::get_state_transitions_no_drain(db, fork)?;
+
+            let modified_accounts_size = Self::calc_modified_accounts_size(&account_updates, db)?;
+
+            let current_state_diff_size =
+                1 /* version (u8) */ + HEADER_FIELDS_SIZE + actual_size + modified_accounts_size;
+
+            if current_state_diff_size > SAFE_BYTES_PER_BLOB {
+                return Err(EvmError::StateDiffSizeError);
+            }
+            *acc_state_diff_size = current_state_diff_size; // update the accumulated size
+            Ok(())
         }
-        if is_deposit_l2(tx) {
-            actual_size += L2_DEPOSIT_SIZE;
-        }
-
-        let fork = db.store.get_chain_config().fork(block_header.timestamp);
-        let account_updates = LEVM::get_state_transitions_no_drain(db, fork)?;
-
-        let modified_accounts_size = Self::calc_modified_accounts_size(&account_updates, db)?;
-
-        let current_state_diff_size =
-            1 /* version (u8) */ + HEADER_FIELDS_SIZE + actual_size + modified_accounts_size;
-
-        if current_state_diff_size > SAFE_BYTES_PER_BLOB {
-            // Restore the withdrawals and deposits counters.
-            // if is_withdrawal_l2(&tx, receipt)? {
-            //     *acc_withdrawals_size -= L2_WITHDRAWAL_SIZE;
-            // }
-            // if is_deposit_l2(&tx) {
-            //     *acc_deposits_size -= L2_DEPOSIT_SIZE;
-            // }
-            // debug!(
-            //     "Blob size limit exceeded. current_state_diff_size: {}",
-            //     current_state_diff_size
-            // );
-            return Err(EvmError::StateDiffSizeError);
-        }
-        *acc_state_diff_size = current_state_diff_size; // update the accumulated size
-        Ok(())
     }
 }
 

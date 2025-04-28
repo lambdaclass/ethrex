@@ -411,7 +411,9 @@ impl Blockchain {
             metrics!(METRICS_TX.inc_tx());
 
             // Execute tx
-            let receipt = match self.apply_transaction(&head_tx, context, &mut usize::MAX) {
+            let mut acc_state_diff_size = 0; // this is only used for the L2
+            let receipt = match self.apply_transaction(&head_tx, context, &mut acc_state_diff_size)
+            {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
@@ -449,11 +451,11 @@ impl Blockchain {
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
-        left_size: &mut usize,
+        acc_state_diff_size: &mut usize,
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
-            _ => self.apply_plain_transaction(head, context, left_size),
+            _ => self.apply_plain_transaction(head, context, acc_state_diff_size),
         }
     }
 
@@ -481,7 +483,8 @@ impl Blockchain {
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
         // Apply transaction
-        let receipt = self.apply_plain_transaction(head, context, &mut usize::MAX)?;
+        let mut acc_state_diff_size = 0; // this is only used for the L2
+        let receipt = self.apply_plain_transaction(head, context, &mut acc_state_diff_size)?;
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
@@ -495,14 +498,14 @@ impl Blockchain {
         &self,
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
-        left_size: &mut usize,
+        acc_state_diff_size: &mut usize,
     ) -> Result<Receipt, ChainError> {
         let (report, gas_used) = context.vm.execute_tx(
             &head.tx,
             &context.payload.header,
             &mut context.remaining_gas,
             head.tx.sender(),
-            left_size,
+            acc_state_diff_size,
         )?;
         context.block_value += U256::from(gas_used) * head.tip;
         Ok(report)

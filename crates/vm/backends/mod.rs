@@ -109,7 +109,7 @@ impl Evm {
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
         sender: Address,
-        left_size: &mut usize,
+        acc_state_diff_size: &mut usize,
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
             Evm::REVM { state } => {
@@ -145,7 +145,7 @@ impl Evm {
                     execution_report.logs.clone(),
                 );
 
-                LEVM::update_state_diff_size(left_size, tx, &receipt, db, block_header)?;
+                LEVM::update_state_diff_size(acc_state_diff_size, tx, &receipt, db, block_header)?;
 
                 Ok((receipt, execution_report.gas_used))
             }
@@ -199,16 +199,6 @@ impl Evm {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
             Evm::LEVM { db } => LEVM::get_state_transitions(db, fork),
-        }
-    }
-
-    pub fn get_state_transitions_no_drain(
-        &self,
-        fork: Fork,
-    ) -> Result<Vec<AccountUpdate>, EvmError> {
-        match self {
-            Evm::REVM { .. } => todo!(),
-            Evm::LEVM { db } => LEVM::get_state_transitions_no_drain(db, fork),
         }
     }
 
