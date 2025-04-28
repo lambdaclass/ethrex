@@ -66,8 +66,8 @@ pub async fn fill_transactions(
     store: &Store,
 ) -> Result<(), BlockProducerError> {
     // Two bytes for the len
-    // let (mut acc_withdrawals_size, mut acc_deposits_size): (usize, usize) = (2, 2);
-    let mut acc_state_diff_size = 4; // 2 bytes for withdrawals + 2 bytes for deposits
+    // 2 bytes for withdrawals + 2 bytes for deposits
+    let mut acc_state_diff_size = 4;
 
     let chain_config = store.get_chain_config()?;
     let max_blob_number_per_block: usize = chain_config
@@ -191,97 +191,3 @@ pub async fn fill_transactions(
     }
     Ok(())
 }
-
-// /// Calculates the size of the current `StateDiff` of the block.
-// /// If the current size exceeds the blob size limit, returns `Ok(false)`.
-// /// If there is still space in the blob, returns `Ok(true)`.
-// /// Updates the following mutable variables in the process:
-// /// - `acc_withdrawals_size`: Accumulated size of withdrawals (incremented by L2_WITHDRAWAL_SIZE if tx is withdrawal)
-// /// - `acc_deposits_size`: Accumulated size of deposits (incremented by L2_DEPOSIT_SIZE if tx is deposit)
-// /// - `acc_state_diff_size`: Set to current total state diff size if within limit
-// /// - `context`: Must be mutable because `get_state_transitions` requires mutable access
-// /// - `accounts_info_cache`: When calculating account updates, we store account info in the cache if it's not already present
-// ///
-// ///  StateDiff:
-// /// +-------------------+
-// /// | Version           |
-// /// | HeaderFields      |
-// /// | AccountsStateDiff |
-// /// | Withdrawals       |
-// /// | Deposits          |
-// /// +-------------------+
-// async fn update_state_diff_size(
-//     acc_withdrawals_size: &mut usize,
-//     acc_deposits_size: &mut usize,
-//     acc_state_diff_size: &mut usize,
-//     tx: Transaction,
-//     receipt: &Receipt,
-//     context: &mut PayloadBuildContext,
-//     accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
-// ) -> Result<bool, BlockProducerError> {
-//     if is_withdrawal_l2(&tx, receipt)? {
-//         *acc_withdrawals_size += L2_WITHDRAWAL_SIZE;
-//     }
-//     if is_deposit_l2(&tx) {
-//         *acc_deposits_size += L2_DEPOSIT_SIZE;
-//     }
-//     let modified_accounts_size = calc_modified_accounts_size(context, accounts_info_cache).await?;
-
-//     let current_state_diff_size = 1 /* version (u8) */ + HEADER_FIELDS_SIZE + *acc_withdrawals_size + *acc_deposits_size + modified_accounts_size;
-
-//     if current_state_diff_size > SAFE_BYTES_PER_BLOB {
-//         // Restore the withdrawals and deposits counters.
-//         if is_withdrawal_l2(&tx, receipt)? {
-//             *acc_withdrawals_size -= L2_WITHDRAWAL_SIZE;
-//         }
-//         if is_deposit_l2(&tx) {
-//             *acc_deposits_size -= L2_DEPOSIT_SIZE;
-//         }
-//         debug!(
-//             "Blob size limit exceeded. current_state_diff_size: {}",
-//             current_state_diff_size
-//         );
-//         return Ok(false);
-//     }
-//     *acc_state_diff_size = current_state_diff_size;
-//     Ok(true)
-// }
-
-// pub async fn calc_modified_accounts_size(
-//     context: &PayloadBuildContext,
-//     accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
-// ) -> Result<usize, BlockProducerError> {
-//     let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
-
-//     let chain_config = &context.store.get_chain_config()?;
-//     let fork = chain_config.fork(context.payload.header.timestamp);
-//     let account_updates = context.vm.get_state_transitions_no_drain(fork)?;
-//     for account_update in account_updates {
-//         modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
-//         if account_update.info.is_some() {
-//             modified_accounts_size += 32; // 32bytes | new_balance(U256)
-//         }
-
-//         let nonce_diff = get_nonce_diff(
-//             &account_update,
-//             &context.store,
-//             Some(accounts_info_cache),
-//             context.block_number(),
-//         )
-//         .await
-//         .map_err(|e| {
-//             BlockProducerError::Custom(format!("Block Producer failed to get nonce diff: {e}"))
-//         })?;
-//         if nonce_diff != 0 {
-//             modified_accounts_size += 2; // 2bytes | nonce_diff(u16)
-//         }
-//         // for each added_storage: 32bytes + 32bytes | key(H256) + value(U256)
-//         modified_accounts_size += account_update.added_storage.len() * 2 * 32;
-
-//         if let Some(bytecode) = &account_update.code {
-//             modified_accounts_size += 2; // 2bytes | bytecode_len(u16)
-//             modified_accounts_size += bytecode.len(); // (len)bytes | bytecode(Bytes)
-//         }
-//     }
-//     Ok(modified_accounts_size)
-// }

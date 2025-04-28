@@ -145,7 +145,7 @@ impl Evm {
                     execution_report.logs.clone(),
                 );
 
-                LEVM::update_state_diff_size(acc_state_diff_size, tx, &receipt, db, block_header)?;
+                levm::update_state_diff_size(acc_state_diff_size, tx, &receipt, db, block_header)?;
 
                 Ok((receipt, execution_report.gas_used))
             }

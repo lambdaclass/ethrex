@@ -1,16 +1,16 @@
 pub mod db;
+mod l2_utils;
+pub use l2_utils::update_state_diff_size;
 
 use super::revm::db::get_potential_child_nodes;
 use super::BlockExecutionResult;
 use crate::backends::levm::db::DatabaseLogger;
 use crate::constants::{
-    BEACON_ROOTS_ADDRESS, COMMON_BRIDGE_L2_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-    HEADER_FIELDS_SIZE, HISTORY_STORAGE_ADDRESS, L2_DEPOSIT_SIZE, L2_WITHDRAWAL_SIZE,
+    BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionDB, ExecutionDBError, ExecutionResult, StoreWrapper};
 use bytes::Bytes;
-use ethrex_common::types::SAFE_BYTES_PER_BLOB;
 use ethrex_common::{
     types::{
         code_hash, requests::Requests, AccessList, AccountInfo, AuthorizationTuple, Block,
@@ -29,7 +29,6 @@ use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, TrieError};
 use std::cmp::min;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 
 // Export needed types
@@ -243,7 +242,7 @@ impl LEVM {
         Ok(account_updates)
     }
 
-    pub fn get_state_transitions_no_drain(
+    fn get_state_transitions_no_drain(
         db: &GeneralizedDatabase,
         fork: Fork,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
@@ -623,117 +622,6 @@ impl LEVM {
             storage_proofs,
         })
     }
-
-    fn calc_modified_accounts_size(
-        account_updates: &[AccountUpdate],
-        db: &GeneralizedDatabase,
-    ) -> Result<usize, EvmError> {
-        let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
-
-        for account_update in account_updates {
-            modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
-            if account_update.info.is_some() {
-                modified_accounts_size += 32; // 32bytes | new_balance(U256)
-            }
-
-            let nonce_diff = Self::get_nonce_diff(account_update, db)?;
-            if nonce_diff != 0 {
-                modified_accounts_size += 2; // 2bytes | nonce_diff(u16)
-            }
-            // for each added_storage: 32bytes + 32bytes | key(H256) + value(U256)
-            modified_accounts_size += account_update.added_storage.len() * 2 * 32;
-
-            if let Some(bytecode) = &account_update.code {
-                modified_accounts_size += 2; // 2bytes | bytecode_len(u16)
-                modified_accounts_size += bytecode.len(); // (len)bytes | bytecode(Bytes)
-            }
-        }
-        Ok(modified_accounts_size)
-    }
-
-    fn get_nonce_diff(
-        account_update: &AccountUpdate,
-        db: &GeneralizedDatabase,
-    ) -> Result<u16, EvmError> {
-        // Get previous nonce
-        let prev_nonce = db
-            .cache
-            .get(&account_update.address)
-            .map(|acc| acc.info.clone())
-            .unwrap_or_else(|| {
-                db.store
-                    .get_account_info(account_update.address)
-                    .unwrap_or_default()
-            })
-            .nonce;
-
-        // Get current nonce
-        let new_nonce = if let Some(info) = account_update.info.clone() {
-            info.nonce
-        } else {
-            prev_nonce
-        };
-
-        // Calculate nonce diff
-        let nonce_diff = new_nonce
-            .checked_sub(prev_nonce)
-            .ok_or(EvmError::Custom(
-                "Underflow on calculating nonce diff".to_owned(),
-            ))?
-            .try_into()
-            .map_err(|_| EvmError::Custom("Nonce diff to high".to_owned()))?;
-
-        Ok(nonce_diff)
-    }
-
-    /// Calculates the size of the current `StateDiff` of the block.
-    /// If the current size exceeds the blob size limit, returns `Err(EvmError::StateDiffSizeError)`.
-    /// If there is still space in the blob, returns `Ok(())`.
-    /// Updates the following mutable variable in the process:
-    /// - `acc_state_diff_size`: Set to current total state diff size if within limit
-    ///
-    ///  StateDiff:
-    /// +-------------------+
-    /// | Version           |
-    /// | HeaderFields      |
-    /// | AccountsStateDiff |
-    /// | Withdrawals       |
-    /// | Deposits          |
-    /// +-------------------+
-    pub fn update_state_diff_size(
-        acc_state_diff_size: &mut usize,
-        tx: &Transaction,
-        receipt: &Receipt,
-        db: &GeneralizedDatabase,
-        block_header: &BlockHeader,
-    ) -> Result<(), EvmError> {
-        #[cfg(not(feature = "l2"))]
-        return Ok(());
-        #[cfg(feature = "l2")]
-        {
-            let mut actual_size = 0;
-            if is_withdrawal_l2(tx, receipt)? {
-                actual_size += L2_WITHDRAWAL_SIZE;
-            }
-            if is_deposit_l2(tx) {
-                actual_size += L2_DEPOSIT_SIZE;
-            }
-
-            let fork = db.store.get_chain_config().fork(block_header.timestamp);
-            let account_updates = Self::get_state_transitions_no_drain(db, fork)?;
-
-            let modified_accounts_size = Self::calc_modified_accounts_size(&account_updates, db)?;
-
-            let current_state_diff_size =
-                1 /* version (u8) */ + HEADER_FIELDS_SIZE + actual_size + modified_accounts_size;
-
-            if current_state_diff_size > SAFE_BYTES_PER_BLOB {
-                return Err(EvmError::StateDiffSizeError);
-            }
-            *acc_state_diff_size = current_state_diff_size; // update the accumulated size
-            Ok(())
-        }
-    }
 }
 
 pub fn generic_system_contract_levm(
@@ -945,25 +833,4 @@ fn vm_from_generic<'a>(
         }),
     };
     VM::new(env, db, &tx)
-}
-
-fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> Result<bool, EvmError> {
-    // WithdrawalInitiated(address,address,uint256)
-    let withdrawal_event_selector: H256 =
-        H256::from_str("bb2689ff876f7ef453cf8865dde5ab10349d222e2e1383c5152fbdb083f02da2")
-            .map_err(|e| EvmError::Custom(e.to_string()))?;
-
-    let is_withdrawal = match tx.to() {
-        TxKind::Call(to) if to == *COMMON_BRIDGE_L2_ADDRESS => receipt.logs.iter().any(|log| {
-            log.topics
-                .iter()
-                .any(|topic| *topic == withdrawal_event_selector)
-        }),
-        _ => false,
-    };
-    Ok(is_withdrawal)
-}
-
-fn is_deposit_l2(tx: &Transaction) -> bool {
-    matches!(tx, Transaction::PrivilegedL2Transaction(_tx))
 }
