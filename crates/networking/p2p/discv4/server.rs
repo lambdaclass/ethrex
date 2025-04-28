@@ -672,6 +672,7 @@ pub(super) mod tests {
     pub async fn start_discovery_server(
         udp_port: u16,
         should_start_server: bool,
+        client_info: String,
     ) -> Result<Discv4Server, DiscoveryError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
         let signer = SigningKey::random(&mut OsRng);
@@ -701,6 +702,7 @@ pub(super) mod tests {
             storage,
             blockchain,
             broadcast,
+            client_info,
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;
@@ -745,8 +747,8 @@ pub(super) mod tests {
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
     async fn discovery_server_revalidation() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(7998, true).await?;
-        let mut server_b = start_discovery_server(7999, true).await?;
+        let mut server_a = start_discovery_server(7998, true, "ethrex".to_string()).await?;
+        let mut server_b = start_discovery_server(7999, true, "ethrex".to_string()).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -815,8 +817,8 @@ pub(super) mod tests {
      * 5. Verify that the updated node record has been correctly received and stored.
      */
     async fn discovery_enr_message() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8006, true).await?;
-        let mut server_b = start_discovery_server(8007, true).await?;
+        let mut server_a = start_discovery_server(8006, true, "ethrex".to_string()).await?;
+        let mut server_b = start_discovery_server(8007, true, "ethrex".to_string()).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 

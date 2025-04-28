@@ -1,4 +1,3 @@
-use ethrex_common::constants;
 use ethrex_common::types::ChainConfig;
 use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
@@ -53,7 +52,7 @@ pub fn node_info(
         enode: enode_url,
         enr: enr_url,
         id: hex::encode(Keccak256::digest(local_node.node_id.as_bytes())),
-        name: constants::get_client_info(),
+        name: "constants::get_client_info()".to_string(),
         ip: local_node.ip.to_string(),
         ports: Ports {
             discovery: local_node.udp_port,

@@ -2,6 +2,7 @@
 name = "ethrex"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -79,3 +80,6 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 path = "../../bench/criterion_benchmark.rs"
 name = "criterion_benchmark"
 harness = false
+
+[build-dependencies]
+vergen = { version = "9.0.0", features = ["rustc"] }    

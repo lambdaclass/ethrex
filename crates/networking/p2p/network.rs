@@ -52,6 +52,7 @@ pub struct P2PContext {
     pub(crate) broadcast: RLPxConnBroadcastSender,
     pub local_node: Node,
     pub enr_seq: u64,
+    pub client_info: String,
 }
 
 pub async fn start_network(
@@ -62,6 +63,7 @@ pub async fn start_network(
     peer_table: Arc<Mutex<KademliaTable>>,
     storage: Store,
     blockchain: Arc<Blockchain>,
+    client_info: String,
 ) -> Result<(), NetworkError> {
     let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
         tokio::task::Id,
@@ -80,6 +82,7 @@ pub async fn start_network(
         storage,
         blockchain,
         broadcast: channel_broadcast_send_end,
+        client_info,
     };
     let discovery = Discv4Server::try_new(context.clone())
         .await

@@ -1,7 +1,10 @@
 use crate::{
     cli::Options,
     networks,
-    utils::{parse_socket_addr, read_genesis_file, read_jwtsecret_file, read_known_peers},
+    utils::{
+        get_client_info, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
+        read_known_peers,
+    },
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
@@ -206,6 +209,7 @@ pub async fn init_network(
         peer_table.clone(),
         store,
         blockchain,
+        get_client_info(),
     )
     .await
     .expect("Network starts");

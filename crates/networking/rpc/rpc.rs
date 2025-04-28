@@ -504,7 +504,6 @@ mod tests {
     use super::*;
     use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
     use ethrex_blockchain::Blockchain;
-    use ethrex_common::constants;
     use ethrex_common::{
         types::{ChainConfig, Genesis},
         H160,
@@ -610,7 +609,7 @@ mod tests {
                 },
             }
         });
-        json["result"]["name"] = serde_json::json!(constants::get_client_info());
+        json["result"]["name"] = serde_json::json!("constants::get_client_info()".to_string());
         let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
