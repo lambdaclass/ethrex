@@ -68,6 +68,7 @@ jobs:
         run: |
           cargo clippy --workspace --exclude ethrex-prover-bench -- -D warnings
           make lint
+
       - name: Run cargo fmt
         run: |
           cargo fmt --all -- --check
