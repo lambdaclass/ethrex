@@ -167,6 +167,7 @@ pub struct VM<'a> {
     pub hooks: Vec<Arc<dyn Hook>>,
     pub return_data: Vec<RetData>,
     pub backups: Vec<StateBackup>,
+    pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
 }
 
 pub struct RetData {
@@ -217,13 +218,6 @@ impl<'a> VM<'a> {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        // When instantiating a new vm the current value of the storage slots are actually the original values because it is a new transaction
-        for account in db.cache.values_mut() {
-            for storage_slot in account.storage.values_mut() {
-                storage_slot.original_value = storage_slot.current_value;
-            }
-        }
-
         let hooks: Vec<Arc<dyn Hook>> = match tx {
             Transaction::PrivilegedL2Transaction(privileged_tx) => vec![Arc::new(L2Hook {
                 recipient: privileged_tx.recipient,
@@ -270,6 +264,7 @@ impl<'a> VM<'a> {
                     hooks,
                     return_data: vec![],
                     backups: vec![],
+                    storage_original_values: HashMap::new(),
                 })
             }
             TxKind::Create => {
@@ -311,6 +306,7 @@ impl<'a> VM<'a> {
                     hooks,
                     return_data: vec![],
                     backups: vec![],
+                    storage_original_values: HashMap::new(),
                 })
             }
         }

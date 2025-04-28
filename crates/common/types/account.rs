@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_trie::Trie;
+use keccak_hash::keccak;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 
@@ -166,6 +167,43 @@ impl From<&GenesisAccount> for AccountState {
             storage_root: compute_storage_root(&value.storage),
             code_hash: code_hash(&value.code),
         }
+    }
+}
+
+impl Account {
+    pub fn new(balance: U256, code: Bytes, nonce: u64, storage: HashMap<H256, U256>) -> Self {
+        Self {
+            info: AccountInfo {
+                balance,
+                code_hash: keccak(code.as_ref()).0.into(),
+                nonce,
+            },
+            code,
+            storage,
+        }
+    }
+
+    pub fn has_nonce(&self) -> bool {
+        self.info.nonce != 0
+    }
+
+    pub fn has_code(&self) -> bool {
+        self.info.code_hash != *EMPTY_KECCACK_HASH
+    }
+
+    pub fn has_code_or_nonce(&self) -> bool {
+        self.has_code() || self.has_nonce()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.info.balance.is_zero()
+            && self.info.nonce == 0
+            && self.info.code_hash == *EMPTY_KECCACK_HASH
+    }
+
+    pub fn set_code(&mut self, code: Bytes) {
+        self.code = code.clone();
+        self.info.code_hash = keccak(code.as_ref()).0.into();
     }
 }
 

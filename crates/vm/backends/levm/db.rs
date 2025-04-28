@@ -1,3 +1,4 @@
+use ethrex_common::types::Account;
 use ethrex_common::U256 as CoreU256;
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::constants::EMPTY_CODE_HASH;
@@ -29,16 +30,13 @@ impl DatabaseLogger {
 }
 
 impl LevmDatabase for DatabaseLogger {
-    fn get_account_info(
-        &self,
-        address: CoreAddress,
-    ) -> Result<ethrex_levm::AccountInfo, DatabaseError> {
+    fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
         self.state_accessed
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
             .entry(address)
             .or_default();
-        self.store.get_account_info(address)
+        self.store.get_account(address)
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
@@ -87,10 +85,7 @@ impl LevmDatabase for DatabaseLogger {
 }
 
 impl LevmDatabase for StoreWrapper {
-    fn get_account_info(
-        &self,
-        address: CoreAddress,
-    ) -> Result<ethrex_levm::AccountInfo, DatabaseError> {
+    fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
         let acc_info = self
             .store
             .get_account_info_by_hash(self.block_hash, address)
@@ -103,11 +98,12 @@ impl LevmDatabase for StoreWrapper {
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default();
 
-        Ok(ethrex_levm::account::AccountInfo {
-            balance: acc_info.balance,
-            nonce: acc_info.nonce,
-            bytecode: acc_code,
-        })
+        Ok(Account::new(
+            acc_info.balance,
+            acc_code,
+            acc_info.nonce,
+            HashMap::new(),
+        ))
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
@@ -151,12 +147,9 @@ impl LevmDatabase for StoreWrapper {
 }
 
 impl LevmDatabase for ExecutionDB {
-    fn get_account_info(
-        &self,
-        address: CoreAddress,
-    ) -> Result<ethrex_levm::AccountInfo, DatabaseError> {
+    fn get_account(&self, address: CoreAddress) -> Result<Account, DatabaseError> {
         let Some(acc_info) = self.accounts.get(&address) else {
-            return Ok(ethrex_levm::AccountInfo::default());
+            return Ok(Account::default());
         };
 
         let acc_code = if acc_info.code_hash != EMPTY_CODE_HASH {
@@ -170,11 +163,12 @@ impl LevmDatabase for ExecutionDB {
             &bytes::Bytes::new()
         };
 
-        Ok(ethrex_levm::AccountInfo {
-            balance: acc_info.balance,
-            bytecode: acc_code.clone(),
-            nonce: acc_info.nonce,
-        })
+        Ok(Account::new(
+            acc_info.balance,
+            acc_code.clone(),
+            acc_info.nonce,
+            HashMap::new(),
+        ))
     }
 
     fn account_exists(&self, address: CoreAddress) -> bool {
