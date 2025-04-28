@@ -176,7 +176,7 @@ impl<'a> VM<'a> {
     pub fn get_original_storage(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
         let value_pre_tx = match self.storage_original_values.get(&address).cloned() {
             Some(account_storage) => match account_storage.get(&key) {
-                Some(value) => value.clone(),
+                Some(value) => *value,
                 None => self.get_storage_slot(address, key)?,
             },
             None => self.get_storage_slot(address, key)?,
@@ -184,10 +184,10 @@ impl<'a> VM<'a> {
 
         // Add it to the original values if it wasn't already there
         if let Some(account_storage) = self.storage_original_values.get_mut(&address) {
-            account_storage.entry(key).or_insert(value_pre_tx.clone());
+            account_storage.entry(key).or_insert(value_pre_tx);
         } else {
             let mut account_storage = HashMap::new();
-            account_storage.insert(key, value_pre_tx.clone());
+            account_storage.insert(key, value_pre_tx);
             self.storage_original_values
                 .insert(address, account_storage);
         }
@@ -224,7 +224,7 @@ impl<'a> VM<'a> {
     pub fn get_storage_slot(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
         let storage_slot = match cache::get_account(&self.db.cache, &address) {
             Some(account) => match account.storage.get(&key) {
-                Some(storage_slot) => storage_slot.clone(),
+                Some(storage_slot) => *storage_slot,
                 None => self.db.store.get_storage_slot(address, key)?,
             },
             None => self.db.store.get_storage_slot(address, key)?,
@@ -233,7 +233,7 @@ impl<'a> VM<'a> {
         // When getting storage slot of an account that's not yet cached we need to store it in the account
         // Note: We end up caching the account because it is the most straightforward way of doing it.
         let account = self.get_account_mut(address)?;
-        account.storage.entry(key).or_insert(storage_slot.clone());
+        account.storage.entry(key).or_insert(storage_slot);
 
         Ok(storage_slot)
     }

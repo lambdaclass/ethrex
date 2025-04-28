@@ -359,7 +359,7 @@ pub async fn compare_levm_revm_account_updates(
             let account_storage = pre_state_value
                 .storage
                 .iter()
-                .map(|(key, value)| (H256::from_slice(&key.to_big_endian()), value.clone()))
+                .map(|(key, value)| (H256::from_slice(&key.to_big_endian()), *value))
                 .collect();
             let account = Account::new(
                 pre_state_value.balance,

@@ -191,7 +191,7 @@ impl LEVM {
             for (key, storage_slot) in &new_state_account.storage {
                 let storage_before_block = db.store.get_storage_slot(address, *key)?;
                 if *storage_slot != storage_before_block {
-                    added_storage.insert(*key, storage_slot.clone());
+                    added_storage.insert(*key, *storage_slot);
                     storage_updated = true;
                 }
             }
