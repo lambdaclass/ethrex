@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: ["**"]
     paths:
-      - "crates/l2/contracts/**"
+      - "crates/l2/**"
       - ".github/workflows/pr-main_l2_contracts.yaml"
 
 concurrency:

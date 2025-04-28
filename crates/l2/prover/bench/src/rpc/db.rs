@@ -2,11 +2,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
-use crate::rpc::{get_account, retry};
+use crate::rpc::{get_account, get_block, retry};
 
 use bytes::Bytes;
 use ethrex_common::{
-    types::{AccountInfo, AccountState, Block, TxKind},
+    types::{AccountInfo, AccountState, Block, Fork, TxKind},
     Address, H256, U256,
 };
 use ethrex_levm::db::Database as LevmDatabase;
@@ -245,9 +245,9 @@ impl RpcDB {
         let mut db = GeneralizedDatabase::new(Arc::new(self.clone()), CacheDB::new());
 
         // pre-execute and get all state changes
-        let execution_updates = LEVM::execute_block(block, &mut db)
-            .map_err(Box::new)?
-            .account_updates;
+        let result = LEVM::execute_block(block, &mut db).map_err(Box::new)?;
+        let execution_updates =
+            LEVM::get_state_transitions(&mut db, Fork::default()).map_err(Box::new)?;
 
         let index: Vec<(Address, Vec<H256>)> = self
             .cache
@@ -507,20 +507,6 @@ impl LevmDatabase for RpcDB {
 
     fn get_chain_config(&self) -> ethrex_common::types::ChainConfig {
         *CANCUN_CONFIG
-    }
-
-    fn get_account_info_by_hash(
-        &self,
-        _block_hash: ethrex_common::types::BlockHash,
-        address: Address,
-    ) -> Result<Option<ethrex_common::types::AccountInfo>, DatabaseError> {
-        // TODO: Fetch the block from the RPC API given its block hash.
-        let info = self.get_account_info(address)?;
-        Ok(Some(ethrex_common::types::AccountInfo {
-            code_hash: info.bytecode_hash(),
-            balance: info.balance,
-            nonce: info.nonce,
-        }))
     }
 }
 

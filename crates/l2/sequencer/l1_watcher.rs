@@ -83,40 +83,8 @@ impl L1Watcher {
                 continue;
             }
 
-            let pending_deposit_logs = self.get_pending_deposit_logs().await?;
-            let _deposit_txs = self
-                .process_logs(logs, &pending_deposit_logs, store, blockchain)
-                .await?;
+            let _deposit_txs = self.process_logs(logs, store, blockchain).await?;
         }
-    }
-
-    pub async fn get_pending_deposit_logs(&self) -> Result<Vec<H256>, L1WatcherError> {
-        let selector = keccak(b"getDepositLogs()")
-            .as_bytes()
-            .get(..4)
-            .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
-            .to_vec();
-
-        Ok(hex::decode(
-            self.eth_client
-                .call(
-                    self.address,
-                    Bytes::copy_from_slice(&selector),
-                    Overrides::default(),
-                )
-                .await?
-                .get(2..)
-                .ok_or(L1WatcherError::FailedToDeserializeLog(
-                    "Not a valid hex string".to_string(),
-                ))?,
-        )
-        .map_err(|_| L1WatcherError::FailedToDeserializeLog("Not a valid hex string".to_string()))?
-        .chunks(32)
-        .map(H256::from_slice)
-        .collect::<Vec<H256>>()
-        .split_at(2) // Two first words are index and length abi encode
-        .1
-        .to_vec())
     }
 
     pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
@@ -176,7 +144,6 @@ impl L1Watcher {
     pub async fn process_logs(
         &self,
         logs: Vec<RpcLog>,
-        pending_deposit_logs: &[H256],
         store: &Store,
         blockchain: &Blockchain,
     ) -> Result<Vec<H256>, L1WatcherError> {
@@ -189,7 +156,7 @@ impl L1Watcher {
             let value_bytes = mint_value.to_big_endian();
             let id_bytes = deposit_id.to_big_endian();
             let gas_limit_bytes = gas_limit.to_big_endian();
-            if !pending_deposit_logs.contains(&keccak(
+            let deposit_hash = keccak(
                 [
                     to_address.as_bytes(),
                     &value_bytes,
@@ -200,7 +167,15 @@ impl L1Watcher {
                     keccak(&calldata).as_bytes(),
                 ]
                 .concat(),
-            )) {
+            );
+
+            let deposit_already_processed = store
+                .get_transaction_by_hash(deposit_hash)
+                .await
+                .map_err(L1WatcherError::FailedAccessingStore)?
+                .is_some();
+
+            if deposit_already_processed {
                 warn!("Deposit already processed (to: {recipient:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
                 continue;
             }
