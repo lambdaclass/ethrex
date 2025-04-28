@@ -370,7 +370,7 @@ impl RLPDecode for Transaction {
             let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
             println!("Tx type: {:?}", tx_type);
             let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            println!("Tx encoding: {:?}", tx_encoding);
+            println!("Tx encoding: {:?}", hex::encode(tx_encoding));
             // Look at the first byte to check if it corresponds to a TransactionType
             match *tx_type {
                 // Legacy
