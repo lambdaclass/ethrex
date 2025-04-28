@@ -364,6 +364,7 @@ pub mod test_utils {
             local_p2p_node,
             example_local_node_record(),
             SyncManager::dummy(),
+            "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client,
             #[cfg(feature = "based")]

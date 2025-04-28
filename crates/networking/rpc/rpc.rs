@@ -93,6 +93,7 @@ pub struct RpcApiContext {
     pub local_node_record: NodeRecord,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
+    pub client_info: String,
     #[cfg(feature = "based")]
     pub gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -146,6 +147,7 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    client_info: String,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "based")] gateway_pubkey: Public,
@@ -163,6 +165,7 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
+        client_info,
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
@@ -447,7 +450,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => web3::client_version(req, context.storage),
+        "web3_clientVersion" => web3::client_version(req, context.storage, context.client_info),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -547,6 +550,7 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            client_info: "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -647,6 +651,7 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            client_info: "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -691,6 +696,7 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            client_info: "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -769,6 +775,7 @@ mod tests {
             jwt_secret: Default::default(),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            client_info: "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]

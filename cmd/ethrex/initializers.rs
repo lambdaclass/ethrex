@@ -139,6 +139,7 @@ pub async fn init_rpc_api(
         local_p2p_node,
         local_node_record,
         syncer,
+        get_client_info(),
         #[cfg(feature = "based")]
         get_gateway_http_client(&l2_opts.based_opts),
         #[cfg(feature = "based")]
