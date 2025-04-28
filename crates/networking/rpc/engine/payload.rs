@@ -5,6 +5,7 @@ use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
+use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
 use tracing::{error, info, warn};
 
@@ -34,7 +35,14 @@ impl RpcHandler for NewPayloadV1Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v1(&self.payload)?;
-        let block = get_block_from_payload(&self.payload, None, None)?;
+        let block = match get_block_from_payload(&self.payload, None, None) {
+            Ok(block) => block,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?)
+            }
+        };
         let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -59,8 +67,14 @@ impl RpcHandler for NewPayloadV2Request {
             // Behave as a v1
             validate_execution_payload_v1(&self.payload)?;
         }
-
-        let block = get_block_from_payload(&self.payload, None, None)?;
+        let block = match get_block_from_payload(&self.payload, None, None) {
+            Ok(block) => block,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?)
+            }
+        };
         let payload_status = handle_new_payload_v1_v2(&self.payload, block, context).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -105,8 +119,18 @@ impl RpcHandler for NewPayloadV3Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let block =
-            get_block_from_payload(&self.payload, Some(self.parent_beacon_block_root), None)?;
+        let block = match get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            None,
+        ) {
+            Ok(block) => block,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?)
+            }
+        };
         validate_fork(&block, Fork::Cancun, &context)?;
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = handle_new_payload_v3(
@@ -205,11 +229,18 @@ impl RpcHandler for NewPayloadV4Request {
         validate_execution_requests(&self.execution_requests)?;
 
         let requests_hash = compute_requests_hash(&self.execution_requests);
-        let block = get_block_from_payload(
+        let block = match get_block_from_payload(
             &self.payload,
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
-        )?;
+        ) {
+            Ok(block) => block,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?)
+            }
+        };
 
         let chain_config = context.storage.get_chain_config()?;
 
@@ -645,14 +676,13 @@ fn get_block_from_payload(
     payload: &ExecutionPayload,
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
-) -> Result<Block, RpcErr> {
+) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
     info!("Received new payload with block hash: {block_hash:#x}");
 
     payload
         .clone()
         .into_block(parent_beacon_block_root, requests_hash)
-        .map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), RpcErr> {
@@ -698,9 +728,7 @@ async fn try_execute_payload(
                 .update_sync_status(false)
                 .await
                 .map_err(|e| RpcErr::Internal(e.to_string()))?;
-            context.syncer.set_head(block_hash);
-            context.syncer.start_sync();
-
+            context.syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }
         // Under the current implementation this is not possible: we always calculate the state
