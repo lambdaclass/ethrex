@@ -131,7 +131,7 @@ jobs:
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach contract_deployer
 
-      - name: Start Prover & Sequencer
+      - name: Start Sequencer
         run: |
           sleep 30
           cd crates/l2
@@ -142,7 +142,7 @@ jobs:
       - name: Run test
         run: |
           cd crates/l2
-          cargo test l2 --release -- --nocapture --test-threads=1
+          RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
 
   state-diff-test:
     name: State Reconstruction Tests
