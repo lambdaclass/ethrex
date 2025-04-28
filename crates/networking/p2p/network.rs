@@ -55,6 +55,7 @@ pub struct P2PContext {
     pub client_info: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn start_network(
     local_node: Node,
     tracker: TaskTracker,

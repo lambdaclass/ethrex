@@ -97,6 +97,7 @@ pub(crate) struct RLPxConnection<S> {
 }
 
 impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         signer: SigningKey,
         node: Node,
@@ -119,7 +120,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
             next_periodic_ping: Instant::now() + PERIODIC_TASKS_CHECK_INTERVAL,
             next_tx_broadcast: Instant::now() + PERIODIC_TX_BROADCAST_INTERVAL,
             broadcasted_txs: HashSet::new(),
-            client_info: client_info,
+            client_info,
             connection_broadcast_send: connection_broadcast,
         }
     }
