@@ -136,7 +136,7 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     }
 }
 
-pub fn get_client_info() -> String {
+pub fn get_client_version() -> String {
     format!(
         "{}/v{}-develop-{}/{}/rustc-v{}",
         env!("CARGO_PKG_NAME"),

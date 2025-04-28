@@ -2,7 +2,7 @@ use crate::{
     cli::Options,
     networks,
     utils::{
-        get_client_info, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
+        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
         read_known_peers,
     },
 };
@@ -139,7 +139,7 @@ pub async fn init_rpc_api(
         local_p2p_node,
         local_node_record,
         syncer,
-        get_client_info(),
+        get_client_version(),
         #[cfg(feature = "based")]
         get_gateway_http_client(&l2_opts.based_opts),
         #[cfg(feature = "based")]
@@ -210,7 +210,7 @@ pub async fn init_network(
         peer_table.clone(),
         store,
         blockchain,
-        get_client_info(),
+        get_client_version(),
     )
     .await
     .expect("Network starts");
