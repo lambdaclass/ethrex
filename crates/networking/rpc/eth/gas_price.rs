@@ -82,6 +82,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            client_info: "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
