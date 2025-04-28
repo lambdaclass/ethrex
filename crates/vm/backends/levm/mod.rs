@@ -327,7 +327,7 @@ impl LEVM {
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
         let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
         if code_hash(&account.info.bytecode) == EMPTY_CODE_HASH {
-            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string())); 
+            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
         }
 
         match report.result {
