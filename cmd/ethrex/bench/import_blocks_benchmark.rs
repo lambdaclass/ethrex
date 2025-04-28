@@ -14,7 +14,7 @@ fn block_import() {
 
     let evm_engine = EvmEngine::default();
 
-    let network = "../../test_data/genesis-l2-ci.json";
+    let network = "../../test_data/genesis-perf-ci.json";
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
