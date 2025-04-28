@@ -2,7 +2,7 @@ use crate::{
     errors::{InternalError, OpcodeResult, VMError},
     gas_cost::{self},
     memory::{self, calculate_memory_size},
-    utils::{access_account, word_to_address},
+    utils::word_to_address,
     vm::VM,
 };
 use ethrex_common::{types::Fork, U256};
@@ -31,8 +31,9 @@ impl<'a> VM<'a> {
         let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
-        let (account_info, address_was_cold) =
-            access_account(self.db, &mut self.accrued_substate, address)?;
+        let (account_info, address_was_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, address)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
@@ -258,8 +259,9 @@ impl<'a> VM<'a> {
         let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
-        let (account_info, address_was_cold) =
-            access_account(self.db, &mut self.accrued_substate, address)?;
+        let (account_info, address_was_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, address)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
@@ -286,8 +288,9 @@ impl<'a> VM<'a> {
             .map_err(|_| VMError::VeryLargeNumber)?;
         let current_memory_size = self.current_call_frame()?.memory.len();
 
-        let (account_info, address_was_cold) =
-            access_account(self.db, &mut self.accrued_substate, address)?;
+        let (account_info, address_was_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, address)?;
 
         let new_memory_size = calculate_memory_size(dest_offset, size)?;
 
@@ -411,8 +414,9 @@ impl<'a> VM<'a> {
         let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
-        let (account_info, address_was_cold) =
-            access_account(self.db, &mut self.accrued_substate, address)?;
+        let (account_info, address_was_cold) = self
+            .db
+            .access_account(&mut self.accrued_substate, address)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 

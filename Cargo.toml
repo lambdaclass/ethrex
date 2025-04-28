@@ -15,6 +15,7 @@ members = [
   "crates/l2/",
   "crates/l2/contracts",
   "crates/l2/prover",
+  "crates/l2/prover/bench",
   "crates/l2/sdk",
   "crates/networking/p2p",
   "crates/networking/rpc",
