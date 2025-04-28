@@ -2,6 +2,7 @@ use std::cmp::min;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
+use hex;
 use keccak_hash::keccak;
 pub use mempool::MempoolTransaction;
 use secp256k1::{ecdsa::RecoveryId, Message, SecretKey};
@@ -360,11 +361,16 @@ impl RLPDecode for Transaction {
     /// B) Non legacy transactions: rlp(Bytes) where Bytes represents the canonical encoding for the transaction as a bytes object.
     /// Checkout [Transaction::decode_canonical] for more information
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        println!("Decoding transaction: {:?}", hex::encode(rlp));
         if is_encoded_as_bytes(rlp)? {
+            println!("Is encoded as bytes");
             // Adjust the encoding to get the payload
             let payload = get_rlp_bytes_item_payload(rlp)?;
+            println!("The payload is: {:?}", hex::encode(payload));
             let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
+            println!("Tx type: {:?}", tx_type);
             let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
+            println!("Tx encoding: {:?}", tx_encoding);
             // Look at the first byte to check if it corresponds to a TransactionType
             match *tx_type {
                 // Legacy
@@ -390,6 +396,7 @@ impl RLPDecode for Transaction {
                 ))),
             }
         } else {
+            println!("Is encoded as legacy transaction");
             // LegacyTransaction
             LegacyTransaction::decode_unfinished(rlp)
                 .map(|(tx, rem)| (Transaction::LegacyTransaction(tx), rem))
