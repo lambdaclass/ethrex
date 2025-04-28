@@ -313,69 +313,51 @@ impl LEVM {
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-    ) -> Option<ExecutionReport> {
+    ) -> Result<Option<ExecutionReport>, EvmError> {
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
             db,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
-        .ok()?;
+        )?;
 
         // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
         // has any code after being deployed. If not, the whole block becomes invalid.
-        let acc = db
-            .cache
-            .get(&*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)
-            .unwrap();
-        if code_hash(&acc.info.bytecode) == EMPTY_CODE_HASH {
-            return Some(ExecutionReport {
-                result: TxResult::Revert(VMError::FatalError),
-                gas_used: 0,
-                gas_refunded: 0,
-                output: Bytes::new(),
-                logs: vec![],
-            });
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
+        let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
+        if code_hash(&account.info.bytecode) == EMPTY_CODE_HASH {
+            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string())); 
         }
 
         match report.result {
-            TxResult::Success => Some(report),
-            _ => None,
+            TxResult::Success => Ok(Some(report)),
+            _ => Ok(None),
         }
     }
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-    ) -> Option<ExecutionReport> {
+    ) -> Result<Option<ExecutionReport>, EvmError> {
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
             db,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
-        .ok()?;
+        )?;
 
         // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
         // has any code after being deployed. If not, the whole block becomes invalid.
-        let acc = db
-            .cache
-            .get(&*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)
-            .unwrap();
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
+        let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
         if code_hash(&acc.info.bytecode) == EMPTY_CODE_HASH {
-            return Some(ExecutionReport {
-                result: TxResult::Revert(VMError::FatalError),
-                gas_used: 0,
-                gas_refunded: 0,
-                output: Bytes::new(),
-                logs: vec![],
-            });
+            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
         }
 
         match report.result {
-            TxResult::Success => Some(report),
-            _ => None,
+            TxResult::Success => Ok(Some(report)),
+            _ => Ok(None),
         }
     }
 
@@ -648,7 +630,7 @@ pub fn extract_all_requests_levm(
         }
     }
 
-    let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, db) {
+    let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, db)? {
         Some(report) => {
             match report.result {
                 TxResult::Success => report.output.into(), // the cache is updated inside the generic_system_call
@@ -658,7 +640,7 @@ pub fn extract_all_requests_levm(
         None => Default::default(),
     };
 
-    let consolidation_data: Vec<u8> = match LEVM::dequeue_consolidation_requests(header, db) {
+    let consolidation_data: Vec<u8> = match LEVM::dequeue_consolidation_requests(header, db)? {
         Some(report) => {
             match report.result {
                 TxResult::Success => report.output.into(), // the cache is updated inside the generic_system_call
