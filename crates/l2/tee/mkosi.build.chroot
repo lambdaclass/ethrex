@@ -5,4 +5,6 @@ cargo build --release --manifest-path Cargo.toml --bin ethrex --features "dev"
 cp target/release/ethrex /work/dest/ethrex_l1
 cargo build --release --manifest-path Cargo.toml --bin ethrex --features l2
 cp target/release/ethrex /work/dest/ethrex_l2
-bash
+cd crates/l2/tee/quote-gen
+cargo build --release
+cp target/release/ethrex /work/dest/quote-gen
