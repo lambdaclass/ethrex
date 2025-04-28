@@ -115,7 +115,10 @@ pub fn prepare_revm_for_tx<'state>(
     let blob_excess_gas_and_price = if test.env.current_excess_blob_gas.is_none() {
         None
     } else {
-        Some(BlobExcessGasAndPrice::new(test.env.current_excess_blob_gas.unwrap().as_u64(), *fork==Fork::Prague))
+        Some(BlobExcessGasAndPrice::new(
+            test.env.current_excess_blob_gas.unwrap().as_u64(),
+            *fork == Fork::Prague,
+        ))
     };
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
