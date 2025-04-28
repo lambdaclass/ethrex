@@ -131,7 +131,7 @@ impl Committer {
             .await?;
 
         if last_committed_block_number == last_block_of_batch {
-            debug!("No new blocks to commit, skipping..");
+            debug!("No new blocks to commit, skipping");
             return Ok(());
         }
 

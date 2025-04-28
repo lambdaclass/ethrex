@@ -60,9 +60,10 @@ impl MetricsGatherer {
     // TODO: update metrics to work with batches.
     async fn main_logic(&mut self) -> Result<(), MetricsGathererError> {
         loop {
-            let last_fetched_l1_block =
-                EthClient::get_last_fetched_l1_block(&self.eth_client, self.common_bridge_address)
-                    .await?;
+            let last_fetched_l1_block = self
+                .eth_client
+                .get_last_fetched_l1_block(self.common_bridge_address)
+                .await?;
 
             let last_committed_batch = self
                 .eth_client

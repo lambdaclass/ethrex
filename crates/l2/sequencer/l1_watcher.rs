@@ -89,10 +89,11 @@ impl L1Watcher {
 
     pub async fn get_logs(&mut self) -> Result<Vec<RpcLog>, L1WatcherError> {
         if self.last_block_fetched.is_zero() {
-            self.last_block_fetched =
-                EthClient::get_last_fetched_l1_block(&self.eth_client, self.address)
-                    .await?
-                    .into();
+            self.last_block_fetched = self
+                .eth_client
+                .get_last_fetched_l1_block(self.address)
+                .await?
+                .into();
         }
 
         let current_block = self.eth_client.get_block_number().await?;
