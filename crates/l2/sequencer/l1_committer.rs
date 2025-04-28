@@ -110,12 +110,12 @@ impl Committer {
         let batch_to_commit = last_committed_batch_number + 1;
 
         // Get the last committed block_number
-        let last_committed_blocks: Vec<BlockNumber> = self
+        let last_committed_block_number = self
             .rollup_store
             .get_block_numbers_by_batch(last_committed_batch_number)
             .await?
-            .unwrap_or_default();
-        let last_committed_block_number = *last_committed_blocks.last().unwrap_or(&0);
+            .and_then(|blocks| blocks.last().copied())
+            .ok_or_else(|| CommitterError::InternalError("Invalid rollup_storage state".into()))?;
 
         let first_block_to_commit = last_committed_block_number + 1;
 

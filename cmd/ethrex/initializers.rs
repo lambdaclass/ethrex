@@ -105,7 +105,13 @@ pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
             let engine_type = EngineTypeRollup::InMemory;
         }
     }
-    StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup")
+    let rollup_store =
+        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+    rollup_store
+        .init()
+        .await
+        .expect("Failed to init rollup store");
+    rollup_store
 }
 
 pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {

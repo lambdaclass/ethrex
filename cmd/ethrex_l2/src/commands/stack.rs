@@ -208,6 +208,10 @@ impl Command {
                         .expect("Invalid store path"),
                     EngineTypeRollup::Libmdbx,
                 )?;
+                rollup_store
+                    .init()
+                    .await
+                    .expect("Failed to init rollup store");
 
                 // Get genesis
                 let genesis_header = store.get_block_header(0)?.expect("Genesis block not found");

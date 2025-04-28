@@ -53,6 +53,11 @@ impl Store {
         Ok(store)
     }
 
+    pub async fn init(&self) -> Result<(), StoreError> {
+        // Stores batch 0 with block 0
+        self.store_batch(0, 0, 0, Vec::new()).await
+    }
+
     /// Stores the block numbers by a given batch_number
     pub async fn store_block_numbers_by_batch(
         &self,
