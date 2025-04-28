@@ -325,15 +325,18 @@ impl LEVM {
 
         // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
         // has any code after being deployed. If not, the whole block becomes invalid.
-        let acc = db.cache.get(&*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS).unwrap();
+        let acc = db
+            .cache
+            .get(&*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)
+            .unwrap();
         if code_hash(&acc.info.bytecode) == EMPTY_CODE_HASH {
-                return Some(ExecutionReport {
-                    result: TxResult::Revert(VMError::FatalError), // TODO: Check what type of error to use
-                    gas_used: 0,
-                    gas_refunded: 0,
-                    output: Bytes::new(),
-                    logs: vec![]
-                });
+            return Some(ExecutionReport {
+                result: TxResult::Revert(VMError::FatalError), // TODO: Check what type of error to use
+                gas_used: 0,
+                gas_refunded: 0,
+                output: Bytes::new(),
+                logs: vec![],
+            });
         }
 
         match report.result {
@@ -635,7 +638,6 @@ pub fn extract_all_requests_levm(
                 TxResult::Success => report.output.into(), // the cache is updated inside the generic_system_call
                 TxResult::Revert(vmerror) => return Err(EvmError::from(vmerror)), // We need to check if there was an error when reading the withdrawal requests
             }
-            
         }
         None => Default::default(),
     };
