@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745865840659,
+  "lastUpdate": 1745869728678,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4915,6 +4915,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179360843225,
             "range": "± 760788254",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e90d210a130d1fcc2155ea19b28d782ca3745375",
+          "message": "fix(core): exclude ethrex-prover-bench on make lint (#2618)\n\n**Motivation**\n\n`make lint` throws an error in main:\n\n```\nerror occurred in cc-rs: failed to find tool \"nvcc\": No such file or directory (os error 2)\n```\n\n**Description**\n\nExclude `ethrex-prover-bench` when running clippy.\n\nCloses None",
+          "timestamp": "2025-04-28T18:34:26Z",
+          "tree_id": "8901c93a81eb91872c0fd90457a3c62fd3c9aafb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e90d210a130d1fcc2155ea19b28d782ca3745375"
+        },
+        "date": 1745869726312,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 184135010188,
+            "range": "± 888348559",
             "unit": "ns/iter"
           }
         ]
