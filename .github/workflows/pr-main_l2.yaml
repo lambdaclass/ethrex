@@ -45,10 +45,44 @@ jobs:
           name: buildx-cache
           path: /tmp/buildx-cache
 
-  integration-test:
-    # "Integration Test" is a required check, don't change the name
-    name: Integration Test
+  lint:
+    # "Lint" is a required check, don't change the name
+    name: Lint
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Add Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run cargo check
+        run: cargo check --workspace --exclude ethrex-prover-bench
+
+      - name: Run cargo clippy
+        run: |
+          cargo clippy --workspace --exclude ethrex-prover-bench -- -D warnings
+          cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface --exclude ethrex-prover-bench -- -D warnings
+
+      - name: Run cargo fmt
+        run: |
+          cargo fmt --all -- --check
+
+  integration-test:
+    name: Integration Test - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: "Validium"
+            validium: true
+          - name: "Vanilla"
+            validium: false
     needs: [docker-bake]
     steps:
       - name: Checkout sources
@@ -95,11 +129,12 @@ jobs:
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           cp configs/sequencer_config_example.toml configs/sequencer_config.toml
           sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
-
+          if [ "${{ matrix.validium }}" = "true" ]; then
+            sed -i.bak 's/^validium = false$/validium = true/' configs/sequencer_config.toml && rm configs/sequencer_config.toml.bak
+          fi
           make integration-test
 
   state-diff-test:
-    # "State Reconstruction Tests" is a required check, don't change the name
     name: State Reconstruction Tests
     runs-on: ubuntu-latest
     needs: [docker-bake]
@@ -146,3 +181,24 @@ jobs:
           sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
 
           make state-diff-test
+
+  # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
+  all-tests:
+    # "Integration Test" is a required check, don't change the name
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [integration-test, state-diff-test]
+    # Make sure this job runs even if the previous jobs failed or were skipped
+    if: ${{ always() && needs.integration-test.result != 'skipped' && needs.state-diff-test.result != 'skipped' }}
+    steps:
+      - name: Check if any job failed
+        run: |
+          if [ "${{ needs.integration-test.result }}" != "success" ]; then
+            echo "Job Integration Tests failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.state-diff-test.result }}" != "success" ]; then
+            echo "Job State Reconstruction Tests failed"
+            exit 1
+          fi

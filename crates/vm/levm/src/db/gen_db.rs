@@ -143,16 +143,6 @@ impl<'a> VM<'a> {
         Ok(account.info.nonce)
     }
 
-    pub fn decrement_account_nonce(&mut self, address: Address) -> Result<(), VMError> {
-        let account = self.get_account_mut(address)?;
-        account.info.nonce = account
-            .info
-            .nonce
-            .checked_sub(1)
-            .ok_or(VMError::NonceUnderflow)?;
-        Ok(())
-    }
-
     /// Inserts account to cache backing up the previus state of it in the CacheBackup (if it wasn't already backed up)
     pub fn insert_account(&mut self, address: Address, account: Account) -> Result<(), VMError> {
         let previous_account = cache::insert_account(&mut self.db.cache, address, account);

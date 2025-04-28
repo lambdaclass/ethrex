@@ -95,16 +95,6 @@ pub struct CallFrame {
 pub type CacheBackup = HashMap<Address, Option<Account>>;
 
 impl CallFrame {
-    pub fn new_from_bytecode(bytecode: Bytes) -> Self {
-        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
-        Self {
-            gas_limit: u64::MAX,
-            bytecode,
-            valid_jump_destinations,
-            ..Default::default()
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         msg_sender: Address,
@@ -150,10 +140,6 @@ impl CallFrame {
             .checked_add(count)
             .ok_or(VMError::Internal(InternalError::PCOverflowed))?;
         Ok(())
-    }
-
-    pub fn increment_pc(&mut self) -> Result<(), VMError> {
-        self.increment_pc_by(1)
     }
 
     pub fn pc(&self) -> usize {
