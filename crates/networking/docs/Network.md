@@ -117,7 +117,8 @@ curl -s http://localhost:8545 \
 ```
 
 **node b**
-We start a new server passing the enode from node A `a` as argument. Also changing the database dir and the ports is needed to avoid conflicts.
+
+We start a new server passing the enode from node `a` as an argument. Also changing the database dir and the ports is needed to avoid conflicts.
 
 ```bash
 cargo run --bin ethrex -- --network ./test_data/genesis-kurtosis.json --bootnodes=`NODE_A_ENODE` \
