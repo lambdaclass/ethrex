@@ -17,6 +17,7 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
+use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
@@ -322,6 +323,19 @@ impl LEVM {
         )
         .ok()?;
 
+        // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
+        // has any code after being deployed. If not, the whole block becomes invalid.
+        let acc = db.cache.get(&*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS).unwrap();
+        if code_hash(&acc.info.bytecode) == EMPTY_CODE_HASH {
+                return Some(ExecutionReport {
+                    result: TxResult::Revert(VMError::FatalError), // TODO: Check what type of error to use
+                    gas_used: 0,
+                    gas_refunded: 0,
+                    output: Bytes::new(),
+                    logs: vec![]
+                });
+        }
+
         match report.result {
             TxResult::Success => Some(report),
             _ => None,
@@ -617,8 +631,11 @@ pub fn extract_all_requests_levm(
 
     let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, db) {
         Some(report) => {
-            // the cache is updated inside the generic_system_call
-            report.output.into()
+            match report.result {
+                TxResult::Success => report.output.into(), // the cache is updated inside the generic_system_call
+                TxResult::Revert(vmerror) => return Err(EvmError::from(vmerror)), // We need to check if there was an error when reading the withdrawal requests
+            }
+            
         }
         None => Default::default(),
     };

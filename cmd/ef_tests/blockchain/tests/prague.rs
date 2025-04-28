@@ -22,9 +22,7 @@ const SKIPPED_TESTS_REVM: [&str; 13] = [
 ];
 
 #[cfg(feature = "levm")]
-const SKIPPED_TESTS_LEVM: [&str; 46] = [
-    "tests/prague/eip7002_el_triggerable_withdrawals/test_contract_deployment.py::test_system_contract_deployment[fork_CancunToPragueAtTime15k-blockchain_test-deploy_after_fork-nonzero_balance]",
-    "tests/prague/eip7002_el_triggerable_withdrawals/test_contract_deployment.py::test_system_contract_deployment[fork_CancunToPragueAtTime15k-blockchain_test-deploy_after_fork-zero_balance]",
+const SKIPPED_TESTS_LEVM: [&str; 44] = [
     "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_out_of_gas-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
     "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reverts-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
     "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reaches_gas_limit-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
