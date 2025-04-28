@@ -35,6 +35,7 @@ pub fn node_info(
     storage: Store,
     local_node: Node,
     local_node_record: NodeRecord,
+    client_info: String,
 ) -> Result<Value, RpcErr> {
     let enode_url = local_node.enode_url();
     let enr_url = match local_node_record.enr_url() {
@@ -52,7 +53,7 @@ pub fn node_info(
         enode: enode_url,
         enr: enr_url,
         id: hex::encode(Keccak256::digest(local_node.node_id.as_bytes())),
-        name: "constants::get_client_info()".to_string(),
+        name: client_info,
         ip: local_node.ip.to_string(),
         ports: Ports {
             discovery: local_node.udp_port,

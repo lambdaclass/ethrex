@@ -443,6 +443,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
             context.storage,
             context.local_p2p_node,
             context.local_node_record,
+            context.client_info,
         ),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
