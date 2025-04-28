@@ -9,10 +9,12 @@ use ethrex_common::{
     H256, U256,
 };
 use ethrex_levm::{
+    db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{EVMConfig, GeneralizedDatabase, VM},
+    vm::{EVMConfig, VM},
     Environment,
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::backends;
 use keccak_hash::keccak;
@@ -344,13 +346,32 @@ pub async fn ensure_post_state(
                                     .to_owned(),
                             )
                         })?;
-                    let post_state_root_hash = post_state_root(&levm_account_updates, test).await;
-                    let expected_post_state_root_hash =
-                        test.post.vector_post_value(vector, *fork).hash;
-                    if expected_post_state_root_hash != post_state_root_hash {
+                    let vector_post_value = test.post.vector_post_value(vector, *fork);
+
+                    // 1. Compare the post-state root hash with the expected post-state root hash
+                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
+                    {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             execution_report.clone(),
                             "Post-state root mismatch".to_string(),
+                            cache,
+                        ));
+                    }
+
+                    // 2. Compare keccak of logs with test's expected logs hash.
+
+                    // Do keccak of the RLP of logs
+                    let keccak_logs = {
+                        let logs = execution_report.logs.clone();
+                        let mut encoded_logs = Vec::new();
+                        logs.encode(&mut encoded_logs);
+                        keccak(encoded_logs)
+                    };
+
+                    if keccak_logs != vector_post_value.logs {
+                        return Err(EFTestRunnerError::FailedToEnsurePostState(
+                            execution_report.clone(),
+                            "Logs mismatch".to_string(),
                             cache,
                         ));
                     }
