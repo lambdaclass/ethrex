@@ -18,7 +18,7 @@ spamoor_params:
   spammers:
     - scenario: blobs
       config:
-        throughput: 6
+        throughput: 200
 
 network_params:
   electra_fork_epoch: 1
