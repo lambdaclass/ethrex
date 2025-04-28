@@ -506,7 +506,7 @@ impl Syncer {
         sync_head_found: bool,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         // If we found the sync head, run the blocks sequentially to store all the blocks's state
-        if sync_head_found {
+        if true {
             let mut last_valid_hash = H256::default();
             for block in blocks {
                 blockchain.add_block(&block).await.map_err(|e| {
