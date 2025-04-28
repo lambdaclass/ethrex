@@ -133,7 +133,6 @@ cargo run --bin ethrex -- --network ./test_data/genesis-kurtosis.json --bootnode
 --datadir=ethrex_c --authrpc.port=8553 --http.port=8547 --p2p.port=30308 --discovery.port=30310
 ```
 
-You can get the enode form node `b` using:
 We get the `enode` by querying the node_info and using jq:
 ```bash
 curl -s http://localhost:8546 \
