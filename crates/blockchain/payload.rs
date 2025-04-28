@@ -313,7 +313,7 @@ impl Blockchain {
     /// Returns two transaction queues, one for plain and one for blob txs
     pub fn fetch_mempool_transactions(
         &self,
-        context: &mut PayloadBuildContext,
+        context: &PayloadBuildContext,
     ) -> Result<(TransactionQueue, TransactionQueue), ChainError> {
         let tx_filter = PendingTxFilter {
             /*TODO(https://github.com/lambdaclass/ethrex/issues/680): add tip filter */
@@ -346,6 +346,12 @@ impl Blockchain {
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        // Check if we have enough gas at all
+        if context.remaining_gas < TX_GAS_COST {
+            debug!("No more gas to run transactions");
+            return Ok(());
+        };
+
         let chain_config = context.chain_config()?;
         let max_blob_number_per_block = chain_config
             .get_fork_blob_schedule(context.payload.header.timestamp)
@@ -355,6 +361,10 @@ impl Blockchain {
         debug!("Fetching transactions from mempool");
         // Fetch mempool transactions
         let (mut plain_txs, mut blob_txs) = self.fetch_mempool_transactions(context)?;
+
+        // Txs to remove from the mempool in a batch.
+        let mut transactions_to_remove = Vec::with_capacity(plain_txs.txs.len());
+
         // Execute and add transactions to payload (if suitable)
         loop {
             // Check if we have enough gas to run more transactions
@@ -402,7 +412,7 @@ impl Blockchain {
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
                 txs.pop();
-                self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+                transactions_to_remove.push(head_tx.tx.compute_hash());
                 continue;
             }
 
@@ -416,7 +426,7 @@ impl Blockchain {
                 Ok(receipt) => {
                     txs.shift()?;
                     // Pull transaction from the mempool
-                    self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
+                    transactions_to_remove.push(head_tx.tx.compute_hash());
 
                     metrics!(METRICS_TX.inc_tx_with_status_and_type(
                         MetricsTxStatus::Succeeded,
@@ -441,6 +451,8 @@ impl Blockchain {
             // Save receipt for hash calculation
             context.receipts.push(receipt);
         }
+
+        self.remove_transactions_from_pool(&transactions_to_remove)?;
         Ok(())
     }
 
