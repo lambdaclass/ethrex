@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745855979097,
+  "lastUpdate": 1745858949662,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4855,6 +4855,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 186176726258,
             "range": "± 615341293",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e0d75223b09f3ba9e4700d1ad967439125503f43",
+          "message": "ci(core): run sp1 backend integration test on the merge queue (#2607)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-28T15:37:00Z",
+          "tree_id": "2eac24c9bc0d9ed0609d33843eca21ed9bada5ef",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e0d75223b09f3ba9e4700d1ad967439125503f43"
+        },
+        "date": 1745858947335,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179478989639,
+            "range": "± 929432664",
             "unit": "ns/iter"
           }
         ]
