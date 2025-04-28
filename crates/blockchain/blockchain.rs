@@ -75,6 +75,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config()?;
         let fork = chain_config.fork(block.header.timestamp);
 
+        dbg!(&block);
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config)?;
 
@@ -637,6 +638,10 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Chai
             InvalidBlockError::ExceededMaxBlobNumberPerBlock,
         ));
     }
+
+    info!("Header blob gas used: {:?}", block.header.blob_gas_used);
+    info!("Calculated blob gas used: {:?}", blob_gas_used);
+
     if block
         .header
         .blob_gas_used
