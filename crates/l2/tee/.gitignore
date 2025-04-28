@@ -2,3 +2,5 @@ image
 image.*
 mkosi.crt
 mkosi.key
+mkosi.tools.manifest
+mkosi.tools

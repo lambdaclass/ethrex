@@ -1,4 +1,6 @@
-#!/bin/sh
+#!/bin/bash
 git clone https://github.com/canonical/tdx.git
 cd tdx
-./setup-tdx-guest.sh
+source setup-tdx-common
+add_kobuk_ppas tdx-release
+apt install qemu-system-x86 ovmf
