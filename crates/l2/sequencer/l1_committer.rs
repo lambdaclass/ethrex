@@ -290,9 +290,9 @@ impl Committer {
 
                     last_added_block_number += 1;
                 }
-                Err(e) => {
+                Err(_) => {
+                    warn!("Batch size limit reached. Any remaining blocks will be processed in the next batch.");
                     // Break loop. Use the previous generated blobs_bundle.
-                    error!("Failed to generate blobs bundle: {e}");
                     break;
                 }
             }
