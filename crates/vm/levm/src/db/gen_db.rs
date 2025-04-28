@@ -183,14 +183,11 @@ impl<'a> VM<'a> {
         };
 
         // Add it to the original values if it wasn't already there
-        if let Some(account_storage) = self.storage_original_values.get_mut(&address) {
-            account_storage.entry(key).or_insert(value_pre_tx);
-        } else {
-            let mut account_storage = HashMap::new();
-            account_storage.insert(key, value_pre_tx);
-            self.storage_original_values
-                .insert(address, account_storage);
-        }
+        self.storage_original_values
+            .entry(address)
+            .or_insert_with(HashMap::new)
+            .entry(key)
+            .or_insert(value_pre_tx);
 
         Ok(value_pre_tx)
     }
