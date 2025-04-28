@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745853184735,
+  "lastUpdate": 1745855979097,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4825,6 +4825,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181402721317,
             "range": "± 1529816863",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "11b1c882f0fcee5de97ea8b3b6249607d4f50616",
+          "message": "fix(l2): bad address parsing was forbidding sequencer to start (#2599)\n\n**Motivation**\n\nwhen fetching verifier contract's addresses, the address was not being\nparsed correctly.\n\nthis is at least one reason the SP1 job is failing right now.\n\nwe should also consider alternatives to using the \"0xaa\" address to flag\na verifier as disabled.\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-04-28T15:01:45Z",
+          "tree_id": "9777163b5adbed02da98d24c2383661d78704ebe",
+          "url": "https://github.com/lambdaclass/ethrex/commit/11b1c882f0fcee5de97ea8b3b6249607d4f50616"
+        },
+        "date": 1745855977857,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 186176726258,
+            "range": "± 615341293",
             "unit": "ns/iter"
           }
         ]
