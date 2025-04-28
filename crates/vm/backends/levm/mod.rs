@@ -331,7 +331,7 @@ impl LEVM {
             .unwrap();
         if code_hash(&acc.info.bytecode) == EMPTY_CODE_HASH {
             return Some(ExecutionReport {
-                result: TxResult::Revert(VMError::FatalError), // TODO: Check what type of error to use
+                result: TxResult::Revert(VMError::FatalError),
                 gas_used: 0,
                 gas_refunded: 0,
                 output: Bytes::new(),
@@ -356,6 +356,22 @@ impl LEVM {
             *SYSTEM_ADDRESS,
         )
         .ok()?;
+
+        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
+        // has any code after being deployed. If not, the whole block becomes invalid.
+        let acc = db
+            .cache
+            .get(&*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)
+            .unwrap();
+        if code_hash(&acc.info.bytecode) == EMPTY_CODE_HASH {
+            return Some(ExecutionReport {
+                result: TxResult::Revert(VMError::FatalError),
+                gas_used: 0,
+                gas_refunded: 0,
+                output: Bytes::new(),
+                logs: vec![],
+            });
+        }
 
         match report.result {
             TxResult::Success => Some(report),
@@ -636,7 +652,7 @@ pub fn extract_all_requests_levm(
         Some(report) => {
             match report.result {
                 TxResult::Success => report.output.into(), // the cache is updated inside the generic_system_call
-                TxResult::Revert(vmerror) => return Err(EvmError::from(vmerror)), // We need to check if there was an error when reading the withdrawal requests
+                TxResult::Revert(vmerror) => return Err(EvmError::from(vmerror)),
             }
         }
         None => Default::default(),
@@ -644,8 +660,10 @@ pub fn extract_all_requests_levm(
 
     let consolidation_data: Vec<u8> = match LEVM::dequeue_consolidation_requests(header, db) {
         Some(report) => {
-            // the cache is updated inside the generic_system_call
-            report.output.into()
+            match report.result {
+                TxResult::Success => report.output.into(), // the cache is updated inside the generic_system_call
+                TxResult::Revert(vmerror) => return Err(EvmError::from(vmerror)),
+            }
         }
         None => Default::default(),
     };
