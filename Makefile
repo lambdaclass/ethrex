@@ -175,8 +175,5 @@ load-test-io:
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
-flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
-	sudo bash bench/scripts/flamegraph.sh
-
 test_data/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./test_data/ERC20.sol -o $@
