@@ -4,10 +4,11 @@ use crate::{
     memory::Memory,
     opcodes::Opcode,
     utils::get_valid_jump_destinations,
+    Account,
 };
 use bytes::Bytes;
 use ethrex_common::{types::Log, Address, U256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Stack {
@@ -85,7 +86,11 @@ pub struct CallFrame {
     pub valid_jump_destinations: HashSet<usize>,
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
+    /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
+    pub cache_backup: CacheBackup,
 }
+
+pub type CacheBackup = HashMap<Address, Option<Account>>;
 
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]
