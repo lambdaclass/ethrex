@@ -207,7 +207,7 @@ impl Account {
         Self {
             info: AccountInfo {
                 balance,
-                code_hash: keccak(&code.as_ref()).0.into(),
+                code_hash: keccak(code.as_ref()).0.into(),
                 nonce,
             },
             code,
@@ -233,6 +233,6 @@ impl Account {
 
     pub fn set_code(&mut self, code: Bytes) {
         self.code = code.clone();
-        self.info.code_hash = keccak(&code.as_ref()).0.into();
+        self.info.code_hash = keccak(code.as_ref()).0.into();
     }
 }
