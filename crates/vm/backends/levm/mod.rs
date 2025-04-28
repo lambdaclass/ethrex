@@ -21,11 +21,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, Substate, VM},
-<<<<<<< HEAD
     Environment,
-=======
-    Account, Environment,
->>>>>>> main
 };
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{hash_address, hash_key, AccountUpdate, Store};
