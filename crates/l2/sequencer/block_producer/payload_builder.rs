@@ -17,7 +17,7 @@ use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRI
 use ethrex_storage::Store;
 use std::ops::Div;
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::{
     sequencer::{errors::BlockProducerError, state_diff::get_nonce_diff},
@@ -162,7 +162,8 @@ pub async fn fill_transactions(
 
         let previous_context = context.clone();
 
-        let left_size = SAFE_BYTES_PER_BLOB - acc_state_diff_size;
+        // let left_size = SAFE_BYTES_PER_BLOB - acc_state_diff_size;
+        let left_size = 0;
         dbg!(left_size);
 
         // Execute tx
@@ -201,6 +202,10 @@ pub async fn fill_transactions(
             }
             // Ignore following txs from sender
             Err(e) => {
+                error!(
+                    "Failed to execute transaction (State diff too big): {}, {e}",
+                    tx_hash
+                );
                 debug!("Failed to execute transaction: {}, {e}", tx_hash);
                 metrics!(METRICS_TX.inc_tx_with_status_and_type(
                     MetricsTxStatus::Failed,

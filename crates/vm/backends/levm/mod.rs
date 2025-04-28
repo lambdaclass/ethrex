@@ -9,6 +9,7 @@ use crate::constants::{
 };
 use crate::{EvmError, ExecutionDB, ExecutionDBError, ExecutionResult, StoreWrapper};
 use bytes::Bytes;
+use ethrex_common::types::BlockNumber;
 use ethrex_common::{
     types::{
         code_hash, requests::Requests, AccessList, AccountInfo, AuthorizationTuple, Block,
@@ -619,6 +620,66 @@ impl LEVM {
             state_proofs,
             storage_proofs,
         })
+    }
+
+    pub fn calc_modified_accounts_size(
+        account_updates: &[AccountUpdate],
+        db: &GeneralizedDatabase,
+    ) -> Result<usize, EvmError> {
+        let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
+
+        for account_update in account_updates {
+            modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
+            if account_update.info.is_some() {
+                modified_accounts_size += 32; // 32bytes | new_balance(U256)
+            }
+
+            let nonce_diff = Self::get_nonce_diff(account_update, db)?;
+            if nonce_diff != 0 {
+                modified_accounts_size += 2; // 2bytes | nonce_diff(u16)
+            }
+            // for each added_storage: 32bytes + 32bytes | key(H256) + value(U256)
+            modified_accounts_size += account_update.added_storage.len() * 2 * 32;
+
+            if let Some(bytecode) = &account_update.code {
+                modified_accounts_size += 2; // 2bytes | bytecode_len(u16)
+                modified_accounts_size += bytecode.len(); // (len)bytes | bytecode(Bytes)
+            }
+        }
+        Ok(modified_accounts_size)
+    }
+
+    pub fn get_nonce_diff(
+        account_update: &AccountUpdate,
+        db: &GeneralizedDatabase,
+    ) -> Result<u16, EvmError> {
+        // Get previous nonce
+        let prev_nonce = db
+            .cache
+            .get(&account_update.address)
+            .map(|acc| acc.info.clone())
+            .unwrap_or_else(|| {
+                db.store
+                    .get_account_info(account_update.address)
+                    .unwrap_or_default()
+            })
+            .nonce;
+
+        // Get current nonce
+        let new_nonce = if let Some(info) = account_update.info.clone() {
+            info.nonce
+        } else {
+            prev_nonce
+        };
+
+        // Calculate nonce diff
+        let nonce_diff = new_nonce
+            .checked_sub(prev_nonce)
+            .ok_or(EvmError::Custom("underflow nonce".to_owned()))?
+            .try_into()
+            .map_err(|_| EvmError::Custom("from error".to_owned()))?;
+
+        Ok(nonce_diff)
     }
 }
 
