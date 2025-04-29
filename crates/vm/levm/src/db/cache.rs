@@ -1,5 +1,4 @@
-use crate::Account;
-use ethrex_common::Address;
+use ethrex_common::{types::Account, Address};
 use std::collections::HashMap;
 
 pub type CacheDB = HashMap<Address, Account>;

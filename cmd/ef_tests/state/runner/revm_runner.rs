@@ -6,13 +6,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Fork, TxKind},
+    types::{Account, Fork, TxKind},
     Address, H256,
 };
-use ethrex_levm::{
-    errors::{ExecutionReport, TxResult},
-    Account, StorageSlot,
-};
+use ethrex_levm::errors::{ExecutionReport, TxResult};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
     self,
@@ -362,13 +359,7 @@ pub async fn compare_levm_revm_account_updates(
             let account_storage = pre_state_value
                 .storage
                 .iter()
-                .map(|(key, value)| {
-                    let storage_slot = StorageSlot {
-                        original_value: *value,
-                        current_value: *value,
-                    };
-                    (H256::from_slice(&key.to_big_endian()), storage_slot)
-                })
+                .map(|(key, value)| (H256::from_slice(&key.to_big_endian()), *value))
                 .collect();
             let account = Account::new(
                 pre_state_value.balance,

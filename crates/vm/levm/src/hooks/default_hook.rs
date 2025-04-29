@@ -1,5 +1,4 @@
 use crate::{
-    account::Account,
     constants::*,
     errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
@@ -8,7 +7,10 @@ use crate::{
     vm::VM,
 };
 
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::{
+    types::{Account, Fork},
+    U256,
+};
 
 use std::cmp::max;
 
@@ -180,7 +182,7 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        if sender_account.has_code() && !has_delegation(&sender_account.info)? {
+        if sender_account.has_code() && !has_delegation(&sender_account)? {
             return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
         }
 

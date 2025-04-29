@@ -4,10 +4,12 @@ use crate::{
     memory::Memory,
     opcodes::Opcode,
     utils::get_valid_jump_destinations,
-    Account,
 };
 use bytes::Bytes;
-use ethrex_common::{types::Log, Address, U256};
+use ethrex_common::{
+    types::{Account, Log},
+    Address, U256,
+};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

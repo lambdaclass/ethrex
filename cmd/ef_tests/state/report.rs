@@ -1,10 +1,10 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
-use ethrex_common::{types::Fork, Address, H256};
-use ethrex_levm::{
-    errors::{ExecutionReport, TxResult, VMError},
-    Account,
+use ethrex_common::{
+    types::{Account, Fork},
+    Address, H256,
 };
+use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use itertools::Itertools;
 use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult};
@@ -664,14 +664,14 @@ impl fmt::Display for ComparisonReport {
                         base_account.info.balance, new_info.balance
                     )?;
 
-                    if base_account.info.bytecode_hash() != new_info.code_hash {
+                    if base_account.info.code_hash != new_info.code_hash {
                         writeln!(
                             f,
                             "\t\t\t\t\tCode: {} -> {}",
-                            if base_account.info.bytecode.is_empty() {
+                            if base_account.code.is_empty() {
                                 "empty".to_string()
                             } else {
-                                hex::encode(&base_account.info.bytecode)
+                                hex::encode(&base_account.code)
                             },
                             account_update
                                 .code
@@ -691,7 +691,7 @@ impl fmt::Display for ComparisonReport {
                     writeln!(
                         f,
                         "\t\t\t\t\tStorage slot: {key:#x}: {} -> {}",
-                        initial_value.original_value, value
+                        initial_value, value
                     )?;
                 }
             }
