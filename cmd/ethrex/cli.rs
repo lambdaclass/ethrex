@@ -7,12 +7,13 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_p2p::{sync::SyncMode, types::Node};
+use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmEngine;
 use tracing::{info, warn, Level};
 
 use crate::{
     initializers::{init_blockchain, init_store},
-    utils::{self, set_datadir},
+    utils::{self, write_storage_blocks_to_file, get_data_dir},
     DEFAULT_DATADIR,
 };
 
@@ -237,6 +238,26 @@ pub enum Subcommand {
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
+    #[command(name = "export", about = "Export blocks to a database file -- starting from block number 1")]
+    Export {
+        #[arg(
+            required = false,
+            value_name = "EXISTING FOLDER",
+            help = "Path to store the RLP file",
+            default_value = "./",
+            short = 'o',
+            long = "output-dir"
+        )]
+        path: String,
+        #[arg(
+            value_name = "source data dir",
+            long = "data-dir",
+            short = 'd',
+            value_name = "DATA DIR",
+            help = "Path to an existing data dir for ethrex, otherwise use the default one"
+        )]
+        data_dir: Option<String>
+    },
     #[cfg(any(feature = "l2", feature = "based"))]
     #[command(subcommand)]
     L2(l2::Command),
@@ -268,6 +289,14 @@ impl Subcommand {
 
                 import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
+            Subcommand::Export { path, data_dir } => {
+                let data_dir = data_dir.unwrap_or_else(|| get_data_dir(DEFAULT_DATADIR).to_owned());
+                let store = Store::new(&data_dir, EngineType::Libmdbx).expect("Fatal: could not open db");
+                match write_storage_blocks_to_file(None, &path, &store).await {
+                    Err(err) => tracing::error!("Could not write RLP file: {}", err),
+                    Ok(ok) => tracing::info!("Block file written to {}", ok)
+                }
+            }
             #[cfg(any(feature = "l2", feature = "based"))]
             Subcommand::L2(command) => command.run().await?,
         }
@@ -276,7 +305,7 @@ impl Subcommand {
 }
 
 pub fn remove_db(datadir: &str, force: bool) {
-    let data_dir = set_datadir(datadir);
+    let data_dir = get_data_dir(datadir);
     let path = Path::new(&data_dir);
 
     if path.exists() {
@@ -303,7 +332,7 @@ pub fn remove_db(datadir: &str, force: bool) {
 }
 
 pub async fn import_blocks(path: &str, data_dir: &str, network: &str, evm: EvmEngine) {
-    let data_dir = set_datadir(data_dir);
+    let data_dir = get_data_dir(data_dir);
 
     let store = init_store(&data_dir, network).await;
 
