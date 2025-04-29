@@ -233,6 +233,7 @@ impl LEVM {
 
             account_updates.push(account_update);
         }
+        db.in_memory_db.clear();
         Ok(account_updates)
     }
 
