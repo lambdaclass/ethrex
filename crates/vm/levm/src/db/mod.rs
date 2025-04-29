@@ -6,6 +6,7 @@ use ethrex_common::{types::ChainConfig, Address, H256, U256};
 pub mod cache;
 pub use cache::CacheDB;
 pub mod error;
+pub mod gen_db;
 
 pub trait Database: Send + Sync {
     fn get_account_info(&self, address: Address) -> Result<AccountInfo, DatabaseError>;

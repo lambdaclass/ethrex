@@ -23,6 +23,7 @@ pub(crate) struct StatusMessage {
 }
 
 impl RLPxMessage for StatusMessage {
+    const CODE: u8 = 0x10;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
