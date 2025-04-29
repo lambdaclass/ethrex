@@ -212,9 +212,19 @@ impl EthClient {
                 };
 
                 if tx_max_fee > max_fee_per_gas {
-                    return Err(EthClientError::Custom(
-                        "max_fee_per_gas too high".to_owned(),
-                    ));
+                    match wrapped_tx {
+                        WrappedTransaction::EIP4844(tx) => {
+                            tx.tx.max_fee_per_gas = max_fee_per_gas;
+                        }
+                        WrappedTransaction::EIP1559(tx) => {
+                            tx.max_fee_per_gas = max_fee_per_gas;
+                        }
+                        WrappedTransaction::L2(tx) => {
+                            tx.max_fee_per_gas = max_fee_per_gas;
+                        }
+                    }
+
+                    warn!("max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}");
                 }
             }
 
@@ -222,9 +232,10 @@ impl EthClient {
             if let WrappedTransaction::EIP4844(tx) = wrapped_tx {
                 if let Some(max_fee_per_blob_gas) = self.max_fee_per_blob_gas {
                     if tx.tx.max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
-                        return Err(EthClientError::Custom(
-                            "max_fee_per_blob_gas too high".to_owned(),
-                        ));
+                        tx.tx.max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+                        warn!(
+                            "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
+                        );
                     }
                 }
             }
