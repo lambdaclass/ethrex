@@ -164,7 +164,11 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.drain() {
-            let initial_state_account = db.in_memory_db.get(&address).expect("account not found");
+            let initial_state_account = db
+                .in_memory_db
+                .get(&address)
+                .cloned()
+                .unwrap_or(db.store.get_account(address)?);
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
