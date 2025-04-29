@@ -47,7 +47,7 @@ impl LevmDatabase for DatabaseLogger {
         self.store.lock().unwrap().account_exists(address)
     }
 
-    fn get_storage_slot(
+    fn get_storage_value(
         &self,
         address: CoreAddress,
         key: CoreH256,
@@ -61,7 +61,7 @@ impl LevmDatabase for DatabaseLogger {
         self.store
             .lock()
             .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
-            .get_storage_slot(address, key)
+            .get_storage_value(address, key)
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<Option<CoreH256>, DatabaseError> {
@@ -129,7 +129,7 @@ impl LevmDatabase for StoreWrapper {
         acc_info.is_some()
     }
 
-    fn get_storage_slot(
+    fn get_storage_value(
         &self,
         address: CoreAddress,
         key: CoreH256,
@@ -193,7 +193,7 @@ impl LevmDatabase for ExecutionDB {
         Ok(self.block_hashes.get(&block_number).cloned())
     }
 
-    fn get_storage_slot(
+    fn get_storage_value(
         &self,
         address: CoreAddress,
         key: CoreH256,

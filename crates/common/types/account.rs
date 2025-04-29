@@ -202,8 +202,8 @@ impl Account {
     }
 
     pub fn set_code(&mut self, code: Bytes) {
-        self.code = code.clone();
         self.info.code_hash = keccak(code.as_ref()).0.into();
+        self.code = code;
     }
 }
 

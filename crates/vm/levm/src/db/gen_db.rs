@@ -61,7 +61,7 @@ impl GeneralizedDatabase {
         address: Address,
         key: H256,
     ) -> Result<U256, DatabaseError> {
-        let value = self.store.get_storage_slot(address, key)?;
+        let value = self.store.get_storage_value(address, key)?;
         // Account must be already in in_memory_db
         if let Some(account) = self.in_memory_db.get_mut(&address) {
             account.storage.insert(key, value);
@@ -104,14 +104,14 @@ impl<'a> VM<'a> {
     // ================== Account related functions =====================
 
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
-        if !cache::is_account_cached(&self.db.cache, &address) {
-            let account = self.db.get_account_from_storage(address)?;
-            cache::insert_account(&mut self.db.cache, address, account.clone());
-        }
-
-        let backup_account = cache::get_account(&self.db.cache, &address)
-            .ok_or(VMError::Internal(InternalError::AccountNotFound))?
-            .clone();
+        let backup_account = match cache::get_account(&self.db.cache, &address) {
+            Some(acc) => acc.clone(),
+            None => {
+                let acc = self.db.store.get_account(address)?;
+                cache::insert_account(&mut self.db.cache, address, acc.clone());
+                acc
+            }
+        };
 
         if let Ok(frame) = self.current_call_frame_mut() {
             frame
@@ -207,25 +207,23 @@ impl<'a> VM<'a> {
     /// Gets original storage value of an account, caching it if not already cached.
     /// Also saves the original value for future gas calculations.
     pub fn get_original_storage(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
-        let value_pre_tx = match self.storage_original_values.get(&address).cloned() {
-            Some(account_storage) => match account_storage.get(&key) {
-                Some(value) => *value,
-                None => self.get_storage_slot(address, key)?,
-            },
-            None => self.get_storage_slot(address, key)?,
-        };
+        if let Some(value) = self
+            .storage_original_values
+            .get(&address)
+            .and_then(|account_storage| account_storage.get(&key))
+        {
+            return Ok(*value);
+        }
 
-        // Add it to the original values if it wasn't already there
+        let value = self.get_storage_value(address, key)?;
         self.storage_original_values
             .entry(address)
             .or_default()
-            .entry(key)
-            .or_insert(value_pre_tx);
-
-        Ok(value_pre_tx)
+            .insert(key, value);
+        Ok(value)
     }
 
-    /// Accesses to an account's storage slot.
+    /// Accesses to an account's storage slot and returns the value in it.
     ///
     /// Accessed storage slots are stored in the `touched_storage_slots` set.
     /// Accessed storage slots take place in some gas cost computation.
@@ -245,28 +243,30 @@ impl<'a> VM<'a> {
                 .insert(key);
         }
 
-        let storage_slot = self.get_storage_slot(address, key)?;
+        let storage_slot = self.get_storage_value(address, key)?;
 
         Ok((storage_slot, storage_slot_was_cold))
     }
 
-    /// Gets storage slot of an account, caching the account and the storage slot if not already cached.
-    pub fn get_storage_slot(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
-        let account = self.db.get_account(address)?;
-
-        let storage_slot = account.storage.get(&key);
-        if let Some(value) = storage_slot {
-            return Ok(*value);
-        } else {
-            self.db.get_account(address)?; // For storing and caching the account first if necessary.
-            let value = self.db.get_storage_slot_from_storage(address, key)?;
-            let account = self.get_account_mut(address)?;
-            account.storage.insert(key, value);
-            return Ok(value);
+    /// Gets storage value of an account, caching it if not already cached.
+    pub fn get_storage_value(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
+        if let Some(account) = cache::get_account(&self.db.cache, &address) {
+            if let Some(value) = account.storage.get(&key) {
+                return Ok(*value);
+            }
         }
+
+        let value = self.db.store.get_storage_value(address, key)?;
+
+        // When getting storage value of an account that's not yet cached we need to store it in the account
+        // We don't actually know if the account is cached so we cache it anyway
+        let account = self.get_account_mut(address)?;
+        account.storage.entry(key).or_insert(value);
+
+        Ok(value)
     }
 
-    //TODO: Can be more performant with .entry and .and_modify, but didn't want to add complexity.
+    /// Updates storage of an account, caching it if not already cached.
     pub fn update_account_storage(
         &mut self,
         address: Address,
@@ -274,9 +274,7 @@ impl<'a> VM<'a> {
         new_value: U256,
     ) -> Result<(), VMError> {
         let account = self.get_account_mut(address)?;
-        if account.storage.get(&key) != Some(&new_value) {
-            account.storage.insert(key, new_value);
-        }
+        account.storage.insert(key, new_value);
         Ok(())
     }
 }
