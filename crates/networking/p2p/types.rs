@@ -13,6 +13,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
 };
+use tracing::warn;
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
@@ -222,6 +223,8 @@ pub struct NodeRecordDecodedPairs {
     pub tcp_port: Option<u16>,
     pub udp_port: Option<u16>,
     pub secp256k1: Option<H264>,
+    // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
+    pub eth: Option<Vec<[u8; 4]>>,
     // TODO implement ipv6 addresses
 }
 
@@ -246,6 +249,9 @@ impl NodeRecord {
                         continue;
                     }
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
+                }
+                "eth" => {
+                    warn!("{:?}", &value);
                 }
                 _ => {}
             }
