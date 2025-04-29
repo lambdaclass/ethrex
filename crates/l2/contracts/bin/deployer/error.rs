@@ -26,4 +26,6 @@ pub enum DeployerError {
     FailedToCompileContract(#[from] ContractCompilationError),
     #[error("Failed to deploy contract: {0}")]
     FailedToDeployContract(#[from] DeployError),
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }

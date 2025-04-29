@@ -155,7 +155,10 @@ async fn deploy_contracts(
     let salt = if opts.randomize_contract_deployment {
         H256::random().as_bytes().to_vec()
     } else {
-        SALT.lock().unwrap().as_bytes().to_vec()
+        SALT.lock()
+            .map_err(|_| DeployerError::InternalError("failed unwrapping salt lock".to_string()))?
+            .as_bytes()
+            .to_vec()
     };
 
     let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) = deploy_contract(
