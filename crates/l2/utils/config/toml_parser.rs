@@ -154,7 +154,6 @@ impl Committer {
 struct ProverClient {
     prover_server_endpoint: String,
     proving_time_ms: u64,
-    elasticity_multiplier: u64,
 }
 
 impl ProverClient {
@@ -163,9 +162,8 @@ impl ProverClient {
         format!(
             "{prefix}_PROVER_SERVER_ENDPOINT={}
 {prefix}_PROVING_TIME_MS={}
-{prefix}_ELASTICITY_MULTIPLIER={}
 ",
-            self.prover_server_endpoint, self.proving_time_ms, self.elasticity_multiplier
+            self.prover_server_endpoint, self.proving_time_ms
         )
     }
 }
