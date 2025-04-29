@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745945080559,
+  "lastUpdate": 1745954111314,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5005,6 +5005,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181565500339,
             "range": "± 786617050",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "991f0e7f3abaa81d58d759ecc3610b3cfb392804",
+          "message": "fix(l1): increase max_fee_per_gas to avoid blocks with 0 txs in load test (#2615)\n\n**Motivation**\n\nDue to feeding so many txs, the base fee keeps increasing so when it\ngoes beyond the load test txs max fee per gas, the block will have 0 txs\ndue to them all having the same max fee per gas.\n\nThis pr increasing the load test max fee per has to u64 MAX and lowers\npriority fee per gas to decreasing (realistically removing) the chance\nof 0 block txs in load tests\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2523",
+          "timestamp": "2025-04-29T18:14:52Z",
+          "tree_id": "235392c8f894223c0ca351173ac65ab318bb73c8",
+          "url": "https://github.com/lambdaclass/ethrex/commit/991f0e7f3abaa81d58d759ecc3610b3cfb392804"
+        },
+        "date": 1745954109447,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181085441711,
+            "range": "± 540111676",
             "unit": "ns/iter"
           }
         ]
