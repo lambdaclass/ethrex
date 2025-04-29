@@ -151,24 +151,16 @@ impl L1Watcher {
         let mut deposit_txs = Vec::new();
 
         for log in logs {
-            let (mint_value, to_address, deposit_id, recipient, from, gas_limit, calldata) =
-                parse_values_log(log.log)?;
-
-            let value_bytes = mint_value.to_big_endian();
-            let id_bytes = deposit_id.to_big_endian();
-            let gas_limit_bytes = gas_limit.to_big_endian();
-            let deposit_hash = keccak(
-                [
-                    to_address.as_bytes(),
-                    &value_bytes,
-                    &id_bytes,
-                    recipient.as_bytes(),
-                    from.as_bytes(),
-                    &gas_limit_bytes,
-                    keccak(&calldata).as_bytes(),
-                ]
-                .concat(),
-            );
+            let (
+                mint_value,
+                to_address,
+                deposit_id,
+                recipient,
+                from,
+                gas_limit,
+                calldata,
+                deposit_hash,
+            ) = parse_values_log(log.log)?;
 
             let deposit_already_processed = store
                 .get_transaction_by_hash(deposit_hash)
@@ -244,7 +236,7 @@ impl L1Watcher {
 #[allow(clippy::type_complexity)]
 fn parse_values_log(
     log: RpcLogInfo,
-) -> Result<(U256, H160, U256, H160, H160, U256, Vec<u8>), L1WatcherError> {
+) -> Result<(U256, H160, U256, H160, H160, U256, Vec<u8>, H256), L1WatcherError> {
     let mint_value = format!(
         "{:#x}",
         log.topics
@@ -307,7 +299,7 @@ fn parse_values_log(
         ),
     )?);
 
-    let _deposit_tx_hash = H256::from_slice(log.data.get(128..160).ok_or(
+    let deposit_tx_hash = H256::from_slice(log.data.get(128..160).ok_or(
         L1WatcherError::FailedToDeserializeLog(
             "Failed to parse deposit_tx_hash from log: log.data[64..96] out of bounds".to_owned(),
         ),
@@ -334,5 +326,6 @@ fn parse_values_log(
         from,
         gas_limit,
         calldata.to_vec(),
+        deposit_tx_hash,
     ))
 }
