@@ -65,13 +65,13 @@ The following environment variables are available to configure the Proposer cons
 - Under the `[watcher]` section:
 
   - `bridge_address`: Address of the bridge contract on L1.
-  - `check_interval_ms`: Interval in milliseconds to check for new events.
+  - `check_proving_time_ms`: Interval in milliseconds to check for new events.
   - `max_block_step`: Maximum number of blocks to look for when checking for new events.
   - `l2_proposer_private_key`: Private key of the L2 proposer.
 
 - Under the `[proposer]` section:
 
-  - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
+  - `proving_time_ms`: Interval in milliseconds to produce new blocks for the proposer.
   - `coinbase address`: Address which will receive the execution fees.
 
 - Under the `[committer]` section:
