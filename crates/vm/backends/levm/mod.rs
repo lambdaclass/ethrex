@@ -249,7 +249,11 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.iter() {
-            let initial_state_account = db.read_cache.get(address).unwrap();
+            let initial_state_account = if let Some(account) = db.read_cache.get(address) {
+                account
+            } else {
+                &db.store.get_account_info(*address)?
+            };
             let account_existed = db.read_cache.contains_key(address);
 
             let mut acc_info_updated = false;
