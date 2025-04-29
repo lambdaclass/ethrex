@@ -86,7 +86,7 @@ The following environment variables are available to configure the Proposer cons
 
 - Under the `[committer]` section:
 
-  - `l1_address`: Address of a funded account that it will be used to send commit transactions to the L1.
+  - `l1_address`: Address of a funded account that will be used to send commit transactions to the L1.
   - `l1_private_key`: Its private key.
   - `commit_time_ms`: Sleep time after sending the commit transaction with the proofs to the L1. If no new block has been fetched, we wait another `commit_time_ms` and check again.
   - `on_chain_proposer_address`: Address of the on-chain committer.
