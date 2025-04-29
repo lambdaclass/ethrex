@@ -4,10 +4,9 @@ use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_common::types::GenericTransaction;
+use ethrex_rpc::clients::eth::WithdrawalProof;
 use ethrex_rpc::clients::eth::{
-    errors::{EthClientError, GetTransactionReceiptError},
-    eth_sender::Overrides,
-    EthClient, WrappedTransaction,
+    errors::EthClientError, eth_sender::Overrides, EthClient, WrappedTransaction,
 };
 use ethrex_rpc::types::receipt::RpcReceipt;
 
