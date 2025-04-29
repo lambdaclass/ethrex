@@ -540,7 +540,10 @@ fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Nod
                 let mut variants = Vec::with_capacity(node.partial.len());
                 while {
                     variants.push(Node::from(node.clone()));
-                    node.partial.next().is_some()
+                    node.partial.next();
+                    !node.partial.is_empty() // skip the last nibble, which is the leaf flag.
+                                             // if we encode a leaf with its flag missing, it’s going to be encoded as an
+                                             // extension.
                 } {}
                 Some(variants)
             }
