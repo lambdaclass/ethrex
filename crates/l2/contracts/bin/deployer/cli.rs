@@ -74,10 +74,8 @@ pub struct DeployerOptions {
     pub proof_sender_l1_address: Address,
     #[arg(
         long,
-        default_value = ".",
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_CONTRACTS_PATH",
-        required = false,
         help_heading = "Deployer options",
         help = "Path to the contracts directory. The default is the current directory."
     )]
