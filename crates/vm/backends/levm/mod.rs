@@ -249,8 +249,8 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.iter() {
-            let initial_state_account = db.store.get_account_info(*address)?;
-            let account_existed = db.store.account_exists(*address);
+            let initial_state_account = db.read_cache.get(address).unwrap();
+            let account_existed = db.read_cache.contains_key(address);
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -264,13 +264,14 @@ impl LEVM {
                 acc_info_updated = true;
             }
 
-            let new_state_code_hash = code_hash(&new_state_account.info.bytecode);
-            let code = if initial_state_account.bytecode_hash() != new_state_code_hash {
-                acc_info_updated = true;
-                Some(new_state_account.info.bytecode.clone())
-            } else {
-                None
-            };
+            // let new_state_code_hash = code_hash(&new_state_account.info.bytecode);
+            // let code = if initial_state_account.bytecode_hash() != new_state_code_hash {
+            //     acc_info_updated = true;
+            //     Some(new_state_account.info.bytecode.clone())
+            // } else {
+            //     None
+            // };
+            let code = None;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
@@ -284,7 +285,7 @@ impl LEVM {
 
             let info = if acc_info_updated {
                 Some(AccountInfo {
-                    code_hash: new_state_code_hash,
+                    code_hash: H256::zero(),
                     balance: new_state_account.info.balance,
                     nonce: new_state_account.info.nonce,
                 })

@@ -24,11 +24,16 @@ use super::Database;
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,
+    pub read_cache: HashMap<Address, AccountInfo>,
 }
 
 impl GeneralizedDatabase {
     pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
-        Self { store, cache }
+        Self {
+            store,
+            cache,
+            read_cache: HashMap::new(),
+        }
     }
 
     // ================== Account related functions =====================
@@ -44,21 +49,31 @@ impl GeneralizedDatabase {
                     storage: HashMap::new(),
                 };
                 cache::insert_account(&mut self.cache, address, account.clone());
+                self.read_cache
+                    .entry(address)
+                    .or_insert(account.info.clone());
                 Ok(account)
             }
         }
     }
 
     /// Gets account without pushing it to the cache
-    pub fn get_account_no_push_cache(&self, address: Address) -> Result<Account, DatabaseError> {
+    pub fn get_account_no_push_cache(
+        &mut self,
+        address: Address,
+    ) -> Result<Account, DatabaseError> {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
             None => {
                 let account_info = self.store.get_account_info(address)?;
-                Ok(Account {
+                let account = Account {
                     info: account_info,
                     storage: HashMap::new(),
-                })
+                };
+                self.read_cache
+                    .entry(address)
+                    .or_insert(account.info.clone());
+                Ok(account)
             }
         }
     }
@@ -75,7 +90,13 @@ impl GeneralizedDatabase {
         let address_was_cold = accrued_substate.touched_accounts.insert(address);
         let account = match cache::get_account(&self.cache, &address) {
             Some(account) => account.info.clone(),
-            None => self.store.get_account_info(address)?,
+            None => {
+                let account_info = self.store.get_account_info(address)?;
+                self.read_cache
+                    .entry(address)
+                    .or_insert(account_info.clone());
+                account_info
+            }
         };
         Ok((account, address_was_cold))
     }
@@ -91,6 +112,10 @@ impl<'a> VM<'a> {
                 info: account_info,
                 storage: HashMap::new(),
             };
+            self.db
+                .read_cache
+                .entry(address)
+                .or_insert(account.info.clone());
             cache::insert_account(&mut self.db.cache, address, account.clone());
         }
 
@@ -161,7 +186,7 @@ impl<'a> VM<'a> {
         Ok(account.info.nonce)
     }
 
-    /// Inserts account to cache backing up the previus state of it in the CacheBackup (if it wasn't already backed up)
+    /// Inserts account to cache backing up the previous state of it in the CacheBackup (if it wasn't already backed up)
     pub fn insert_account(&mut self, address: Address, account: Account) -> Result<(), VMError> {
         let previous_account = cache::insert_account(&mut self.db.cache, address, account);
 
