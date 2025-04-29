@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745968166966,
+  "lastUpdate": 1745969540054,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5095,6 +5095,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177165030633,
             "range": "± 832278543",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "33e34efcf5f339ff1d344b134d8f60e78d16e8c4",
+          "message": "refactor(levm): use ethrex account types in LEVM (#2629)\n\n**Motivation**\n\n- Stop using the Account and AccountInfo types defined in LEVM and start\nusing the ones defined in the L1 client.\n- Biggest changes are that AccountInfo no longer has code, so we can't\nuse it with that purpose and also we don't have our struct StorageSlot\nanymore, so we have to keep track of original values somewhere else.\n\n\n**Description**\n\n- Now we use the structs of the L1 client but they are different from\nthe ones that we used so I had to make changes:\n- `get_account_info` is now `get_account` because we also need the code\nof the account and `AccountInfo` has the `code_hash` only. This makes\nchanges on every structure that implements `LevmDatabase` trait.\n- Now that we don't have `StorageSlot` that had the `current_value` and\n`original_value` of a storage slot (`original_value` being the value\npre-tx) I had to make some changes to logic and store those original\nvalues into an auxiliary `HashMap` on `VM`.\n- Added new function `get_original_storage()` for getting the original\nstorage value.\n- Make some tiny changes in SSTORE, mostly organize it better.\n\nStorage changes deep description:\n- Now every time we want to get the `original_value` we will look up in\nthe original values stored in the VM struct. These intends to store the\nstorage values previous to starting the execution of a particular\ntransaction. For efficiency and performance, we only update this new\nfield when actually getting the original value.\n- Let me clarify: At the beginning of the transaction the `CacheDB`\ncould have a lot of accounts with their storage but the\n`VM.storage_original_values`will start empty on every transaction. When\n`SSTORE` opcode is executed and we actually care for the original value\nof a storage slot we will look at `storage_original_values` and it won’t\nfind it (the first time), so then it will see what the value in the\n`CacheDB` is, and if it’s not there it will finally check on the actual\n`Database`. After retrieving the value, it will be added to\n`storage_original_values` , but ONLY the FIRST time. That means that if\nthe value keeps on changing the `original_value` won’t change because\nonce it’s added it’s not modified.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-29T22:14:01Z",
+          "tree_id": "35cd2b17f6fbab85c2cb6fa6bbba7be2897845b3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/33e34efcf5f339ff1d344b134d8f60e78d16e8c4"
+        },
+        "date": 1745969538182,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180356296640,
+            "range": "± 762876067",
             "unit": "ns/iter"
           }
         ]
