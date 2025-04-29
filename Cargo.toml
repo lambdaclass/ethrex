@@ -85,3 +85,4 @@ axum = "0.8.1"
 libsecp256k1 = "0.7.2"
 clap = { version = "4.3", features = ["derive"] }
 clap_complete = "4.5.17"
+eyre = "0.6.12"

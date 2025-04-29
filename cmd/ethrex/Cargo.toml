@@ -22,7 +22,7 @@ tracing-subscriber.workspace = true
 k256.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
-eyre = "0.6.12"
+eyre.workspace = true
 directories = "5.0.1"
 serde_json.workspace = true
 tokio = { version = "1.38.0", features = ["full"] }
