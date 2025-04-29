@@ -93,6 +93,7 @@ The following environment variables are available to configure the Proposer cons
 
 - Under the `[eth]` section:
 
+  - `rpc_url`: The URL for interacting with the RPC endpoint from the client.
   - `max_number_of_retries`: Value to set how many times are you willing to bump the gas in order to send the transaction.
   - `backoff_factor`: Base of the exponential used to calculate the backoff for the wait time when bumping the gas.
   - `min_retry_delay`: Minimum wait time for expecting to receive the receipt of the transaction. If not received, bump the transaction
