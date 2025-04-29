@@ -80,6 +80,7 @@ The following environment variables are available to configure the Proposer cons
   - `l1_private_key`: Its private key.
   - `commit_time_ms`: Sleep time after sending the commit transaction.
   - `on_chain_proposer_address`: Address of the on-chain committer.
+  - `elasticity_multiplier`: Value used to set the gas limit of a block. This value is multiplied by the gas target value of the block.
 
 - Under the `[prover_server]` section:
 
@@ -89,6 +90,13 @@ The following environment variables are available to configure the Proposer cons
   - `listen_ip`: IP to listen for proof data requests.
   - `listen_port`: Port to listen for proof data requests.
   - `dev_mode`: Whether `dev_mode` is activated or not.
+
+- Under the `[eth]` section:
+
+  - `max_number_of_retries`: Value to set how many times are you willing to bump the gas in order to send the transaction.
+  - `backoff_factor`: Base of the exponential used to calculate the backoff for the wait time when bumping the gas.
+  - `min_retry_delay`: Minimum wait time for expecting to receive the receipt of the transaction. If not received, bump the transaction
+  - `max_retry_delay`: Maximum wait time to before expecting the transaction's receipt. This prevents from long wait times.
 
 If you want to use a different configuration file, you can set the:
 
