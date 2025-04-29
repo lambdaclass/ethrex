@@ -394,8 +394,9 @@ impl Syncer {
                 .request_block_bodies(current_block_hashes_chunk.clone())
                 .await
             else {
-                info!("Break reached after requesting block bodies, so we retry");
-                continue;
+                // info!("Break reached after requesting block bodies, so we retry");
+                // continue;
+                break;
             };
 
             let block_bodies_len = block_bodies.len();
