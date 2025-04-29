@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745954111314,
+  "lastUpdate": 1745965300557,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5035,6 +5035,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181085441711,
             "range": "± 540111676",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3a5a0c39cdaf4614978c7e20bc3ad833a8448195",
+          "message": "refactor(levm): refactored new funcion to make it more easily readable (#2641)\n\n**Motivation**\n\nMake it easier to distinguish the differences in instantiation between\ncall and create transactions\n\n**Description**\n\nThe PR changes a match statement in the levm new function, moving some\nof the logic outside of it and leaving inside only the things that\nstricly differ between each branch.",
+          "timestamp": "2025-04-29T21:20:29Z",
+          "tree_id": "dfc678c1c958af4fc52e7a1de15fb744c78e2196",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3a5a0c39cdaf4614978c7e20bc3ad833a8448195"
+        },
+        "date": 1745965298462,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181600192519,
+            "range": "± 860795754",
             "unit": "ns/iter"
           }
         ]
