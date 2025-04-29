@@ -100,7 +100,7 @@ The following environment variables are available to configure the Proposer cons
   - `l1_private_key`: Its private key.
   - `listen_ip`: IP to listen for proof data requests.
   - `listen_port`: Port to listen for proof data requests.
-  - `proof_send_interval_ms`: Interval in which the committer wakes up and send commitments to the L1
+  - `proof_send_interval_ms`: Periodicity with which the proof sender looks for new proofs to send to the L1 for verification.
   - `dev_mode`: Whether `dev_mode` is activated or not. If it is activated, proofs won't be verified just executed. This can be seen on the OnChainProposer contract, specifically on the verify function, proofs will be ignored.
 
 If you want to use a different configuration file, you can set the:
