@@ -54,7 +54,6 @@ ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain
 CI_ETHREX_WORKDIR := /usr/local/bin
 
 ethrex_L2_CONFIGS_PATH=$(shell pwd)/configs
-ethrex_L2_SEQUENCER_CONFIG_FILE=sequencer_config.toml
 ethrex_L2_PROVER_CLIENT_CONFIG_FILE=prover_client_config.toml
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
@@ -114,23 +113,21 @@ clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
 
 deploy-l1: ## 📜 Deploys the L1 contracts
-	DEPLOYER_CONTRACTS_PATH=contracts \
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	SEQUENCER_CONFIG_FILE=${ethrex_L2_SEQUENCER_CONFIG_FILE} \
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- --deposit_rich
+	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	--contracts-path contracts \
+	--deposit-rich \
+	--private-keys-file-path ../../test_data/private_keys_l1.txt \
+	--genesis-l1-path ../../test_data/genesis-l1-dev.json
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
-	DEPLOYER_CONTRACTS_PATH=contracts \
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	SEQUENCER_CONFIG_FILE=${ethrex_L2_SEQUENCER_CONFIG_FILE} \
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
+	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	--contracts-path contracts
 
 update-system-contracts:
-	DEPLOYER_CONTRACTS_PATH=contracts \
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	SEQUENCER_CONFIG_FILE=${ethrex_L2_SEQUENCER_CONFIG_FILE} \
-	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- ${L2_GENESIS_FILE_PATH}
+	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
+	--contracts-path contracts \
+	--l2-genesis-path ../../test_data/genesis-l2.json
 
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
