@@ -210,24 +210,13 @@ impl EthClient {
         'outer: while number_of_retries < MAX_NUMBER_OF_RETRIES {
             if let Some(max_fee_per_gas) = self.maximum_allowed_max_fee_per_gas {
                 let tx_max_fee = match wrapped_tx {
-                    WrappedTransaction::EIP4844(tx) => tx.tx.max_fee_per_gas,
-                    WrappedTransaction::EIP1559(tx) => tx.max_fee_per_gas,
-                    WrappedTransaction::L2(tx) => tx.max_fee_per_gas,
+                    WrappedTransaction::EIP4844(tx) => &mut tx.tx.max_fee_per_gas,
+                    WrappedTransaction::EIP1559(tx) => &mut tx.max_fee_per_gas,
+                    WrappedTransaction::L2(tx) => &mut tx.max_fee_per_gas,
                 };
 
-                if tx_max_fee > max_fee_per_gas {
-                    match wrapped_tx {
-                        WrappedTransaction::EIP4844(tx) => {
-                            tx.tx.max_fee_per_gas = max_fee_per_gas;
-                        }
-                        WrappedTransaction::EIP1559(tx) => {
-                            tx.max_fee_per_gas = max_fee_per_gas;
-                        }
-                        WrappedTransaction::L2(tx) => {
-                            tx.max_fee_per_gas = max_fee_per_gas;
-                        }
-                    }
-
+                if *tx_max_fee > max_fee_per_gas {
+                    *tx_max_fee = max_fee_per_gas;
                     warn!("max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}");
                 }
             }
