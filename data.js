@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745879108769,
+  "lastUpdate": 1745945080559,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -4975,6 +4975,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180214468361,
             "range": "± 691072243",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a8d2ec410a622827e83a29cc84c8d9b3e6ffb008",
+          "message": "feat(l2): commit blocks in batches (#2397)\n\n**Motivation**\n\nTo reduce the number of times we go to the L1 to commit/verify blocks.\n\n**Description**\n\n- Modifies `l1_committer` to merge as many blocks as possible into a\nsingle `StateDiff` before committing, limited by the blob size.\n- Modifies `StateDiff` to now contain both the resulting\n`AccountUpdates` from executing all blocks in the batch and the header\nof the last block.\n- Adapts contracts to use `batchNumbers` instead of `blockNumbers`.\n- Adds a new RPC endpoint, `ethrex_getWithdrawalProof`, which returns\nall necessary data to claim an L1 withdrawal for a given L2 withdrawal\ntransaction hash.\n- Implements `apply_account_updates` for the `ExecutionDB` to prepare\nthe db for executing the next block in the batch.\n- Adds a `L2/storage` with the following tables:\n- `block_number` => `batch_number`: Maps block numbers to batches (used\nby the endpoint to locate a withdrawal's batch).\n- `batch_number` => `Vec<block_number>`: Lists all block numbers\nincluded in a given batch.\n- `batch_number` => `withdrawal_hashes`: Stores withdrawal hashes per\nbatch (used to construct merkle proofs).\n\nCloses None\n\nCreated issues:\n- #2563\n- #2578 \n- #2579 \n- #2617\n\n---------\n\nCo-authored-by: Edgar <git@edgl.dev>\nCo-authored-by: VolodymyrBg <aqdrgg19@gmail.com>\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Mauro Toscano <12560266+MauroToscano@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Lucas Fiegl <iovoid@users.noreply.github.com>\nCo-authored-by: Cypher Pepe <125112044+cypherpepe@users.noreply.github.com>",
+          "timestamp": "2025-04-29T15:41:21Z",
+          "tree_id": "3e27c2af8e7ae0f8f1cb53f03dc105fdbd2699bf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a8d2ec410a622827e83a29cc84c8d9b3e6ffb008"
+        },
+        "date": 1745945077919,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181565500339,
+            "range": "± 786617050",
             "unit": "ns/iter"
           }
         ]
