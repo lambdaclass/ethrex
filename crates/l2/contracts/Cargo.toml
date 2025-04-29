@@ -26,7 +26,7 @@ ethrex-rpc = { path = "../../networking/rpc" }
 
 [[bin]]
 name = "ethrex_l2_l1_deployer"
-path = "./deployer.rs"
+path = "bin/deployer/main.rs"
 
 [[bin]]
 name = "ethrex_l2_system_contracts_updater"
