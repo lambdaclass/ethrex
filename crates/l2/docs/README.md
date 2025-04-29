@@ -81,6 +81,13 @@ For more information on what you can do with the CommonBridge see [here](./contr
     rex l2 withdraw 5000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
     ```
 
+    If the withdraw is successful, the hash will be printed in the format:
+
+    ```
+    Withdrawal sent: <L2_WITHDRAWAL_TX_HASH>
+    ...
+    ```
+
 3. Claim the Withdraw:
 
    After making the withdraw it has to be claimed in the L1. This is done with the L1 CommonBridge contract. We can use the Rex command `rex l2 claim-withdraw`. Here we have to use the tx hash obtained in the previous step. Also, it is necessary to wait for the block that includes the withdraw to be committed.
