@@ -94,7 +94,7 @@ The following environment variables are available to configure the Proposer cons
 
   - `rpc_url`: The URL for interacting with the RPC endpoint from the client.
   - `maximum_allowed_max_fee_per_gas`: Sets a hard cap on the maximum fee per gas you are willing to pay for a single transaction.
-  `maximum_allowed_max_fee_per_blob_gas`: Sets a hard cap on the maximum fee per blob gas you are willing to pay for a single transaction.
+  - `maximum_allowed_max_fee_per_blob_gas`: Sets a hard cap on the maximum fee per blob gas you are willing to pay for a single transaction.
 
 If you want to use a different configuration file, you can set the:
 
