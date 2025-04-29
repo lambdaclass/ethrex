@@ -313,7 +313,7 @@ impl LEVM {
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-    ) -> Result<Option<ExecutionReport>, EvmError> {
+    ) -> Result<ExecutionReport, EvmError> {
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
@@ -331,14 +331,14 @@ impl LEVM {
         }
 
         match report.result {
-            TxResult::Success => Ok(Some(report)),
-            _ => Ok(None),
+            TxResult::Success => Ok(report),
+            TxResult::Revert(vm_error) => Err(EvmError::from(vm_error)),
         }
     }
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-    ) -> Result<Option<ExecutionReport>, EvmError> {
+    ) -> Result<ExecutionReport, EvmError> {
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
@@ -356,8 +356,8 @@ impl LEVM {
         }
 
         match report.result {
-            TxResult::Success => Ok(Some(report)),
-            _ => Ok(None),
+            TxResult::Success => Ok(report),
+            TxResult::Revert(vm_error) => Err(EvmError::from(vm_error)),
         }
     }
 
@@ -630,25 +630,10 @@ pub fn extract_all_requests_levm(
         }
     }
 
-    let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, db)? {
-        Some(report) => {
-            match report.result {
-                TxResult::Success => report.output.into(), // the cache is updated inside the generic_system_call
-                TxResult::Revert(vmerror) => return Err(EvmError::from(vmerror)),
-            }
-        }
-        None => Default::default(),
-    };
-
-    let consolidation_data: Vec<u8> = match LEVM::dequeue_consolidation_requests(header, db)? {
-        Some(report) => {
-            match report.result {
-                TxResult::Success => report.output.into(), // the cache is updated inside the generic_system_call
-                TxResult::Revert(vmerror) => return Err(EvmError::from(vmerror)),
-            }
-        }
-        None => Default::default(),
-    };
+    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db)?.output.into();
+    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db)?
+        .output
+        .into();
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts);
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);

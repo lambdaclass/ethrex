@@ -22,15 +22,11 @@ const SKIPPED_TESTS_REVM: [&str; 13] = [
 ];
 
 #[cfg(feature = "levm")]
-const SKIPPED_TESTS_LEVM: [&str; 42] = [
-    "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_out_of_gas-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
-    "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reverts-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
+const SKIPPED_TESTS_LEVM: [&str; 38] = [
     "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reaches_gas_limit-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
     "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_throws-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
     "tests/prague/eip7251_consolidations/test_modified_consolidation_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reaches_gas_limit-system_contract_0x0000bbddc7ce488642fb579f8b00f3a590007251]",
-    "tests/prague/eip7251_consolidations/test_modified_consolidation_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_out_of_gas-system_contract_0x0000bbddc7ce488642fb579f8b00f3a590007251]",
     "tests/prague/eip7251_consolidations/test_modified_consolidation_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_throws-system_contract_0x0000bbddc7ce488642fb579f8b00f3a590007251]",
-    "tests/prague/eip7251_consolidations/test_modified_consolidation_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reverts-system_contract_0x0000bbddc7ce488642fb579f8b00f3a590007251]",
     "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000006-blockchain_test_from_state_test]",
     "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile[fork_Prague-precompile_0x0000000000000000000000000000000000000011-call_opcode_CALL-evm_code_type_LEGACY-blockchain_test_from_state_test]",
     "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_precompile_not_enough_gas_for_precompile_execution[fork_Prague-precompile_0x0000000000000000000000000000000000000009-blockchain_test_from_state_test]",
