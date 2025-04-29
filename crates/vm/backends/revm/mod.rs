@@ -223,26 +223,49 @@ impl REVM {
 
         match tx_result {
             ExecutionResult::Success { gas_used: _, gas_refunded: _, logs: _, output } => Ok(output.into()),
-            _ => Err(EvmError::Custom("Transaction Reverted when doing a system call to WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS".to_string())),
+            // EIP-7002 specifies that a failed system call invalidates the entire block.
+            _ => Err(EvmError::Custom("Failed transaction when doing a system call to WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS".to_string())),
         }
     }
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
         state: &mut EvmState,
-    ) -> Option<Vec<u8>> {
+    ) -> Result<Vec<u8>, EvmError> {
         let tx_result = generic_system_contract_revm(
             block_header,
             Bytes::new(),
             state,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
-        .ok()?;
+        )?;
 
-        if tx_result.is_success() {
-            Some(tx_result.output().into())
-        } else {
-            None
+        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
+        // has any code after being deployed. If not, the whole block becomes invalid.
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
+        let revm_addr = RevmAddress::from_slice(CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.as_bytes());
+        let account_info = match state {
+            EvmState::Store(db) => {
+                let mut evm = Evm::builder().with_db(db).build();
+                let evm_db = evm.db_mut();
+                evm_db.basic(revm_addr)?
+            }
+            EvmState::Execution(cache_db) => {
+                let mut evm = Evm::builder().with_db(cache_db).build();
+                let evm_cache_db = evm.db_mut();
+                evm_cache_db.basic(revm_addr)?
+            }
+        }
+        .ok_or(EvmError::DB(StoreError::Custom(
+            "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS was not found after deployment".to_string(),
+        )))?;
+        if account_info.is_empty_code_hash() {
+            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+        }
+
+        match tx_result {
+            ExecutionResult::Success { gas_used: _, gas_refunded: _, logs: _, output } => Ok(output.into()),
+            // EIP-7251 specifies that a failed system call invalidates the entire block.
+            _ => Err(EvmError::Custom("Transaction transaction when doing a system call to CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string())),
         }
     }
 
@@ -716,10 +739,10 @@ pub fn extract_all_requests(
 
     let deposits = Requests::from_deposit_receipts(config.deposit_contract_address, receipts);
     let withdrawals_data = REVM::read_withdrawal_requests(header, state)?;
-    let consolidation_data = REVM::dequeue_consolidation_requests(header, state);
+    let consolidation_data = REVM::dequeue_consolidation_requests(header, state)?;
 
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
-    let consolidation = Requests::from_consolidation_data(consolidation_data.unwrap_or_default());
+    let consolidation = Requests::from_consolidation_data(consolidation_data);
 
     Ok(vec![deposits, withdrawals, consolidation])
 }

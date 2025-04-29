@@ -5,16 +5,12 @@ use ethrex_vm::EvmEngine;
 
 // TODO: enable these tests once the evm is updated.
 #[cfg(not(feature = "levm"))]
-const SKIPPED_TESTS_REVM: [&str; 9] = [
+const SKIPPED_TESTS_REVM: [&str; 5] = [
     "tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_to_non_empty_storage[fork_Prague-blockchain_test-zero_nonce]",
     "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reaches_gas_limit-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
     "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_throws-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
-    "tests/prague/eip7251_consolidations/test_contract_deployment.py::test_system_contract_deployment[fork_CancunToPragueAtTime15k-blockchain_test-deploy_after_fork-zero_balance]",
-    "tests/prague/eip7251_consolidations/test_contract_deployment.py::test_system_contract_deployment[fork_CancunToPragueAtTime15k-blockchain_test-deploy_after_fork-nonzero_balance]",
     "tests/prague/eip7251_consolidations/test_modified_consolidation_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reaches_gas_limit-system_contract_0x0000bbddc7ce488642fb579f8b00f3a590007251]",
-    "tests/prague/eip7251_consolidations/test_modified_consolidation_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_out_of_gas-system_contract_0x0000bbddc7ce488642fb579f8b00f3a590007251]",
     "tests/prague/eip7251_consolidations/test_modified_consolidation_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_throws-system_contract_0x0000bbddc7ce488642fb579f8b00f3a590007251]",
-    "tests/prague/eip7251_consolidations/test_modified_consolidation_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reverts-system_contract_0x0000bbddc7ce488642fb579f8b00f3a590007251]",
 ];
 
 #[cfg(feature = "levm")]

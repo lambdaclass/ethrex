@@ -332,6 +332,7 @@ impl LEVM {
 
         match report.result {
             TxResult::Success => Ok(report),
+            // EIP-7002 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::from(vm_error)),
         }
     }
@@ -357,6 +358,7 @@ impl LEVM {
 
         match report.result {
             TxResult::Success => Ok(report),
+            // EIP-7251 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::from(vm_error)),
         }
     }
