@@ -268,7 +268,7 @@ impl<'a> VM<'a> {
                     .created_accounts
                     .insert(destination_and_code_address);
 
-                bytecode = Bytes::new();
+                bytecode = Bytes::new() //Bytecode will be later assigned from the calldata after passing validations;
             }
         }
 
