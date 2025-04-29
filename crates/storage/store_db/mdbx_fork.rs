@@ -474,18 +474,96 @@ impl StoreEngine for MDBXFork {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        todo!();
-        // let encoded_hash = block_hash.encode_to_vec();
-        // let tx = self.env.tx_mut().unwrap();
-        // let mut cursor = tx.cursor_dup_write()
+        let encoded = receipt.encode_to_vec();
+        let main_key = block_hash.encode_to_vec();
+        let tx = self.env.tx_mut().unwrap();
+        let mut cursor = tx.cursor_dup_write::<Receipts>().unwrap();
+        if encoded.len() > *DB_DUPSORT_MAX_SIZE.get().unwrap() {
+            let chunks: Vec<Vec<u8>> = encoded
+                .chunks(*DB_DUPSORT_MAX_SIZE.get().unwrap())
+                .map(|chunk| chunk.to_vec())
+                .collect();
+
+            for (chunk_index, chunk) in chunks.into_iter().enumerate() {
+                let mut chunked_value = vec![];
+
+                chunked_value.extend_from_slice(&(index as u64).to_be_bytes());
+
+                chunked_value.push(chunk_index as u8);
+
+                chunked_value.extend_from_slice(&chunk);
+
+                cursor.append_dup(main_key.clone(), chunked_value).unwrap();
+            }
+        } else {
+            let mut value = Vec::with_capacity(8 + 1 + encoded.len());
+
+            value.extend_from_slice(&(index as u64).to_be_bytes());
+
+            value.push(0u8);
+
+            value.extend_from_slice(&encoded);
+
+            cursor.append_dup(main_key.clone(), value).unwrap();
+        }
+        tx.commit().unwrap();
+        Ok(())
     }
 
     fn get_receipt(
         &self,
-        block_number: BlockNumber,
-        index: Index,
+        block_number: u64,
+        receipt_index: u64,
     ) -> Result<Option<Receipt>, StoreError> {
-        todo!()
+        let tx = self.env.tx().unwrap();
+        let Some(hash) = tx.get::<CanonicalBlockHashes>(block_number).unwrap() else {
+            return Ok(None);
+        };
+
+        let key = hash.encode_to_vec();
+
+        let mut cursor = tx.cursor_dup_read::<Receipts>().unwrap();
+
+        if cursor.seek_exact(key.clone()).unwrap().is_none() {
+            return Ok(None);
+        }
+
+        let mut chunks = Vec::new();
+
+        while let Some((k, v)) = cursor.current().unwrap() {
+            if k != key {
+                break;
+            }
+
+            let mut index_bytes = [0u8; 8];
+            index_bytes.copy_from_slice(&v[0..8]);
+            let stored_index = u64::from_be_bytes(index_bytes);
+
+            if stored_index == receipt_index {
+                let chunk_index = v[8] as usize;
+                let chunk_data = v[9..].to_vec();
+
+                chunks.push((chunk_index, chunk_data));
+            }
+
+            if cursor.next_dup().unwrap().is_none() {
+                break;
+            }
+        }
+
+        if chunks.is_empty() {
+            return Ok(None);
+        }
+
+        chunks.sort_by_key(|(idx, _)| *idx);
+
+        let mut complete_data = Vec::new();
+        for (_, chunk_data) in chunks {
+            complete_data.extend_from_slice(&chunk_data);
+        }
+
+        let receipt: Receipt = RLPDecode::decode(&complete_data).unwrap();
+        Ok(Some(receipt))
     }
 
     fn add_transaction_location(
@@ -790,41 +868,48 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        let main_key = block_hash.encode_to_vec();
-        let mut chunks = BTreeMap::new();
-        const TERMINATOR_MARKER: u64 = u32::MAX as u64;
-
-        for (receipt_idx, receipt) in receipts.into_iter().enumerate() {
-            let receipt_data = receipt.encode_to_vec();
-
-            // Store data chunks
-            for (chunk_idx, chunk) in receipt_data
-                .chunks(
-                    *DB_DUPSORT_MAX_SIZE
-                        .get()
-                        .expect("Fatal: Dupsort constant not initialized"),
-                )
-                .enumerate()
-            {
-                let subkey = ((receipt_idx as u64) << 32) | chunk_idx as u64;
-                chunks.insert(subkey, chunk.to_vec());
-            }
-
-            let terminator = ((receipt_idx as u64) << 32) | TERMINATOR_MARKER;
-            chunks.insert(terminator, vec![]);
-        }
         let tx = self.env.tx_mut().unwrap();
         let mut cursor = tx.cursor_dup_write::<Receipts>().unwrap();
 
-        for (subkey, chunk) in chunks {
-            cursor.seek_by_key_subkey(main_key.clone(), subkey).unwrap();
-            cursor.append_dup(main_key.clone(), chunk).unwrap();
+        let main_key = block_hash.encode_to_vec();
+
+        for (index, receipt) in receipts.into_iter().enumerate() {
+            let receipt_bytes = receipt.encode_to_vec();
+
+            if receipt_bytes.len() > *DB_DUPSORT_MAX_SIZE.get().unwrap() {
+                let chunks: Vec<Vec<u8>> = receipt_bytes
+                    .chunks(*DB_DUPSORT_MAX_SIZE.get().unwrap())
+                    .map(|chunk| chunk.to_vec())
+                    .collect();
+
+                for (chunk_index, chunk) in chunks.into_iter().enumerate() {
+                    let mut chunked_value = vec![];
+
+                    chunked_value.extend_from_slice(&(index as u64).to_be_bytes());
+
+                    chunked_value.push(chunk_index as u8);
+
+                    chunked_value.extend_from_slice(&chunk);
+
+                    cursor.append_dup(main_key.clone(), chunked_value).unwrap();
+                }
+            } else {
+                let mut value = Vec::with_capacity(8 + 1 + receipt_bytes.len());
+
+                value.extend_from_slice(&(index as u64).to_be_bytes());
+
+                value.push(0u8);
+
+                value.extend_from_slice(&receipt_bytes);
+
+                cursor.append_dup(main_key.clone(), value).unwrap();
+            }
         }
 
+        // Commit the transaction
         tx.commit().unwrap();
         Ok(())
     }
-
     fn add_receipts_for_blocks(
         &self,
         receipts: std::collections::HashMap<BlockHash, Vec<Receipt>>,
@@ -836,57 +921,7 @@ impl StoreEngine for MDBXFork {
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        let main_key = block_hash.encode_to_vec();
-        let tx = self.env.tx().unwrap();
-        let mut cursor = tx.cursor_dup_read::<Receipts>().unwrap();
-
-        // Map to track receipt_idx -> (chunks, has_terminator)
-        let mut receipt_states = BTreeMap::new();
-
-        if cursor.seek_exact(main_key).unwrap().is_some() {
-            while let Some((subkey, chunk)) = cursor.next_dup().unwrap() {
-                let subkey = u64::decode(&subkey).unwrap();
-                let receipt_idx = (subkey >> 32) as u32;
-                let chunk_info = subkey as u32;
-
-                let state = receipt_states
-                    .entry(receipt_idx)
-                    .or_insert_with(|| (BTreeMap::new(), false));
-
-                if chunk_info == u32::MAX {
-                    state.1 = true;
-                } else {
-                    let chunk_idx = chunk_info;
-                    state.0.insert(chunk_idx, chunk);
-                }
-            }
-        }
-
-        let mut receipts = Vec::new();
-        for (_receipt_idx, (chunks, has_terminator)) in receipt_states {
-            if !has_terminator || chunks.is_empty() {
-                continue;
-            }
-
-            let chunk_indices: Vec<u32> = chunks.keys().copied().collect();
-            let expected_indices: Vec<u32> = (0..chunks.len() as u32).collect();
-
-            if chunk_indices != expected_indices {
-                continue;
-            }
-
-            let full_data = chunks
-                .into_values()
-                .flat_map(|chunk| chunk.into_iter())
-                .collect::<Vec<u8>>();
-
-            match Receipt::decode(&full_data) {
-                Ok(receipt) => receipts.push(receipt),
-                Err(_) => continue,
-            }
-        }
-
-        Ok(receipts)
+        todo!()
     }
 
     fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
