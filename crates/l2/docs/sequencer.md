@@ -33,9 +33,21 @@ Verify transactions are sent by the Proposer after the prover has successfully g
 
 ### Proof Coordinator
 
-The Proof Coordinator is a simple TCP server that manages communication with a component called the `Proof Sender`. The Proof Sender acts as a simple TCP client, handling incoming requests to prove a block. It then "calls" a zkVM, generates the Groth16 proof, and sends it back to the Coordinator. In this setup, the state is managed solely by the Proof Coordinator, which, in theory, makes it less error-prone than the zkVMs.
+The Proof Coordinator is a simple TCP server that manages communication with a component called the Prover. The Prover acts as a simple TCP client that makes requests to prove a block to the Coordinator. It responds with the proof input data required to generate the proof. Then, the Prover "calls" a zkVM, generates the Groth16 proof, and sends it back to the Coordinator.
 
-For more information about the Proof Coordinator, the Proof Sender, and the proving process itself, see the [Prover Docs](./prover.md).
+The Proof Coordinator centralizes the responsibility of determining which block needs to be proven next and how to retrieve the necessary data for proving. This design simplifies the system by reducing the complexity of the Prover, it only makes requests and proves blocks.
+
+For more information about the Proof Coordinator, the Prover, and the proving process itself, see the [Prover Docs](./prover.md).
+
+### L1 Proof Sender
+
+The L1 Proof Sender is responsible for interacting with Ethereum L1 to manage proof verification. Its key functionalities include:
+
+- Connecting to Ethereum L1 to send proofs for verification.
+- Dynamically determine required proof types based on active verifier contracts (`PICOVERIFIER`, `R0VERIFIER`, `SP1VERIFIER`).
+- Ensure blocks are verified in the correct order by invoking the `verify(..)` function in the `OnChainProposer` contract. Upon successful verification, an event is emitted to confirm the block's verification status.
+- Operating on a configured interval defined by `proof_send_interval_ms`.
+
 
 ## Configuration
 
