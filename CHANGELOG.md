@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-04-28
+
+- Refactor mempool a bit, add batch add/remove transaction methods [2540](https://github.com/lambdaclass/ethrex/pull/2540)
+
 ### 2025-04-22
 
 - Avoid calculating state transitions after every block in bulk mode [2519](https://github.com/lambdaclass/ethrex/pull/2519)
