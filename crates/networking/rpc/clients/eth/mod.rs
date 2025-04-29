@@ -44,8 +44,8 @@ pub enum RpcResponse {
 pub struct EthClient {
     client: Client,
     pub url: String,
-    pub max_fee_per_gas: Option<u64>,
-    pub max_fee_per_blob_gas: Option<u64>,
+    pub maximum_allowed_max_fee_per_gas: Option<u64>,
+    pub maximum_allowed_max_fee_per_blob_gas: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,17 +95,21 @@ impl EthClient {
         Self {
             client: Client::new(),
             url: url.to_string(),
-            max_fee_per_gas: None,
-            max_fee_per_blob_gas: None,
+            maximum_allowed_max_fee_per_gas: None,
+            maximum_allowed_max_fee_per_blob_gas: None,
         }
     }
 
-    pub fn new_with_fees(url: &str, max_fee_per_gas: u64, max_fee_per_blob_gas: u64) -> Self {
+    pub fn new_with_maximum_fees(
+        url: &str,
+        max_fee_per_gas: u64,
+        max_fee_per_blob_gas: u64,
+    ) -> Self {
         Self {
             client: Client::new(),
             url: url.to_string(),
-            max_fee_per_gas: Some(max_fee_per_gas),
-            max_fee_per_blob_gas: Some(max_fee_per_blob_gas),
+            maximum_allowed_max_fee_per_gas: Some(max_fee_per_gas),
+            maximum_allowed_max_fee_per_blob_gas: Some(max_fee_per_blob_gas),
         }
     }
 
@@ -204,7 +208,7 @@ impl EthClient {
         let mut number_of_retries = 0;
 
         'outer: while number_of_retries < MAX_NUMBER_OF_RETRIES {
-            if let Some(max_fee_per_gas) = self.max_fee_per_gas {
+            if let Some(max_fee_per_gas) = self.maximum_allowed_max_fee_per_gas {
                 let tx_max_fee = match wrapped_tx {
                     WrappedTransaction::EIP4844(tx) => tx.tx.max_fee_per_gas,
                     WrappedTransaction::EIP1559(tx) => tx.max_fee_per_gas,
@@ -230,7 +234,7 @@ impl EthClient {
 
             // Check blob gas fees only for EIP4844 transactions
             if let WrappedTransaction::EIP4844(tx) = wrapped_tx {
-                if let Some(max_fee_per_blob_gas) = self.max_fee_per_blob_gas {
+                if let Some(max_fee_per_blob_gas) = self.maximum_allowed_max_fee_per_blob_gas {
                     if tx.tx.max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
                         tx.tx.max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
                         warn!(

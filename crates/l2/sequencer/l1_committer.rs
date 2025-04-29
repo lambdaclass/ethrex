@@ -66,7 +66,7 @@ impl Committer {
         execution_cache: Arc<ExecutionCache>,
     ) -> Self {
         Self {
-            eth_client: EthClient::new_with_fees(
+            eth_client: EthClient::new_with_maximum_fees(
                 &eth_config.rpc_url,
                 eth_config.maximum_allowed_max_fee_per_gas,
                 eth_config.maximum_allowed_max_fee_per_blob_gas,

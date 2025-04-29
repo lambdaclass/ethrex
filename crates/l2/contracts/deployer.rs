@@ -167,7 +167,7 @@ fn setup() -> Result<SetupResult, DeployError> {
     read_env_file_by_config(ConfigMode::Sequencer)?;
     let eth_config = EthConfig::from_env().map_err(DeployError::ConfigError)?;
 
-    let eth_client = EthClient::new_with_fees(
+    let eth_client = EthClient::new_with_maximum_fees(
         &eth_config.rpc_url,
         eth_config.maximum_allowed_max_fee_per_gas,
         eth_config.maximum_allowed_max_fee_per_blob_gas,

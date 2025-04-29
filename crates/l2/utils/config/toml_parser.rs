@@ -46,8 +46,8 @@ impl Deployer {
 #[derive(Deserialize, Debug)]
 struct Eth {
     rpc_url: String,
-    max_fee_per_gas: u64,
-    max_fee_per_blob_gas: u64,
+    maximum_allowed_max_fee_per_gas: u64,
+    maximum_allowed_max_fee_per_blob_gas: u64,
 }
 
 impl Eth {
@@ -56,10 +56,12 @@ impl Eth {
         format!(
             "
 {prefix}_RPC_URL={}
-{prefix}_MAX_FEE_PER_GAS={}
-{prefix}_MAX_FEE_PER_BLOB_GAS={}
+{prefix}_MAXIMUM_ALLOWED_MAX_FEE_PER_GAS={}
+{prefix}_MAXIMUM_ALLOWED_MAX_FEE_PER_BLOB_GAS={}
 ",
-            self.rpc_url, self.max_fee_per_gas, self.max_fee_per_blob_gas
+            self.rpc_url,
+            self.maximum_allowed_max_fee_per_gas,
+            self.maximum_allowed_max_fee_per_blob_gas
         )
     }
 }
