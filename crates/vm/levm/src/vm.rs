@@ -256,11 +256,17 @@ impl<'a> VM<'a> {
 
                 // In this case, the destination address which also holds the code would be the address of the newly created contract
                 destination_and_code_address = calculate_create_address(env.origin, sender_nonce)
-                    .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
+                    .map_err(|_| {
+                    VMError::Internal(InternalError::CouldNotComputeCreateAddress)
+                })?;
 
-                substate.touched_accounts.insert(destination_and_code_address);
+                substate
+                    .touched_accounts
+                    .insert(destination_and_code_address);
 
-                substate.created_accounts.insert(destination_and_code_address);
+                substate
+                    .created_accounts
+                    .insert(destination_and_code_address);
 
                 bytecode = Bytes::new();
             }
