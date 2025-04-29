@@ -146,8 +146,7 @@ impl<'a> VM<'a> {
 
         let storage_slot_key = H256::from(storage_slot_key.to_big_endian());
 
-        let (value, storage_slot_was_cold) =
-            self.access_storage_slot(address, storage_slot_key)?;
+        let (value, storage_slot_was_cold) = self.access_storage_slot(address, storage_slot_key)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
