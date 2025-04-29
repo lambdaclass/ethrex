@@ -70,14 +70,14 @@ impl<'a> VM<'a> {
     // ================== Account related functions =====================
 
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
-        if !cache::is_account_cached(&self.db.cache, &address) {
-            let account = self.db.store.get_account(address)?;
-            cache::insert_account(&mut self.db.cache, address, account.clone());
-        }
-
-        let backup_account = cache::get_account(&self.db.cache, &address)
-            .ok_or(VMError::Internal(InternalError::AccountNotFound))?
-            .clone();
+        let backup_account = match cache::get_account(&self.db.cache, &address) {
+            Some(acc) => acc.clone(),
+            None => {
+                let acc = self.db.store.get_account(address)?;
+                cache::insert_account(&mut self.db.cache, address, acc.clone());
+                acc
+            }
+        };
 
         if let Ok(frame) = self.current_call_frame_mut() {
             frame
