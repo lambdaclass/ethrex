@@ -477,7 +477,7 @@ impl LevmDatabase for RpcDB {
         }
     }
 
-    fn get_storage_slot(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
+    fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
         let account = self
             .fetch_accounts_blocking(&[(address, vec![key])], false)
             .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?

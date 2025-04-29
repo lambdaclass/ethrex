@@ -146,14 +146,14 @@ impl<'a> VM<'a> {
 
         let storage_slot_key = H256::from(storage_slot_key.to_big_endian());
 
-        let (storage_slot, storage_slot_was_cold) =
+        let (value, storage_slot_was_cold) =
             self.access_storage_slot(address, storage_slot_key)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
         current_call_frame.increase_consumed_gas(gas_cost::sload(storage_slot_was_cold, fork)?)?;
 
-        current_call_frame.stack.push(storage_slot)?;
+        current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
