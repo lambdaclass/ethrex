@@ -32,9 +32,9 @@ pub mod io {
     #[serde_as]
     #[derive(Serialize, Deserialize)]
     pub struct ProgramInput {
-        /// block to execute
+        /// blocks to execute
         #[serde_as(as = "SerdeJSON")]
-        pub block: Block,
+        pub blocks: Vec<Block>,
         /// header of the previous block
         #[serde_as(as = "SerdeJSON")]
         pub parent_block_header: BlockHeader,

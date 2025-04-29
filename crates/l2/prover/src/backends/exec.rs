@@ -1,7 +1,10 @@
 use ethrex_blockchain::{validate_block, validate_gas_used};
+use ethrex_common::Address;
 use ethrex_l2::utils::prover::proving_systems::{ProofCalldata, ProverType};
 use ethrex_l2_sdk::calldata::Value;
+use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
+use std::collections::HashMap;
 use tracing::warn;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
@@ -36,12 +39,10 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
 
 fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::error::Error>> {
     let ProgramInput {
-        block,
+        blocks,
         parent_block_header,
-        db,
+        mut db,
     } = input;
-    // Validate the block
-    validate_block(&block, &parent_block_header, &db.chain_config)?;
 
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db.get_tries()?;
@@ -55,20 +56,48 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         return Err("invalid database".to_string().into());
     };
 
-    let mut vm = Evm::from_execution_db(db.clone());
-    let result = vm.execute_block(&block)?;
-    let receipts = result.receipts;
-    let account_updates = result.account_updates;
-    // validate_gas_used(&receipts, &block.header)?;
+    let last_block = blocks.last().ok_or("empty batch".to_string())?;
+    let last_block_state_root = last_block.header.state_root;
+    let mut parent_header = parent_block_header;
+    let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
+
+    for block in blocks {
+        let fork = db.chain_config.fork(block.header.timestamp);
+        // Validate the block
+        validate_block(&block, &parent_header, &db.chain_config)?;
+
+        // Execute block
+        let mut vm = Evm::from_execution_db(db.clone());
+        let result = vm.execute_block(&block)?;
+        let receipts = result.receipts;
+        let account_updates = vm.get_state_transitions(fork)?;
+
+        // Update db for the next block
+        db.apply_account_updates(&account_updates);
+
+        // Update acc_account_updates
+        for account in account_updates {
+            let address = account.address;
+            if let Some(existing) = acc_account_updates.get_mut(&address) {
+                existing.merge(account);
+            } else {
+                acc_account_updates.insert(address, account);
+            }
+        }
+
+        validate_gas_used(&receipts, &block.header)?;
+        parent_header = block.header;
+    }
 
     // Update state trie
-    update_tries(&mut state_trie, &mut storage_tries, &account_updates)?;
+    let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
+    update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)?;
 
     // Calculate final state root hash and check
     let final_state_hash = state_trie.hash_no_commit();
-    // if final_state_hash != block.header.state_root {
-    //     return Err("invalid final state trie".to_string().into());
-    // }
+    if final_state_hash != last_block_state_root {
+        return Err("invalid final state trie".to_string().into());
+    }
 
     Ok(ProgramOutput {
         initial_state_hash,

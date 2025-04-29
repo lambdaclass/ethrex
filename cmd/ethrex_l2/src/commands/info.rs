@@ -9,10 +9,10 @@ use std::str::FromStr;
 #[derive(Subcommand)]
 pub(crate) enum Command {
     #[clap(
-        about = "Get latestCommittedBlock and latestVerifiedBlock from the OnChainProposer.",
+        about = "Get latestCommittedBatch and latestVerifiedBatch from the OnChainProposer.",
         short_flag = 'l'
     )]
-    LatestBlocks,
+    LatestBatches,
     #[clap(about = "Get the current block_number.", alias = "bl")]
     BlockNumber {
         #[arg(long = "l2", required = false)]
@@ -48,23 +48,23 @@ impl Command {
         let rollup_client = EthClient::new(&cfg.network.l2_rpc_url);
         let on_chain_proposer_address = cfg.contracts.on_chain_proposer;
         match self {
-            Command::LatestBlocks => {
-                let last_committed_block =
-                    EthClient::get_last_committed_block(&eth_client, on_chain_proposer_address)
-                        .await?;
+            Command::LatestBatches => {
+                let last_committed_batch = eth_client
+                    .get_last_committed_batch(on_chain_proposer_address)
+                    .await?;
 
-                let last_verified_block =
-                    EthClient::get_last_verified_block(&eth_client, on_chain_proposer_address)
-                        .await?;
+                let last_verified_batch = eth_client
+                    .get_last_verified_batch(on_chain_proposer_address)
+                    .await?;
 
                 println!(
-                    "latestCommittedBlock: {}",
-                    format!("{last_committed_block}").bright_cyan()
+                    "latestCommittedBatch: {}",
+                    format!("{last_committed_batch}").bright_cyan()
                 );
 
                 println!(
-                    "latestVerifiedBlock:  {}",
-                    format!("{last_verified_block}").bright_cyan()
+                    "latestVerifiedBatch:  {}",
+                    format!("{last_verified_batch}").bright_cyan()
                 );
             }
             Command::BlockNumber { l2, l1 } => {
