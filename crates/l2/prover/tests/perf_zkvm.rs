@@ -64,7 +64,7 @@ async fn setup() -> (ProgramInput, Block) {
         .unwrap()
         .unwrap();
 
-    let db = Evm::to_execution_db(&store.clone(), block_to_prove)
+    let db = Evm::to_execution_db(&store.clone(), &vec![block_to_prove.clone()])
         .await
         .unwrap();
 
@@ -72,7 +72,7 @@ async fn setup() -> (ProgramInput, Block) {
     let elasticity_multiplier = ELASTICITY_MULTIPLIER;
 
     let input = ProgramInput {
-        block: block_to_prove.clone(),
+        blocks: vec![block_to_prove.clone()],
         parent_block_header,
         db,
         elasticity_multiplier,
