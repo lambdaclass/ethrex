@@ -118,7 +118,7 @@ impl From<RevmError<ExecutionDBError>> for EvmError {
 
 impl From<VMError> for EvmError {
     fn from(value: VMError) -> Self {
-        if value.is_internal() {
+        if value.should_propagate() {
             // We don't categorize our internal errors yet, so we label them as "Custom"
             EvmError::Custom(value.to_string())
         } else {
