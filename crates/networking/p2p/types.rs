@@ -251,7 +251,12 @@ impl NodeRecord {
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
                 "eth" => {
-                    warn!("{:?}", &value);
+                    let mut result = Vec::new();
+                    for chunk in value.chunks_exact(4) {
+                        let arr: [u8; 4] = chunk.try_into().expect("Chunk size should be 4");
+                        result.push(arr);
+                    }
+                    decoded_pairs.eth = Some(result)
                 }
                 _ => {}
             }
