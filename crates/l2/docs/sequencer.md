@@ -21,7 +21,9 @@ Creates Blocks with a connection to the `auth.rpc` port.
 
 ### L1 Watcher
 
-This component monitors the L1 for new deposits made by users. For that, it queries the `CommonBridge` contract on L1 at regular intervals (defined by the config file) for new `DepositInitiated()` events. Once a new deposit event is detected, it creates the corresponding deposit transaction on the L2.
+This component handles the L1->L2 messages. Without rest, it is always watching the L1 for new deposit events defined as `DepositInitiated()` that contain the deposit transaction to be executed on the L2. Once a new deposit event is detected, it will insert the deposit transaction into the L2.
+
+In the future, it will also be watching for other L1->L2 messages.
 
 ### L1 Transaction Sender (a.k.a. L1 Committer)
 
