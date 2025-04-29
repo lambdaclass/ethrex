@@ -5,3 +5,6 @@ After=network-online.target
 Type=oneshot
 ExecStart=/payload
 StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target
