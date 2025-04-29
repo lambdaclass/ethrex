@@ -423,25 +423,17 @@ pub enum DeployError {
     FailedToDeploy(#[from] EthClientError),
 }
 
-lazy_static::lazy_static! {
-    static ref SALT: tokio::sync::Mutex<H256>  = tokio::sync::Mutex::new(H256::zero());
-}
-
 pub async fn deploy_contract(
     constructor_args: &[u8],
     contract_path: &Path,
     deployer_private_key: &SecretKey,
+    salt: &[u8],
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
     let bytecode = hex::decode(read_to_string(contract_path)?)?;
     let init_code = [&bytecode, constructor_args].concat();
-    let (deploy_tx_hash, contract_address) = create2_deploy(
-        SALT.lock().await.as_bytes(),
-        &init_code,
-        deployer_private_key,
-        eth_client,
-    )
-    .await?;
+    let (deploy_tx_hash, contract_address) =
+        create2_deploy(salt, &init_code, deployer_private_key, eth_client).await?;
     Ok((deploy_tx_hash, contract_address))
 }
 

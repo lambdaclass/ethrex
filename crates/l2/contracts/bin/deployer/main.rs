@@ -19,6 +19,7 @@ use ethrex_rpc::{
     clients::{eth::BlockByNumber, EthClientError, Overrides},
     EthClient,
 };
+use keccak_hash::H256;
 use spinoff::{spinner, spinners, Color, Spinner};
 
 mod cli;
@@ -135,6 +136,10 @@ fn compile_contracts(opts: &DeployerOptions) -> Result<(), DeployerError> {
     Ok(())
 }
 
+lazy_static::lazy_static! {
+    static ref SALT: std::sync::Mutex<H256>  = std::sync::Mutex::new(H256::zero());
+}
+
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
@@ -147,10 +152,17 @@ async fn deploy_contracts(
         Color::Cyan,
     );
 
+    let salt = if opts.randomize_contract_deployment {
+        H256::random().as_bytes().to_vec()
+    } else {
+        SALT.lock().unwrap().as_bytes().to_vec()
+    };
+
     let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) = deploy_contract(
         &[&[0u8; 31][..], &[u8::from(opts.validium)]].concat(),
         &opts.contracts_path.join("solc_out/OnChainProposer.bin"),
         &opts.private_key,
+        &salt,
         eth_client,
     )
     .await?;
@@ -172,6 +184,7 @@ async fn deploy_contracts(
         },
         &opts.contracts_path.join("solc_out/CommonBridge.bin"),
         &opts.private_key,
+        &salt,
         eth_client,
     )
     .await?;
@@ -188,6 +201,7 @@ async fn deploy_contracts(
             &[],
             &opts.contracts_path.join("solc_out/SP1Verifier.bin"),
             &opts.private_key,
+            &salt,
             eth_client,
         )
         .await?;
@@ -208,6 +222,7 @@ async fn deploy_contracts(
             &[],
             &opts.contracts_path.join("solc_out/PicoVerifier.bin"),
             &opts.private_key,
+            &salt,
             eth_client,
         )
         .await?;
