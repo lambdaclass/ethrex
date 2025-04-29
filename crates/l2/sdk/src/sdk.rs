@@ -1,3 +1,5 @@
+use std::{fs::read_to_string, path::Path, process::Command};
+
 use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
@@ -5,7 +7,7 @@ use ethrex_common::types::{GenericTransaction, Transaction, TxKind};
 use ethrex_rpc::clients::eth::{
     errors::{EthClientError, GetTransactionReceiptError},
     eth_sender::Overrides,
-    EthClient,
+    EthClient, WrappedTransaction,
 };
 use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
 use itertools::Itertools;
@@ -338,4 +340,210 @@ pub fn get_address_from_secret_key(secret_key: &SecretKey) -> Result<Address, Et
         })?;
 
     Ok(Address::from(address_bytes))
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ContractCompilationError {
+    #[error("The path is not a valid utf-8 string")]
+    FailedToGetStringFromPath,
+    #[error("Deployer compilation error: {0}")]
+    CompilationError(String),
+    #[error("Could not read file")]
+    FailedToReadFile(#[from] std::io::Error),
+    #[error("Failed to serialize/deserialize")]
+    SerializationError(#[from] serde_json::Error),
+}
+
+pub fn compile_contract(
+    general_contracts_path: &Path,
+    contract_path: &str,
+    runtime_bin: bool,
+) -> Result<(), ContractCompilationError> {
+    let bin_flag = if runtime_bin {
+        "--bin-runtime"
+    } else {
+        "--bin"
+    };
+
+    // Both the contract path and the output path are relative to where the Makefile is.
+    if !Command::new("solc")
+        .arg(bin_flag)
+        .arg(
+            general_contracts_path
+                .join(contract_path)
+                .to_str()
+                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+        )
+        .arg("--via-ir")
+        .arg("-o")
+        .arg(
+            general_contracts_path
+                .join("solc_out")
+                .to_str()
+                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+        )
+        .arg("--overwrite")
+        .arg("--allow-paths")
+        .arg(
+            general_contracts_path
+                .to_str()
+                .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+        )
+        .spawn()
+        .map_err(|err| {
+            ContractCompilationError::CompilationError(format!("Failed to spawn solc: {err}"))
+        })?
+        .wait()
+        .map_err(|err| {
+            ContractCompilationError::CompilationError(format!("Failed to wait for solc: {err}"))
+        })?
+        .success()
+    {
+        return Err(ContractCompilationError::CompilationError(
+            format!("Failed to compile {contract_path}").to_owned(),
+        ));
+    }
+
+    Ok(())
+}
+
+// 0x4e59b44847b379578588920cA78FbF26c0B4956C
+const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
+    0x4e, 0x59, 0xb4, 0x48, 0x47, 0xb3, 0x79, 0x57, 0x85, 0x88, 0x92, 0x0c, 0xa7, 0x8f, 0xbf, 0x26,
+    0xc0, 0xb4, 0x95, 0x6c,
+]);
+
+#[derive(Debug, thiserror::Error)]
+pub enum DeployError {
+    #[error("Failed to decode init code: {0}")]
+    FailedToReadInitCode(#[from] std::io::Error),
+    #[error("Failed to decode init code: {0}")]
+    FailedToDecodeBytecode(#[from] hex::FromHexError),
+    #[error("Failed to deploy contract: {0}")]
+    FailedToDeploy(#[from] EthClientError),
+}
+
+lazy_static::lazy_static! {
+    static ref SALT: tokio::sync::Mutex<H256>  = tokio::sync::Mutex::new(H256::zero());
+}
+
+pub async fn deploy_contract(
+    constructor_args: &[u8],
+    contract_path: &Path,
+    deployer_private_key: &SecretKey,
+    eth_client: &EthClient,
+) -> Result<(H256, Address), DeployError> {
+    let bytecode = hex::decode(read_to_string(contract_path)?)?;
+    let init_code = [&bytecode, constructor_args].concat();
+    let (deploy_tx_hash, contract_address) = create2_deploy(
+        SALT.lock().await.as_bytes(),
+        &init_code,
+        deployer_private_key,
+        eth_client,
+    )
+    .await?;
+    Ok((deploy_tx_hash, contract_address))
+}
+
+async fn create2_deploy(
+    salt: &[u8],
+    init_code: &[u8],
+    deployer_private_key: &SecretKey,
+    eth_client: &EthClient,
+) -> Result<(H256, Address), EthClientError> {
+    let calldata = [salt, init_code].concat();
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
+    let deployer_address = get_address_from_secret_key(deployer_private_key)?;
+
+    let deploy_tx = eth_client
+        .build_eip1559_transaction(
+            DETERMINISTIC_CREATE2_ADDRESS,
+            deployer_address,
+            calldata.into(),
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(deploy_tx);
+    eth_client
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer_address)
+        .await?;
+    let deploy_tx_hash = eth_client
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, deployer_private_key)
+        .await?;
+
+    wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
+
+    let deployed_address = create2_address(salt, keccak(init_code));
+
+    Ok((deploy_tx_hash, deployed_address))
+}
+
+#[allow(clippy::indexing_slicing)]
+fn create2_address(salt: &[u8], init_code_hash: H256) -> Address {
+    Address::from_slice(
+        &keccak(
+            [
+                &[0xff],
+                DETERMINISTIC_CREATE2_ADDRESS.as_bytes(),
+                salt,
+                init_code_hash.as_bytes(),
+            ]
+            .concat(),
+        )
+        .as_bytes()[12..],
+    )
+}
+
+pub async fn initialize_contract(
+    contract_address: Address,
+    initialize_calldata: Vec<u8>,
+    initializer_private_key: &SecretKey,
+    eth_client: &EthClient,
+) -> Result<H256, EthClientError> {
+    let initializer_address = get_address_from_secret_key(initializer_private_key)?;
+
+    let gas_price = eth_client
+        .get_gas_price_with_extra(20)
+        .await?
+        .try_into()
+        .map_err(|_| {
+            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
+        })?;
+
+    let initialize_tx = eth_client
+        .build_eip1559_transaction(
+            contract_address,
+            initializer_address,
+            initialize_calldata.into(),
+            Overrides {
+                max_fee_per_gas: Some(gas_price),
+                max_priority_fee_per_gas: Some(gas_price),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let mut wrapped_tx = WrappedTransaction::EIP1559(initialize_tx);
+
+    eth_client
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, initializer_address)
+        .await?;
+
+    let initialize_tx_hash = eth_client
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, initializer_private_key)
+        .await?;
+
+    Ok(initialize_tx_hash)
 }
