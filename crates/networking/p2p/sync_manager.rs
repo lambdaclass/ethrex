@@ -115,7 +115,7 @@ impl SyncManager {
 
         tokio::spawn(async move {
             let current_head = H256::from_slice(
-                &hex::decode("0x6351db0406764252afbd1c54ff49818e434f0b7ab7a2472de925a2153aec1109")
+                &hex::decode("6351db0406764252afbd1c54ff49818e434f0b7ab7a2472de925a2153aec1109")
                     .unwrap(),
             );
 
