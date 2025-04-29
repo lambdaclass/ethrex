@@ -259,6 +259,7 @@ impl Blockchain {
         let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
+        let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
         let mut context = PayloadBuildContext::new(payload, self.evm_engine, &self.storage)?;
 
         #[cfg(not(feature = "l2"))]
@@ -269,7 +270,10 @@ impl Blockchain {
         self.finalize_payload(&mut context).await?;
 
         let interval = Instant::now().duration_since(since).as_millis();
-        tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
+        tracing::info!(
+            "[METRIC] BUILDING PAYLOAD TOOK: {interval} ms, base fee {}",
+            base_fee
+        );
         if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
             let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
