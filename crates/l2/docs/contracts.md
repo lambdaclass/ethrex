@@ -19,7 +19,7 @@ Allows L1<->L2 communication from L1. It both sends messages from L1 to L2 and r
 
 ### `OnChainOperator`
 
-Ensures the advancement of the L2. It is used by the operator to commit blocks and verify block proofs
+Ensures the advancement of the L2. It is used by the operator to commit batches of blocks and verify batch proofs.
 
 ### `Verifier`
 

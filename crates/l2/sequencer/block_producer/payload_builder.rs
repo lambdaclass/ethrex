@@ -16,11 +16,7 @@ use std::ops::Div;
 use tokio::time::Instant;
 use tracing::{debug, error};
 
-use crate::sequencer::errors::BlockProducerError;
-
-// State diff size for a simple transfer.
-// Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
-const TX_STATE_DIFF_SIZE: usize = 116;
+use crate::sequencer::{errors::BlockProducerError, state_diff::TX_STATE_DIFF_SIZE};
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
