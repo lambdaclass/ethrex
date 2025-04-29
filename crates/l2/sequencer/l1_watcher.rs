@@ -252,7 +252,7 @@ impl L1Watcher {
 
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the deposit is marked as pending in the contract.
-        Ok(pending_deposits.contains(&deposit_hash))
+        Ok(!pending_deposits.contains(&deposit_hash))
     }
 }
 

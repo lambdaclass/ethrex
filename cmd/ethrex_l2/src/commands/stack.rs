@@ -202,7 +202,7 @@ impl Command {
                 .await?;
                 let rollup_store = StoreRollup::new(
                     store_path
-                        .join("../rollup_store")
+                        .join("./rollup_store")
                         .to_str()
                         .expect("Invalid store path"),
                     EngineTypeRollup::Libmdbx,
@@ -294,7 +294,7 @@ impl Command {
                     // Store batch info in L2 storage
                     rollup_store
                         .store_batch(
-                            batch_number as u64,
+                            batch_number as u64 + 1,
                             first_block_number,
                             last_block_number,
                             withdrawal_hashes,
