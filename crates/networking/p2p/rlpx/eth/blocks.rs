@@ -308,6 +308,19 @@ impl RLPxMessage for BlockBodies {
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (block_bodies, _): (Vec<BlockBody>, _) = decoder.decode_field("blockBodies")?;
 
+        let has_empty = block_bodies.iter().any(|b| {
+            b.transactions.is_empty()
+                && b.ommers.is_empty()
+                && b.withdrawals
+                    .as_ref()
+                    .map(|w| w.is_empty())
+                    .unwrap_or(false)
+        });
+
+        if has_empty {
+            return Err(RLPDecodeError::MalformedData);
+        }
+
         Ok(Self::new(id, block_bodies))
     }
 }
