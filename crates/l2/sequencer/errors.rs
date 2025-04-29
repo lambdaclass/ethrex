@@ -108,7 +108,7 @@ pub enum BlockProducerError {
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
     #[error("Block Producer failed because of a store error: {0}")]
     StoreError(#[from] StoreError),
-    #[error("Block Producer failed retrieve block from storaga, data is None.")]
+    #[error("Block Producer failed retrieve block from storage, data is None.")]
     StorageDataIsNone,
     #[error("Block Producer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
@@ -131,7 +131,7 @@ pub enum CommitterError {
     #[error("Committer failed to  {0}")]
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
     #[error("Committer failed retrieve block from storage: {0}")]
-    FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    StoreError(#[from] StoreError),
     #[error("Committer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]

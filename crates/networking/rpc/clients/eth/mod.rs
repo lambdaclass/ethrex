@@ -88,6 +88,14 @@ const WAIT_TIME_FOR_RECEIPT_SECONDS: u64 = 2;
 // 0x08c379a0 == Error(String)
 pub const ERROR_FUNCTION_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
+#[derive(Serialize, Deserialize)]
+pub struct WithdrawalProof {
+    pub batch_number: u64,
+    pub index: usize,
+    pub withdrawal_hash: H256,
+    pub merkle_proof: Vec<H256>,
+}
+
 impl EthClient {
     pub fn new(url: &str) -> Self {
         Self {
@@ -877,39 +885,32 @@ impl EthClient {
         self.get_nonce(address, BlockByNumber::Latest).await
     }
 
-    pub async fn get_last_committed_block(
-        eth_client: &EthClient,
+    pub async fn get_last_committed_batch(
+        &self,
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(
-            eth_client,
-            b"lastCommittedBlock()",
-            on_chain_proposer_address,
-        )
-        .await
+        self._call_variable(b"lastCommittedBatch()", on_chain_proposer_address)
+            .await
     }
 
-    pub async fn get_last_verified_block(
-        eth_client: &EthClient,
+    pub async fn get_last_verified_batch(
+        &self,
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(
-            eth_client,
-            b"lastVerifiedBlock()",
-            on_chain_proposer_address,
-        )
-        .await
+        self._call_variable(b"lastVerifiedBatch()", on_chain_proposer_address)
+            .await
     }
 
     pub async fn get_last_fetched_l1_block(
-        eth_client: &EthClient,
+        &self,
         common_bridge_address: Address,
     ) -> Result<u64, EthClientError> {
-        Self::_call_block_variable(eth_client, b"lastFetchedL1Block()", common_bridge_address).await
+        self._call_variable(b"lastFetchedL1Block()", common_bridge_address)
+            .await
     }
 
     async fn _generic_call(
-        eth_client: &EthClient,
+        &self,
         selector: &[u8],
         on_chain_proposer_address: Address,
     ) -> Result<String, EthClientError> {
@@ -925,7 +926,7 @@ impl EthClient {
         let leading_zeros = 32 - ((calldata.len() - 4) % 32);
         calldata.extend(vec![0; leading_zeros]);
 
-        let hex_string = eth_client
+        let hex_string = self
             .call(
                 on_chain_proposer_address,
                 calldata.into(),
@@ -936,13 +937,14 @@ impl EthClient {
         Ok(hex_string)
     }
 
-    async fn _call_block_variable(
-        eth_client: &EthClient,
+    async fn _call_variable(
+        &self,
         selector: &[u8],
         on_chain_proposer_address: Address,
     ) -> Result<u64, EthClientError> {
-        let hex_string =
-            Self::_generic_call(eth_client, selector, on_chain_proposer_address).await?;
+        let hex_string = self
+            ._generic_call(selector, on_chain_proposer_address)
+            .await?;
 
         let value = from_hex_string_to_u256(&hex_string)?
             .try_into()
@@ -993,6 +995,57 @@ impl EthClient {
         }
         receipt.ok_or(EthClientError::Custom(
             "Transaction receipt is None".to_owned(),
+        ))
+    }
+
+    pub async fn get_withdrawal_proof(
+        &self,
+        transaction_hash: H256,
+    ) -> Result<Option<WithdrawalProof>, EthClientError> {
+        use errors::GetWithdrawalProofError;
+        let request = RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: "ethrex_getWithdrawalProof".to_string(),
+            params: Some(vec![json!(format!("{:#x}", transaction_hash))]),
+        };
+
+        match self.send_request(request).await {
+            Ok(RpcResponse::Success(result)) => serde_json::from_value(result.result)
+                .map_err(GetWithdrawalProofError::SerdeJSONError)
+                .map_err(EthClientError::from),
+            Ok(RpcResponse::Error(error_response)) => {
+                Err(GetWithdrawalProofError::RPCError(error_response.error.message).into())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub async fn wait_for_withdrawal_proof(
+        &self,
+        transaction_hash: H256,
+        max_retries: u64,
+    ) -> Result<WithdrawalProof, EthClientError> {
+        let mut withdrawal_proof = self.get_withdrawal_proof(transaction_hash).await?;
+        let mut r#try = 1;
+        while withdrawal_proof.is_none() {
+            println!(
+                "[{try}/{max_retries}] Retrying to get withdrawal proof for tx {transaction_hash:#x}"
+            );
+
+            if max_retries == r#try {
+                return Err(EthClientError::Custom(format!(
+                    "Withdrawal proof for tx {transaction_hash:#x} not found after {max_retries} retries"
+                )));
+            }
+            r#try += 1;
+
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            withdrawal_proof = self.get_withdrawal_proof(transaction_hash).await?;
+        }
+        withdrawal_proof.ok_or(EthClientError::Custom(
+            "Withdrawal proof is None".to_owned(),
         ))
     }
 }

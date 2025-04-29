@@ -4,6 +4,7 @@ use crate::SequencerConfig;
 use block_producer::start_block_producer;
 use ethrex_blockchain::Blockchain;
 use ethrex_storage::Store;
+use ethrex_storage_rollup::StoreRollup;
 use execution_cache::ExecutionCache;
 use tokio::task::JoinSet;
 use tracing::{error, info};
@@ -23,7 +24,12 @@ pub mod configs;
 pub mod errors;
 pub mod utils;
 
-pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>, cfg: SequencerConfig) {
+pub async fn start_l2(
+    store: Store,
+    rollup_store: StoreRollup,
+    blockchain: Arc<Blockchain>,
+    cfg: SequencerConfig,
+) {
     info!("Starting Proposer");
 
     let execution_cache = Arc::new(ExecutionCache::default());
@@ -38,11 +44,13 @@ pub async fn start_l2(store: Store, blockchain: Arc<Blockchain>, cfg: SequencerC
     ));
     task_set.spawn(l1_committer::start_l1_committer(
         store.clone(),
+        rollup_store.clone(),
         execution_cache.clone(),
         cfg.clone(),
     ));
     task_set.spawn(proof_coordinator::start_proof_coordinator(
         store.clone(),
+        rollup_store,
         cfg.clone(),
     ));
     task_set.spawn(l1_proof_sender::start_l1_proof_sender(cfg.clone()));
