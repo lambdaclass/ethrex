@@ -1,0 +1,13 @@
+use ethrex_l2_sdk::ContractCompilationError;
+
+#[derive(Debug, thiserror::Error)]
+pub enum SystemContractsUpdaterError {
+    #[error("Failed to compile contract: {0}")]
+    FailedToCompileContract(#[from] ContractCompilationError),
+    #[error("Failed to deploy contract: {0}")]
+    FailedToDecodeRuntimeCode(#[from] hex::FromHexError),
+    #[error("Failed to serialize modified genesis: {0}")]
+    FailedToSerializeModifiedGenesis(#[from] serde_json::Error),
+    #[error("Failed to write modified genesis file: {0}")]
+    FailedToWriteModifiedGenesisFile(#[from] std::io::Error),
+}

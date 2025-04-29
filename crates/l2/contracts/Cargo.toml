@@ -30,7 +30,7 @@ path = "./deployer.rs"
 
 [[bin]]
 name = "ethrex_l2_system_contracts_updater"
-path = "./system_contracts_updater.rs"
+path = "bin/system_contracts_updater/main.rs"
 
 [lints.clippy]
 unwrap_used = "deny"
