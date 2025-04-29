@@ -148,7 +148,7 @@ async fn deploy_contracts(
     );
 
     let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) = deploy_contract(
-        &[u8::from(opts.validium)],
+        &[&[0u8; 31][..], &[u8::from(opts.validium)]].concat(),
         &opts.contracts_path.join("solc_out/OnChainProposer.bin"),
         &opts.private_key,
         eth_client,
