@@ -1,6 +1,4 @@
-
 use crate::eth::fee_calculator::estimate_gas_tip;
-
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
 use serde_json::Value;
