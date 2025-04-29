@@ -6,7 +6,7 @@ services:
     platform: linux/amd64
     container_name: contract_deployer
     image: ethrex_l2_contract_deployer
-    command: --deposit_rich
+    command: --deposit-rich
     build:
       context: ../../
       args:
@@ -15,19 +15,18 @@ services:
     volumes:
       # NOTE: CI_ETHREX_WORKDIR is defined in crates/l2/Makefile
       - ./contracts:${CI_ETHREX_WORKDIR}/contracts
-      - ./configs/sequencer_config.toml:${CI_ETHREX_WORKDIR}/configs/sequencer_config.toml
       - ./.env:${CI_ETHREX_WORKDIR}/.env
       - ../../test_data/genesis-l1-dev.json:${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
       - ../../test_data/private_keys_l1.txt:${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
     environment:
-      - ETH_RPC_URL=http://ethrex_l1:8545
+      - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
       # NOTE: The paths in the env variables must match those
       # specified in the `volumes:` section
-      - DEPLOYER_CONTRACTS_PATH=${CI_ETHREX_WORKDIR}/contracts
+      - ETHREX_DEPLOYER_CONTRACTS_PATH=${CI_ETHREX_WORKDIR}/contracts
       - ENV_FILE=${CI_ETHREX_WORKDIR}/.env
       - CONFIGS_PATH=${CI_ETHREX_WORKDIR}/configs
-      - GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
-      - PRIVATE_KEYS_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
+      - ETHREX_DEPLOYER_GENESIS_L1_PATH=${CI_ETHREX_WORKDIR}/test_data/genesis-l1-dev.json
+      - ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=${CI_ETHREX_WORKDIR}/test_data/private_keys_l1.txt
     depends_on:
       - ethrex
     restart: on-failure:3
