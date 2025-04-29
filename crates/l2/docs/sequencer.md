@@ -101,7 +101,7 @@ The following environment variables are available to configure the Proposer cons
   - `listen_ip`: IP to listen for proof data requests.
   - `listen_port`: Port to listen for proof data requests.
   - `proof_send_interval_ms`: Periodicity with which the proof sender looks for new proofs to send to the L1 for verification.
-  - `dev_mode`: Whether `dev_mode` is activated or not. If it is activated, proofs won't be verified just executed. This can be seen on the OnChainProposer contract, specifically on the verify function, proofs will be ignored.
+  - `dev_mode`: Whether `dev_mode` is activated or not. If it is activated, the prover won't actually generate proofs, but just execute the blocks it is given, and the proof sender will send empty proofs to the L1. The L1, in turn, will ignore proofs.
 
 If you want to use a different configuration file, you can set the:
 
