@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745965300557,
+  "lastUpdate": 1745968166966,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5065,6 +5065,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181600192519,
             "range": "± 860795754",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "240886b7de53acfa1b30b6f9ccd8431c9dc5d851",
+          "message": "feat(l2): configure hard cap on L2 commit transactions (#2532)\n\n**Motivation**\n\nHere we want to limit the price we are willing to pay for a commitment\ntransaction from the L2 to the L1\n\n**Description**\n\n* Add two values to the `EthClient`, (`max_fee_per_gas` and\n`max_fee_per_blob_gas`), so we can limit if the fees are two high\n* Add checks in the commitment if any of the fees exceeds the limits\nand, if this happens, return an error\n\nCloses #2498\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-04-29T22:08:37Z",
+          "tree_id": "028eb199fffa09c39d99c4dc1cb00a4280a2d0ba",
+          "url": "https://github.com/lambdaclass/ethrex/commit/240886b7de53acfa1b30b6f9ccd8431c9dc5d851"
+        },
+        "date": 1745968164415,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177165030633,
+            "range": "± 832278543",
             "unit": "ns/iter"
           }
         ]
