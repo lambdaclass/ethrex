@@ -245,9 +245,9 @@ impl<'a> VM<'a> {
             TxKind::Call(address_to) => {
                 substate.touched_accounts.insert(address_to);
 
-                let (_is_delegation, _eip7702_gas_consumed, address, bytes) =
+                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytes) =
                     eip7702_get_code(db, &mut substate, address_to)?;
-                destination_and_code_address = address;
+                destination_and_code_address = address_to;
                 bytecode = bytes;
             }
 
