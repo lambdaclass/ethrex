@@ -573,7 +573,7 @@ impl std::ops::Deref for HeadTransaction {
 
 impl From<HeadTransaction> for Transaction {
     fn from(val: HeadTransaction) -> Self {
-        val.tx.into()
+        val.tx.transaction().clone()
     }
 }
 
@@ -583,7 +583,7 @@ impl TransactionQueue {
         mut txs: HashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
-        let mut heads = Vec::new();
+        let mut heads = Vec::with_capacity(100);
         for (_, txs) in txs.iter_mut() {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element
