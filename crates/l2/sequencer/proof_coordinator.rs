@@ -1,4 +1,5 @@
 use crate::sequencer::errors::ProverServerError;
+use crate::utils::config::block_producer::BlockProducerConfig;
 use crate::utils::prover::save_state::{
     block_number_has_state_file, write_state, StateFileType, StateType,
 };
@@ -32,6 +33,7 @@ pub struct ProverInputData {
     pub block: Block,
     pub parent_block_header: BlockHeader,
     pub db: ExecutionDB,
+    pub elasticity_multiplier: u64,
 }
 
 #[derive(Clone)]
@@ -41,6 +43,7 @@ struct ProofCoordinator {
     store: Store,
     eth_client: EthClient,
     on_chain_proposer_address: Address,
+    elasticity_multiplier: u64,
 }
 
 /// Enum for the ProverServer <--> ProverClient Communication Protocol.
@@ -112,10 +115,12 @@ pub async fn start_proof_coordinator(store: Store) -> Result<(), ConfigError> {
     let server_config = ProofCoordinatorConfig::from_env()?;
     let eth_config = EthConfig::from_env()?;
     let committer_config = CommitterConfig::from_env()?;
+    let proposer_config = BlockProducerConfig::from_env()?;
     let prover_server = ProofCoordinator::new_from_config(
         server_config.clone(),
         &committer_config,
         eth_config.clone(),
+        &proposer_config,
         store,
     )
     .await?;
@@ -129,6 +134,7 @@ impl ProofCoordinator {
         config: ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
         eth_config: EthConfig,
+        proposer_config: &BlockProducerConfig,
         store: Store,
     ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new_with_config(
@@ -146,6 +152,7 @@ impl ProofCoordinator {
             store,
             eth_client,
             on_chain_proposer_address,
+            elasticity_multiplier: proposer_config.elasticity_multiplier,
         })
     }
 
@@ -327,6 +334,7 @@ impl ProofCoordinator {
             db,
             block,
             parent_block_header,
+            elasticity_multiplier: self.elasticity_multiplier,
         })
     }
 }
