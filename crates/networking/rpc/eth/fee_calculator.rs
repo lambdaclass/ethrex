@@ -27,8 +27,8 @@ const BLOCK_RANGE_LOWER_BOUND_DEC: u64 = 20;
 // we can look into more sophisticated estimation methods, if needed.
 /// Estimate Gas Price based on already accepted transactions,
 /// as per the spec, this will be returned in wei.
-pub fn estimate_gas_tip(storage: &Store) -> Result<Option<u64>, RpcErr> {
-    let latest_block_number = storage.get_latest_block_number()?;
+pub async fn estimate_gas_tip(storage: &Store) -> Result<Option<u64>, RpcErr> {
+    let latest_block_number = storage.get_latest_block_number().await?;
     let block_range_lower_bound = latest_block_number.saturating_sub(BLOCK_RANGE_LOWER_BOUND_DEC);
     // These are the blocks we'll use to estimate the price.
     let block_range = block_range_lower_bound..=latest_block_number;
@@ -46,7 +46,7 @@ pub fn estimate_gas_tip(storage: &Store) -> Result<Option<u64>, RpcErr> {
     // caching this result, also we can have a specific DB method
     // that returns a block range to not query them one-by-one.
     for block_num in block_range {
-        let Some(block_body) = storage.get_block_body(block_num)? else {
+        let Some(block_body) = storage.get_block_body(block_num).await? else {
             error!("Block body for block number {block_num} is missing but is below the latest known block!");
             return Err(RpcErr::Internal(
                 "Error calculating gas price: missing data".to_string(),
@@ -87,34 +87,34 @@ mod tests {
         BASE_PRICE_IN_WEI,
     };
 
-    #[test]
-    fn test_for_legacy_txs() {
-        let storage = setup_store();
-        add_legacy_tx_blocks(&storage, 20, 10);
-        let gas_tip = estimate_gas_tip(&storage).unwrap().unwrap();
+    #[tokio::test]
+    async fn test_for_legacy_txs() {
+        let storage = setup_store().await;
+        add_legacy_tx_blocks(&storage, 20, 10).await;
+        let gas_tip = estimate_gas_tip(&storage).await.unwrap().unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
-    #[test]
-    fn test_for_eip1559_txs() {
-        let storage = setup_store();
-        add_eip1559_tx_blocks(&storage, 20, 10);
-        let gas_tip = estimate_gas_tip(&storage).unwrap().unwrap();
+    #[tokio::test]
+    async fn test_for_eip1559_txs() {
+        let storage = setup_store().await;
+        add_eip1559_tx_blocks(&storage, 20, 10).await;
+        let gas_tip = estimate_gas_tip(&storage).await.unwrap().unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
-    #[test]
-    fn test_for_mixed_txs() {
-        let storage = setup_store();
-        add_mixed_tx_blocks(&storage, 20, 10);
-        let gas_tip = estimate_gas_tip(&storage).unwrap().unwrap();
+    #[tokio::test]
+    async fn test_for_mixed_txs() {
+        let storage = setup_store().await;
+        add_mixed_tx_blocks(&storage, 20, 10).await;
+        let gas_tip = estimate_gas_tip(&storage).await.unwrap().unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
     }
 
-    #[test]
-    fn test_for_empty_blocks() {
-        let storage = setup_store();
-        let gas_tip = estimate_gas_tip(&storage).unwrap();
+    #[tokio::test]
+    async fn test_for_empty_blocks() {
+        let storage = setup_store().await;
+        let gas_tip = estimate_gas_tip(&storage).await.unwrap();
         assert_eq!(gas_tip, None);
     }
 }

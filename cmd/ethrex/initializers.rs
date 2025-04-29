@@ -7,7 +7,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::node_id_from_signing_key,
-    sync::SyncManager,
+    sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
@@ -33,6 +33,7 @@ use crate::l2::L2Options;
 use ::{
     ethrex_common::Address,
     ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
+    ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
     secp256k1::SecretKey,
 };
 
@@ -56,6 +57,11 @@ pub fn init_tracing(opts: &Options) {
 }
 
 pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
+    tracing::info!(
+        "Starting metrics server on {}:{}",
+        opts.metrics_addr,
+        opts.metrics_port
+    );
     let metrics_api = ethrex_metrics::api::start_prometheus_metrics_api(
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
@@ -63,7 +69,7 @@ pub fn init_metrics(opts: &Options, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-pub fn init_store(data_dir: &str, network: &str) -> Store {
+pub async fn init_store(data_dir: &str, network: &str) -> Store {
     let path = PathBuf::from(data_dir);
     let store = if path.ends_with("memory") {
         Store::new(data_dir, EngineType::InMemory).expect("Failed to create Store")
@@ -74,7 +80,6 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
             } else if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
             } else {
-                let engine_type = EngineType::InMemory;
                 error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
@@ -84,8 +89,29 @@ pub fn init_store(data_dir: &str, network: &str) -> Store {
     let genesis = read_genesis_file(network);
     store
         .add_initial_state(genesis.clone())
+        .await
         .expect("Failed to create genesis block");
     store
+}
+
+#[cfg(feature = "l2")]
+pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "rollup_storage_redb")] {
+            let engine_type = EngineTypeRollup::RedB;
+        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
+            let engine_type = EngineTypeRollup::Libmdbx;
+        } else {
+            let engine_type = EngineTypeRollup::InMemory;
+        }
+    }
+    let rollup_store =
+        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+    rollup_store
+        .init()
+        .await
+        .expect("Failed to init rollup store");
+    rollup_store
 }
 
 pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
@@ -93,7 +119,7 @@ pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn init_rpc_api(
+pub async fn init_rpc_api(
     opts: &Options,
     #[cfg(feature = "l2")] l2_opts: &L2Options,
     signer: &SigningKey,
@@ -103,6 +129,7 @@ pub fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
+    #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
     let enr_seq = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -117,7 +144,9 @@ pub fn init_rpc_api(
         opts.syncmode.clone(),
         cancel_token,
         blockchain.clone(),
-    );
+        store.clone(),
+    )
+    .await;
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
@@ -138,6 +167,8 @@ pub fn init_rpc_api(
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
         get_sponsor_pk(l2_opts),
+        #[cfg(feature = "l2")]
+        rollup_store,
     )
     .into_future();
 
@@ -206,14 +237,15 @@ pub async fn init_network(
 }
 
 #[cfg(feature = "dev")]
-pub fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
+pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
     if opts.dev {
         info!("Running in DEV_MODE");
 
         let head_block_hash = {
-            let current_block_number = store.get_latest_block_number().unwrap();
+            let current_block_number = store.get_latest_block_number().await.unwrap();
             store
                 .get_canonical_block_hash(current_block_number)
+                .await
                 .unwrap()
                 .unwrap()
         };
@@ -250,8 +282,11 @@ pub fn get_network(opts: &Options) -> String {
     if network == "sepolia" {
         network = String::from(networks::SEPOLIA_GENESIS_PATH);
     }
-    if network == "ephemery" {
-        network = String::from(networks::EPHEMERY_GENESIS_PATH);
+    if network == "hoodi" {
+        network = String::from(networks::HOODI_GENESIS_PATH);
+    }
+    if network == "mainnet" {
+        network = String::from(networks::MAINNET_GENESIS_PATH);
     }
 
     network
@@ -271,9 +306,14 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
         bootnodes.extend(networks::SEPOLIA_BOOTNODES.iter());
     }
 
-    if network == networks::EPHEMERY_GENESIS_PATH {
-        info!("Adding ephemery preset bootnodes");
-        bootnodes.extend(networks::EPHEMERY_BOOTNODES.iter());
+    if network == networks::HOODI_GENESIS_PATH {
+        info!("Adding hoodi preset bootnodes");
+        bootnodes.extend(networks::HOODI_BOOTNODES.iter());
+    }
+
+    if network == networks::MAINNET_GENESIS_PATH {
+        info!("Adding mainnet preset bootnodes");
+        bootnodes.extend(networks::MAINNET_BOOTNODES.iter());
     }
 
     if bootnodes.is_empty() {

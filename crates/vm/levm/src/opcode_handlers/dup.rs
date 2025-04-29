@@ -1,5 +1,4 @@
 use crate::{
-    call_frame::CallFrame,
     errors::{OpcodeResult, VMError},
     gas_cost,
     vm::VM,
@@ -8,13 +7,10 @@ use crate::{
 // Duplication Operation (16)
 // Opcodes: DUP1 ... DUP16
 
-impl VM {
+impl<'a> VM<'a> {
     // DUP operation
-    pub fn op_dup(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-        depth: usize,
-    ) -> Result<OpcodeResult, VMError> {
+    pub fn op_dup(&mut self, depth: usize) -> Result<OpcodeResult, VMError> {
+        let current_call_frame = self.current_call_frame_mut()?;
         // Increase the consumed gas
         current_call_frame.increase_consumed_gas(gas_cost::DUPN)?;
 

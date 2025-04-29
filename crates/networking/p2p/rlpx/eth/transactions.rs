@@ -33,6 +33,7 @@ impl Transactions {
 }
 
 impl RLPxMessage for Transactions {
+    const CODE: u8 = 0x12;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let mut encoder = Encoder::new(&mut encoded_data);
@@ -120,6 +121,7 @@ impl NewPooledTransactionHashes {
 }
 
 impl RLPxMessage for NewPooledTransactionHashes {
+    const CODE: u8 = 0x18;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -231,6 +233,7 @@ impl GetPooledTransactions {
 }
 
 impl RLPxMessage for GetPooledTransactions {
+    const CODE: u8 = 0x19;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -272,10 +275,13 @@ impl PooledTransactions {
 
     /// Saves every incoming pooled transaction to the mempool.
 
-    pub fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
+    pub async fn handle(self, node: &Node, blockchain: &Blockchain) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                if let Err(e) = blockchain.add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle) {
+                if let Err(e) = blockchain
+                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
+                    .await
+                {
                     log_peer_warn(node, &format!("Error adding transaction: {}", e));
                     continue;
                 }
@@ -283,7 +289,7 @@ impl PooledTransactions {
                 let regular_tx = tx
                     .try_into()
                     .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx) {
+                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
                     log_peer_warn(node, &format!("Error adding transaction: {}", e));
                     continue;
                 }
@@ -294,6 +300,7 @@ impl PooledTransactions {
 }
 
 impl RLPxMessage for PooledTransactions {
+    const CODE: u8 = 0x1A;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)

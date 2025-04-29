@@ -13,6 +13,7 @@ ethrex-p2p.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
+ethrex-storage-rollup = { workspace = true, optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 
 bytes.workspace = true
@@ -33,6 +34,8 @@ tokio-util.workspace = true
 redb = { workspace = true, optional = true }
 lazy_static.workspace = true
 secp256k1 = { workspace = true, optional = true }
+keccak-hash.workspace = true
+reqwest.workspace = true
 
 cfg-if = "1.0.0"
 
@@ -51,10 +54,10 @@ path = "./lib.rs"
 default = ["libmdbx", "c-kzg", "blst"]
 dev = ["dep:ethrex-dev"]
 c-kzg = [
-    "ethrex-vm/c-kzg",
-    "ethrex-common/c-kzg",
-    "ethrex-blockchain/c-kzg",
-    "ethrex-p2p/c-kzg",
+  "ethrex-vm/c-kzg",
+  "ethrex-common/c-kzg",
+  "ethrex-blockchain/c-kzg",
+  "ethrex-p2p/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics"]
 libmdbx = ["ethrex-storage/libmdbx"]
@@ -66,7 +69,10 @@ l2 = [
     "ethrex-blockchain/l2",
     "ethrex-rpc/l2",
     "dep:secp256k1",
+    "ethrex-storage-rollup"
 ]
+rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
+rollup_storage_redb = ["ethrex-storage-rollup/redb"]
 based = ["l2", "ethrex-rpc/based"]
 
 

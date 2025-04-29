@@ -3,8 +3,8 @@ use ethrex_rpc::clients::{auth, eth};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("Error deserializing config from env: {0}")]
-    ConfigDeserializationError(#[from] envy::Error),
+    #[error("Error deserializing config from env: {err}. From config: {from:?}")]
+    ConfigDeserializationError { err: envy::Error, from: String },
     #[error("Error reading env file: {0}")]
     EnvFileError(#[from] std::io::Error),
     #[error("Error building Proposer from config: {0}")]
@@ -15,6 +15,8 @@ pub enum ConfigError {
     BuildProverServerFromConfigError(#[from] eth::errors::EthClientError),
     #[error("Error parsing the .toml configuration files: {0}")]
     TomlParserError(#[from] TomlParserError),
+    #[error("Error parsing '{0}' as hex value")]
+    HexParsingError(String),
     #[error("{0}")]
     Custom(String),
 }

@@ -1,3 +1,4 @@
+mod payload_builder;
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -10,8 +11,9 @@ use ethrex_blockchain::{
 };
 use ethrex_common::Address;
 use ethrex_storage::Store;
-use ethrex_vm::backends::BlockExecutionResult;
+use ethrex_vm::BlockExecutionResult;
 use keccak_hash::H256;
+use payload_builder::build_payload;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
@@ -57,8 +59,9 @@ impl BlockProducer {
         execution_cache: Arc<ExecutionCache>,
     ) {
         loop {
-            if let Err(err) =
-                self.main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+            if let Err(err) = self
+                .main_logic(store.clone(), blockchain.clone(), execution_cache.clone())
+                .await
             {
                 error!("Block Producer Error: {}", err);
             }
@@ -67,7 +70,7 @@ impl BlockProducer {
         }
     }
 
-    pub fn main_logic(
+    pub async fn main_logic(
         &self,
         store: Store,
         blockchain: Arc<Blockchain>,
@@ -75,7 +78,7 @@ impl BlockProducer {
     ) -> Result<(), BlockProducerError> {
         let version = 3;
         let head_header = {
-            let current_block_number = store.get_latest_block_number()?;
+            let current_block_number = store.get_latest_block_number().await?;
             store
                 .get_block_header(current_block_number)?
                 .ok_or(BlockProducerError::StorageDataIsNone)?
@@ -99,32 +102,38 @@ impl BlockProducer {
             beacon_root: Some(head_beacon_block_root),
             version,
         };
-        let mut payload = create_payload(&args, &store)?;
+        let payload = create_payload(&args, &store)?;
 
         // Blockchain builds the payload from mempool txs and executes them
-        let payload_build_result = blockchain.build_payload(&mut payload)?;
-        info!("Built payload for new block {}", payload.header.number);
+        let payload_build_result = build_payload(blockchain.clone(), payload, &store).await?;
+        info!(
+            "Built payload for new block {}",
+            payload_build_result.payload.header.number
+        );
 
         // Blockchain stores block
-        let block = payload;
+        let block = payload_build_result.payload;
         let chain_config = store.get_chain_config()?;
         validate_block(&block, &head_header, &chain_config)?;
 
+        let account_updates = payload_build_result.account_updates;
+
         let execution_result = BlockExecutionResult {
-            account_updates: payload_build_result.account_updates,
             receipts: payload_build_result.receipts,
             requests: Vec::new(),
         };
 
-        blockchain.store_block(&block, execution_result.clone())?;
+        blockchain
+            .store_block(&block, execution_result.clone(), &account_updates)
+            .await?;
         info!("Stored new block {:x}", block.hash());
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         // Cache execution result
-        execution_cache.push(block.hash(), execution_result.account_updates)?;
+        execution_cache.push(block.hash(), account_updates)?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&store, block.hash(), block.hash(), block.hash())?;
+        apply_fork_choice(&store, block.hash(), block.hash(), block.hash()).await?;
 
         Ok(())
     }

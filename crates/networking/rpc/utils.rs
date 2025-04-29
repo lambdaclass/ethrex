@@ -1,3 +1,4 @@
+use ethrex_common::{types::Transaction, Address, H256};
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
 use serde::{Deserialize, Serialize};
@@ -279,6 +280,61 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
     }
 }
 
+/// Returns the formated hash of the withdrawal transaction,
+/// or None if the transaction is not a withdrawal.
+/// The hash is computed as keccak256(to || value || tx_hash)
+pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
+    let to_bytes: [u8; 20] = match tx.data().get(16..36)?.try_into() {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
+    let to = Address::from(to_bytes);
+
+    let value = tx.value().to_big_endian();
+
+    Some(keccak_hash::keccak(
+        [to.as_bytes(), &value, tx.compute_hash().as_bytes()].concat(),
+    ))
+}
+
+pub fn merkle_proof(data: Vec<H256>, base_element: H256) -> Option<Vec<H256>> {
+    use keccak_hash::keccak;
+
+    if !data.contains(&base_element) {
+        return None;
+    }
+
+    let mut proof = vec![];
+    let mut data = data;
+
+    let mut target_hash = base_element;
+    let mut first = true;
+    while data.len() > 1 || first {
+        first = false;
+        let current_target = target_hash;
+        data = data
+            .chunks(2)
+            .flat_map(|chunk| -> Option<H256> {
+                let left = chunk.first().copied()?;
+
+                let right = chunk.get(1).copied().unwrap_or(left);
+                let result = keccak([left.as_bytes(), right.as_bytes()].concat())
+                    .as_fixed_bytes()
+                    .into();
+                if left == current_target {
+                    proof.push(right);
+                    target_hash = result;
+                } else if right == current_target {
+                    proof.push(left);
+                    target_hash = result;
+                }
+                Some(result)
+            })
+            .collect();
+    }
+    Some(proof)
+}
+
 #[cfg(test)]
 pub mod test_utils {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
@@ -286,17 +342,19 @@ pub mod test_utils {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::H512;
     use ethrex_p2p::{
-        sync::SyncManager,
+        sync_manager::SyncManager,
         types::{Node, NodeRecord},
     };
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
 
-    use crate::start_api;
+    use crate::rpc::{start_api, RpcApiContext};
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
     use bytes::Bytes;
+    #[cfg(feature = "l2")]
+    use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
     #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
 
@@ -342,6 +400,7 @@ pub mod test_utils {
             Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
         storage
             .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
+            .await
             .expect("Failed to build test genesis");
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
@@ -354,6 +413,9 @@ pub mod test_utils {
         let valid_delegation_addresses = Vec::new();
         #[cfg(feature = "l2")]
         let sponsor_pk = SecretKey::new(&mut rand::thread_rng());
+        #[cfg(feature = "l2")]
+        let rollup_store = StoreRollup::new("", EngineTypeRollup::InMemory)
+            .expect("Failed to create in-memory storage");
         start_api(
             http_addr,
             authrpc_addr,
@@ -373,7 +435,35 @@ pub mod test_utils {
             valid_delegation_addresses,
             #[cfg(feature = "l2")]
             sponsor_pk,
+            #[cfg(feature = "l2")]
+            rollup_store,
         )
         .await;
+    }
+
+    pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
+        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        RpcApiContext {
+            storage,
+            blockchain,
+            jwt_secret: Default::default(),
+            local_p2p_node: example_p2p_node(),
+            local_node_record: example_local_node_record(),
+            active_filters: Default::default(),
+            syncer: Arc::new(SyncManager::dummy()),
+            #[cfg(feature = "based")]
+            gateway_eth_client: EthClient::new(""),
+            #[cfg(feature = "based")]
+            gateway_auth_client: EngineClient::new("", Bytes::default()),
+            #[cfg(feature = "based")]
+            gateway_pubkey: Default::default(),
+            #[cfg(feature = "l2")]
+            valid_delegation_addresses: Vec::new(),
+            #[cfg(feature = "l2")]
+            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            rollup_store: StoreRollup::new("test-store", EngineTypeRollup::InMemory)
+                .expect("Fail to create in-memory db test"),
+        }
     }
 }

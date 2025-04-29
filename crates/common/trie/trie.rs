@@ -75,7 +75,7 @@ impl Trie {
         if let Some(root) = &self.root {
             let root_node = self
                 .state
-                .get_node(root.clone())?
+                .get_node(*root)?
                 .ok_or(TrieError::InconsistentTree)?;
             root_node.get(&self.state, Nibbles::from_bytes(path))
         } else {
@@ -92,8 +92,7 @@ impl Trie {
             .flatten()
         {
             // If the trie is not empty, call the root node's insertion logic
-            let root_node =
-                root_node.insert(&mut self.state, Nibbles::from_bytes(&path), value.clone())?;
+            let root_node = root_node.insert(&mut self.state, Nibbles::from_bytes(&path), value)?;
             self.root = Some(root_node.insert_self(&mut self.state)?)
         } else {
             // If the trie is empty, just add a leaf.
@@ -131,7 +130,7 @@ impl Trie {
         Ok(self
             .root
             .as_ref()
-            .map(|root| root.clone().finalize())
+            .map(|root| root.finalize())
             .unwrap_or(*EMPTY_TRIE_HASH))
     }
 
@@ -140,7 +139,7 @@ impl Trie {
     pub fn hash_no_commit(&self) -> H256 {
         self.root
             .as_ref()
-            .map(|root| root.clone().finalize())
+            .map(|root| root.finalize())
             .unwrap_or(*EMPTY_TRIE_HASH)
     }
 
@@ -161,10 +160,10 @@ impl Trie {
             return Ok(node_path);
         };
         // If the root is inlined, add it to the node_path
-        if let NodeHash::Inline(node) = root {
-            node_path.push(node.to_vec());
+        if let NodeHash::Inline(_) = root {
+            node_path.push(root.as_ref().to_vec());
         }
-        if let Some(root_node) = self.state.get_node(root.clone())? {
+        if let Some(root_node) = self.state.get_node(*root)? {
             root_node.get_path(&self.state, Nibbles::from_bytes(path), &mut node_path)?;
         }
         Ok(node_path)
@@ -180,7 +179,7 @@ impl Trie {
         let Some(root_node) = self
             .root
             .as_ref()
-            .map(|root| self.state.get_node(root.clone()))
+            .map(|root| self.state.get_node(*root))
             .transpose()?
             .flatten()
         else {
@@ -197,7 +196,7 @@ impl Trie {
         // dedup
         // TODO: really inefficient, by making the traversing smarter we can avoid having
         // duplicates
-        let node_path: HashSet<_> = node_path.drain(..).collect();
+        let node_path: HashSet<_> = node_path.into_iter().collect();
         let node_path = Vec::from_iter(node_path);
         Ok((Some(root_node.encode_raw()), node_path))
     }
@@ -233,7 +232,7 @@ impl Trie {
         }
         trie.root
             .as_ref()
-            .map(|root| root.clone().finalize())
+            .map(|root| root.finalize())
             .unwrap_or(*EMPTY_TRIE_HASH)
     }
 
@@ -277,7 +276,7 @@ impl Trie {
         let Some(root_node) = self
             .root
             .as_ref()
-            .map(|root| self.state.get_node(root.clone()))
+            .map(|root| self.state.get_node(*root))
             .transpose()?
             .flatten()
         else {
@@ -298,7 +297,7 @@ impl Trie {
                     if child_hash.is_valid() {
                         let child_node = self
                             .state
-                            .get_node(child_hash.clone())?
+                            .get_node(*child_hash)?
                             .ok_or(TrieError::InconsistentTree)?;
                         self.get_node_inner(child_node, partial_path)
                     } else {
@@ -313,7 +312,7 @@ impl Trie {
                 {
                     let child_node = self
                         .state
-                        .get_node(extension_node.child.clone())?
+                        .get_node(extension_node.child)?
                         .ok_or(TrieError::InconsistentTree)?;
                     self.get_node_inner(child_node, partial_path)
                 } else {

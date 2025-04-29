@@ -11,14 +11,18 @@ pub struct CommitterConfig {
     pub l1_address: Address,
     #[serde(deserialize_with = "secret_key_deserializer")]
     pub l1_private_key: SecretKey,
-    pub interval_ms: u64,
+    pub commit_time_ms: u64,
     pub arbitrary_base_blob_gas_price: u64,
+    pub validium: bool,
 }
 
 impl CommitterConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         envy::prefixed("COMMITTER_")
             .from_env::<Self>()
-            .map_err(ConfigError::from)
+            .map_err(|e| ConfigError::ConfigDeserializationError {
+                err: e,
+                from: "CommitterConfig".to_string(),
+            })
     }
 }

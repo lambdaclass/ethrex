@@ -5,11 +5,13 @@ use self::revm::db::evm_state;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
 use crate::{db::StoreWrapper, errors::EvmError};
+use crate::{ExecutionDB, ExecutionDBError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
 };
 use ethrex_common::{Address, H256};
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
@@ -38,14 +40,10 @@ impl TryFrom<String> for EvmEngine {
     }
 }
 
+#[derive(Clone)]
 pub enum Evm {
-    REVM {
-        state: EvmState,
-    },
-    LEVM {
-        store_wrapper: StoreWrapper,
-        block_cache: CacheDB,
-    },
+    REVM { state: EvmState },
+    LEVM { db: GeneralizedDatabase },
 }
 
 impl std::fmt::Debug for Evm {
@@ -67,13 +65,28 @@ impl Evm {
                 state: evm_state(store.clone(), parent_hash),
             },
             EvmEngine::LEVM => Evm::LEVM {
-                store_wrapper: StoreWrapper {
-                    store: store.clone(),
-                    block_hash: parent_hash,
-                },
-                block_cache: CacheDB::new(),
+                db: GeneralizedDatabase::new(
+                    Arc::new(StoreWrapper {
+                        store: store.clone(),
+                        block_hash: parent_hash,
+                    }),
+                    CacheDB::new(),
+                ),
             },
         }
+    }
+
+    pub fn from_execution_db(db: ExecutionDB) -> Self {
+        Evm::LEVM {
+            db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
+        }
+    }
+
+    pub async fn to_execution_db(
+        store: &Store,
+        blocks: &[Block],
+    ) -> Result<ExecutionDB, ExecutionDBError> {
+        LEVM::to_execution_db(blocks, store).await
     }
 
     pub fn default(store: Store, parent_hash: H256) -> Self {
@@ -82,29 +95,8 @@ impl Evm {
 
     pub fn execute_block(&mut self, block: &Block) -> Result<BlockExecutionResult, EvmError> {
         match self {
-            Evm::REVM { state } => {
-                let mut state =
-                    evm_state(state.database().unwrap().clone(), block.header.parent_hash);
-                REVM::execute_block(block, &mut state)
-            }
-            Evm::LEVM { store_wrapper, .. } => LEVM::execute_block(
-                block,
-                Arc::new(store_wrapper.clone()),
-                store_wrapper.store.get_chain_config()?,
-            ),
-        }
-    }
-
-    pub fn execute_block_without_clearing_state(
-        &mut self,
-        block: &Block,
-    ) -> Result<BlockExecutionResult, EvmError> {
-        match self {
             Evm::REVM { state } => REVM::execute_block(block, state),
-            Evm::LEVM { .. } => {
-                // TODO(#2218): LEVM does not support a way  persist the state between block executions
-                todo!();
-            }
+            Evm::LEVM { db } => LEVM::execute_block(block, db),
         }
     }
 
@@ -140,35 +132,10 @@ impl Evm {
 
                 Ok((receipt, execution_result.gas_used()))
             }
-            Evm::LEVM {
-                store_wrapper,
-                block_cache,
-            } => {
-                store_wrapper.block_hash = block_header.parent_hash; // JIC
-                let store = store_wrapper.store.clone();
-                let chain_config = store.get_chain_config()?;
-
-                let execution_report = LEVM::execute_tx(
-                    tx,
-                    sender,
-                    block_header,
-                    Arc::new(store_wrapper.clone()),
-                    block_cache.clone(),
-                    &chain_config,
-                )?;
+            Evm::LEVM { db } => {
+                let execution_report = LEVM::execute_tx(tx, sender, block_header, db)?;
 
                 *remaining_gas = remaining_gas.saturating_sub(execution_report.gas_used);
-
-                let mut new_state = execution_report.new_state.clone();
-
-                // Now original_value is going to be the same as the current_value, for the next transaction.
-                // It should have only one value but it is convenient to keep on using our CacheDB structure
-                for account in new_state.values_mut() {
-                    for storage_slot in account.storage.values_mut() {
-                        storage_slot.original_value = storage_slot.current_value;
-                    }
-                }
-                block_cache.extend(new_state);
 
                 let receipt = Receipt::new(
                     tx.tx_type(),
@@ -176,6 +143,7 @@ impl Evm {
                     block_header.gas_limit - *remaining_gas,
                     execution_report.logs.clone(),
                 );
+
                 Ok((receipt, execution_report.gas_used))
             }
         }
@@ -196,43 +164,21 @@ impl Evm {
                 if spec_id >= SpecId::PRAGUE {
                     REVM::process_block_hash_history(block_header, state)?;
                 }
+
                 Ok(())
             }
-            Evm::LEVM {
-                store_wrapper,
-                block_cache,
-            } => {
-                let chain_config = store_wrapper.store.get_chain_config()?;
+            Evm::LEVM { db } => {
+                let chain_config = db.store.get_chain_config();
                 let fork = chain_config.fork(block_header.timestamp);
-                let mut new_state = CacheDB::new();
 
                 if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
-                    LEVM::beacon_root_contract_call(
-                        block_header,
-                        chain_config,
-                        Arc::new(store_wrapper.clone()),
-                        &mut new_state,
-                    )?;
+                    LEVM::beacon_root_contract_call(block_header, db)?;
                 }
 
                 if fork >= Fork::Prague {
-                    LEVM::process_block_hash_history(
-                        block_header,
-                        chain_config,
-                        Arc::new(store_wrapper.clone()),
-                        &mut new_state,
-                    )?;
+                    LEVM::process_block_hash_history(block_header, db)?;
                 }
 
-                // Now original_value is going to be the same as the current_value, for the next transaction.
-                // It should have only one value but it is convenient to keep on using our CacheDB structure
-                for account in new_state.values_mut() {
-                    for storage_slot in account.storage.values_mut() {
-                        storage_slot.original_value = storage_slot.current_value;
-                    }
-                }
-
-                block_cache.extend(new_state);
                 Ok(())
             }
         }
@@ -246,56 +192,19 @@ impl Evm {
     /// [LEVM::get_state_transitions] gathers the information from a [CacheDB].
     ///
     /// They may have the same name, but they serve for different purposes.
-    pub fn get_state_transitions(
-        &mut self,
-        parent_hash: H256,
-    ) -> Result<Vec<AccountUpdate>, EvmError> {
+    pub fn get_state_transitions(&mut self, fork: Fork) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
-            Evm::LEVM {
-                store_wrapper,
-                block_cache,
-            } => {
-                store_wrapper.block_hash = parent_hash;
-                let block_header = store_wrapper
-                    .store
-                    .get_block_header_by_hash(parent_hash)?
-                    .unwrap();
-                LEVM::get_state_transitions(
-                    None,
-                    Arc::new(store_wrapper.clone()),
-                    store_wrapper.store.get_chain_config()?,
-                    &block_header,
-                    block_cache,
-                )
-            }
+            Evm::LEVM { db } => LEVM::get_state_transitions(db, fork),
         }
     }
 
     /// Wraps the [REVM::process_withdrawals] and [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
-    pub fn process_withdrawals(
-        &mut self,
-        withdrawals: &[Withdrawal],
-        block_header: &BlockHeader,
-    ) -> Result<(), StoreError> {
+    pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), StoreError> {
         match self {
             Evm::REVM { state } => REVM::process_withdrawals(state, withdrawals),
-            Evm::LEVM {
-                store_wrapper,
-                block_cache,
-            } => {
-                let parent_hash = block_header.parent_hash;
-                let mut new_state = CacheDB::new();
-                LEVM::process_withdrawals(
-                    &mut new_state,
-                    withdrawals,
-                    &store_wrapper.store,
-                    parent_hash,
-                )?;
-                block_cache.extend(new_state);
-                Ok(())
-            }
+            Evm::LEVM { db } => LEVM::process_withdrawals(db, withdrawals),
         }
     }
 
@@ -305,16 +214,7 @@ impl Evm {
         header: &BlockHeader,
     ) -> Result<Vec<Requests>, EvmError> {
         match self {
-            Evm::LEVM {
-                store_wrapper,
-                block_cache,
-            } => levm::extract_all_requests_levm(
-                receipts,
-                Arc::new(store_wrapper.clone()),
-                store_wrapper.store.get_chain_config()?,
-                header,
-                block_cache,
-            ),
+            Evm::LEVM { db } => levm::extract_all_requests_levm(receipts, db, header),
             Evm::REVM { state } => revm::extract_all_requests(receipts, state, header),
         }
     }
@@ -325,20 +225,12 @@ impl Evm {
         header: &BlockHeader,
         fork: Fork,
     ) -> Result<ExecutionResult, EvmError> {
-        let spec_id = fork_to_spec_id(fork);
-
         match self {
             Evm::REVM { state } => {
+                let spec_id = fork_to_spec_id(fork);
                 self::revm::helpers::simulate_tx_from_generic(tx, header, state, spec_id)
             }
-            Evm::LEVM {
-                store_wrapper,
-                block_cache,
-            } => {
-                store_wrapper.block_hash = header.parent_hash;
-
-                LEVM::simulate_tx_from_generic(tx, header, store_wrapper, block_cache.clone())
-            }
+            Evm::LEVM { db } => LEVM::simulate_tx_from_generic(tx, header, db),
         }
     }
 
@@ -348,17 +240,13 @@ impl Evm {
         header: &BlockHeader,
         fork: Fork,
     ) -> Result<(u64, AccessList, Option<String>), EvmError> {
-        let spec_id = fork_to_spec_id(fork);
-
         let result = match self {
             Evm::REVM { state } => {
+                let spec_id = fork_to_spec_id(fork);
                 self::revm::helpers::create_access_list(tx, header, state, spec_id)?
             }
 
-            Evm::LEVM {
-                store_wrapper,
-                block_cache,
-            } => LEVM::create_access_list(tx.clone(), header, store_wrapper, block_cache)?,
+            Evm::LEVM { db } => LEVM::create_access_list(tx.clone(), header, db)?,
         };
         match result {
             (
@@ -388,9 +276,8 @@ impl Evm {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockExecutionResult {
     pub receipts: Vec<Receipt>,
     pub requests: Vec<Requests>,
-    pub account_updates: Vec<AccountUpdate>,
 }

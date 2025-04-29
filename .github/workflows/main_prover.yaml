@@ -1,0 +1,81 @@
+name: L2 (SP1 Backend)
+on:
+  pull_request:
+    branches: ["**"]
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CI_ETHREX_WORKDIR: /usr/local/bin
+  PROVER: sp1
+
+jobs:
+  test:
+    name: Integration Test Prover SP1
+    runs-on: gpu
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustup toolchain install
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Rust cache
+        if: ${{ always() && github.event_name == 'merge_group' }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: "true"
+
+      - name: RISC-V SP1 toolchain install
+        if: ${{ always() && github.event_name == 'merge_group' }}
+        run: |
+          . "$HOME/.cargo/env"
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up --version 4.1.0
+
+      - name: Set up Docker Buildx
+        if: ${{ always() && github.event_name == 'merge_group' }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Bake docker images
+        if: ${{ always() && github.event_name == 'merge_group' }}
+        uses: docker/bake-action@v6
+        with:
+          workdir: "crates/l2"
+          files: "crates/l2/docker-compose-l2.yaml"
+          load: true
+          set: |
+            *.cache-to=type=gha,mode=max
+            *.cache-from=type=gha
+
+      - name: Build prover
+        if: ${{ always() && github.event_name == 'merge_group' }}
+        run: |
+          cd crates/l2
+          make build-prover
+
+      - name: Build test
+        if: ${{ always() && github.event_name == 'merge_group' }}
+        run: |
+          cargo test l2 --no-run --release
+
+      - name: Run test
+        if: ${{ always() && github.event_name == 'merge_group' }}
+        run: |
+          cd crates/l2
+          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
+          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
+
+          sed -i 's/sp1_deploy_verifier = false/sp1_deploy_verifier = true/' configs/sequencer_config.toml
+          sed -i 's/block_time_ms = 5000/block_time_ms = 12000/' configs/sequencer_config.toml
+          sed -i 's/listen_ip = "127.0.0.1"/listen_ip = "0.0.0.0"/' configs/sequencer_config.toml
+          sed -i 's/dev_mode = true/dev_mode = false/' configs/sequencer_config.toml
+
+          make integration-test-gpu
+
+      - name: Ensure admin permissions in _work
+        if: always()
+        run: sudo chown admin:admin -R /home/admin/actions-runner/_work/

@@ -11,9 +11,9 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::{
+    rpc::{RpcApiContext, RpcHandler},
     types::block_identifier::BlockIdentifier,
     utils::{parse_json_hex, RpcErr},
-    RpcApiContext, RpcHandler,
 };
 use ethrex_storage::Store;
 
@@ -84,7 +84,7 @@ impl RpcHandler for FeeHistoryRequest {
         })
     }
 
-    fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let config = storage.get_chain_config()?;
         info!(
@@ -97,7 +97,8 @@ impl RpcHandler for FeeHistoryRequest {
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         }
 
-        let (start_block, end_block) = get_range(storage, self.block_count, &self.newest_block)?;
+        let (start_block, end_block) =
+            get_range(storage, self.block_count, &self.newest_block).await?;
         let oldest_block = start_block;
         let block_count = (end_block - start_block + 1) as usize;
         let mut base_fee_per_gas = vec![0_u64; block_count + 1];
@@ -114,7 +115,8 @@ impl RpcHandler for FeeHistoryRequest {
                     "Could not get header for block {block_number}"
                 )))?;
             let body = storage
-                .get_block_body(block_number)?
+                .get_block_body(block_number)
+                .await?
                 .ok_or(RpcErr::Internal(format!(
                     "Could not get body for block {block_number}"
                 )))?;
@@ -212,7 +214,7 @@ fn project_next_block_base_fee_values(
     (base_fee_per_gas, base_fee_per_blob)
 }
 
-fn get_range(
+async fn get_range(
     storage: &Store,
     block_count: u64,
     expected_finish_block: &BlockIdentifier,
@@ -220,16 +222,16 @@ fn get_range(
     // NOTE: The amount of blocks to retrieve is capped by MAX_BLOCK_COUNT
 
     // Get earliest block
-    let earliest_block_num = storage.get_earliest_block_number()?;
+    let earliest_block_num = storage.get_earliest_block_number().await?;
     // Get latest block
-    let latest_block_num = storage.get_latest_block_number()?;
+    let latest_block_num = storage.get_latest_block_number().await?;
     // Get the expected finish block number from the parameter
-    let expected_finish_block_num =
-        expected_finish_block
-            .resolve_block_number(storage)?
-            .ok_or(RpcErr::Internal(
-                "Could not resolve block number".to_owned(),
-            ))?;
+    let expected_finish_block_num = expected_finish_block
+        .resolve_block_number(storage)
+        .await?
+        .ok_or(RpcErr::Internal(
+            "Could not resolve block number".to_owned(),
+        ))?;
     // Calculate start and finish block numbers, considering finish block inclusion
     let finish_block_num = expected_finish_block_num.min(latest_block_num);
     let expected_start_block_num = (finish_block_num + 1).saturating_sub(block_count);

@@ -1,9 +1,9 @@
-use crate::account::Account;
 use bytes::Bytes;
-use ethrex_common::{types::Log, Address};
+use ethrex_common::types::Log;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use thiserror;
+
+use crate::db::error::DatabaseError;
 
 /// Errors that halt the program
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -60,8 +60,6 @@ pub enum VMError {
     MemorySizeOverflow,
     #[error("Nonce overflowed")]
     NonceOverflow,
-    #[error("Nonce underflowed")]
-    NonceUnderflow,
     // OutOfGas
     #[error("Out Of Gas")]
     OutOfGas(#[from] OutOfGasError),
@@ -74,6 +72,8 @@ pub enum VMError {
     OutOfBounds,
     #[error("Precompile execution error: {0}")]
     PrecompileError(#[from] PrecompileError),
+    #[error("Database access error: {0}")]
+    DatabaseError(#[from] DatabaseError),
 }
 
 impl VMError {
@@ -232,7 +232,6 @@ pub enum TxResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionReport {
     pub result: TxResult,
-    pub new_state: HashMap<Address, Account>,
     pub gas_used: u64,
     pub gas_refunded: u64,
     pub output: Bytes,
@@ -240,21 +239,6 @@ pub struct ExecutionReport {
 }
 
 impl ExecutionReport {
-    /// Function to add gas to report without exceeding the maximum gas limit
-    pub fn add_gas_with_max(&mut self, gas: u64, max: u64) -> Result<(), VMError> {
-        let new_gas_used = self
-            .gas_used
-            .checked_add(gas)
-            .ok_or(OutOfGasError::MaxGasLimitExceeded)?;
-
-        if new_gas_used > max {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-        }
-
-        self.gas_used = new_gas_used;
-        Ok(())
-    }
-
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
     }

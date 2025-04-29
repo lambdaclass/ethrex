@@ -3,23 +3,16 @@ use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::merkle_tree::merkle_proof;
-use ethrex_l2_sdk::{get_withdrawal_hash, COMMON_BRIDGE_L2_ADDRESS, L2_WITHDRAW_SIGNATURE};
+use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, L2_WITHDRAW_SIGNATURE};
 use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, EthClient};
-use ethrex_rpc::types::block::BlockBodyWrapper;
-use eyre::OptionExt;
 use hex::FromHexError;
-use itertools::Itertools;
-
-const CLAIM_WITHDRAWAL_SIGNATURE: &str =
-    "claimWithdrawal(bytes32,uint256,uint256,uint256,bytes32[])";
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
     #[clap(about = "Get the balance of the wallet.")]
     Balance {
-        #[clap(long = "token")]
+        #[arg(long = "token")]
         token_address: Option<Address>,
         #[arg(long = "l2", required = false)]
         l2: bool,
@@ -31,7 +24,7 @@ pub(crate) enum Command {
     #[clap(about = "Deposit funds into some wallet.")]
     Deposit {
         // TODO: Parse ether instead.
-        #[clap(long = "amount", value_parser = U256::from_dec_str)]
+        #[arg(long = "amount", value_parser = U256::from_dec_str)]
         amount: U256,
         #[clap(
             long = "token",
@@ -43,29 +36,29 @@ pub(crate) enum Command {
             help = "Specify the wallet in which you want to deposit your funds."
         )]
         to: Option<Address>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
-        #[clap(long, short = 'e', required = false)]
+        #[arg(long, short = 'e', required = false)]
         explorer_url: bool,
     },
     #[clap(about = "Finalize a pending withdrawal.")]
     ClaimWithdraw {
         l2_withdrawal_tx_hash: H256,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
     #[clap(about = "Transfer funds to another wallet.")]
     Transfer {
         // TODO: Parse ether instead.
-        #[clap(long = "amount", value_parser = U256::from_dec_str)]
+        #[arg(long = "amount", value_parser = U256::from_dec_str)]
         amount: U256,
-        #[clap(long = "token")]
+        #[arg(long = "token")]
         token_address: Option<Address>,
-        #[clap(long = "to")]
+        #[arg(long = "to")]
         to: Address,
-        #[clap(long = "nonce")]
+        #[arg(long = "nonce")]
         nonce: Option<u64>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
         #[clap(
             long = "l1",
@@ -73,31 +66,31 @@ pub(crate) enum Command {
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
         )]
         l1: bool,
-        #[clap(long, short = 'e', required = false)]
+        #[arg(long, short = 'e', required = false)]
         explorer_url: bool,
     },
     #[clap(about = "Withdraw funds from the wallet.")]
     Withdraw {
         // TODO: Parse ether instead.
-        #[clap(long = "amount", value_parser = U256::from_dec_str)]
+        #[arg(long = "amount", value_parser = U256::from_dec_str)]
         amount: U256,
-        #[clap(long = "to")]
+        #[arg(long = "to")]
         to: Option<Address>,
-        #[clap(long = "nonce")]
+        #[arg(long = "nonce")]
         nonce: Option<u64>,
         #[clap(
             long = "token",
             help = "Specify the token address, the base token is used as default."
         )]
         token_address: Option<Address>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
-        #[clap(long, short = 'e', required = false)]
+        #[arg(long, short = 'e', required = false)]
         explorer_url: bool,
     },
     #[clap(about = "Get the withdrawal merkle proof of a transaction.")]
     WithdrawalProof {
-        #[clap(long = "hash")]
+        #[arg(long = "hash")]
         tx_hash: H256,
     },
     #[clap(about = "Get the wallet address.")]
@@ -106,7 +99,7 @@ pub(crate) enum Command {
     PrivateKey,
     #[clap(about = "Send a transaction")]
     Send {
-        #[clap(long = "to")]
+        #[arg(long = "to")]
         to: Address,
         #[clap(
             long = "value",
@@ -116,7 +109,7 @@ pub(crate) enum Command {
             help = "Value to send in wei"
         )]
         value: U256,
-        #[clap(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
+        #[arg(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
         calldata: Bytes,
         #[clap(
             long = "l1",
@@ -124,24 +117,24 @@ pub(crate) enum Command {
             help = "If set it will do an L1 transfer, defaults to an L2 transfer"
         )]
         l1: bool,
-        #[clap(long = "chain-id", required = false)]
+        #[arg(long = "chain-id", required = false)]
         chain_id: Option<u64>,
-        #[clap(long = "nonce", required = false)]
+        #[arg(long = "nonce", required = false)]
         nonce: Option<u64>,
-        #[clap(long = "gas-limit", required = false)]
+        #[arg(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
-        #[clap(long = "gas-price", required = false)]
+        #[arg(long = "gas-price", required = false)]
         max_fee_per_gas: Option<u64>,
-        #[clap(long = "priority-gas-price", required = false)]
+        #[arg(long = "priority-gas-price", required = false)]
         max_priority_fee_per_gas: Option<u64>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
     #[clap(about = "Make a call to a contract")]
     Call {
-        #[clap(long = "to")]
+        #[arg(long = "to")]
         to: Address,
-        #[clap(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
+        #[arg(long = "calldata", value_parser = decode_hex, required = false, default_value = "")]
         calldata: Bytes,
         #[clap(
             long = "l1",
@@ -157,16 +150,16 @@ pub(crate) enum Command {
             help = "Value to send in wei"
         )]
         value: U256,
-        #[clap(long = "from", required = false)]
+        #[arg(long = "from", required = false)]
         from: Option<Address>,
-        #[clap(long = "gas-limit", required = false)]
+        #[arg(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
-        #[clap(long = "gas-price", required = false)]
+        #[arg(long = "gas-price", required = false)]
         max_fee_per_gas: Option<u64>,
     },
     #[clap(about = "Deploy a contract")]
     Deploy {
-        #[clap(long = "bytecode", value_parser = decode_hex)]
+        #[arg(long = "bytecode", value_parser = decode_hex)]
         bytecode: Bytes,
         #[clap(
             long = "l1",
@@ -182,17 +175,17 @@ pub(crate) enum Command {
             help = "Value to send in wei"
         )]
         value: U256,
-        #[clap(long = "chain-id", required = false)]
+        #[arg(long = "chain-id", required = false)]
         chain_id: Option<u64>,
-        #[clap(long = "nonce", required = false)]
+        #[arg(long = "nonce", required = false)]
         nonce: Option<u64>,
-        #[clap(long = "gas-limit", required = false)]
+        #[arg(long = "gas-limit", required = false)]
         gas_limit: Option<u64>,
-        #[clap(long = "gas-price", required = false)]
+        #[arg(long = "gas-price", required = false)]
         max_fee_per_gas: Option<u64>,
-        #[clap(long = "priority-gas-price", required = false)]
+        #[arg(long = "priority-gas-price", required = false)]
         max_priority_fee_per_gas: Option<u64>,
-        #[clap(short = 'w', required = false)]
+        #[arg(short = 'w', required = false)]
         wait_for_receipt: bool,
     },
 }
@@ -202,48 +195,6 @@ fn decode_hex(s: &str) -> Result<Bytes, FromHexError> {
         Some(s) => hex::decode(s).map(Into::into),
         None => hex::decode(s).map(Into::into),
     }
-}
-
-async fn get_withdraw_merkle_proof(
-    client: &EthClient,
-    tx_hash: H256,
-) -> Result<(u64, Vec<H256>), eyre::Error> {
-    let tx_receipt = client
-        .get_transaction_receipt(tx_hash)
-        .await?
-        .ok_or_eyre("Transaction receipt not found")?;
-
-    let block = client
-        .get_block_by_hash(tx_receipt.block_info.block_hash)
-        .await?;
-
-    let transactions = match block.body {
-        BlockBodyWrapper::Full(body) => body.transactions,
-        BlockBodyWrapper::OnlyHashes(_) => unreachable!(),
-    };
-
-    let (index, tx_withdrawal_hash) = transactions
-        .iter()
-        .find_position(|tx| tx.hash == tx_hash)
-        .map(|(i, tx)| (i as u64, get_withdrawal_hash(&tx.tx).unwrap()))
-        .ok_or_eyre("Transaction is not a Withdrawal")?;
-
-    let path = merkle_proof(
-        transactions
-            .iter()
-            .filter_map(|tx| get_withdrawal_hash(&tx.tx))
-            .collect(),
-        tx_withdrawal_hash,
-    )
-    .map_err(|err| {
-        eyre::eyre!(
-            "Failed to generate merkle proof in get_withdraw_merkle_proof: {:?}",
-            err
-        )
-    })?
-    .ok_or_eyre("Transaction's WithdrawalData is not in block's WithdrawalDataMerkleRoot")?;
-
-    Ok((index, path))
 }
 
 impl Command {
@@ -315,62 +266,40 @@ impl Command {
                 l2_withdrawal_tx_hash,
                 wait_for_receipt,
             } => {
-                let (withdrawal_l2_block_number, claimed_amount) = match rollup_client
+                let claimed_amount = match rollup_client
                     .get_transaction_by_hash(l2_withdrawal_tx_hash)
                     .await?
                 {
-                    Some(l2_withdrawal_tx) => {
-                        (l2_withdrawal_tx.block_number, l2_withdrawal_tx.value)
-                    }
+                    Some(l2_withdrawal_tx) => l2_withdrawal_tx.value,
                     None => {
                         println!("Withdrawal transaction not found in L2");
                         return Ok(());
                     }
                 };
 
-                let (index, proof) =
-                    get_withdraw_merkle_proof(&rollup_client, l2_withdrawal_tx_hash).await?;
+                let withdrawal_proof = match rollup_client
+                    .get_withdrawal_proof(l2_withdrawal_tx_hash)
+                    .await?
+                {
+                    Some(withdrawal_proof) => withdrawal_proof,
+                    None => {
+                        println!("Withdrawal proof not found in L2");
+                        return Ok(());
+                    }
+                };
 
-                let mut values = vec![
-                    Value::Uint(U256::from_big_endian(
-                        l2_withdrawal_tx_hash.as_fixed_bytes(),
-                    )),
-                    Value::Uint(claimed_amount),
-                    Value::Uint(withdrawal_l2_block_number),
-                    Value::Uint(U256::from(index)),
-                ];
-
-                for hash in proof {
-                    values.push(Value::Uint(U256::from_big_endian(hash.as_fixed_bytes())));
-                }
-
-                let claim_withdrawal_data =
-                    encode_calldata(CLAIM_WITHDRAWAL_SIGNATURE, &values).unwrap();
-                println!(
-                    "ClaimWithdrawalData: {}",
-                    hex::encode(&claim_withdrawal_data)
-                );
-
-                let tx = eth_client
-                    .build_eip1559_transaction(
-                        cfg.contracts.common_bridge,
-                        cfg.wallet.address,
-                        claim_withdrawal_data.into(),
-                        Overrides {
-                            chain_id: Some(cfg.network.l1_chain_id),
-                            from: Some(cfg.wallet.address),
-                            ..Default::default()
-                        },
-                    )
-                    .await?;
-                let tx_hash = eth_client
-                    .send_eip1559_transaction(&tx, &cfg.wallet.private_key)
-                    .await?;
-
-                println!("Withdrawal claim sent: {tx_hash:#x}");
+                let claim_tx = ethrex_l2_sdk::claim_withdraw(
+                    claimed_amount,
+                    l2_withdrawal_tx_hash,
+                    cfg.wallet.address,
+                    cfg.wallet.private_key,
+                    &eth_client,
+                    &withdrawal_proof,
+                )
+                .await?;
 
                 if wait_for_receipt {
-                    wait_for_transaction_receipt(&eth_client, tx_hash).await?;
+                    wait_for_transaction_receipt(&eth_client, claim_tx).await?;
                 }
             }
             Command::Transfer {
@@ -432,6 +361,7 @@ impl Command {
                 let withdraw_transaction = rollup_client
                     .build_privileged_transaction(
                         to.unwrap_or(cfg.wallet.address),
+                        to.unwrap_or(cfg.wallet.address),
                         COMMON_BRIDGE_L2_ADDRESS,
                         Bytes::from(encode_calldata(
                             L2_WITHDRAW_SIGNATURE,
@@ -449,7 +379,7 @@ impl Command {
                     .await?;
 
                 let tx_hash = rollup_client
-                    .send_privileged_l2_transaction(&withdraw_transaction, &cfg.wallet.private_key)
+                    .send_privileged_l2_transaction(&withdraw_transaction)
                     .await?;
 
                 println!("Withdrawal sent: {tx_hash:#x}");
@@ -459,8 +389,14 @@ impl Command {
                 }
             }
             Command::WithdrawalProof { tx_hash } => {
-                let (_index, path) = get_withdraw_merkle_proof(&rollup_client, tx_hash).await?;
-                println!("{path:?}");
+                let withdrawal_proof = match rollup_client.get_withdrawal_proof(tx_hash).await? {
+                    Some(withdrawal_proof) => withdrawal_proof,
+                    None => {
+                        println!("Withdrawal proof not found in L2");
+                        return Ok(());
+                    }
+                };
+                println!("{:?}", withdrawal_proof.merkle_proof);
             }
             Command::Address => {
                 todo!()

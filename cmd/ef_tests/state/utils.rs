@@ -1,21 +1,23 @@
+use std::sync::Arc;
+
 use crate::{
     runner::{EFTestRunnerError, InternalError},
     types::{EFTest, EFTestTransaction},
 };
 use ethrex_common::{types::Genesis, H256, U256};
+use ethrex_levm::db::{gen_db::GeneralizedDatabase, CacheDB};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::{
     backends::revm::db::{evm_state, EvmState},
     StoreWrapper,
 };
-use spinoff::Spinner;
 
 /// Loads initial state, used for REVM as it contains EvmState.
-pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
+pub async fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
     let genesis = Genesis::from(test);
 
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
-    storage.add_initial_state(genesis.clone()).unwrap();
+    storage.add_initial_state(genesis.clone()).await.unwrap();
 
     (
         evm_state(
@@ -27,34 +29,20 @@ pub fn load_initial_state(test: &EFTest) -> (EvmState, H256) {
 }
 
 /// Loads initial state, function for LEVM as it does not require EvmState
-pub fn load_initial_state_levm(test: &EFTest) -> StoreWrapper {
+pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let genesis = Genesis::from(test);
 
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
-    storage.add_initial_state(genesis.clone()).unwrap();
+    storage.add_initial_state(genesis.clone()).await.unwrap();
 
     let block_hash = genesis.get_block().header.compute_block_hash();
 
-    StoreWrapper {
+    let store = StoreWrapper {
         store: storage,
         block_hash,
-    }
-}
+    };
 
-pub fn spinner_update_text_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {
-    if !spinner_enabled {
-        println!("{}", text);
-    } else {
-        spinner.update_text(text);
-    }
-}
-
-pub fn spinner_success_or_print(spinner: &mut Spinner, text: String, spinner_enabled: bool) {
-    if !spinner_enabled {
-        println!("{}", text);
-    } else {
-        spinner.success(&text);
-    }
+    GeneralizedDatabase::new(Arc::new(store), CacheDB::new())
 }
 
 // If gas price is not provided, calculate it with current base fee and priority fee

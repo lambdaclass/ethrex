@@ -2,12 +2,29 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_common::types::{AccountInfo, AccountState, BlockHeader};
+use ethrex_common::types::{code_hash, AccountInfo, AccountState, BlockHeader, BlockNumber};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{hash_address, AccountUpdate};
+use ethrex_storage::{error::StoreError, hash_address, AccountUpdate, Store};
 use ethrex_trie::Trie;
 
 use super::errors::StateDiffError;
+
+// transactions_root(H256) + receipts_root(H256) + parent_hash(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64)
+// block_number(u64) + base_fee_per_gas(u64)
+// 32bytes + 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes + 8bytes
+pub const LAST_HEADER_FIELDS_SIZE: usize = 136;
+
+// address(H160) + amount(U256) + tx_hash(H256).
+// 20bytes + 32bytes + 32bytes.
+pub const L2_WITHDRAWAL_SIZE: usize = 84;
+
+// address(H160) + amount(U256).
+// 20bytes + 32bytes
+pub const L2_DEPOSIT_SIZE: usize = 52;
+
+// State diff size for a simple transfer.
+// Two `AccountUpdates` with new_balance, one of which also has nonce_diff.
+pub const TX_STATE_DIFF_SIZE: usize = 116;
 
 #[derive(Clone)]
 pub struct AccountStateDiff {
@@ -44,7 +61,7 @@ pub struct DepositLog {
 #[derive(Clone)]
 pub struct StateDiff {
     pub version: u8,
-    pub header: BlockHeader,
+    pub last_header: BlockHeader,
     pub modified_accounts: HashMap<Address, AccountStateDiff>,
     pub withdrawal_logs: Vec<WithdrawalLog>,
     pub deposit_logs: Vec<DepositLog>,
@@ -88,7 +105,7 @@ impl Default for StateDiff {
     fn default() -> Self {
         StateDiff {
             version: 1,
-            header: BlockHeader::default(),
+            last_header: BlockHeader::default(),
             modified_accounts: HashMap::new(),
             withdrawal_logs: Vec::new(),
             deposit_logs: Vec::new(),
@@ -105,13 +122,15 @@ impl StateDiff {
         let mut encoded: Vec<u8> = Vec::new();
         encoded.push(self.version);
 
-        // Header fields
-        encoded.extend(self.header.transactions_root.0);
-        encoded.extend(self.header.receipts_root.0);
-        encoded.extend(self.header.gas_limit.to_be_bytes());
-        encoded.extend(self.header.gas_used.to_be_bytes());
-        encoded.extend(self.header.timestamp.to_be_bytes());
-        encoded.extend(self.header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
+        // Last header fields
+        encoded.extend(self.last_header.transactions_root.0);
+        encoded.extend(self.last_header.receipts_root.0);
+        encoded.extend(self.last_header.parent_hash.0);
+        encoded.extend(self.last_header.gas_limit.to_be_bytes());
+        encoded.extend(self.last_header.gas_used.to_be_bytes());
+        encoded.extend(self.last_header.timestamp.to_be_bytes());
+        encoded.extend(self.last_header.number.to_be_bytes());
+        encoded.extend(self.last_header.base_fee_per_gas.unwrap_or(0).to_be_bytes());
 
         let modified_accounts_len: u16 = self
             .modified_accounts
@@ -153,13 +172,18 @@ impl StateDiff {
             return Err(StateDiffError::UnsupportedVersion(version));
         }
 
-        // Header fields
-        let transactions_root = decoder.get_h256()?;
-        let receipts_root = decoder.get_h256()?;
-        let gas_limit = decoder.get_u64()?;
-        let gas_used = decoder.get_u64()?;
-        let timestamp = decoder.get_u64()?;
-        let base_fee_per_gas = decoder.get_u64()?;
+        // Last header fields
+        let last_header = BlockHeader {
+            transactions_root: decoder.get_h256()?,
+            receipts_root: decoder.get_h256()?,
+            parent_hash: decoder.get_h256()?,
+            gas_limit: decoder.get_u64()?,
+            gas_used: decoder.get_u64()?,
+            timestamp: decoder.get_u64()?,
+            number: decoder.get_u64()?,
+            base_fee_per_gas: Some(decoder.get_u64()?),
+            ..Default::default()
+        };
 
         // Accounts diff
         let modified_accounts_len = decoder.get_u16()?;
@@ -204,16 +228,8 @@ impl StateDiff {
         }
 
         Ok(Self {
-            header: BlockHeader {
-                transactions_root,
-                receipts_root,
-                gas_limit,
-                gas_used,
-                timestamp,
-                base_fee_per_gas: Some(base_fee_per_gas),
-                ..Default::default()
-            },
             version,
+            last_header,
             modified_accounts,
             withdrawal_logs,
             deposit_logs,
@@ -238,7 +254,10 @@ impl StateDiff {
 
             let balance = diff.new_balance.unwrap_or(account_state.balance);
             let nonce = account_state.nonce + u64::from(diff.nonce_diff);
-            let bytecode_hash = diff.bytecode_hash.unwrap_or(account_state.code_hash);
+            let bytecode_hash = diff.bytecode_hash.unwrap_or_else(|| match &diff.bytecode {
+                Some(bytecode) => code_hash(bytecode),
+                None => code_hash(&Bytes::new()),
+            });
 
             let account_info = if diff.new_balance.is_some()
                 || diff.nonce_diff != 0
@@ -486,4 +505,74 @@ impl Decoder {
 
         Ok(Bytes::copy_from_slice(res))
     }
+}
+
+/// Calculates nonce_diff between current and previous block.
+/// Uses cache if provided to optimize account_info lookups.
+pub async fn get_nonce_diff(
+    account_update: &AccountUpdate,
+    store: &Store,
+    accounts_info_cache: Option<&mut HashMap<Address, Option<AccountInfo>>>,
+    current_block_number: BlockNumber,
+) -> Result<u16, StateDiffError> {
+    // Get previous account_info either from store or cache
+    let account_info = match accounts_info_cache {
+        None => store
+            .get_account_info(current_block_number - 1, account_update.address)
+            .await
+            .map_err(StoreError::from)?,
+        Some(cache) => {
+            account_info_from_cache(
+                cache,
+                store,
+                account_update.address,
+                current_block_number - 1,
+            )
+            .await?
+        }
+    };
+
+    // Get previous nonce
+    let prev_nonce = match account_info {
+        Some(info) => info.nonce,
+        None => 0,
+    };
+
+    // Get current nonce
+    let new_nonce = if let Some(info) = account_update.info.clone() {
+        info.nonce
+    } else {
+        prev_nonce
+    };
+
+    // Calculate nonce diff
+    let nonce_diff = new_nonce
+        .checked_sub(prev_nonce)
+        .ok_or(StateDiffError::FailedToCalculateNonce)?
+        .try_into()
+        .map_err(StateDiffError::from)?;
+
+    Ok(nonce_diff)
+}
+
+/// Retrieves account info from cache or falls back to store.
+/// Updates cache with fresh data if cache miss occurs.
+async fn account_info_from_cache(
+    cache: &mut HashMap<Address, Option<AccountInfo>>,
+    store: &Store,
+    address: Address,
+    block_number: BlockNumber,
+) -> Result<Option<AccountInfo>, StateDiffError> {
+    let account_info = match cache.get(&address) {
+        Some(account_info) => account_info.clone(),
+        None => {
+            let account_info = store
+                .get_account_info(block_number, address)
+                .await
+                .map_err(StoreError::from)?;
+            cache.insert(address, account_info.clone());
+            account_info
+        }
+    };
+    Ok(account_info)
 }

@@ -1,6 +1,6 @@
 # State diffs
 
-This architecture was inspired by MatterLabs' ZKsync pubdata architecture (see [here](https://github.com/matter-labs/zksync-era/blob/main/docs/specs/data_availability/pubdata.md)).
+This architecture was inspired by MatterLabs' ZKsync pubdata architecture (see [here](https://github.com/matter-labs/zksync-era/blob/main/docs/src/specs/contracts/settlement_contracts/data_availability/pubdata.md)).
 
 To provide data availability for our network, we need to publish enough information on every commit transaction to be able to reconstruct the entire state of the L2 from the beginning by querying the L1.
 
@@ -11,19 +11,19 @@ The data needed is:
 - The bytecode of every contract deployed on the network.
 - All withdrawal Logs.
 
-After executing each L2 block, the EVM will return the following data:
+After executing a batch of L2 blocks, the EVM will return the following data:
 
-- A list of every storage slot modified in the block, with their previous and next values. A storage slot is a mapping `(address, slot) -> value`. Note that, on a block, there could be repeated writes to the same slot. In that case, we keep only the latest write; all the others are discarded since they are not needed for state reconstruction.
+- A list of every storage slot modified in the batch, with their previous and next values. A storage slot is a mapping `(address, slot) -> value`. Note that, in a batch, there could be repeated writes to the same slot. In that case, we keep only the latest write; all the others are discarded since they are not needed for state reconstruction.
 - The bytecode of every newly deployed contract. Every contract deployed is then a pair `(address, bytecode)`.
 - A list of withdrawal logs (as explained in milestone 1 we already collect these and publish a merkle root of their values as calldata, but we still need to send them as the state diff).
-- A list of triples `(address, nonce_increase, balance)` for every modified account. The `nonce_increase` is a value that says by how much the nonce of the account was increased on the block (this could be more than one as there can be multiple transactions for the account on the block). The balance is just the new balance value for the account.
+- A list of triples `(address, nonce_increase, balance)` for every modified account. The `nonce_increase` is a value that says by how much the nonce of the account was increased in the batch (this could be more than one as there can be multiple transactions for the account in the batch). The balance is just the new balance value for the account.
 
-The full state diff sent on every block will then be a sequence of bytes encoded as follows. We use the notation `un` for a sequence of `n` bits, so `u16` is a 16-bit sequence and `u96` a 96-bit one, we don’t really care about signedness here; if we don’t specify it, the value is of variable length and a field before it specifies it.
+The full state diff sent for each batch will then be a sequence of bytes encoded as follows. We use the notation `un` for a sequence of `n` bits, so `u16` is a 16-bit sequence and `u96` a 96-bit one, we don’t really care about signedness here; if we don’t specify it, the value is of variable length and a field before it specifies it.
 
 - The first byte is a `u8`: the version header. For now it should always be one, but we reserve it for future changes to the encoding/compression format.
-- Next come the block header info:
-  - The `tx_root` and `receipts_root` are `u256` values.
-  - The `gas_limit`, `gas_used`, `timestamp`, and `base_fee_per_gas` are `u64` values.
+- Next come the block header info of the last block in the batch:
+  - The `tx_root`, `receipts_root` and `parent_hash` are `u256` values.
+  - The `gas_limit`, `gas_used`, `timestamp`,  `block_number` and `base_fee_per_gas` are `u64` values.
 - Next the `ModifiedAccounts` list. The first two bytes (`u16`) are the amount of element it has, followed by its entries. Each entry correspond to an altered address and has the form:
   - The first byte is the `type` of the modification. The value is a `u8`, constrained to the range `[1; 23]`, computed by adding the following values:
     - `1` if the balance of the EOA/contract was modified.
@@ -48,9 +48,10 @@ To recap, using `||` for byte concatenation and `[]` for optional parameters, th
 
 ```jsx
 version_header_u8 ||
-// Block Header info
-tx_root_u256 || receipts_root_u256 ||
-gas_limit_u64 || gas_used_u64 || timestamp_u64 || base_fee_per_gas_u64
+// Last Block Header info
+tx_root_u256 || receipts_root_u256 || parent_hash_u256 ||
+gas_limit_u64 || gas_used_u64 || timestamp_u64 ||
+block_number_u64 || base_fee_per_gas_u64
 // Modified Accounts
 number_of_modified_accounts_u16 ||
 (

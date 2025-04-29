@@ -6,6 +6,7 @@ use crate::store_db::libmdbx::Store as LibmdbxStore;
 use crate::store_db::mdbx_fork::MDBXFork;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
+use crate::AccountUpdate;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -17,7 +18,6 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
-use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -45,36 +45,6 @@ pub enum EngineType {
     RedB,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AccountUpdate {
-    pub address: Address,
-    pub removed: bool,
-    pub info: Option<AccountInfo>,
-    pub code: Option<Bytes>,
-    pub added_storage: HashMap<H256, U256>,
-    // Matches TODO in code
-    // removed_storage_keys: Vec<H256>,
-}
-
-impl AccountUpdate {
-    /// Creates new empty update for the given account
-    pub fn new(address: Address) -> AccountUpdate {
-        AccountUpdate {
-            address,
-            ..Default::default()
-        }
-    }
-
-    /// Creates new update representing an account removal
-    pub fn removed(address: Address) -> AccountUpdate {
-        AccountUpdate {
-            address,
-            removed: true,
-            ..Default::default()
-        }
-    }
-}
-
 impl Store {
     pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
@@ -86,7 +56,7 @@ impl Store {
         Ok(store)
     }
 
-    pub fn new_from_genesis(
+    pub async fn new_from_genesis(
         store_path: &str,
         engine_type: EngineType,
         genesis_path: &str,
@@ -97,16 +67,16 @@ impl Store {
         let genesis: Genesis =
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let store = Self::new(store_path, engine_type)?;
-        store.add_initial_state(genesis)?;
+        store.add_initial_state(genesis).await?;
         Ok(store)
     }
 
-    pub fn get_account_info(
+    pub async fn get_account_info(
         &self,
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        match self.get_canonical_block_hash(block_number)? {
+        match self.get_canonical_block_hash(block_number).await? {
             Some(block_hash) => self.get_account_info_by_hash(block_hash, address),
             None => Ok(None),
         }
@@ -132,20 +102,22 @@ impl Store {
         }))
     }
 
-    pub fn add_block_header(
+    pub async fn add_block_header(
         &self,
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_header(block_hash, block_header)
+        self.engine.add_block_header(block_hash, block_header).await
     }
 
-    pub fn add_block_headers(
+    pub async fn add_block_headers(
         &self,
         block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_headers(block_hashes, block_headers)
+        self.engine
+            .add_block_headers(block_hashes, block_headers)
+            .await
     }
 
     pub fn get_block_header(
@@ -162,42 +134,60 @@ impl Store {
         self.engine.get_block_header_by_hash(block_hash)
     }
 
-    pub fn get_block_body_by_hash(
+    pub async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
-        self.engine.get_block_body_by_hash(block_hash)
+        self.engine.get_block_body_by_hash(block_hash).await
     }
 
-    pub fn add_block_body(
+    pub async fn add_block_body(
         &self,
         block_hash: BlockHash,
         block_body: BlockBody,
     ) -> Result<(), StoreError> {
-        self.engine.add_block_body(block_hash, block_body)
+        self.engine.add_block_body(block_hash, block_body).await
     }
 
-    pub fn get_block_body(
+    pub async fn get_block_body(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockBody>, StoreError> {
-        self.engine.get_block_body(block_number)
+        self.engine.get_block_body(block_number).await
     }
 
-    pub fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    pub async fn get_block_bodies(
+        &self,
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        self.engine.get_block_bodies(from, to).await
+    }
+
+    pub async fn get_block_bodies_by_hash(
+        &self,
+        hashes: Vec<BlockHash>,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        self.engine.get_block_bodies_by_hash(hashes).await
+    }
+
+    pub async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         info!(
             "Adding block to pending: {}",
             block.header.compute_block_hash()
         );
-        self.engine.add_pending_block(block)
+        self.engine.add_pending_block(block).await
     }
 
-    pub fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
+    pub async fn get_pending_block(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<Block>, StoreError> {
         info!("get pending: {}", block_hash);
-        self.engine.get_pending_block(block_hash)
+        self.engine.get_pending_block(block_hash).await
     }
 
-    pub fn add_block_number(
+    pub async fn add_block_number(
         &self,
         block_hash: BlockHash,
         block_number: BlockNumber,
@@ -205,16 +195,17 @@ impl Store {
         self.engine
             .clone()
             .add_block_number(block_hash, block_number)
+            .await
     }
 
-    pub fn get_block_number(
+    pub async fn get_block_number(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_block_number(block_hash)
+        self.engine.get_block_number(block_hash).await
     }
 
-    pub fn add_transaction_location(
+    pub async fn add_transaction_location(
         &self,
         transaction_hash: H256,
         block_number: BlockNumber,
@@ -223,9 +214,10 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine
             .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .await
     }
 
-    pub fn add_transaction_locations(
+    pub async fn add_transaction_locations(
         &self,
         transactions: &[Transaction],
         block_number: BlockNumber,
@@ -242,30 +234,30 @@ impl Store {
             ));
         }
 
-        self.engine.add_transaction_locations(locations)
+        self.engine.add_transaction_locations(locations).await
     }
 
-    pub fn get_transaction_location(
+    pub async fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
-        self.engine.get_transaction_location(transaction_hash)
+        self.engine.get_transaction_location(transaction_hash).await
     }
 
-    pub fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
-        self.engine.add_account_code(code_hash, code)
+    pub async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
+        self.engine.add_account_code(code_hash, code).await
     }
 
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Bytes>, StoreError> {
         self.engine.get_account_code(code_hash)
     }
 
-    pub fn get_code_by_account_address(
+    pub async fn get_code_by_account_address(
         &self,
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<Bytes>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number)? else {
+        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
@@ -279,12 +271,12 @@ impl Store {
         self.get_account_code(account_state.code_hash)
     }
 
-    pub fn get_nonce_by_account_address(
+    pub async fn get_nonce_by_account_address(
         &self,
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<u64>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number)? else {
+        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
@@ -300,7 +292,7 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
-    pub fn apply_account_updates(
+    pub async fn apply_account_updates(
         &self,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
@@ -309,11 +301,13 @@ impl Store {
             return Ok(None);
         };
 
-        let mut state_trie = self.apply_account_updates_from_trie(state_trie, account_updates)?;
+        let mut state_trie = self
+            .apply_account_updates_from_trie(state_trie, account_updates)
+            .await?;
         Ok(Some(state_trie.hash()?))
     }
 
-    pub fn apply_account_updates_from_trie(
+    pub async fn apply_account_updates_from_trie(
         &self,
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
@@ -336,7 +330,7 @@ impl Store {
                     account_state.code_hash = info.code_hash;
                     // Store updated code in DB
                     if let Some(code) = &update.code {
-                        self.add_account_code(info.code_hash, code.clone())?;
+                        self.add_account_code(info.code_hash, code.clone()).await?;
                     }
                 }
                 // Store the added storage in the account's storage trie and compute its new root
@@ -363,7 +357,7 @@ impl Store {
     }
 
     /// Adds all genesis accounts and returns the genesis block's state_root
-    pub fn setup_genesis_state_trie(
+    pub async fn setup_genesis_state_trie(
         &self,
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
@@ -372,7 +366,7 @@ impl Store {
             let hashed_address = hash_address(&address);
             // Store account code (as this won't be stored in the trie)
             let code_hash = code_hash(&account.code);
-            self.add_account_code(code_hash, account.code)?;
+            self.add_account_code(code_hash, account.code).await?;
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie = self
                 .engine
@@ -393,56 +387,56 @@ impl Store {
             };
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
-        Ok(genesis_state_trie.hash()?)
+        genesis_state_trie.hash().map_err(StoreError::Trie)
     }
 
-    pub fn add_receipt(
+    pub async fn add_receipt(
         &self,
         block_hash: BlockHash,
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipt(block_hash, index, receipt)
+        self.engine.add_receipt(block_hash, index, receipt).await
     }
 
-    pub fn add_receipts(
+    pub async fn add_receipts(
         &self,
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipts(block_hash, receipts)
+        self.engine.add_receipts(block_hash, receipts).await
     }
 
-    pub fn add_receipts_for_blocks(
+    pub async fn add_receipts_for_blocks(
         &self,
         receipts: HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
-        self.engine.add_receipts_for_blocks(receipts)
+        self.engine.add_receipts_for_blocks(receipts).await
     }
 
-    pub fn get_receipt(
+    pub async fn get_receipt(
         &self,
         block_number: BlockNumber,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        self.engine.get_receipt(block_number, index)
+        self.engine.get_receipt(block_number, index).await
     }
 
-    pub fn add_block(&self, block: Block) -> Result<(), StoreError> {
-        self.add_blocks(&[block])
+    pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
+        self.add_blocks(vec![block]).await
     }
 
-    pub fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        self.engine.add_blocks(blocks)
+    pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
+        self.engine.add_blocks(blocks).await
     }
 
-    pub fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
-        self.engine.mark_chain_as_canonical(blocks)
+    pub async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+        self.engine.mark_chain_as_canonical(blocks).await
     }
 
-    pub fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
+    pub async fn add_initial_state(&self, genesis: Genesis) -> Result<(), StoreError> {
         info!("Setting initial sync status to false");
-        self.update_sync_status(false)?;
+        self.update_sync_status(false).await?;
 
         info!("Storing initial state from genesis");
 
@@ -462,7 +456,7 @@ impl Store {
         }
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
-        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc)?;
+        let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
 
         // Store genesis block
@@ -471,42 +465,46 @@ impl Store {
             genesis_block_number, genesis_hash
         );
 
-        self.add_block(genesis_block)?;
-        self.update_earliest_block_number(genesis_block_number)?;
-        self.update_latest_block_number(genesis_block_number)?;
-        self.set_canonical_block(genesis_block_number, genesis_hash)?;
-        self.get_block_header_by_hash(genesis_hash).unwrap();
+        self.add_block(genesis_block).await?;
+        self.update_earliest_block_number(genesis_block_number)
+            .await?;
+        self.update_latest_block_number(genesis_block_number)
+            .await?;
+        self.set_canonical_block(genesis_block_number, genesis_hash)
+            .await?;
 
         // Set chain config
-        self.set_chain_config(&genesis.config)
+        self.set_chain_config(&genesis.config).await
     }
 
-    pub fn get_transaction_by_hash(
+    pub async fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
-        self.engine.get_transaction_by_hash(transaction_hash)
+        self.engine.get_transaction_by_hash(transaction_hash).await
     }
 
-    pub fn get_transaction_by_location(
+    pub async fn get_transaction_by_location(
         &self,
         block_hash: BlockHash,
         index: u64,
     ) -> Result<Option<Transaction>, StoreError> {
-        self.engine.get_transaction_by_location(block_hash, index)
+        self.engine
+            .get_transaction_by_location(block_hash, index)
+            .await
     }
 
-    pub fn get_block_by_hash(&self, block_hash: H256) -> Result<Option<Block>, StoreError> {
-        self.engine.get_block_by_hash(block_hash)
+    pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<Option<Block>, StoreError> {
+        self.engine.get_block_by_hash(block_hash).await
     }
 
-    pub fn get_storage_at(
+    pub async fn get_storage_at(
         &self,
         block_number: BlockNumber,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        match self.get_canonical_block_hash(block_number)? {
+        match self.get_canonical_block_hash(block_number).await? {
             Some(block_hash) => self.get_storage_at_hash(block_hash, address, storage_key),
             None => Ok(None),
         }
@@ -528,92 +526,105 @@ impl Store {
             .transpose()
     }
 
-    pub fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
-        self.engine.set_chain_config(chain_config)
+    pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+        self.engine.set_chain_config(chain_config).await
     }
 
     pub fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
         self.engine.get_chain_config()
     }
 
-    pub fn update_earliest_block_number(
+    pub async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_earliest_block_number(block_number)
+        self.engine.update_earliest_block_number(block_number).await
     }
 
-    pub fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
+    pub async fn get_earliest_block_number(&self) -> Result<BlockNumber, StoreError> {
         self.engine
-            .get_earliest_block_number()?
+            .get_earliest_block_number()
+            .await?
             .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
-    pub fn update_finalized_block_number(
+    pub async fn update_finalized_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
-        self.engine.update_finalized_block_number(block_number)
-    }
-
-    pub fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_finalized_block_number()
-    }
-
-    pub fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.update_safe_block_number(block_number)
-    }
-
-    pub fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_safe_block_number()
-    }
-
-    pub fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.update_latest_block_number(block_number)
-    }
-
-    pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
         self.engine
-            .get_latest_block_number()?
+            .update_finalized_block_number(block_number)
+            .await
+    }
+
+    pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.engine.get_finalized_block_number().await
+    }
+
+    pub async fn update_safe_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        self.engine.update_safe_block_number(block_number).await
+    }
+
+    pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.engine.get_safe_block_number().await
+    }
+
+    pub async fn update_latest_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        self.engine.update_latest_block_number(block_number).await
+    }
+
+    pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
+        self.engine
+            .get_latest_block_number()
+            .await?
             .ok_or(StoreError::MissingLatestBlockNumber)
     }
 
-    pub fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.update_pending_block_number(block_number)
+    pub async fn update_pending_block_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        self.engine.update_pending_block_number(block_number).await
     }
 
-    pub fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
-        self.engine.get_pending_block_number()
+    pub async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.engine.get_pending_block_number().await
     }
 
-    pub fn set_canonical_block(
+    pub async fn set_canonical_block(
         &self,
         number: BlockNumber,
         hash: BlockHash,
     ) -> Result<(), StoreError> {
-        self.engine.set_canonical_block(number, hash)
+        self.engine.set_canonical_block(number, hash).await
     }
 
-    pub fn get_canonical_block_hash(
+    pub async fn get_canonical_block_hash(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_canonical_block_hash(block_number)
+        self.engine.get_canonical_block_hash(block_number).await
     }
 
-    pub fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
-        let latest_block_number = match self.engine.get_latest_block_number() {
+    pub async fn get_latest_canonical_block_hash(&self) -> Result<Option<BlockHash>, StoreError> {
+        let latest_block_number = match self.engine.get_latest_block_number().await {
             Ok(n) => n.ok_or(StoreError::MissingLatestBlockNumber)?,
             Err(e) => return Err(e),
         };
-        self.get_canonical_block_hash(latest_block_number)
+        self.get_canonical_block_hash(latest_block_number).await
     }
 
     /// Marks a block number as not having any canonical blocks associated with it.
     /// Used for reorgs.
     /// Note: Should we also remove all others up to the head here?
-    pub fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
-        self.engine.unset_canonical_block(number)
+    pub async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
+        self.engine.unset_canonical_block(number).await
     }
 
     /// Obtain the storage trie for the given block
@@ -647,12 +658,12 @@ impl Store {
         )))
     }
 
-    pub fn get_account_state(
+    pub async fn get_account_state(
         &self,
         block_number: BlockNumber,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number)? else {
+        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
@@ -684,12 +695,12 @@ impl Store {
         Ok(Some(AccountState::decode(&encoded_state)?))
     }
 
-    pub fn get_account_proof(
+    pub async fn get_account_proof(
         &self,
         block_number: BlockNumber,
         address: &Address,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
-        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number)? else {
+        let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
         let Some(state_trie) = self.state_trie(block_hash)? else {
@@ -831,20 +842,20 @@ impl Store {
         Ok(nodes)
     }
 
-    pub fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
-        self.engine.add_payload(payload_id, block)
+    pub async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
+        self.engine.add_payload(payload_id, block).await
     }
 
-    pub fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
-        self.engine.get_payload(payload_id)
+    pub async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
+        self.engine.get_payload(payload_id).await
     }
 
-    pub fn update_payload(
+    pub async fn update_payload(
         &self,
         payload_id: u64,
         payload: PayloadBundle,
     ) -> Result<(), StoreError> {
-        self.engine.update_payload(payload_id, payload)
+        self.engine.update_payload(payload_id, payload).await
     }
 
     pub fn get_receipts_for_block(
@@ -898,73 +909,82 @@ impl Store {
     }
 
     /// Sets the hash of the last header downloaded during a snap sync
-    pub fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
-        self.engine.set_header_download_checkpoint(block_hash)
+    pub async fn set_header_download_checkpoint(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.engine.set_header_download_checkpoint(block_hash).await
     }
 
     /// Gets the hash of the last header downloaded during a snap sync
-    pub fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
-        self.engine.get_header_download_checkpoint()
+    pub async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_header_download_checkpoint().await
     }
 
     /// Sets the last key fetched from the state trie being fetched during snap sync
-    pub fn set_state_trie_key_checkpoint(
+    pub async fn set_state_trie_key_checkpoint(
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
-        self.engine.set_state_trie_key_checkpoint(last_keys)
+        self.engine.set_state_trie_key_checkpoint(last_keys).await
     }
 
     /// Gets the last key fetched from the state trie being fetched during snap sync
-    pub fn get_state_trie_key_checkpoint(
+    pub async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
-        self.engine.get_state_trie_key_checkpoint()
+        self.engine.get_state_trie_key_checkpoint().await
     }
 
-    /// Sets the storage trie paths in need of healing, grouped by hashed address
-    pub fn set_storage_heal_paths(
+    /// Sets storage trie paths in need of healing, grouped by hashed address
+    /// This will overwite previously stored paths for the received storages but will not remove other storage's paths
+    pub async fn set_storage_heal_paths(
         &self,
-        accounts: Vec<(H256, Vec<Nibbles>)>,
+        paths: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_storage_heal_paths(accounts)
+        self.engine.set_storage_heal_paths(paths).await
     }
 
     /// Gets the storage trie paths in need of healing, grouped by hashed address
+    /// Gets paths from at most `limit` storage tries and removes them from the Store
     #[allow(clippy::type_complexity)]
-    pub fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        self.engine.get_storage_heal_paths()
+    pub async fn take_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
+        self.engine.take_storage_heal_paths(limit).await
     }
 
     /// Sets the state trie paths in need of healing
-    pub fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
-        self.engine.set_state_heal_paths(paths)
+    pub async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+        self.engine.set_state_heal_paths(paths).await
     }
 
     /// Gets the state trie paths in need of healing
-    pub fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
-        self.engine.get_state_heal_paths()
+    pub async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+        self.engine.get_state_heal_paths().await
     }
 
-    pub fn is_synced(&self) -> Result<bool, StoreError> {
-        self.engine.is_synced()
+    pub async fn is_synced(&self) -> Result<bool, StoreError> {
+        self.engine.is_synced().await
     }
-    pub fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
-        self.engine.update_sync_status(status)
+    pub async fn update_sync_status(&self, is_synced: bool) -> Result<(), StoreError> {
+        self.engine.update_sync_status(is_synced).await
     }
 
     /// Write an account batch into the current state snapshot
-    pub fn write_snapshot_account_batch(
+    pub async fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
         account_states: Vec<AccountState>,
     ) -> Result<(), StoreError> {
         self.engine
             .write_snapshot_account_batch(account_hashes, account_states)
+            .await
     }
 
     /// Write a storage batch into the current storage snapshot
-    pub fn write_snapshot_storage_batch(
+    pub async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
         storage_keys: Vec<H256>,
@@ -972,10 +992,11 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine
             .write_snapshot_storage_batch(account_hash, storage_keys, storage_values)
+            .await
     }
 
     /// Write multiple storage batches belonging to different accounts into the current storage snapshot
-    pub fn write_snapshot_storage_batches(
+    pub async fn write_snapshot_storage_batches(
         &self,
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,
@@ -983,46 +1004,49 @@ impl Store {
     ) -> Result<(), StoreError> {
         self.engine
             .write_snapshot_storage_batches(account_hashes, storage_keys, storage_values)
+            .await
     }
 
     /// Clears all checkpoint data created during the last snap sync
-    pub fn clear_snap_state(&self) -> Result<(), StoreError> {
-        self.engine.clear_snap_state()
+    pub async fn clear_snap_state(&self) -> Result<(), StoreError> {
+        self.engine.clear_snap_state().await
     }
 
     /// Set the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub fn set_state_trie_rebuild_checkpoint(
+    pub async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
-        self.engine.set_state_trie_rebuild_checkpoint(checkpoint)
+        self.engine
+            .set_state_trie_rebuild_checkpoint(checkpoint)
+            .await
     }
 
     /// Get the latest root of the rebuilt state trie and the last downloaded hashes from each segment
-    pub fn get_state_trie_rebuild_checkpoint(
+    pub async fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
-        self.engine.get_state_trie_rebuild_checkpoint()
+        self.engine.get_state_trie_rebuild_checkpoint().await
     }
 
     /// Set the accont hashes and roots of the storage tries awaiting rebuild
-    pub fn set_storage_trie_rebuild_pending(
+    pub async fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
-        self.engine.set_storage_trie_rebuild_pending(pending)
+        self.engine.set_storage_trie_rebuild_pending(pending).await
     }
 
     /// Get the accont hashes and roots of the storage tries awaiting rebuild
-    pub fn get_storage_trie_rebuild_pending(
+    pub async fn get_storage_trie_rebuild_pending(
         &self,
     ) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
-        self.engine.get_storage_trie_rebuild_pending()
+        self.engine.get_storage_trie_rebuild_pending().await
     }
 
     /// Clears the state and storage snapshots
-    pub fn clear_snapshot(&self) -> Result<(), StoreError> {
-        self.engine.clear_snapshot()
+    pub async fn clear_snapshot(&self) -> Result<(), StoreError> {
+        self.engine.clear_snapshot().await
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` accounts from the state snapshot as from the `start` hash
@@ -1034,12 +1058,29 @@ impl Store {
     }
 
     /// Reads the next `MAX_SNAPSHOT_READS` elements from the storage snapshot as from the `start` storage key
-    pub fn read_storage_snapshot(
+    pub async fn read_storage_snapshot(
         &self,
         account_hash: H256,
         start: H256,
     ) -> Result<Vec<(H256, U256)>, StoreError> {
-        self.engine.read_storage_snapshot(account_hash, start)
+        self.engine.read_storage_snapshot(account_hash, start).await
+    }
+
+    pub async fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        self.engine.get_latest_valid_ancestor(block).await
+    }
+
+    pub async fn set_latest_valid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .set_latest_valid_ancestor(bad_block, latest_valid)
+            .await
     }
 }
 
@@ -1062,308 +1103,353 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
         .to_vec()
 }
 
-#[cfg(test)]
-mod tests {
-    use bytes::Bytes;
-    use ethereum_types::{H256, U256};
-    use ethrex_common::{
-        types::{Transaction, TxType, EMPTY_KECCACK_HASH},
-        Bloom, H160,
-    };
-    use ethrex_rlp::decode::RLPDecode;
-    use std::{fs, panic, str::FromStr};
+// #[cfg(test)]
+// mod tests {
+//     use bytes::Bytes;
+//     use ethereum_types::{H256, U256};
+//     use ethrex_common::{
+//         types::{Transaction, TxType, EMPTY_KECCACK_HASH},
+//         Bloom, H160,
+//     };
+//     use ethrex_rlp::decode::RLPDecode;
+//     use std::{fs, panic, str::FromStr};
 
-    use super::*;
+//     use super::*;
 
-    // #[test]
-    // fn test_in_memory_store() {
-    //     test_store_suite(EngineType::InMemory);
-    // }
+//     #[tokio::test]
+//     async fn test_in_memory_store() {
+//         test_store_suite(EngineType::InMemory).await;
+//     }
 
-    // #[cfg(feature = "libmdbx")]
-    // #[test]
-    // fn test_libmdbx_store() {
-    //     test_store_suite(EngineType::Libmdbx);
-    // }
+//     #[cfg(feature = "libmdbx")]
+//     #[tokio::test]
+//     async fn test_libmdbx_store() {
+//         test_store_suite(EngineType::Libmdbx).await;
+//     }
 
-    // #[cfg(feature = "redb")]
-    // #[test]
-    // fn test_redb_store() {
-    //     test_store_suite(EngineType::RedB);
-    // }
+//     #[cfg(feature = "redb")]
+//     #[tokio::test]
+//     async fn test_redb_store() {
+//         test_store_suite(EngineType::RedB).await;
+//     }
 
-    // Creates an empty store, runs the test and then removes the store (if needed)
-    fn run_test(test_func: &dyn Fn(Store), engine_type: EngineType) {
-        // Remove preexistent DBs in case of a failed previous test
-        if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs("store-test-db");
-        };
-        // Build a new store
-        let store = Store::new("store-test-db", engine_type).expect("Failed to create test db");
-        // Run the test
-        test_func(store);
-        // Remove store (if needed)
-        if !matches!(engine_type, EngineType::InMemory) {
-            remove_test_dbs("store-test-db");
-        };
-    }
+//     // Creates an empty store, runs the test and then removes the store (if needed)
+//     async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
+//     where
+//         F: FnOnce(Store) -> Fut,
+//         Fut: std::future::Future<Output = ()>,
+//     {
+//         // Remove preexistent DBs in case of a failed previous test
+//         if !matches!(engine_type, EngineType::InMemory) {
+//             remove_test_dbs("store-test-db");
+//         };
+//         // Build a new store
+//         let store = Store::new("store-test-db", engine_type).expect("Failed to create test db");
+//         // Run the test
+//         test_func(store).await;
+//         // Remove store (if needed)
+//         if !matches!(engine_type, EngineType::InMemory) {
+//             remove_test_dbs("store-test-db");
+//         };
+//     }
 
-    // fn test_store_suite(engine_type: EngineType) {
-    //     run_test(&test_store_block, engine_type);
-    //     run_test(&test_store_block_number, engine_type);
-    //     run_test(&test_store_transaction_location, engine_type);
-    //     run_test(&test_store_transaction_location_not_canonical, engine_type);
-    //     run_test(&test_store_block_receipt, engine_type);
-    //     run_test(&test_store_account_code, engine_type);
-    //     run_test(&test_store_block_tags, engine_type);
-    //     run_test(&test_chain_config_storage, engine_type);
-    //     run_test(&test_genesis_block, engine_type);
-    // }
+//     async fn test_store_suite(engine_type: EngineType) {
+//         run_test(test_store_block, engine_type).await;
+//         run_test(test_store_block_number, engine_type).await;
+//         run_test(test_store_transaction_location, engine_type).await;
+//         run_test(test_store_transaction_location_not_canonical, engine_type).await;
+//         run_test(test_store_block_receipt, engine_type).await;
+//         run_test(test_store_account_code, engine_type).await;
+//         run_test(test_store_block_tags, engine_type).await;
+//         run_test(test_chain_config_storage, engine_type).await;
+//         run_test(test_genesis_block, engine_type).await;
+//     }
 
-    // fn test_genesis_block(store: Store) {
-    //     const GENESIS_KURTOSIS: &str = include_str!("../../test_data/genesis-kurtosis.json");
-    //     const GENESIS_HIVE: &str = include_str!("../../test_data/genesis-hive.json");
-    //     assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
-    //     let genesis_kurtosis: Genesis =
-    //         serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize genesis-kurtosis.json");
-    //     let genesis_hive: Genesis =
-    //         serde_json::from_str(GENESIS_HIVE).expect("deserialize genesis-hive.json");
-    //     store
-    //         .add_initial_state(genesis_kurtosis.clone())
-    //         .expect("first genesis");
-    //     store
-    //         .add_initial_state(genesis_kurtosis)
-    //         .expect("second genesis with same block");
-    //     panic::catch_unwind(move || {
-    //         let _ = store.add_initial_state(genesis_hive);
-    //     })
-    //     .expect_err("genesis with a different block should panic");
-    // }
+//     async fn test_genesis_block(store: Store) {
+//         const GENESIS_KURTOSIS: &str = include_str!("../../test_data/genesis-kurtosis.json");
+//         const GENESIS_HIVE: &str = include_str!("../../test_data/genesis-hive.json");
+//         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
+//         let genesis_kurtosis: Genesis =
+//             serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize genesis-kurtosis.json");
+//         let genesis_hive: Genesis =
+//             serde_json::from_str(GENESIS_HIVE).expect("deserialize genesis-hive.json");
+//         store
+//             .add_initial_state(genesis_kurtosis.clone())
+//             .await
+//             .expect("first genesis");
+//         store
+//             .add_initial_state(genesis_kurtosis)
+//             .await
+//             .expect("second genesis with same block");
+//         panic::catch_unwind(move || {
+//             let rt = tokio::runtime::Runtime::new().expect("runtime creation failed");
+//             let _ = rt.block_on(store.add_initial_state(genesis_hive));
+//         })
+//         .expect_err("genesis with a different block should panic");
+//     }
 
-    fn remove_test_dbs(path: &str) {
-        // Removes all test databases from filesystem
-        if std::path::Path::new(path).exists() {
-            fs::remove_dir_all(path).expect("Failed to clean test db dir");
-        }
-    }
+//     fn remove_test_dbs(path: &str) {
+//         // Removes all test databases from filesystem
+//         if std::path::Path::new(path).exists() {
+//             fs::remove_dir_all(path).expect("Failed to clean test db dir");
+//         }
+//     }
 
-    fn test_store_block(store: Store) {
-        let (block_header, block_body) = create_block_for_testing();
-        let block_number = 6;
-        let hash = block_header.compute_block_hash();
+//     async fn test_store_block(store: Store) {
+//         let (block_header, block_body) = create_block_for_testing();
+//         let block_number = 6;
+//         let hash = block_header.compute_block_hash();
 
-        store.add_block_header(hash, block_header.clone()).unwrap();
-        store.add_block_body(hash, block_body.clone()).unwrap();
-        store.set_canonical_block(block_number, hash).unwrap();
+//         store
+//             .add_block_header(hash, block_header.clone())
+//             .await
+//             .unwrap();
+//         store
+//             .add_block_body(hash, block_body.clone())
+//             .await
+//             .unwrap();
+//         store.set_canonical_block(block_number, hash).await.unwrap();
 
-        let stored_header = store.get_block_header(block_number).unwrap().unwrap();
-        let stored_body = store.get_block_body(block_number).unwrap().unwrap();
+//         let stored_header = store.get_block_header(block_number).unwrap().unwrap();
+//         let stored_body = store.get_block_body(block_number).await.unwrap().unwrap();
 
-        assert_eq!(stored_header, block_header);
-        assert_eq!(stored_body, block_body);
-    }
+//         assert_eq!(stored_header, block_header);
+//         assert_eq!(stored_body, block_body);
+//     }
 
-    fn create_block_for_testing() -> (BlockHeader, BlockBody) {
-        let block_header = BlockHeader {
-            parent_hash: H256::from_str(
-                "0x1ac1bf1eef97dc6b03daba5af3b89881b7ae4bc1600dc434f450a9ec34d44999",
-            )
-            .unwrap(),
-            ommers_hash: H256::from_str(
-                "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-            )
-            .unwrap(),
-            coinbase: Address::from_str("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba").unwrap(),
-            state_root: H256::from_str(
-                "0x9de6f95cb4ff4ef22a73705d6ba38c4b927c7bca9887ef5d24a734bb863218d9",
-            )
-            .unwrap(),
-            transactions_root: H256::from_str(
-                "0x578602b2b7e3a3291c3eefca3a08bc13c0d194f9845a39b6f3bcf843d9fed79d",
-            )
-            .unwrap(),
-            receipts_root: H256::from_str(
-                "0x035d56bac3f47246c5eed0e6642ca40dc262f9144b582f058bc23ded72aa72fa",
-            )
-            .unwrap(),
-            logs_bloom: Bloom::from([0; 256]),
-            difficulty: U256::zero(),
-            number: 1,
-            gas_limit: 0x016345785d8a0000,
-            gas_used: 0xa8de,
-            timestamp: 0x03e8,
-            extra_data: Bytes::new(),
-            prev_randao: H256::zero(),
-            nonce: 0x0000000000000000,
-            base_fee_per_gas: Some(0x07),
-            withdrawals_root: Some(
-                H256::from_str(
-                    "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-                )
-                .unwrap(),
-            ),
-            blob_gas_used: Some(0x00),
-            excess_blob_gas: Some(0x00),
-            parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
-        };
-        let block_body = BlockBody {
-            transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),
-            Transaction::decode(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap()],
-            ommers: Default::default(),
-            withdrawals: Default::default(),
-        };
-        (block_header, block_body)
-    }
+//     fn create_block_for_testing() -> (BlockHeader, BlockBody) {
+//         let block_header = BlockHeader {
+//             parent_hash: H256::from_str(
+//                 "0x1ac1bf1eef97dc6b03daba5af3b89881b7ae4bc1600dc434f450a9ec34d44999",
+//             )
+//             .unwrap(),
+//             ommers_hash: H256::from_str(
+//                 "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+//             )
+//             .unwrap(),
+//             coinbase: Address::from_str("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba").unwrap(),
+//             state_root: H256::from_str(
+//                 "0x9de6f95cb4ff4ef22a73705d6ba38c4b927c7bca9887ef5d24a734bb863218d9",
+//             )
+//             .unwrap(),
+//             transactions_root: H256::from_str(
+//                 "0x578602b2b7e3a3291c3eefca3a08bc13c0d194f9845a39b6f3bcf843d9fed79d",
+//             )
+//             .unwrap(),
+//             receipts_root: H256::from_str(
+//                 "0x035d56bac3f47246c5eed0e6642ca40dc262f9144b582f058bc23ded72aa72fa",
+//             )
+//             .unwrap(),
+//             logs_bloom: Bloom::from([0; 256]),
+//             difficulty: U256::zero(),
+//             number: 1,
+//             gas_limit: 0x016345785d8a0000,
+//             gas_used: 0xa8de,
+//             timestamp: 0x03e8,
+//             extra_data: Bytes::new(),
+//             prev_randao: H256::zero(),
+//             nonce: 0x0000000000000000,
+//             base_fee_per_gas: Some(0x07),
+//             withdrawals_root: Some(
+//                 H256::from_str(
+//                     "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+//                 )
+//                 .unwrap(),
+//             ),
+//             blob_gas_used: Some(0x00),
+//             excess_blob_gas: Some(0x00),
+//             parent_beacon_block_root: Some(H256::zero()),
+//             requests_hash: Some(*EMPTY_KECCACK_HASH),
+//         };
+//         let block_body = BlockBody {
+//             transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),
+//             Transaction::decode(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap()],
+//             ommers: Default::default(),
+//             withdrawals: Default::default(),
+//         };
+//         (block_header, block_body)
+//     }
 
-    fn test_store_block_number(store: Store) {
-        let block_hash = H256::random();
-        let block_number = 6;
+//     async fn test_store_block_number(store: Store) {
+//         let block_hash = H256::random();
+//         let block_number = 6;
 
-        store.add_block_number(block_hash, block_number).unwrap();
+//         store
+//             .add_block_number(block_hash, block_number)
+//             .await
+//             .unwrap();
 
-        let stored_number = store.get_block_number(block_hash).unwrap().unwrap();
+//         let stored_number = store.get_block_number(block_hash).await.unwrap().unwrap();
 
-        assert_eq!(stored_number, block_number);
-    }
+//         assert_eq!(stored_number, block_number);
+//     }
 
-    fn test_store_transaction_location(store: Store) {
-        let transaction_hash = H256::random();
-        let block_hash = H256::random();
-        let block_number = 6;
-        let index = 3;
+//     async fn test_store_transaction_location(store: Store) {
+//         let transaction_hash = H256::random();
+//         let block_hash = H256::random();
+//         let block_number = 6;
+//         let index = 3;
 
-        store
-            .add_transaction_location(transaction_hash, block_number, block_hash, index)
-            .unwrap();
+//         store
+//             .add_transaction_location(transaction_hash, block_number, block_hash, index)
+//             .await
+//             .unwrap();
 
-        store.set_canonical_block(block_number, block_hash).unwrap();
+//         store
+//             .set_canonical_block(block_number, block_hash)
+//             .await
+//             .unwrap();
 
-        let stored_location = store
-            .get_transaction_location(transaction_hash)
-            .unwrap()
-            .unwrap();
+//         let stored_location = store
+//             .get_transaction_location(transaction_hash)
+//             .await
+//             .unwrap()
+//             .unwrap();
 
-        assert_eq!(stored_location, (block_number, block_hash, index));
-    }
+//         assert_eq!(stored_location, (block_number, block_hash, index));
+//     }
 
-    fn test_store_transaction_location_not_canonical(store: Store) {
-        let transaction_hash = H256::random();
-        let block_hash = H256::random();
-        let block_number = 6;
-        let index = 3;
+//     async fn test_store_transaction_location_not_canonical(store: Store) {
+//         let transaction_hash = H256::random();
+//         let block_hash = H256::random();
+//         let block_number = 6;
+//         let index = 3;
 
-        store
-            .add_transaction_location(transaction_hash, block_number, block_hash, index)
-            .unwrap();
+//         store
+//             .add_transaction_location(transaction_hash, block_number, block_hash, index)
+//             .await
+//             .unwrap();
 
-        store
-            .set_canonical_block(block_number, H256::random())
-            .unwrap();
+//         store
+//             .set_canonical_block(block_number, H256::random())
+//             .await
+//             .unwrap();
 
-        assert_eq!(
-            store.get_transaction_location(transaction_hash).unwrap(),
-            None
-        )
-    }
+//         assert_eq!(
+//             store
+//                 .get_transaction_location(transaction_hash)
+//                 .await
+//                 .unwrap(),
+//             None
+//         )
+//     }
 
-    fn test_store_block_receipt(store: Store) {
-        let receipt = Receipt {
-            tx_type: TxType::EIP2930,
-            succeeded: true,
-            cumulative_gas_used: 1747,
-            bloom: Bloom::random(),
-            logs: vec![],
-        };
-        let block_number = 6;
-        let index = 4;
-        let block_hash = H256::random();
+//     async fn test_store_block_receipt(store: Store) {
+//         let receipt = Receipt {
+//             tx_type: TxType::EIP2930,
+//             succeeded: true,
+//             cumulative_gas_used: 1747,
+//             bloom: Bloom::random(),
+//             logs: vec![],
+//         };
+//         let block_number = 6;
+//         let index = 4;
+//         let block_hash = H256::random();
 
-        store
-            .add_receipt(block_hash, index, receipt.clone())
-            .unwrap();
+//         store
+//             .add_receipt(block_hash, index, receipt.clone())
+//             .await
+//             .unwrap();
 
-        store.set_canonical_block(block_number, block_hash).unwrap();
+//         store
+//             .set_canonical_block(block_number, block_hash)
+//             .await
+//             .unwrap();
 
-        let stored_receipt = store.get_receipt(block_number, index).unwrap().unwrap();
+//         let stored_receipt = store
+//             .get_receipt(block_number, index)
+//             .await
+//             .unwrap()
+//             .unwrap();
 
-        assert_eq!(stored_receipt, receipt);
-    }
+//         assert_eq!(stored_receipt, receipt);
+//     }
 
-    fn test_store_account_code(store: Store) {
-        let code_hash = H256::random();
-        let code = Bytes::from("kiwi");
+//     async fn test_store_account_code(store: Store) {
+//         let code_hash = H256::random();
+//         let code = Bytes::from("kiwi");
 
-        store.add_account_code(code_hash, code.clone()).unwrap();
+//         store
+//             .add_account_code(code_hash, code.clone())
+//             .await
+//             .unwrap();
 
-        let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
+//         let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
 
-        assert_eq!(stored_code, code);
-    }
+//         assert_eq!(stored_code, code);
+//     }
 
-    fn test_store_block_tags(store: Store) {
-        let earliest_block_number = 0;
-        let finalized_block_number = 7;
-        let safe_block_number = 6;
-        let latest_block_number = 8;
-        let pending_block_number = 9;
+//     async fn test_store_block_tags(store: Store) {
+//         let earliest_block_number = 0;
+//         let finalized_block_number = 7;
+//         let safe_block_number = 6;
+//         let latest_block_number = 8;
+//         let pending_block_number = 9;
 
-        store
-            .update_earliest_block_number(earliest_block_number)
-            .unwrap();
-        store
-            .update_finalized_block_number(finalized_block_number)
-            .unwrap();
-        store.update_safe_block_number(safe_block_number).unwrap();
-        store
-            .update_latest_block_number(latest_block_number)
-            .unwrap();
-        store
-            .update_pending_block_number(pending_block_number)
-            .unwrap();
+//         store
+//             .update_earliest_block_number(earliest_block_number)
+//             .await
+//             .unwrap();
+//         store
+//             .update_finalized_block_number(finalized_block_number)
+//             .await
+//             .unwrap();
+//         store
+//             .update_safe_block_number(safe_block_number)
+//             .await
+//             .unwrap();
+//         store
+//             .update_latest_block_number(latest_block_number)
+//             .await
+//             .unwrap();
+//         store
+//             .update_pending_block_number(pending_block_number)
+//             .await
+//             .unwrap();
 
-        let stored_earliest_block_number = store.get_earliest_block_number().unwrap();
-        let stored_finalized_block_number = store.get_finalized_block_number().unwrap().unwrap();
-        let stored_safe_block_number = store.get_safe_block_number().unwrap().unwrap();
-        let stored_latest_block_number = store.get_latest_block_number().unwrap();
-        let stored_pending_block_number = store.get_pending_block_number().unwrap().unwrap();
+//         let stored_earliest_block_number = store.get_earliest_block_number().await.unwrap();
+//         let stored_finalized_block_number =
+//             store.get_finalized_block_number().await.unwrap().unwrap();
+//         let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
+//         let stored_latest_block_number = store.get_latest_block_number().await.unwrap();
+//         let stored_pending_block_number = store.get_pending_block_number().await.unwrap().unwrap();
 
-        assert_eq!(earliest_block_number, stored_earliest_block_number);
-        assert_eq!(finalized_block_number, stored_finalized_block_number);
-        assert_eq!(safe_block_number, stored_safe_block_number);
-        assert_eq!(latest_block_number, stored_latest_block_number);
-        assert_eq!(pending_block_number, stored_pending_block_number);
-    }
+//         assert_eq!(earliest_block_number, stored_earliest_block_number);
+//         assert_eq!(finalized_block_number, stored_finalized_block_number);
+//         assert_eq!(safe_block_number, stored_safe_block_number);
+//         assert_eq!(latest_block_number, stored_latest_block_number);
+//         assert_eq!(pending_block_number, stored_pending_block_number);
+//     }
 
-    fn test_chain_config_storage(store: Store) {
-        let chain_config = example_chain_config();
-        store.set_chain_config(&chain_config).unwrap();
-        let retrieved_chain_config = store.get_chain_config().unwrap();
-        assert_eq!(chain_config, retrieved_chain_config);
-    }
+//     async fn test_chain_config_storage(store: Store) {
+//         let chain_config = example_chain_config();
+//         store.set_chain_config(&chain_config).await.unwrap();
+//         let retrieved_chain_config = store.get_chain_config().unwrap();
+//         assert_eq!(chain_config, retrieved_chain_config);
+//     }
 
-    fn example_chain_config() -> ChainConfig {
-        ChainConfig {
-            chain_id: 3151908_u64,
-            homestead_block: Some(0),
-            eip150_block: Some(0),
-            eip155_block: Some(0),
-            eip158_block: Some(0),
-            byzantium_block: Some(0),
-            constantinople_block: Some(0),
-            petersburg_block: Some(0),
-            istanbul_block: Some(0),
-            berlin_block: Some(0),
-            london_block: Some(0),
-            merge_netsplit_block: Some(0),
-            shanghai_time: Some(0),
-            cancun_time: Some(0),
-            prague_time: Some(1718232101),
-            terminal_total_difficulty: Some(58750000000000000000000),
-            terminal_total_difficulty_passed: true,
-            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
-                .unwrap(),
-            ..Default::default()
-        }
-    }
-}
+//     fn example_chain_config() -> ChainConfig {
+//         ChainConfig {
+//             chain_id: 3151908_u64,
+//             homestead_block: Some(0),
+//             eip150_block: Some(0),
+//             eip155_block: Some(0),
+//             eip158_block: Some(0),
+//             byzantium_block: Some(0),
+//             constantinople_block: Some(0),
+//             petersburg_block: Some(0),
+//             istanbul_block: Some(0),
+//             berlin_block: Some(0),
+//             london_block: Some(0),
+//             merge_netsplit_block: Some(0),
+//             shanghai_time: Some(0),
+//             cancun_time: Some(0),
+//             prague_time: Some(1718232101),
+//             terminal_total_difficulty: Some(58750000000000000000000),
+//             terminal_total_difficulty_passed: true,
+//             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+//                 .unwrap(),
+//             ..Default::default()
+//         }
+//     }
+// }

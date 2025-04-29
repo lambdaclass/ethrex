@@ -1,5 +1,6 @@
 use ethrex_trie::InMemoryTrieDB;
 use reth_db::table::DupSort;
+use reth_primitives::revm_primitives::db::components::block_hash;
 use reth_provider::providers::StaticFileProvider;
 use serde_json::value;
 use std::cell::{Cell, LazyCell, OnceCell};
@@ -291,8 +292,9 @@ tables! {
     table StorageSnapshot<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
 }
 
+#[async_trait::async_trait]
 impl StoreEngine for MDBXFork {
-    fn add_block_header(
+    async fn add_block_header(
         &self,
         block_hash: BlockHash,
         block_header: BlockHeader,
@@ -307,7 +309,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn add_block_headers(
+    async fn add_block_headers(
         &self,
         block_hashes: Vec<BlockHash>,
         block_headers: Vec<BlockHeader>,
@@ -340,7 +342,7 @@ impl StoreEngine for MDBXFork {
         Ok(header)
     }
 
-    fn add_block_body(
+    async fn add_block_body(
         &self,
         block_hash: BlockHash,
         block_body: BlockBody,
@@ -353,7 +355,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn add_blocks(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         for block in blocks {
             let number = block.header.number;
@@ -377,7 +379,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
+    async fn mark_chain_as_canonical(&self, blocks: &[Block]) -> Result<(), StoreError> {
         let key_values: Vec<_> = blocks
             .iter()
             .map(|e| (e.header.number, e.hash().encode_to_vec()))
@@ -390,7 +392,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
+    async fn get_block_body(&self, block_number: BlockNumber) -> Result<Option<BlockBody>, StoreError> {
         let tx = self.env.tx().unwrap();
         let Some(hash) = tx.get::<CanonicalBlockHashes>(block_number).unwrap() else {
             return Ok(None);
@@ -402,7 +404,53 @@ impl StoreEngine for MDBXFork {
         Ok(Some(decoded))
     }
 
-    fn get_block_body_by_hash(
+    async fn get_block_bodies(&self, from: BlockNumber, to: BlockNumber) -> Result<Vec<BlockBody>, StoreError> {
+        let mut encoded_bodies = vec![];
+        {
+            let tx = self.env.tx().unwrap();
+            let mut hashes_cursor = tx.cursor_read::<CanonicalBlockHashes>().unwrap();
+            let iterator = hashes_cursor.walk_range(from..=to).unwrap();
+            for next in iterator {
+                let Ok((_, encoded_hash)) = next else {
+                    break;
+                };
+                let Ok(Some(encoded_body)) = tx.get::<Bodies>(encoded_hash) else {
+                    break;
+                };
+                encoded_bodies.push(encoded_body)
+            }
+        }
+        let bodies: Vec<_> = encoded_bodies.into_iter().map(|eb| RLPDecode::decode(&eb).unwrap()).collect();
+        Ok(bodies)
+    }
+
+    async fn get_block_bodies_by_hash(
+        &self,
+        hashes: Vec<BlockHash>,
+    ) -> Result<Vec<BlockBody>, StoreError> {
+        let mut encoded_result = vec![];
+        {
+            let encoded_hashes: Vec<Vec<u8>> = hashes.into_iter().map(|h| RLPEncode::encode_to_vec(&h)).collect();
+            let tx = self.env.tx().unwrap();
+            for eh in encoded_hashes {
+                let Some(encoded_body) = tx.get::<Bodies>(eh).unwrap() else {
+                    break;
+                };
+                encoded_result.push(encoded_body);
+            }
+        }
+        let bodies: Result<Vec<_>, _> = encoded_result.into_iter().map(|encoded| RLPDecode::decode(&encoded)).collect();
+        Ok(bodies.unwrap())
+    }
+
+    async fn take_storage_heal_paths(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
+        todo!()
+    }
+
+    async fn get_block_body_by_hash(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
@@ -427,7 +475,7 @@ impl StoreEngine for MDBXFork {
         Ok(header)
     }
 
-    fn add_block_number(
+    async fn add_block_number(
         &self,
         block_hash: BlockHash,
         block_number: BlockNumber,
@@ -439,13 +487,13 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_block_number(&self, block_hash: BlockHash) -> Result<Option<BlockNumber>, StoreError> {
         let encoded_key = block_hash.encode_to_vec();
         let tx = self.env.tx().unwrap();
         Ok(tx.get::<BlockNumbers>(encoded_key).unwrap())
     }
 
-    fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
+    async fn add_account_code(&self, code_hash: H256, code: Bytes) -> Result<(), StoreError> {
         let key: B256 = code_hash.0.into();
         let code = reth_primitives_traits::Bytecode::new_raw(AlloyBytes(code));
         let tx = self
@@ -468,7 +516,7 @@ impl StoreEngine for MDBXFork {
         Ok(code.map(|bytecode: Bytecode| -> Bytes { bytecode.bytes().into() }))
     }
 
-    fn add_receipt(
+    async fn add_receipt(
         &self,
         block_hash: BlockHash,
         index: Index,
@@ -510,7 +558,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_receipt(
+    async fn get_receipt(
         &self,
         block_number: u64,
         receipt_index: u64,
@@ -566,7 +614,7 @@ impl StoreEngine for MDBXFork {
         Ok(Some(receipt))
     }
 
-    fn add_transaction_location(
+    async fn add_transaction_location(
         &self,
         transaction_hash: H256,
         block_number: BlockNumber,
@@ -581,7 +629,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_transaction_location(
+    async fn get_transaction_location(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
@@ -594,7 +642,7 @@ impl StoreEngine for MDBXFork {
         Ok(Some(decoded))
     }
 
-    fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
+    async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<ChainData>(
             ChainDataIndex::ChainConfig as u8,
@@ -621,7 +669,7 @@ impl StoreEngine for MDBXFork {
         }
     }
 
-    fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_earliest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<ChainData>(
             ChainDataIndex::EarliestBlockNumber as u8,
@@ -632,7 +680,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_earliest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let tx = self.env.tx().unwrap();
         let res = tx
             .get::<ChainData>(ChainDataIndex::EarliestBlockNumber as u8)
@@ -641,7 +689,7 @@ impl StoreEngine for MDBXFork {
         Ok(res)
     }
 
-    fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_finalized_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<ChainData>(
             ChainDataIndex::FinalizedBlockNumber as u8,
@@ -652,7 +700,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let tx = self.env.tx().unwrap();
         Ok(tx
             .get::<ChainData>(ChainDataIndex::FinalizedBlockNumber as u8)
@@ -660,7 +708,7 @@ impl StoreEngine for MDBXFork {
             .map(|ref bn| BlockNumber::decode(bn).unwrap()))
     }
 
-    fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_safe_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<ChainData>(
             ChainDataIndex::SafeBlockNumber as u8,
@@ -671,7 +719,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let tx = self.env.tx().unwrap();
         Ok(tx
             .get::<ChainData>(ChainDataIndex::SafeBlockNumber as u8)
@@ -679,7 +727,7 @@ impl StoreEngine for MDBXFork {
             .map(|ref num| BlockNumber::decode(num).unwrap()))
     }
 
-    fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_latest_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<ChainData>(
             ChainDataIndex::LatestBlockNumber as u8,
@@ -690,7 +738,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_latest_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let tx = self.env.tx().unwrap();
         let res = tx
             .get::<ChainData>(ChainDataIndex::LatestBlockNumber as u8)
@@ -699,7 +747,7 @@ impl StoreEngine for MDBXFork {
         Ok(res)
     }
 
-    fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+    async fn update_pending_block_number(&self, block_number: BlockNumber) -> Result<(), StoreError> {
         let encoded = block_number.encode_to_vec();
         let tx = self.env.tx_mut().unwrap();
         tx.put::<ChainData>(ChainDataIndex::PendingBlockNumber as u8, encoded)
@@ -707,7 +755,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+    async fn get_pending_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let tx = self.env.tx().unwrap();
         let Some(res) = tx
             .get::<ChainData>(ChainDataIndex::PendingBlockNumber as u8)
@@ -728,7 +776,7 @@ impl StoreEngine for MDBXFork {
         Trie::open(self.storage_trie.clone(), state_root)
     }
 
-    fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_canonical_block(&self, number: BlockNumber, hash: BlockHash) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<CanonicalBlockHashes>(number, hash.encode_to_vec())
             .unwrap();
@@ -736,7 +784,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_canonical_block_hash(
+    async fn get_canonical_block_hash(
         &self,
         number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
@@ -752,7 +800,7 @@ impl StoreEngine for MDBXFork {
         }
     }
 
-    fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
+    async fn add_payload(&self, payload_id: u64, block: Block) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<Payloads>(payload_id, PayloadBundle::from_block(block).encode_to_vec())
             .unwrap();
@@ -760,7 +808,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
+    async fn get_payload(&self, payload_id: u64) -> Result<Option<PayloadBundle>, StoreError> {
         let tx = self.env.tx().unwrap();
         let res = tx.get::<Payloads>(payload_id).unwrap();
         match res {
@@ -769,7 +817,7 @@ impl StoreEngine for MDBXFork {
         }
     }
 
-    fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
+    async fn update_payload(&self, payload_id: u64, payload: PayloadBundle) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<Payloads>(payload_id, payload.encode_to_vec())
             .unwrap();
@@ -777,24 +825,24 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_transaction_by_hash(
+    async fn get_transaction_by_hash(
         &self,
         transaction_hash: H256,
     ) -> Result<Option<Transaction>, StoreError> {
         let (_block_number, block_hash, index) =
-            match self.get_transaction_location(transaction_hash)? {
+            match self.get_transaction_location(transaction_hash).await? {
                 Some(location) => location,
                 None => return Ok(None),
             };
-        self.get_transaction_by_location(block_hash, index)
+        self.get_transaction_by_location(block_hash, index).await
     }
 
-    fn get_transaction_by_location(
+    async fn get_transaction_by_location(
         &self,
         block_hash: H256,
         index: u64,
     ) -> Result<Option<Transaction>, StoreError> {
-        let block_body = match self.get_block_body_by_hash(block_hash)? {
+        let block_body = match self.get_block_body_by_hash(block_hash).await? {
             Some(body) => body,
             None => return Ok(None),
         };
@@ -804,7 +852,7 @@ impl StoreEngine for MDBXFork {
             .and_then(|index: usize| block_body.transactions.get(index).cloned()))
     }
 
-    fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
+    async fn get_block_by_hash(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
         let tx = self.env.tx().unwrap();
         let body = tx.get::<Bodies>(block_hash.encode_to_vec()).unwrap();
         let header = tx.get::<Headers>(block_hash.encode_to_vec()).unwrap();
@@ -819,11 +867,11 @@ impl StoreEngine for MDBXFork {
         }
     }
 
-    fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
+    async fn unset_canonical_block(&self, number: BlockNumber) -> Result<(), StoreError> {
         todo!()
     }
 
-    fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
+    async fn add_pending_block(&self, block: Block) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<PendingBlocks>(
             block.header.compute_block_hash().encode_to_vec(),
@@ -834,7 +882,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
+    async fn get_pending_block(&self, block_hash: BlockHash) -> Result<Option<Block>, StoreError> {
         let encoded_hash = block_hash.encode_to_vec();
         let tx = self.env.tx().unwrap();
         let Some(encoded_block) = tx.get::<PendingBlocks>(encoded_hash).unwrap() else {
@@ -843,7 +891,7 @@ impl StoreEngine for MDBXFork {
         Ok(Some(Block::decode(&encoded_block).unwrap()))
     }
 
-    fn add_transaction_locations(
+    async fn add_transaction_locations(
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
@@ -863,7 +911,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn add_receipts(
+    async fn add_receipts(
         &self,
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
@@ -910,12 +958,12 @@ impl StoreEngine for MDBXFork {
         tx.commit().unwrap();
         Ok(())
     }
-    fn add_receipts_for_blocks(
+    async fn add_receipts_for_blocks(
         &self,
         receipts: std::collections::HashMap<BlockHash, Vec<Receipt>>,
     ) -> Result<(), StoreError> {
         for (block_hash, receipts) in receipts {
-            self.add_receipts(block_hash, receipts).unwrap();
+            self.add_receipts(block_hash, receipts).await.unwrap();
         }
         Ok(())
     }
@@ -924,7 +972,7 @@ impl StoreEngine for MDBXFork {
         todo!()
     }
 
-    fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+    async fn set_header_download_checkpoint(&self, block_hash: BlockHash) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<SnapState>(
             SnapStateIndex::HeaderDownloadCheckpoint as u8,
@@ -934,7 +982,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
+    async fn get_header_download_checkpoint(&self) -> Result<Option<BlockHash>, StoreError> {
         let tx = self.env.tx().unwrap();
         Ok(tx
             .get::<SnapState>(SnapStateIndex::HeaderDownloadCheckpoint as u8)
@@ -942,7 +990,7 @@ impl StoreEngine for MDBXFork {
             .map(|h| BlockHash::decode(h.as_ref()).unwrap()))
     }
 
-    fn set_state_trie_key_checkpoint(
+    async fn set_state_trie_key_checkpoint(
         &self,
         last_keys: [H256; STATE_TRIE_SEGMENTS],
     ) -> Result<(), StoreError> {
@@ -954,7 +1002,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_state_trie_key_checkpoint(
+    async fn get_state_trie_key_checkpoint(
         &self,
     ) -> Result<Option<[H256; STATE_TRIE_SEGMENTS]>, StoreError> {
         let tx = self.env.tx().unwrap();
@@ -970,7 +1018,7 @@ impl StoreEngine for MDBXFork {
             .map_err(StoreError::RLPDecode)
     }
 
-    fn set_storage_heal_paths(
+    async fn set_storage_heal_paths(
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
@@ -981,15 +1029,15 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-        let tx = self.env.tx().unwrap();
-        Ok(tx
-            .get::<SnapState>(SnapStateIndex::StateHealPaths as u8)
-            .unwrap()
-            .map(|ref encoded| <Vec<(H256, Vec<Nibbles>)>>::decode(encoded).unwrap()))
-    }
+    // async fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
+    //     let tx = self.env.tx().unwrap();
+    //     Ok(tx
+    //         .get::<SnapState>(SnapStateIndex::StateHealPaths as u8)
+    //         .unwrap()
+    //         .map(|ref encoded| <Vec<(H256, Vec<Nibbles>)>>::decode(encoded).unwrap()))
+    // }
 
-    fn is_synced(&self) -> Result<bool, StoreError> {
+    async fn is_synced(&self) -> Result<bool, StoreError> {
         let tx = self.env.tx().unwrap();
         let sync_status = tx
             .get::<ChainData>(ChainDataIndex::IsSynced as u8)
@@ -998,7 +1046,7 @@ impl StoreEngine for MDBXFork {
         Ok(RLPDecode::decode(&sync_status).unwrap())
     }
 
-    fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
+    async fn update_sync_status(&self, status: bool) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.put::<ChainData>(ChainDataIndex::IsSynced as u8, status.encode_to_vec())
             .unwrap();
@@ -1006,7 +1054,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
+    async fn set_state_heal_paths(&self, paths: Vec<Nibbles>) -> Result<(), StoreError> {
         let encoded = paths.encode_to_vec();
         let tx = self.env.tx_mut().unwrap();
         tx.put::<SnapState>(SnapStateIndex::StateHealPaths as u8, encoded)
@@ -1015,7 +1063,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
+    async fn get_state_heal_paths(&self) -> Result<Option<Vec<Nibbles>>, StoreError> {
         let tx = self.env.tx().unwrap();
         let Some(res) = tx
             .get::<SnapState>(SnapStateIndex::StateHealPaths as u8)
@@ -1027,14 +1075,14 @@ impl StoreEngine for MDBXFork {
         Ok(Some(decoded))
     }
 
-    fn clear_snap_state(&self) -> Result<(), StoreError> {
+    async fn clear_snap_state(&self) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.clear::<SnapState>().unwrap();
         tx.commit().unwrap();
         Ok(())
     }
 
-    fn write_snapshot_account_batch(
+    async fn write_snapshot_account_batch(
         &self,
         account_hashes: Vec<H256>,
         account_states: Vec<AccountState>,
@@ -1052,7 +1100,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn write_snapshot_storage_batch(
+    async fn write_snapshot_storage_batch(
         &self,
         account_hash: H256,
         storage_keys: Vec<H256>,
@@ -1073,7 +1121,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn write_snapshot_storage_batches(
+    async fn write_snapshot_storage_batches(
         &self,
         account_hashes: Vec<H256>,
         storage_keys: Vec<Vec<H256>>,
@@ -1108,7 +1156,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn set_state_trie_rebuild_checkpoint(
+    async fn set_state_trie_rebuild_checkpoint(
         &self,
         checkpoint: (H256, [H256; STATE_TRIE_SEGMENTS]),
     ) -> Result<(), StoreError> {
@@ -1120,7 +1168,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_state_trie_rebuild_checkpoint(
+    async fn get_state_trie_rebuild_checkpoint(
         &self,
     ) -> Result<Option<(H256, [H256; STATE_TRIE_SEGMENTS])>, StoreError> {
         let tx = self.env.tx().unwrap();
@@ -1134,7 +1182,7 @@ impl StoreEngine for MDBXFork {
         Ok(Some((root, checkpoints.try_into().unwrap())))
     }
 
-    fn set_storage_trie_rebuild_pending(
+    async fn set_storage_trie_rebuild_pending(
         &self,
         pending: Vec<(H256, H256)>,
     ) -> Result<(), StoreError> {
@@ -1148,7 +1196,7 @@ impl StoreEngine for MDBXFork {
         Ok(())
     }
 
-    fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
+    async fn get_storage_trie_rebuild_pending(&self) -> Result<Option<Vec<(H256, H256)>>, StoreError> {
         let tx = self.env.tx().unwrap();
         let Some(encoded) = tx
             .get::<SnapState>(SnapStateIndex::StorageTrieRebuildPending as u8)
@@ -1160,7 +1208,7 @@ impl StoreEngine for MDBXFork {
         Ok(Some(decoded))
     }
 
-    fn clear_snapshot(&self) -> Result<(), StoreError> {
+    async fn clear_snapshot(&self) -> Result<(), StoreError> {
         let tx = self.env.tx_mut().unwrap();
         tx.clear::<StateSnapShot>().unwrap();
         tx.commit().unwrap();
@@ -1195,7 +1243,7 @@ impl StoreEngine for MDBXFork {
         Ok(results)
     }
 
-    fn read_storage_snapshot(
+    async fn read_storage_snapshot(
         &self,
         account_hash: H256,
         start: H256,
@@ -1226,4 +1274,15 @@ impl StoreEngine for MDBXFork {
             .collect::<Vec<_>>();
         Ok(results)
     }
+
+    async fn set_latest_valid_ancestor(
+        &self,
+        bad_block: BlockHash,
+        latest_valid: BlockHash,
+) -> Result<(), StoreError> { todo!() }
+
+    async fn get_latest_valid_ancestor(
+        &self,
+        block: BlockHash,
+    ) -> Result<Option<BlockHash>, StoreError> { todo!() }
 }

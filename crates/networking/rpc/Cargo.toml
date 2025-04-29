@@ -20,6 +20,7 @@ ethrex-vm.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-p2p.workspace = true
 ethrex-rlp.workspace = true
+ethrex-storage-rollup = { workspace = true, optional = true }
 hex.workspace = true
 axum-extra = { version = "0.10.0", features = ["typed-header"] }
 jsonwebtoken.workspace = true
@@ -49,8 +50,8 @@ strum_macros = { version = "0.24", optional = true }
 hex-literal = "0.4.1"
 
 [lib]
-path = "./rpc.rs"
+path = "./lib.rs"
 
 [features]
 based = ["l2", "dep:ssz_types", "dep:tree_hash", "dep:tree_hash_derive", "dep:strum_macros"]
-l2 = []
+l2 = ["ethrex-storage-rollup"]

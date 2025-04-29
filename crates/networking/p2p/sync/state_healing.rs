@@ -8,7 +8,7 @@
 //! This process will stop once it has fixed all trie inconsistencies or when the pivot becomes stale, in which case it can be resumed on the next cycle
 //! All healed accounts will also have their bytecodes and storages healed by the corresponding processes
 
-use std::cmp::min;
+use std::{cmp::min, time::Instant};
 
 use ethrex_common::{
     types::{AccountState, EMPTY_KECCACK_HASH},
@@ -18,13 +18,13 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 use ethrex_trie::{Nibbles, Node, EMPTY_TRIE_HASH};
 use tokio::sync::mpsc::{channel, Sender};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     peer_handler::PeerHandler,
     sync::{
         bytecode_fetcher, node_missing_children, MAX_CHANNEL_MESSAGES, MAX_PARALLEL_FETCHES,
-        NODE_BATCH_SIZE,
+        NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION,
     },
 };
 
@@ -36,9 +36,8 @@ pub(crate) async fn heal_state_trie(
     state_root: H256,
     store: Store,
     peers: PeerHandler,
-    storage_healer_sender: Sender<Vec<H256>>,
 ) -> Result<bool, SyncError> {
-    let mut paths = store.get_state_heal_paths()?.unwrap_or_default();
+    let mut paths = store.get_state_heal_paths().await?.unwrap_or_default();
     // Spawn a bytecode fetcher for this block
     let (bytecode_sender, bytecode_receiver) = channel::<Vec<H256>>(MAX_CHANNEL_MESSAGES);
     let bytecode_fetcher_handle = tokio::spawn(bytecode_fetcher(
@@ -48,7 +47,12 @@ pub(crate) async fn heal_state_trie(
     ));
     // Add the current state trie root to the pending paths
     paths.push(Nibbles::default());
+    let mut last_update = Instant::now();
     while !paths.is_empty() {
+        if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
+            last_update = Instant::now();
+            info!("State Healing in Progress, pending paths: {}", paths.len());
+        }
         // Spawn multiple parallel requests
         let mut state_tasks = tokio::task::JoinSet::new();
         for _ in 0..MAX_PARALLEL_FETCHES {
@@ -59,7 +63,6 @@ pub(crate) async fn heal_state_trie(
                 batch,
                 peers.clone(),
                 store.clone(),
-                storage_healer_sender.clone(),
                 bytecode_sender.clone(),
             ));
             // End loop if we have no more paths to fetch
@@ -82,7 +85,7 @@ pub(crate) async fn heal_state_trie(
     // Save paths for the next cycle
     if !paths.is_empty() {
         debug!("Caching {} paths for the next cycle", paths.len());
-        store.set_state_heal_paths(paths.clone())?;
+        store.set_state_heal_paths(paths.clone()).await?;
     }
     // Send empty batch to signal that no more batches are incoming
     bytecode_sender.send(vec![]).await?;
@@ -98,7 +101,6 @@ async fn heal_state_batch(
     mut batch: Vec<Nibbles>,
     peers: PeerHandler,
     store: Store,
-    storage_sender: Sender<Vec<H256>>,
     bytecode_sender: Sender<Vec<H256>>,
 ) -> Result<(Vec<Nibbles>, bool), SyncError> {
     if let Some(nodes) = peers
@@ -144,7 +146,14 @@ async fn heal_state_batch(
         }
         // Send storage & bytecode requests
         if !hashed_addresses.is_empty() {
-            storage_sender.send(hashed_addresses).await?;
+            store
+                .set_storage_heal_paths(
+                    hashed_addresses
+                        .into_iter()
+                        .map(|hash| (hash, vec![Nibbles::default()]))
+                        .collect(),
+                )
+                .await?;
         }
         if !code_hashes.is_empty() {
             bytecode_sender.send(code_hashes).await?;

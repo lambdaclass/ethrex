@@ -5,7 +5,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::{backends::revm::execution_db::ToExecDB, StoreWrapper};
+use ethrex_vm::Evm;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -33,11 +33,11 @@ pub fn read_genesis_file(genesis_file_path: &str) -> Genesis {
 /// Place this in the `proposer/mod.rs` file,
 /// specifically in the `start` function,
 /// before calling `send_commitment()` to send the block commitment.
-pub fn generate_rlp(
+pub async fn generate_rlp(
     up_to_block_number: u64,
     store: &Store,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if store.get_latest_block_number()? == up_to_block_number {
+    if store.get_latest_block_number().await? == up_to_block_number {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let file_name = "l2-test.rlp";
 
@@ -45,7 +45,7 @@ pub fn generate_rlp(
 
         let mut file = std::fs::File::create(path.to_str().unwrap())?;
         for i in 1..up_to_block_number {
-            let body = store.get_block_body(i)?.unwrap();
+            let body = store.get_block_body(i).await?.unwrap();
             let header = store.get_block_header(i)?.unwrap();
 
             let block = Block::new(header, body);
@@ -58,11 +58,14 @@ pub fn generate_rlp(
     Ok(())
 }
 
-pub fn generate_program_input(
+// Unused. Generates the program input for a batch of only one block.
+pub async fn generate_program_input(
     genesis: Genesis,
     chain: Vec<Block>,
     block_number: usize,
 ) -> Result<ProgramInput, ProverInputError> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
     let block = chain
         .get(block_number)
         .ok_or(ProverInputError::InvalidBlockNumber(block_number))?
@@ -70,26 +73,24 @@ pub fn generate_program_input(
 
     // create store
     let store = Store::new("memory", EngineType::InMemory)?;
-    store.add_initial_state(genesis)?;
+    rt.block_on(store.add_initial_state(genesis))?;
     // create blockchain
     let blockchain = Blockchain::default_with_store(store.clone());
     for block in chain {
-        blockchain.add_block(&block)?;
+        rt.block_on(blockchain.add_block(&block))?;
     }
 
     let parent_hash = block.header.parent_hash;
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    let store = StoreWrapper {
-        store,
-        block_hash: parent_hash,
-    };
-    let db = store.to_exec_db(&block)?;
+
+    let blocks = vec![block];
+    let db = Evm::to_execution_db(&store, &blocks).await?;
 
     Ok(ProgramInput {
         db,
-        block,
+        blocks,
         parent_block_header,
     })
 }

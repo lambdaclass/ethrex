@@ -9,7 +9,7 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface --exclude ethrex-prover-bench -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
@@ -40,7 +40,7 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 			--dev \
 			--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 42963f52f3cfc4eb9deb5248c8529ff97acc709c
+ETHEREUM_PACKAGE_REVISION := e73f52c34fd785700e9555aa41a78b0d5ca50173
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -160,20 +160,43 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--dev \
 	--datadir test_ethrex
 
+<<<<<<< HEAD
 load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
 	cargo run --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
 
 load-test-erc20:
 	cargo run --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
+||||||| 67e1fa89d
+load-test: install-cli ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000
+=======
+load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
+	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t eth-transfers
+
+load-test-erc20:
+	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t erc20
+>>>>>>> main
 
 load-test-fibonacci:
+<<<<<<< HEAD
 	cargo run --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
+||||||| 67e1fa89d
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --fibonacci
+=======
+	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t fibonacci
+>>>>>>> main
 
 load-test-io:
+<<<<<<< HEAD
 	cargo run --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
+||||||| 67e1fa89d
+	ethrex_l2 test load --path test_data/private_keys.txt -i 1000 -v  --value 100000 --io
+=======
+	cargo run --release --manifest-path ./cmd/load_test/Cargo.toml -- -k ./test_data/private_keys.txt -t io-heavy
+>>>>>>> main
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
-	sudo cargo run --release --bin ethrex -- removedb --datadir test_ethrex
+	sudo cargo run --release --bin ethrex -- removedb --force --datadir test_ethrex
 
 flamegraph: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make flamegraph
 	sudo bash bench/scripts/flamegraph.sh

@@ -167,31 +167,31 @@ fn setup() -> Result<SetupResult, DeployError> {
 
     let eth_client = EthClient::new(&read_env_var("ETH_RPC_URL")?);
 
-    let deployer_address = parse_env_var("DEPLOYER_ADDRESS")?;
+    let deployer_address = parse_env_var("DEPLOYER_L1_ADDRESS")?;
     let deployer_private_key = SecretKey::from_slice(
         H256::from_str(
-            read_env_var("DEPLOYER_PRIVATE_KEY")?
+            read_env_var("DEPLOYER_L1_PRIVATE_KEY")?
                 .strip_prefix("0x")
                 .ok_or(DeployError::ParseError(
-                    "Malformed DEPLOYER PRIVATE KEY (strip_prefix(\"0x\"))".to_owned(),
+                    "Malformed DEPLOYER_L1_PRIVATE_KEY (strip_prefix(\"0x\"))".to_owned(),
                 ))?,
         )
         .map_err(|err| {
             DeployError::ParseError(format!(
-                "Malformed DEPLOYER PRIVATE KEY (H256::from_str): {err}"
+                "Malformed DEPLOYER_L1_PRIVATE_KEY (H256::from_str): {err}"
             ))
         })?
         .as_bytes(),
     )
     .map_err(|err| {
         DeployError::ParseError(format!(
-            "Malformed DEPLOYER_PRIVATE_KEY (SecretKey::parse): {err}"
+            "Malformed DEPLOYER_L1_PRIVATE_KEY (SecretKey::parse): {err}"
         ))
     })?;
 
     let committer_address = parse_env_var("COMMITTER_L1_ADDRESS")?;
 
-    let verifier_address = parse_env_var("PROVER_SERVER_VERIFIER_ADDRESS")?;
+    let verifier_address = parse_env_var("PROVER_SERVER_L1_ADDRESS")?;
 
     let contracts_path = Path::new(
         std::env::var("DEPLOYER_CONTRACTS_PATH")
@@ -350,13 +350,14 @@ async fn deploy_contracts(
         Color::Cyan,
     );
 
-    let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) = deploy_contract(
-        deployer,
-        deployer_private_key,
-        eth_client,
-        &contracts_path.join("solc_out/OnChainProposer.bin"),
-    )
-    .await?;
+    let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) =
+        deploy_on_chain_proposer(
+            deployer,
+            deployer_private_key,
+            eth_client,
+            &contracts_path.join("solc_out/OnChainProposer.bin"),
+        )
+        .await?;
 
     let msg = format!(
         "OnChainProposer:\n\tDeployed at address {}\n\tWith tx hash {}",
@@ -438,12 +439,10 @@ async fn deploy_contract(
     contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
     let init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
-        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
+        DeployError::DecodingError(format!("Failed to read contract init code: {err}"))
     })?)
     .map_err(|err| {
-        DeployError::DecodingError(format!(
-            "Failed to decode on_chain_proposer_init_code: {err}"
-        ))
+        DeployError::DecodingError(format!("Failed to decode contract init code: {err}"))
     })?
     .into();
 
@@ -451,6 +450,44 @@ async fn deploy_contract(
         create2_deploy(deployer, deployer_private_key, &init_code, eth_client)
             .await
             .map_err(DeployError::from)?;
+
+    Ok((deploy_tx_hash, contract_address))
+}
+
+async fn deploy_on_chain_proposer(
+    deployer: Address,
+    deployer_private_key: SecretKey,
+    eth_client: &EthClient,
+    contract_path: &Path,
+) -> Result<(H256, Address), DeployError> {
+    let mut init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
+        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
+    })?)
+    .map_err(|err| {
+        DeployError::DecodingError(format!(
+            "Failed to decode on_chain_proposer_init_code: {err}"
+        ))
+    })?;
+
+    let validium: bool = read_env_var("COMMITTER_VALIDIUM")?
+        .trim()
+        .parse()
+        .map_err(|err| DeployError::ParseError(format!("Malformed COMMITTER_VALIDIUM: {err}")))?;
+
+    let validium_value = if validium { 1u8 } else { 0u8 };
+    let encoded_validium = vec![0; 31]
+        .into_iter()
+        .chain(std::iter::once(validium_value));
+    init_code.extend(encoded_validium);
+
+    let (deploy_tx_hash, contract_address) = create2_deploy(
+        deployer,
+        deployer_private_key,
+        &init_code.into(),
+        eth_client,
+    )
+    .await
+    .map_err(DeployError::from)?;
 
     Ok((deploy_tx_hash, contract_address))
 }
@@ -755,8 +792,15 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
                 DeployError::DecodingError("Error while parsing private key".to_string())
             })?;
         let address = get_address_from_secret_key(&secret_key)?;
-        let values = vec![Value::Address(address)];
-        let calldata = encode_calldata("deposit(address)", &values)?;
+        let values = vec![Value::Tuple(vec![
+            Value::Address(address),
+            Value::Address(address),
+            Value::Uint(U256::from(21000 * 5)),
+            Value::Bytes(Bytes::from_static(b"")),
+        ])];
+
+        let calldata = encode_calldata("deposit((address,address,uint256,bytes))", &values)?;
+
         let Some(_) = genesis.alloc.get(&address) else {
             println!(
                 "Skipping deposit for address {:?} as it is not in the genesis file",

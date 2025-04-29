@@ -84,13 +84,13 @@ impl GetBlockHeaders {
             reverse,
         }
     }
-    pub fn fetch_headers(&self, storage: &Store) -> Vec<BlockHeader> {
+    pub async fn fetch_headers(&self, storage: &Store) -> Vec<BlockHeader> {
         let start_block = match self.startblock {
             // Check we have the given block hash and fetch its number
             HashOrNumber::Hash(block_hash) => {
                 // TODO(#1073)
                 // Research what we should do when an error is found in a P2P request.
-                if let Ok(Some(block_number)) = storage.get_block_number(block_hash) {
+                if let Ok(Some(block_number)) = storage.get_block_number(block_hash).await {
                     block_number
                 } else {
                     error!("Could not fetch block number for hash {block_hash}");
@@ -140,6 +140,7 @@ impl GetBlockHeaders {
 }
 
 impl RLPxMessage for GetBlockHeaders {
+    const CODE: u8 = 0x13;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let limit = self.limit;
@@ -180,6 +181,7 @@ impl BlockHeaders {
 }
 
 impl RLPxMessage for BlockHeaders {
+    const CODE: u8 = 0x14;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         // Each message is encoded with its own
@@ -221,10 +223,10 @@ impl GetBlockBodies {
     pub fn new(id: u64, block_hashes: Vec<BlockHash>) -> Self {
         Self { block_hashes, id }
     }
-    pub fn fetch_blocks(&self, storage: &Store) -> Vec<BlockBody> {
+    pub async fn fetch_blocks(&self, storage: &Store) -> Vec<BlockBody> {
         let mut block_bodies = vec![];
         for block_hash in &self.block_hashes {
-            match storage.get_block_body_by_hash(*block_hash) {
+            match storage.get_block_body_by_hash(*block_hash).await {
                 Ok(Some(block)) => {
                     block_bodies.push(block);
                     if block_bodies.len() >= BLOCK_BODY_LIMIT {
@@ -247,6 +249,7 @@ impl GetBlockBodies {
 }
 
 impl RLPxMessage for GetBlockBodies {
+    const CODE: u8 = 0x15;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
@@ -285,6 +288,7 @@ impl BlockBodies {
 }
 
 impl RLPxMessage for BlockBodies {
+    const CODE: u8 = 0x16;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
