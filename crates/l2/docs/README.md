@@ -44,8 +44,10 @@ For more information on how to run the L2 node with the prover attached to it, t
 To transfer ETH from Ethereum L1 to your L2 account:
 
 1. Prerequisites:
-   - An L1 account with sufficient ETH balance
-   - The address of the deployed CommonBridge contract
+   - An L1 account with sufficient ETH balance, for developing purpose you can use:
+      - Address: `0x8943545177806ed17b9f23f0a21ee5948ecaa776`
+      - Private Key: `0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31`
+   - The address of the deployed CommonBridge contract. 
    - An Ethereum utility tool like [Rex](https://github.com/lambdaclass/rex)
 
 2. Make a deposit:
@@ -69,13 +71,16 @@ For more information on what you can do with the CommonBridge see [here](./contr
 ### Withdrawing funds from the L2 to L1
 
 1. Prerequisites:
-   - An L2 account with sufficient ETH balance
-   - The address of the deployed CommonBridge L2 contract (note here that we are calling the L2 contract instead of the L1 as in the deposit case)
-   - An Ethereum utility tool like [Rex](https://github.com/lambdaclass/rex)
+   - An L2 account with sufficient ETH balance, for developing purpose you can use:
+      - Address: `0x8943545177806ed17b9f23f0a21ee5948ecaa776`
+      - Private Key: `0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31`
+   - The address of the deployed CommonBridge L2 contract (note here that we are calling the L2 contract instead of the L1 as in the deposit case). You can use:
+      - CommonBridge L2: `0x000000000000000000000000000000000000ffff`
+   - An Ethereum utility tool like [Rex](https://github.com/lambdaclass/rex).
 
 2. Make the Withdraw:
 
-    Using Rex we simply use the `rex l2 withdraw` command.
+    Using Rex we simply use the `rex l2 withdraw` command (it uses the default CommonBridge address).
     ```Shell
     # Format: rex l2 withdraw <AMOUNT> <PRIVATE_KEY> [RPC_URL]
     rex l2 withdraw 5000 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
