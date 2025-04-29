@@ -38,18 +38,18 @@ pub struct DeployerOptions {
     pub deposit_rich: bool,
     #[arg(
         long,
-        default_value = "../../test_data/private_keys_l1.txt",
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH",
+        required_if_eq("deposit_rich", "true"),
         help_heading = "Deployer options",
         help = "Path to the file containing the private keys of the rich accounts. The default is ../../test_data/private_keys_l1.txt"
     )]
     pub private_keys_file_path: String,
     #[arg(
         long,
-        default_value = "../../test_data/genesis-l1-dev.json",
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_GENESIS_L1_PATH",
+        required_if_eq("deposit_rich", "true"),
         help_heading = "Deployer options",
         help = "Path to the genesis file. The default is ../../test_data/genesis-l1-dev.json"
     )]
