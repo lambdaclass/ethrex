@@ -213,8 +213,6 @@ test: ## 🚧 Runs the L2's integration test, run `make init` and in a new termi
 integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
 	touch .env
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
-	ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM} \
@@ -226,13 +224,9 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
 	touch .env
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
-	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
-	ETHREX_PROPOSER_BLOCK_TIME_MS=${ETHREX_PROPOSER_BLOCK_TIME_MS} \
-	ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
+	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
 	ETHREX_PROPOSER_BLOCK_TIME_MS=${ETHREX_PROPOSER_BLOCK_TIME_MS} \
 	ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
@@ -247,7 +241,6 @@ state-diff-test:
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach

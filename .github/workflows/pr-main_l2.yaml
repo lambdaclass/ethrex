@@ -135,7 +135,7 @@ jobs:
         run: |
           sleep 30
           cd crates/l2
-          CI_ETHREX_WORKDIR=/Users/ivanlitteri/Repositories/lambdaclass/ethrex/ \
+          CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=${{ matrix.validium }} \
           docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
 
