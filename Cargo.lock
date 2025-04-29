@@ -3465,6 +3465,8 @@ name = "ethrex_l2-deployer"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
+ "clap_complete",
  "colored",
  "ethereum-types",
  "ethrex-common",
