@@ -15,7 +15,9 @@ members = [
   "crates/l2/",
   "crates/l2/contracts",
   "crates/l2/prover",
+  "crates/l2/prover/bench",
   "crates/l2/sdk",
+  "crates/l2/storage",
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
@@ -48,6 +50,7 @@ ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
 ethrex-prover = { path = "./crates/l2/prover" }
+ethrex-storage-rollup = { path = "./crates/l2/storage" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }

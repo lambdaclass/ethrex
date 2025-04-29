@@ -13,39 +13,40 @@ import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 /// @title OnChainProposer contract.
 /// @author LambdaClass
 contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
-    /// @notice Committed blocks data.
-    /// @dev This struct holds the information about the committed blocks.
+    /// @notice Committed batches data.
+    /// @dev This struct holds the information about the committed batches.
     /// @dev processedDepositLogsRollingHash is the Merkle root of the logs of the
-    /// deposits that were processed in the block being committed. The amount of
+    /// deposits that were processed in the batch being committed. The amount of
     /// logs that is encoded in this root are to be removed from the
     /// pendingDepositLogs queue of the CommonBridge contract.
-    struct BlockCommitmentInfo {
+    struct BatchCommitmentInfo {
         bytes32 newStateRoot;
         bytes32 stateDiffKZGVersionedHash;
         bytes32 processedDepositLogsRollingHash;
     }
 
-    /// @notice The commitments of the committed blocks.
-    /// @dev If a block is committed, the commitment is stored here.
-    /// @dev If a block was not committed yet, it won't be here.
-    /// @dev It is used by other contracts to verify if a block was committed.
-    mapping(uint256 => BlockCommitmentInfo) public blockCommitments;
+    /// @notice The commitments of the committed batches.
+    /// @dev If a batch is committed, the commitment is stored here.
+    /// @dev If a batch was not committed yet, it won't be here.
+    /// @dev It is used by other contracts to verify if a batch was committed.
+    /// @dev The key is the batch number.
+    mapping(uint256 => BatchCommitmentInfo) public batchCommitments;
 
-    /// @notice The latest verified block number.
-    /// @dev This variable holds the block number of the most recently verified block.
-    /// @dev All blocks with a block number less than or equal to `lastVerifiedBlock` are considered verified.
-    /// @dev Blocks with a block number greater than `lastVerifiedBlock` have not been verified yet.
-    /// @dev This is crucial for ensuring that only valid and confirmed blocks are processed in the contract.
-    uint256 public lastVerifiedBlock;
+    /// @notice The latest verified batch number.
+    /// @dev This variable holds the batch number of the most recently verified batch.
+    /// @dev All batches with a batch number less than or equal to `lastVerifiedBatch` are considered verified.
+    /// @dev Batches with a batch number greater than `lastVerifiedBatch` have not been verified yet.
+    /// @dev This is crucial for ensuring that only valid and confirmed batches are processed in the contract.
+    uint256 public lastVerifiedBatch;
 
-    /// @notice The latest committed block number.
-    /// @dev This variable holds the block number of the most recently committed block.
-    /// @dev All blocks with a block number less than or equal to `lastCommittedBlock` are considered committed.
-    /// @dev Blocks with a block number greater than `lastCommittedBlock` have not been committed yet.
-    /// @dev This is crucial for ensuring that only subsequents blocks are committed in the contract.
-    uint256 public lastCommittedBlock;
+    /// @notice The latest committed batch number.
+    /// @dev This variable holds the batch number of the most recently committed batch.
+    /// @dev All batches with a batch number less than or equal to `lastCommittedBatch` are considered committed.
+    /// @dev Batches with a block number greater than `lastCommittedBatch` have not been committed yet.
+    /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
+    uint256 public lastCommittedBatch;
 
-    /// @dev The sequencer addresses that are authorized to commit and verify blocks.
+    /// @dev The sequencer addresses that are authorized to commit and verify batches.
     mapping(address _authorizedAddress => bool)
         public authorizedSequencerAddresses;
 
@@ -59,6 +60,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// the verification process will not happen.
     /// @dev Used only in dev mode.
     address public constant DEV_MODE = address(0xAA);
+
+    /// @notice Indicates whether the contract operates in validium mode.
+    /// @dev This value is immutable and can only be set during contract deployment.
+    bool public immutable VALIDIUM;
+
+    /// @notice Constructor to initialize the immutable validium value.
+    /// @param _validium A boolean indicating if the contract operates in validium mode.
+    constructor(bool _validium) {
+        VALIDIUM = _validium;
+    }
 
     modifier onlySequencer() {
         require(
@@ -142,20 +153,21 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     }
 
     /// @inheritdoc IOnChainProposer
-    function commit(
-        uint256 blockNumber,
+    function commitBatch(
+        uint256 batchNumber,
         bytes32 newStateRoot,
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash
     ) external override onlySequencer {
+        // TODO: Refactor validation
         require(
-            blockNumber == lastCommittedBlock + 1,
-            "OnChainProposer: blockNumber is not the immediate successor of lastCommittedBlock"
+            batchNumber == lastCommittedBatch + 1,
+            "OnChainProposer: batchNumber is not the immediate successor of lastCommittedBatch"
         );
         require(
-            blockCommitments[blockNumber].newStateRoot == bytes32(0),
-            "OnChainProposer: block already committed"
+            batchCommitments[batchNumber].newStateRoot == bytes32(0),
+            "OnChainProposer: tried to commit an already committed batch"
         );
 
         // Check if commitment is equivalent to blob's KZG commitment.
@@ -172,27 +184,28 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
-                blockNumber,
+                batchNumber,
                 withdrawalsLogsMerkleRoot
             );
         }
-        blockCommitments[blockNumber] = BlockCommitmentInfo(
+        batchCommitments[batchNumber] = BatchCommitmentInfo(
             newStateRoot,
             stateDiffKZGVersionedHash,
             processedDepositLogsRollingHash
         );
-        lastCommittedBlock = blockNumber;
-        emit BlockCommitted(newStateRoot);
+        emit BatchCommitted(newStateRoot);
+
+        lastCommittedBatch = batchNumber;
     }
 
     /// @inheritdoc IOnChainProposer
-    /// @notice The first `require` checks that the block number is the subsequent block.
-    /// @notice The second `require` checks if the block has been committed.
+    /// @notice The first `require` checks that the batch number is the subsequent block.
+    /// @notice The second `require` checks if the batch has been committed.
     /// @notice The order of these `require` statements is important.
-    /// Ordering Reason: After the verification process, we delete the `blockCommitments` for `blockNumber - 1`. This means that when checking the block,
-    /// we might get an error indicating that the block hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
-    function verify(
-        uint256 blockNumber,
+    /// Ordering Reason: After the verification process, we delete the `batchCommitments` for `batchNumber - 1`. This means that when checking the batch,
+    /// we might get an error indicating that the batch hasn’t been committed, even though it was committed but deleted. Therefore, it has already been verified.
+    function verifyBatch(
+        uint256 batchNumber,
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
@@ -206,17 +219,16 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes calldata picoPublicValues,
         uint256[8] calldata picoProof
     ) external override onlySequencer {
+        // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
         require(
-            blockNumber == lastVerifiedBlock + 1,
-            "OnChainProposer: block already verified"
+            batchNumber == lastVerifiedBatch + 1,
+            "OnChainProposer: batch already verified"
         );
-
         require(
-            blockCommitments[blockNumber].stateDiffKZGVersionedHash !=
-                bytes32(0),
-            "OnChainProposer: block not committed"
+            batchCommitments[batchNumber].newStateRoot != bytes32(0),
+            "OnChainProposer: cannot verify an uncommitted batch"
         );
 
         if (PICOVERIFIER != DEV_MODE) {
@@ -246,20 +258,20 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
         }
 
-        lastVerifiedBlock = blockNumber;
+        lastVerifiedBatch = batchNumber;
         // The first 2 bytes are the number of deposits.
         uint16 deposits_amount = uint16(
             bytes2(
-                blockCommitments[blockNumber].processedDepositLogsRollingHash
+                batchCommitments[batchNumber].processedDepositLogsRollingHash
             )
         );
         if (deposits_amount > 0) {
             ICommonBridge(BRIDGE).removePendingDepositLogs(deposits_amount);
         }
 
-        // Remove previous block commitment as it is no longer needed.
-        delete blockCommitments[blockNumber - 1];
+        // Remove previous batch commitment as it is no longer needed.
+        delete batchCommitments[batchNumber - 1];
 
-        emit BlockVerified(blockNumber);
+        emit BatchVerified(lastVerifiedBatch);
     }
 }

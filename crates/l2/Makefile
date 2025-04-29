@@ -137,7 +137,7 @@ init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
-		FEATURES="l2,metrics"; \
+		FEATURES="l2,rollup_storage_libmdbx,metrics"; \
 		echo "Running ethrex L2 vanilla"; \
 	else \
 		FEATURES="metrics,based"; \
@@ -202,7 +202,7 @@ test: ## 🚧 Runs the L2's integration test, run `make init` and in a new termi
 
 integration-test: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
-	# does not exists, the container fails to write to it.
+	# does not exist, the container fails to write to it.
 	touch .env
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build

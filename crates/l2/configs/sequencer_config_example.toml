@@ -36,9 +36,11 @@ l1_address = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b"
 l1_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924"
 on_chain_proposer_address = "0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe"
 # How often does the sequencer commit new blocks to the L1.
-commit_time_ms = 5000
+commit_time_ms = 60000
 # 1 Gwei
 arbitrary_base_blob_gas_price = 1000000000
+# If set to true, initializes the committer in validium mode
+validium = false
 
 [prover_server]
 # Address of a funded account that the sequencer will use to send verify txs to the L1.
