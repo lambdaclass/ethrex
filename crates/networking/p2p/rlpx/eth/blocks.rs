@@ -303,7 +303,7 @@ impl RLPxMessage for BlockBodies {
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
-        println!("Decode block body: {:?}", hex::encode(&decompressed_data));
+        // println!("Decode block body: {:?}", hex::encode(&decompressed_data));
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (block_bodies, _): (Vec<BlockBody>, _) = decoder.decode_field("blockBodies")?;

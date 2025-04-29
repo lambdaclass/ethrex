@@ -153,20 +153,20 @@ impl PeerHandler {
                         Some(RLPxMessage::BlockBodies(BlockBodies { id, block_bodies }))
                             if id == request_id =>
                         {
-                            info!(
-                                "Received a reply that matches, returning {} block bodies: {:?}",
-                                block_bodies.len(),
-                                block_bodies
-                            );
+                            // info!(
+                            //     "Received a reply that matches, returning {} block bodies: {:?}",
+                            //     block_bodies.len(),
+                            //     block_bodies
+                            // );
                             return Some(block_bodies);
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => {
-                            info!("Received a reply that doesn't match, ignoring...");
+                            // info!("Received a reply that doesn't match, ignoring...");
                             continue;
                         }
                         None => {
-                            info!("Received None as a reply, returning...");
+                            // info!("Received None as a reply, returning...");
                             return None;
                         }
                     }

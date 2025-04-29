@@ -75,7 +75,7 @@ impl Blockchain {
         let chain_config = self.storage.get_chain_config()?;
         let fork = chain_config.fork(block.header.timestamp);
 
-        dbg!(&block);
+        // dbg!(&block);
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config)?;
 
@@ -87,8 +87,8 @@ impl Blockchain {
         let execution_result = vm.execute_block(block)?;
         let account_updates = vm.get_state_transitions(fork)?;
 
-        dbg!(&execution_result);
-        dbg!(&account_updates);
+        // dbg!(&execution_result);
+        // dbg!(&account_updates);
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;

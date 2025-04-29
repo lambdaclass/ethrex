@@ -434,7 +434,7 @@ impl Syncer {
             "Starting to execute and validate {} blocks in batch",
             blocks_len
         );
-        dbg!(&blocks);
+        // dbg!(&blocks);
         let Some(first_block) = blocks.first().cloned() else {
             return Err(SyncError::BodiesNotFound);
         };
