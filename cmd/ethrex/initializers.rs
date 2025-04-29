@@ -36,6 +36,7 @@ use crate::l2::L2Options;
 use ::{
     ethrex_common::Address,
     ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode},
+    ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
     secp256k1::SecretKey,
 };
 
@@ -82,7 +83,6 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
             } else if #[cfg(feature = "libmdbx")] {
                 let engine_type = EngineType::Libmdbx;
             } else {
-                let engine_type = EngineType::InMemory;
                 error!("No database specified. The feature flag `redb` or `libmdbx` should've been set while building.");
                 panic!("Specify the desired database engine.");
             }
@@ -95,6 +95,26 @@ pub async fn init_store(data_dir: &str, network: &str) -> Store {
         .await
         .expect("Failed to create genesis block");
     store
+}
+
+#[cfg(feature = "l2")]
+pub async fn init_rollup_store(data_dir: &str) -> StoreRollup {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "rollup_storage_redb")] {
+            let engine_type = EngineTypeRollup::RedB;
+        } else if #[cfg(feature = "rollup_storage_libmdbx")] {
+            let engine_type = EngineTypeRollup::Libmdbx;
+        } else {
+            let engine_type = EngineTypeRollup::InMemory;
+        }
+    }
+    let rollup_store =
+        StoreRollup::new(data_dir, engine_type).expect("Failed to create StoreRollup");
+    rollup_store
+        .init()
+        .await
+        .expect("Failed to init rollup store");
+    rollup_store
 }
 
 pub fn init_blockchain(evm_engine: EvmEngine, store: Store) -> Arc<Blockchain> {
@@ -112,6 +132,7 @@ pub async fn init_rpc_api(
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
     tracker: TaskTracker,
+    #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
     let enr_seq = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -150,6 +171,8 @@ pub async fn init_rpc_api(
         get_valid_delegation_addresses(l2_opts),
         #[cfg(feature = "l2")]
         get_sponsor_pk(l2_opts),
+        #[cfg(feature = "l2")]
+        rollup_store,
     )
     .into_future();
 

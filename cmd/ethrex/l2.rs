@@ -2,7 +2,7 @@ use crate::{
     cli::{self as ethrex_cli, Options},
     initializers::{
         get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_network,
-        init_rpc_api, init_store,
+        init_rollup_store, init_rpc_api, init_store,
     },
     utils::{self, set_datadir, store_known_peers},
     DEFAULT_L2_DATADIR,
@@ -121,10 +121,12 @@ impl Command {
         match self {
             Command::Init { opts } => {
                 let data_dir = set_datadir(&opts.node_opts.datadir);
+                let rollup_store_dir = data_dir.clone() + "/rollup_store";
 
                 let network = get_network(&opts.node_opts);
 
                 let store = init_store(&data_dir, &network).await;
+                let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
                 let blockchain = init_blockchain(opts.node_opts.evm, store.clone());
 
@@ -149,6 +151,7 @@ impl Command {
                     blockchain.clone(),
                     cancel_token.clone(),
                     tracker.clone(),
+                    rollup_store.clone(),
                 )
                 .await;
 
@@ -174,7 +177,8 @@ impl Command {
                     info!("P2P is disabled");
                 }
 
-                let l2_sequencer = ethrex_l2::start_l2(store, blockchain).into_future();
+                let l2_sequencer =
+                    ethrex_l2::start_l2(store, rollup_store, blockchain).into_future();
 
                 tracker.spawn(l2_sequencer);
 
@@ -219,7 +223,7 @@ impl Command {
                     .checked_sub(U256::from(64))
                     .ok_or_eyre("Cannot get finalized block")?;
 
-                let event_signature = keccak("BlockCommitted(bytes32)");
+                let event_signature = keccak("BatchCommitted(bytes32)");
 
                 loop {
                     // Wait for a block
