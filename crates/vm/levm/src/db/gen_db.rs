@@ -41,7 +41,7 @@ impl GeneralizedDatabase {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
             None => {
-                let account = self.get_account_from_storage(address)?;
+                let account = self.get_account_from_database(address)?;
                 cache::insert_account(&mut self.cache, address, account.clone());
                 Ok(account)
             }
@@ -49,14 +49,17 @@ impl GeneralizedDatabase {
     }
 
     /// Gets account from storage, storing in InMemoryDB for efficiency when getting AccountUpdates.
-    pub fn get_account_from_storage(&mut self, address: Address) -> Result<Account, DatabaseError> {
+    pub fn get_account_from_database(
+        &mut self,
+        address: Address,
+    ) -> Result<Account, DatabaseError> {
         let account = self.store.get_account(address)?;
         self.in_memory_db.insert(address, account.clone());
         Ok(account)
     }
 
     /// Gets storage slot from Database, storing in InMemoryDB for efficiency when getting AccountUpdates.
-    pub fn get_storage_slot_from_storage(
+    pub fn get_value_from_database(
         &mut self,
         address: Address,
         key: H256,
@@ -80,7 +83,7 @@ impl GeneralizedDatabase {
     ) -> Result<Account, DatabaseError> {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
-            None => self.get_account_from_storage(address),
+            None => self.get_account_from_database(address),
         }
     }
 
