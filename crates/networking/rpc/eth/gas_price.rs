@@ -61,32 +61,6 @@ mod tests {
         utils::{parse_json_hex, RpcRequest},
     };
     use serde_json::json;
-    use std::sync::Arc;
-
-    async fn default_context() -> RpcApiContext {
-        let storage = setup_store().await;
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        RpcApiContext {
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            client_version: "ethrex/test".to_string(),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        }
-    }
 
     #[tokio::test]
     async fn test_for_legacy_txs() {
