@@ -3054,6 +3054,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-rpc",
  "ethrex-storage",
+ "ethrex-storage-rollup",
  "ethrex-vm",
  "eyre",
  "hex",
@@ -3156,6 +3157,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "ethrex-storage",
+ "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
  "hex",
@@ -3337,6 +3339,7 @@ dependencies = [
  "ethrex-p2p",
  "ethrex-rlp",
  "ethrex-storage",
+ "ethrex-storage-rollup",
  "ethrex-vm",
  "hex",
  "hex-literal",
@@ -3406,6 +3409,22 @@ dependencies = [
  "sha3",
  "tempdir",
  "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-storage-rollup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "ethereum-types",
+ "ethrex-common",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "libmdbx",
+ "redb",
  "tokio",
  "tracing",
 ]
@@ -3504,6 +3523,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk",
  "ethrex-storage",
+ "ethrex-storage-rollup",
  "eyre",
  "hex",
  "itertools 0.13.0",

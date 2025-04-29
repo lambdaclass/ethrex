@@ -283,7 +283,7 @@ pub struct CommitterOptions {
     pub on_chain_proposer_address: Address,
     #[arg(
         long,
-        default_value = "1000",
+        default_value = "60000",
         value_name = "UINT64",
         env = "ETHREX_COMMITTER_COMMIT_TIME_MS",
         help_heading = "L1 Committer options",
