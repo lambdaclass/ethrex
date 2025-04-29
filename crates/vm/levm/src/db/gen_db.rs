@@ -173,22 +173,20 @@ impl<'a> VM<'a> {
     /// Gets original storage value of an account, caching it if not already cached.
     /// Also saves the original value for future gas calculations.
     pub fn get_original_storage(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
-        let value_pre_tx = match self.storage_original_values.get(&address).cloned() {
-            Some(account_storage) => match account_storage.get(&key) {
-                Some(value) => *value,
-                None => self.get_storage_slot(address, key)?,
-            },
-            None => self.get_storage_slot(address, key)?,
-        };
+        if let Some(value) = self
+            .storage_original_values
+            .get(&address)
+            .and_then(|account_storage| account_storage.get(&key))
+        {
+            return Ok(*value);
+        }
 
-        // Add it to the original values if it wasn't already there
+        let value = self.get_storage_slot(address, key)?;
         self.storage_original_values
             .entry(address)
             .or_default()
-            .entry(key)
-            .or_insert(value_pre_tx);
-
-        Ok(value_pre_tx)
+            .insert(key, value);
+        Ok(value)
     }
 
     /// Accesses to an account's storage slot.
