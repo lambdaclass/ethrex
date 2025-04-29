@@ -2,7 +2,6 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
-use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, from_hex_string_to_u256, BlockByNumber, EthClient,
@@ -25,6 +24,16 @@ const DEFAULT_L1_RICH_WALLET_PRIVATE_KEY: H256 = H256([
     0xbc, 0xdf, 0x20, 0x24, 0x9a, 0xbf, 0x0e, 0xd6, 0xd9, 0x44, 0xc0, 0x28, 0x8f, 0xad, 0x48, 0x9e,
     0x33, 0xf6, 0x6b, 0x39, 0x60, 0xd9, 0xe6, 0x22, 0x9c, 0x1c, 0xd2, 0x14, 0xed, 0x3b, 0xbe, 0x31,
 ]);
+// 0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440
+const DEFAULT_BRIDGE_ADDRESS: Address = H160([
+    0x26, 0x6f, 0xfe, 0xf3, 0x4e, 0x21, 0xa7, 0xc4, 0xce, 0x2e, 0x0e, 0xe4, 0x2d, 0xc7, 0x80, 0xc2,
+    0xc2, 0x73, 0xca, 0x44,
+]);
+// 0x0007a881CD95B1484fca47615B64803dad620C8d
+const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
+    0x00, 0x07, 0xa8, 0x81, 0xcd, 0x95, 0xb1, 0x48, 0x4f, 0xca, 0x47, 0x61, 0x5b, 0x64, 0x80, 0x3d,
+    0xad, 0x62, 0x0c, 0x8d,
+]);
 
 const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 
@@ -44,8 +53,6 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
     let proposer_client = proposer_client();
-
-    read_env_file_by_config(ConfigMode::Sequencer)?;
 
     // 1. Check balances on L1 and L2
 
@@ -387,8 +394,6 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     let eth_client = eth_client();
     let proposer_client = proposer_client();
 
-    read_env_file_by_config(ConfigMode::Sequencer)?;
-
     // Check balances on L1 and L2
     println!("Checking initial balances on L1 and L2");
     let l1_rich_wallet_address = l1_rich_wallet_address();
@@ -569,8 +574,6 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
     let proposer_client = proposer_client();
-
-    read_env_file_by_config(ConfigMode::Sequencer)?;
 
     // Check balances on L1 and L2
     println!("Checking initial balances on L1 and L2");
@@ -770,38 +773,27 @@ async fn get_fees_details_l2(tx_receipt: RpcReceipt, l2_client: &EthClient) -> F
 }
 
 fn eth_client() -> EthClient {
-    EthClient::new(&std::env::var("ETH_URL").unwrap_or(DEFAULT_ETH_URL.to_owned()))
+    EthClient::new(DEFAULT_ETH_URL)
 }
 
 fn proposer_client() -> EthClient {
-    EthClient::new(&std::env::var("PROPOSER_URL").unwrap_or(DEFAULT_PROPOSER_URL.to_owned()))
+    EthClient::new(DEFAULT_PROPOSER_URL)
 }
 
 fn l1_rich_wallet_address() -> Address {
-    std::env::var("L1_RICH_WALLET_ADDRESS")
-        .unwrap_or(format!("{DEFAULT_L1_RICH_WALLET_ADDRESS:#x}"))
-        .parse()
-        .unwrap()
+    DEFAULT_L1_RICH_WALLET_ADDRESS
 }
 
 fn common_bridge_address() -> Address {
-    std::env::var("L1_WATCHER_BRIDGE_ADDRESS")
-        .expect("L1_WATCHER_BRIDGE_ADDRESS env var not set")
-        .parse()
-        .unwrap()
+    DEFAULT_BRIDGE_ADDRESS
 }
 
 fn fees_vault() -> Address {
-    std::env::var("PROPOSER_COINBASE_ADDRESS")
-        .expect("PROPOSER_COINBASE_ADDRESS env var not set")
-        .parse()
-        .unwrap()
+    DEFAULT_PROPOSER_COINBASE_ADDRESS
 }
 
 fn l1_rich_wallet_private_key() -> SecretKey {
-    std::env::var("L1_RICH_WALLET_PRIVATE_KEY")
-        .map(|s| SecretKey::from_slice(H256::from_str(&s).unwrap().as_bytes()).unwrap())
-        .unwrap_or(SecretKey::from_slice(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY.as_bytes()).unwrap())
+    SecretKey::from_slice(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY.as_bytes()).unwrap()
 }
 
 fn random_account() -> (Address, SecretKey) {
