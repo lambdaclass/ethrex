@@ -264,14 +264,13 @@ impl LEVM {
                 acc_info_updated = true;
             }
 
-            // let new_state_code_hash = code_hash(&new_state_account.info.bytecode);
-            // let code = if initial_state_account.bytecode_hash() != new_state_code_hash {
-            //     acc_info_updated = true;
-            //     Some(new_state_account.info.bytecode.clone())
-            // } else {
-            //     None
-            // };
-            let code = None;
+            let new_state_code_hash = code_hash(&new_state_account.info.bytecode);
+            let code = if initial_state_account.bytecode_hash() != new_state_code_hash {
+                acc_info_updated = true;
+                Some(new_state_account.info.bytecode.clone())
+            } else {
+                None
+            };
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
@@ -285,7 +284,7 @@ impl LEVM {
 
             let info = if acc_info_updated {
                 Some(AccountInfo {
-                    code_hash: H256::zero(),
+                    code_hash: new_state_code_hash,
                     balance: new_state_account.info.balance,
                     nonce: new_state_account.info.nonce,
                 })
