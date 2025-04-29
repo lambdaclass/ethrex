@@ -29,7 +29,8 @@ As the name suggests, this component sends transactions to the L1. But not any t
 
 Commit transactions are sent when the Proposer wants to commit to a new block. These transactions contain the block data to be committed in the L1.
 
-Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contain the proof to be verified in the L1.
+Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contains the new state root of the L2, the hash of the state diffs produced in the block, the root of the withdrawals logs merkle tree and the hash of the processed deposits.
+
 
 ### Proof Coordinator
 
@@ -88,7 +89,7 @@ The following environment variables are available to configure the Proposer cons
 
   - `l1_address`: Address of a funded account that will be used to send commit transactions to the L1.
   - `l1_private_key`: Its private key.
-  - `commit_time_ms`: Sleep time after sending the commit transaction with the proofs to the L1. If no new block has been fetched, we wait another `commit_time_ms` and check again.
+  - `commit_time_ms`: Sleep time after sending the commit transaction to the L1. If no new block has been built, the committer will simply wait another `commit_time_ms` and check again.
   - `on_chain_proposer_address`: Address of the on-chain committer.
   - `arbitrary_base_blob_gas_price`: Sets the minimum price floor for blob transactions when posting L2 data to the L1. This parameter allows you to control the lower bound of what the sequencer is willing to pay for blob storage. Higher values ensure faster inclusion in L1 blocks but increase operating costs, while lower values reduce costs but may cause delays.
 
