@@ -17,6 +17,7 @@ thiserror.workspace = true
 
 # ethrex
 ethrex-common.workspace = true
+ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-rlp.workspace = true
 ethrex-blockchain.workspace = true

@@ -5,7 +5,7 @@ use ethrex_common::{
     types::{AccountInfo, ChainConfig},
     Address, H256, U256,
 };
-use ethrex_storage::Store;
+use ethrex_storage::{AccountUpdate, Store};
 use ethrex_trie::{NodeRLP, Trie, TrieError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -18,9 +18,9 @@ pub struct StoreWrapper {
     pub block_hash: BlockHash,
 }
 
-/// In-memory EVM database for single execution data.
+/// In-memory EVM database for single batch execution data.
 ///
-/// This is mainly used to store the relevant state data for executing a single block and then
+/// This is mainly used to store the relevant state data for executing a single batch and then
 /// feeding the DB into a zkVM program to prove the execution.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExecutionDB {
@@ -66,5 +66,48 @@ impl ExecutionDB {
             .collect::<Result<_, TrieError>>()?;
 
         Ok((state_trie, storage_trie))
+    }
+
+    pub fn apply_account_updates(&mut self, account_updates: &[AccountUpdate]) {
+        for update in account_updates.iter() {
+            if update.removed {
+                self.accounts.remove(&update.address);
+            } else {
+                // Add or update AccountInfo
+                // Fetch current account_info or create a new one to be inserted
+                let mut account_info = match self.accounts.get(&update.address) {
+                    Some(account_info) => account_info.clone(),
+                    None => AccountInfo::default(),
+                };
+                if let Some(info) = &update.info {
+                    account_info.nonce = info.nonce;
+                    account_info.balance = info.balance;
+                    account_info.code_hash = info.code_hash;
+
+                    // Store updated code
+                    if let Some(code) = &update.code {
+                        self.code.insert(info.code_hash, code.clone());
+                    }
+                }
+                // Insert new AccountInfo
+                self.accounts.insert(update.address, account_info);
+
+                // Store the added storage
+                if !update.added_storage.is_empty() {
+                    let mut storage = match self.storage.get(&update.address) {
+                        Some(storage) => storage.clone(),
+                        None => HashMap::default(),
+                    };
+                    for (storage_key, storage_value) in &update.added_storage {
+                        if storage_value.is_zero() {
+                            storage.remove(storage_key);
+                        } else {
+                            storage.insert(*storage_key, *storage_value);
+                        }
+                    }
+                    self.storage.insert(update.address, storage);
+                }
+            }
+        }
     }
 }

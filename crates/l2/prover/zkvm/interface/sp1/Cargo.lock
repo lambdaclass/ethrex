@@ -3574,6 +3574,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-rlp",
+ "ethrex-storage",
  "ethrex-vm",
  "sp1-zkvm",
  "zkvm_interface",

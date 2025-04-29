@@ -137,7 +137,7 @@ init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
-		FEATURES="l2,metrics"; \
+		FEATURES="l2,rollup_storage_libmdbx,metrics"; \
 		echo "Running ethrex L2 vanilla"; \
 	else \
 		FEATURES="metrics,based"; \

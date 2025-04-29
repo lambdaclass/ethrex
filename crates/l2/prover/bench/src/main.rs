@@ -85,7 +85,7 @@ async fn main() {
     if prove {
         println!("proving");
         ethrex_prover_lib::prove(ProgramInput {
-            block,
+            blocks: vec![block],
             parent_block_header,
             db,
         })
@@ -93,7 +93,7 @@ async fn main() {
     } else {
         println!("executing");
         execute(ProgramInput {
-            block,
+            blocks: vec![block],
             parent_block_header,
             db,
         })

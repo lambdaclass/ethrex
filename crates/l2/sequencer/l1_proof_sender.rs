@@ -19,7 +19,7 @@ use crate::{
         },
         prover::{
             proving_systems::ProverType,
-            save_state::{block_number_has_all_needed_proofs, read_proof, StateFileType},
+            save_state::{batch_number_has_all_needed_proofs, read_proof, StateFileType},
         },
     },
 };
@@ -31,7 +31,7 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0xAA,
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verify(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verifyBatch(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 pub async fn start_l1_proof_sender() -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
@@ -114,22 +114,21 @@ impl L1ProofSender {
     }
 
     async fn main_logic(&self) -> Result<(), ProofSenderError> {
-        let block_to_verify = 1 + EthClient::get_last_verified_block(
-            &self.eth_client,
-            self.on_chain_proposer_address,
-        )
-        .await?;
+        let batch_to_verify = 1 + self
+            .eth_client
+            .get_last_verified_batch(self.on_chain_proposer_address)
+            .await?;
 
-        if block_number_has_all_needed_proofs(block_to_verify, &self.needed_proof_types)
+        if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
             .is_ok_and(|has_all_proofs| has_all_proofs)
         {
-            self.send_proof(block_to_verify).await?;
+            self.send_proof(batch_to_verify).await?;
         }
 
         Ok(())
     }
 
-    pub async fn send_proof(&self, block_number: u64) -> Result<H256, ProofSenderError> {
+    pub async fn send_proof(&self, batch_number: u64) -> Result<H256, ProofSenderError> {
         // TODO: change error
         // TODO: If the proof is not needed, a default calldata is used,
         // the structure has to match the one defined in the OnChainProposer.sol contract.
@@ -137,17 +136,17 @@ impl L1ProofSender {
         // this approach is straight-forward for now.
         let mut proofs = HashMap::with_capacity(self.needed_proof_types.len());
         for prover_type in self.needed_proof_types.iter() {
-            let proof = read_proof(block_number, StateFileType::Proof(*prover_type))?;
+            let proof = read_proof(batch_number, StateFileType::Proof(*prover_type))?;
             if proof.prover_type != *prover_type {
                 return Err(ProofSenderError::ProofNotPresent(*prover_type));
             }
             proofs.insert(prover_type, proof.calldata);
         }
 
-        debug!("Sending proof for block number: {block_number}");
+        debug!("Sending proof for batch number: {batch_number}");
 
         let calldata_values = [
-            &[Value::Uint(U256::from(block_number))],
+            &[Value::Uint(U256::from(batch_number))],
             proofs
                 .get(&ProverType::RISC0)
                 .unwrap_or(&ProverType::RISC0.empty_calldata())
@@ -195,7 +194,7 @@ impl L1ProofSender {
             .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
             .await?;
 
-        info!("Sent proof for block {block_number}, with transaction hash {verify_tx_hash:#x}");
+        info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
 
         Ok(verify_tx_hash)
     }

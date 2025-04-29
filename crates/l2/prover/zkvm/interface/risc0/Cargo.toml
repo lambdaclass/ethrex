@@ -10,6 +10,7 @@ risc0-zkvm = { version = "1.2.2", default-features = false, features = ["std"] }
 zkvm_interface = { path = "../" }
 
 ethrex-common = { path = "../../../../../common", default-features = false }
+ethrex-storage = { path = "../../../../../storage", default-features = false }
 ethrex-rlp = { path = "../../../../../common/rlp" }
 ethrex-vm = { path = "../../../../../vm", default-features = false }
 ethrex-blockchain = { path = "../../../../../blockchain", default-features = false }

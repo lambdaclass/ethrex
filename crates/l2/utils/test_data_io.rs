@@ -58,6 +58,7 @@ pub async fn generate_rlp(
     Ok(())
 }
 
+// Unused. Generates the program input for a batch of only one block.
 pub async fn generate_program_input(
     genesis: Genesis,
     chain: Vec<Block>,
@@ -83,11 +84,13 @@ pub async fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-    let db = Evm::to_execution_db(&store, &block).await?;
+
+    let blocks = vec![block];
+    let db = Evm::to_execution_db(&store, &blocks).await?;
 
     Ok(ProgramInput {
         db,
-        block,
+        blocks,
         parent_block_header,
     })
 }
