@@ -1,5 +1,6 @@
 use ethrex_l2_sdk::ContractCompilationError;
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, thiserror::Error)]
 pub enum SystemContractsUpdaterError {
     #[error("Failed to compile contract: {0}")]
