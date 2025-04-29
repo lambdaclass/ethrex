@@ -164,8 +164,7 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.drain() {
-            let initial_state_account = db.store.get_account(address)?;
-            let account_existed = db.store.account_exists(address);
+            let initial_state_account = db.in_memory_db.get(&address).expect("account not found");
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -206,15 +205,16 @@ impl LEVM {
 
             // https://eips.ethereum.org/EIPS/eip-161
             if fork >= Fork::SpuriousDragon {
-                // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
-                if !account_existed && new_state_account.is_empty() {
-                    continue;
-                }
-
                 // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
                 // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
                 if new_state_account.is_empty() {
                     removed = true;
+
+                    // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
+                    let account_existed = db.store.account_exists(address);
+                    if !account_existed {
+                        continue;
+                    }
                 }
             }
 
