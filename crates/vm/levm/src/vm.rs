@@ -465,7 +465,6 @@ impl<'a> VM<'a> {
         for hook in self.hooks.clone() {
             hook.prepare_execution(self)?;
         }
-
         Ok(())
     }
 
