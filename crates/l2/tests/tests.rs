@@ -258,6 +258,13 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Claiming funds on L1");
 
+    println!("Getting withdrawal proof");
+
+    // We need to wait for the tx to be included in a batch
+    let withdrawal_proof = proposer_client
+        .wait_for_withdrawal_proof(withdraw_tx, 1000)
+        .await?;
+
     while u64::from_str_radix(
         eth_client
             .call(
@@ -266,8 +273,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
                         .expect("ON_CHAIN_PROPOSER env var not set"),
                 )
                 .unwrap(),
-                // lastVerifiedBlock()
-                Bytes::from_static(&[0x2f, 0xde, 0x80, 0xe5]),
+                calldata::encode_calldata("lastVerifiedBatch()", &[])?.into(),
                 Overrides::default(),
             )
             .await?
@@ -276,19 +282,19 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         16,
     )
     .unwrap()
-        < withdraw_tx_receipt.block_info.block_number
+        < withdrawal_proof.batch_number
     {
         println!("Withdrawal is not verified on L1 yet");
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
     let claim_tx = ethrex_l2_sdk::claim_withdraw(
-        withdraw_tx,
         withdraw_value,
+        withdraw_tx,
         l1_rich_wallet_address,
         l1_rich_wallet_private_key(),
-        &proposer_client,
         &eth_client,
+        &withdrawal_proof,
     )
     .await?;
 
