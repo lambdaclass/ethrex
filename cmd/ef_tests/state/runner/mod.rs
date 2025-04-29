@@ -53,7 +53,7 @@ pub enum InternalError {
 
 #[derive(Parser, Debug, Default)]
 pub struct EFTestRunnerOptions {
-    /// For running tests of specific forks. Default is all forks.
+    /// For running tests of specific forks.
     #[arg(
         long,
         value_name = "FORK",
