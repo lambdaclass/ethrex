@@ -81,7 +81,7 @@ The following environment variables are available to configure the Proposer cons
 
 - Under the `[proposer]` section:
 
-  - `interval_ms`: Interval in milliseconds at which the proposer wakes up to produce a new block.
+  - `interval_ms`: Interval in milliseconds at which the proposer builds a new block out of the current transactions on the mempool.
   - `coinbase address`: Address which will receive the execution fees.
 
 - Under the `[committer]` section:
