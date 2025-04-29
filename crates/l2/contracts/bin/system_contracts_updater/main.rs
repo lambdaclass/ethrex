@@ -15,16 +15,14 @@ mod error;
 fn main() -> Result<(), SystemContractsUpdaterError> {
     let opts = SystemContractsUpdaterOptions::parse();
     compile_contract(&opts.contracts_path, "src/l2/CommonBridgeL2.sol", true)?;
-    update_genesis_file(&opts)?;
+    update_genesis_file(&opts.l2_genesis_path)?;
     Ok(())
 }
 
-fn update_genesis_file(
-    opts: &SystemContractsUpdaterOptions,
-) -> Result<(), SystemContractsUpdaterError> {
-    let mut genesis = read_genesis_file(&opts.genesis_l1_path);
+fn update_genesis_file(l2_genesis_path: &str) -> Result<(), SystemContractsUpdaterError> {
+    let mut genesis = read_genesis_file(l2_genesis_path);
 
-    let runtime_code = std::fs::read(&opts.contracts_path)?;
+    let runtime_code = std::fs::read("contracts/solc_out/CommonBridgeL2.bin-runtime")?;
 
     genesis.alloc.insert(
         COMMON_BRIDGE_L2_ADDRESS,
@@ -38,7 +36,9 @@ fn update_genesis_file(
 
     let modified_genesis = serde_json::to_string(&genesis)?;
 
-    std::fs::write(&opts.genesis_l1_path, modified_genesis)?;
+    std::fs::write(l2_genesis_path, modified_genesis)?;
+
+    println!("Updated L2 genesis file.");
 
     Ok(())
 }
