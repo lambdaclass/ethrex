@@ -2,4 +2,4 @@
 source /.cargo/env
 cd /work/src/proj
 cargo build --release
-cp target/release/quote-gen /work/dest/quote-gen
+cp target/release/quote-gen /work/dest/payload
