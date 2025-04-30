@@ -18,6 +18,9 @@ salt_is_zero = true
 
 [eth]
 rpc_url = "http://localhost:8545"
+# 10 Gwei
+maximum_allowed_max_fee_per_gas = 10000000000
+maximum_allowed_max_fee_per_blob_gas = 10000000000
 
 [watcher]
 bridge_address = "0x65dd6dc5df74b7e08e92c910122f91d7b2d5184f"
