@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746029010324,
+  "lastUpdate": 1746054365307,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5275,6 +5275,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179526474703,
             "range": "± 479733581",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "084204cefafef055a22c6a2f049cad0fe8f2b3d2",
+          "message": "feat(l1): properly format client version (#2564)\n\n**Motivation**\n\nThe client version was hardcoded in the rpc crate\n\nIt was used in the client RPC msg, in the admin_info RPC msg and in the\nhelloMsg in P2P\n\n**Description**\n\nAdded vergen crate to include more environment variables at build time\nin the ethrex main package.\n\nIt can be tested using the following cast commands\n```shell\n cast client --rpc-url localhost:8545\n cast rpc admin_nodeInfo --rpc-url http://localhost:8545\n```\n\nModified the `P2PContext` struct to include the client_info\nAlso added it in the struct `RLPxConnection` to pass it to the\nhelloMessage struct when doing the handshake\n\nModified the test to use the functions with a dummy client_info\n\nThe version can now be retrieved by using ethrex --version\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2548",
+          "timestamp": "2025-04-30T22:07:02Z",
+          "tree_id": "6d22c7c9ad3dc884dc3cc1f879310ad381811bcf",
+          "url": "https://github.com/lambdaclass/ethrex/commit/084204cefafef055a22c6a2f049cad0fe8f2b3d2"
+        },
+        "date": 1746054363470,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178408173083,
+            "range": "± 969233794",
             "unit": "ns/iter"
           }
         ]
