@@ -1,5 +1,5 @@
 use std::error::Error;
-use vergen::*;
+use vergen::{Emitter, RustcBuilder};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let rustc = RustcBuilder::all_rustc()?;
