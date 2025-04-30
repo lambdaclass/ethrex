@@ -242,9 +242,6 @@ impl<'a> VM<'a> {
 
         {
             let current_call_frame = self.current_call_frame_mut()?;
-            let refunded = backup.refunded_gas;
-            let output = std::mem::take(&mut current_call_frame.output); // Bytes::new() if error is not RevertOpcode
-            let gas_used = current_call_frame.gas_used;
             // Unless error is from Revert opcode, all gas is consumed
             if error != VMError::RevertOpcode {
                 let left_gas = current_call_frame
@@ -252,7 +249,9 @@ impl<'a> VM<'a> {
                     .saturating_sub(current_call_frame.gas_used);
                 current_call_frame.gas_used = current_call_frame.gas_used.saturating_add(left_gas);
             }
-            
+            let refunded = backup.refunded_gas;
+            let output = std::mem::take(&mut current_call_frame.output); // Bytes::new() if error is not RevertOpcode
+            let gas_used = current_call_frame.gas_used;
             execution_report = Ok(ExecutionReport {
                 result: TxResult::Revert(error),
                 gas_used,
