@@ -98,6 +98,8 @@ The following environment variables are available to configure the Proposer cons
   - `backoff_factor`: Base of the exponential used to calculate the backoff for the wait time when bumping the gas.
   - `min_retry_delay`: Minimum wait time for expecting to receive the receipt of the transaction. If not received, bump the transaction
   - `max_retry_delay`: Maximum wait time to before expecting the transaction's receipt. This prevents from long wait times.
+  - `maximum_allowed_max_fee_per_gas`: Sets a hard cap on the maximum fee per gas you are willing to pay for a single transaction.
+  - `maximum_allowed_max_fee_per_blob_gas`: Sets a hard cap on the maximum fee per blob gas you are willing to pay for a single transaction.
 
 If you want to use a different configuration file, you can set the:
 

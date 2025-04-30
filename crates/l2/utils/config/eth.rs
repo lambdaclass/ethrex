@@ -9,6 +9,8 @@ pub struct EthConfig {
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
     pub max_retry_delay: u64,
+    pub maximum_allowed_max_fee_per_gas: u64,
+    pub maximum_allowed_max_fee_per_blob_gas: u64,
 }
 
 impl EthConfig {

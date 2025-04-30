@@ -173,6 +173,8 @@ fn setup() -> Result<SetupResult, DeployError> {
         eth_config.backoff_factor,
         eth_config.min_retry_delay,
         eth_config.max_retry_delay,
+        Some(eth_config.maximum_allowed_max_fee_per_gas),
+        Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
     );
 
     let deployer_address = parse_env_var("DEPLOYER_L1_ADDRESS")?;

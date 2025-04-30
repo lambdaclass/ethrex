@@ -48,6 +48,8 @@ pub struct EthClient {
     pub backoff_factor: u64,
     pub min_retry_delay: u64,
     pub max_retry_delay: u64,
+    pub maximum_allowed_max_fee_per_gas: Option<u64>,
+    pub maximum_allowed_max_fee_per_blob_gas: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +110,8 @@ impl EthClient {
             BACKOFF_FACTOR,
             MIN_RETRY_DELAY,
             MAX_RETRY_DELAY,
+            None,
+            None,
         )
     }
 
@@ -117,6 +121,8 @@ impl EthClient {
         backoff_factor: u64,
         min_retry_delay: u64,
         max_retry_delay: u64,
+        maximum_allowed_max_fee_per_gas: Option<u64>,
+        maximum_allowed_max_fee_per_blob_gas: Option<u64>,
     ) -> Self {
         Self {
             client: Client::new(),
@@ -125,6 +131,8 @@ impl EthClient {
             backoff_factor,
             min_retry_delay,
             max_retry_delay,
+            maximum_allowed_max_fee_per_gas,
+            maximum_allowed_max_fee_per_blob_gas,
         }
     }
 
@@ -223,6 +231,30 @@ impl EthClient {
         let mut number_of_retries = 0;
 
         'outer: while number_of_retries < self.max_number_of_retries {
+            if let Some(max_fee_per_gas) = self.maximum_allowed_max_fee_per_gas {
+                let tx_max_fee = match wrapped_tx {
+                    WrappedTransaction::EIP4844(tx) => &mut tx.tx.max_fee_per_gas,
+                    WrappedTransaction::EIP1559(tx) => &mut tx.max_fee_per_gas,
+                    WrappedTransaction::L2(tx) => &mut tx.max_fee_per_gas,
+                };
+
+                if *tx_max_fee > max_fee_per_gas {
+                    *tx_max_fee = max_fee_per_gas;
+                    warn!("max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}");
+                }
+            }
+
+            // Check blob gas fees only for EIP4844 transactions
+            if let WrappedTransaction::EIP4844(tx) = wrapped_tx {
+                if let Some(max_fee_per_blob_gas) = self.maximum_allowed_max_fee_per_blob_gas {
+                    if tx.tx.max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
+                        tx.tx.max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+                        warn!(
+                            "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
+                        );
+                    }
+                }
+            }
             let tx_hash = self
                 .send_wrapped_transaction(wrapped_tx, private_key)
                 .await?;

@@ -150,6 +150,8 @@ impl ProofCoordinator {
             eth_config.backoff_factor,
             eth_config.min_retry_delay,
             eth_config.max_retry_delay,
+            Some(eth_config.maximum_allowed_max_fee_per_gas),
+            Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
         );
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
