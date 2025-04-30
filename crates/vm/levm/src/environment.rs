@@ -34,14 +34,3 @@ pub struct Environment {
     #[cfg(feature = "l2")]
     pub is_privilege: bool,
 }
-
-impl Environment {
-    pub fn default_from_address(origin: Address) -> Self {
-        Self {
-            origin,
-            gas_limit: u64::MAX,
-            chain_id: U256::one(),
-            ..Default::default()
-        }
-    }
-}

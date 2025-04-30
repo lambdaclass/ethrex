@@ -9,7 +9,7 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface --exclude ethrex-prover-bench -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
@@ -76,7 +76,7 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := d98bcfa37f501f4ea1869d0a79fde35ed472937f
+HIVE_REVISION := f9004c7e85de003bbdeb4fbcc4a9dbf8c3c4c9c2
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).

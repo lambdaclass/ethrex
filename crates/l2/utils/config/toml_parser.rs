@@ -46,6 +46,8 @@ impl Deployer {
 #[derive(Deserialize, Debug)]
 struct Eth {
     rpc_url: String,
+    maximum_allowed_max_fee_per_gas: u64,
+    maximum_allowed_max_fee_per_blob_gas: u64,
 }
 
 impl Eth {
@@ -54,8 +56,12 @@ impl Eth {
         format!(
             "
 {prefix}_RPC_URL={}
+{prefix}_MAXIMUM_ALLOWED_MAX_FEE_PER_GAS={}
+{prefix}_MAXIMUM_ALLOWED_MAX_FEE_PER_BLOB_GAS={}
 ",
             self.rpc_url,
+            self.maximum_allowed_max_fee_per_gas,
+            self.maximum_allowed_max_fee_per_blob_gas
         )
     }
 }
@@ -112,6 +118,7 @@ struct Committer {
     l1_private_key: String,
     commit_time_ms: u64,
     arbitrary_base_blob_gas_price: u64,
+    validium: bool,
 }
 
 impl Committer {
@@ -124,12 +131,14 @@ impl Committer {
 {prefix}_L1_PRIVATE_KEY={}
 {prefix}_COMMIT_TIME_MS={}
 {prefix}_ARBITRARY_BASE_BLOB_GAS_PRICE={}
+{prefix}_VALIDIUM={}
 ",
             self.on_chain_proposer_address,
             self.l1_address,
             self.l1_private_key,
             self.commit_time_ms,
             self.arbitrary_base_blob_gas_price,
+            self.validium,
         )
     }
 }
