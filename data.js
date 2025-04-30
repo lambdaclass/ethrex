@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746026009809,
+  "lastUpdate": 1746027388573,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5215,6 +5215,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180813110848,
             "range": "± 494505008",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c5ff95e815b60f8e274e097f58fc3c574a0995e",
+          "message": "feat(core): allow setting syncmode from `run-hive` Makefile targets (#2597)\n\n**Motivation**\nAllow running hive tests with snap sync using the available Makefile\ntargets and passing the optional SYNCMODE=snap argument\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `SYNCOMDE` variable to Makefile with default value \"full\"\n* Set `syncmode` ethrex flag on hive Makefile targets according to above\nvariable\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-30T14:34:08Z",
+          "tree_id": "2a17e532d1176e354d9a687c9d66c413eaf4df91",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7c5ff95e815b60f8e274e097f58fc3c574a0995e"
+        },
+        "date": 1746027386628,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181546202431,
+            "range": "± 514808196",
             "unit": "ns/iter"
           }
         ]
