@@ -60,6 +60,11 @@ const SKIPPED_TESTS_LEVM: [&str; 38] = [
 //"tests/prague/eip7702_set_code_tx/test_set_code_txs.py::test_set_code_max_depth_call_stack[fork_Prague-blockchain_test]",
 //"tests/prague/eip7702_set_code_tx/test_set_code_txs_2.py::test_pointer_contract_pointer_loop[fork_Prague-blockchain_test]",
 
+// NOTE: The following test fails because of an OutOfGas error. This happens because it tests a system call to a contract that has a
+// code with a cost of +29 million gas that when is being sumed to the 21k base intrinsic gas it goes over the 30 million limit.
+// "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reaches_gas_limit-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
+
+
 #[cfg(not(feature = "levm"))]
 fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, EvmEngine::REVM, Some(&SKIPPED_TESTS_REVM));

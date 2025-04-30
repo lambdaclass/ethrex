@@ -232,7 +232,14 @@ impl REVM {
         match tx_result {
             ExecutionResult::Success { gas_used: _, gas_refunded: _, logs: _, output } => Ok(output.into()),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
-            _ => Err(EvmError::Custom("Failed transaction when doing a system call to WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS".to_string())),
+            ExecutionResult::Halt { reason, gas_used } => {
+                let err_str = format!("Transaction HALT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                Err(EvmError::Custom(err_str))
+            },
+            ExecutionResult::Revert { gas_used, output } => {
+                let err_str = format!("Transaction REVERT when calling WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                Err(EvmError::Custom(err_str))
+            },
         }
     }
     pub(crate) fn dequeue_consolidation_requests(
@@ -259,7 +266,14 @@ impl REVM {
         match tx_result {
             ExecutionResult::Success { gas_used: _, gas_refunded: _, logs: _, output } => Ok(output.into()),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
-            _ => Err(EvmError::Custom("Failed transaction when doing a system call to CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS".to_string())),
+            ExecutionResult::Halt { reason, gas_used } => {
+                let err_str = format!("Transaction HALT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with reason: {reason} and with used gas: {gas_used}");
+                Err(EvmError::Custom(err_str))
+            },
+            ExecutionResult::Revert { gas_used, output } => {
+                let err_str = format!("Transaction REVERT when calling CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS with output: {:?} and with used gas: {gas_used}", output);
+                Err(EvmError::Custom(err_str))
+            },
         }
     }
 
