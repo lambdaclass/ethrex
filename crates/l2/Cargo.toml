@@ -15,7 +15,7 @@ serde_json.workspace = true
 ethereum-types.workspace = true
 ethrex-common.workspace = true
 ethrex-rlp.workspace = true
-ethrex-rpc.workspace = true
+ethrex-rpc = { workspace = true, features = ["l2"] }
 ethrex-blockchain = { workspace = true, features = ["l2"] }
 ethrex-storage.workspace = true
 ethrex-storage-rollup.workspace = true
