@@ -212,7 +212,6 @@ pub struct EthOptions {
 pub struct WatcherOptions {
     #[arg(
         long,
-        default_value = "0x266ffef34e21a7c4ce2e0e42dc780c2c273ca440",
         value_name = "ADDRESS",
         env = "ETHREX_WATCHER_BRIDGE_ADDRESS",
         help_heading = "L1 Watcher options"
@@ -295,7 +294,6 @@ pub struct CommitterOptions {
     pub committer_l1_private_key: SecretKey,
     #[arg(
         long,
-        default_value = "0xea6d04861106c1fb69176d49eeb8de6dd14a9cfe",
         value_name = "ADDRESS",
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
         help_heading = "L1 Committer options"
