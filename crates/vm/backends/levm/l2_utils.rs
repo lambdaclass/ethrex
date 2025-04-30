@@ -9,7 +9,7 @@ use ethrex_storage::AccountUpdate;
 
 use crate::{
     constants::{
-        COMMON_BRIDGE_L2_ADDRESS, HEADER_FIELDS_SIZE, L2_DEPOSIT_SIZE, L2_WITHDRAWAL_SIZE,
+        COMMON_BRIDGE_L2_ADDRESS, L2_DEPOSIT_SIZE, L2_WITHDRAWAL_SIZE, LAST_HEADER_FIELDS_SIZE,
     },
     EvmError,
 };
@@ -114,7 +114,7 @@ pub fn update_state_diff_size(
     let modified_accounts_size = calc_modified_accounts_size(&account_updates, db)?;
 
     let current_state_diff_size =
-        1 /* version (u8) */ + HEADER_FIELDS_SIZE + actual_size + modified_accounts_size;
+        1 /* version (u8) */ + LAST_HEADER_FIELDS_SIZE + actual_size + modified_accounts_size;
 
     if current_state_diff_size > SAFE_BYTES_PER_BLOB {
         return Err(EvmError::StateDiffSizeError);
