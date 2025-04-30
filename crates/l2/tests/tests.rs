@@ -10,6 +10,9 @@ use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcReceipt;
 use keccak_hash::{keccak, H256};
 use secp256k1::SecretKey;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::{ops::Mul, str::FromStr, time::Duration};
 
 const DEFAULT_ETH_URL: &str = "http://localhost:8545";
@@ -53,6 +56,8 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
     let proposer_client = proposer_client();
+
+    read_env_file_by_config();
 
     // 1. Check balances on L1 and L2
 
@@ -400,6 +405,8 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     let eth_client = eth_client();
     let proposer_client = proposer_client();
 
+    read_env_file_by_config();
+
     // Check balances on L1 and L2
     println!("Checking initial balances on L1 and L2");
     let l1_rich_wallet_address = l1_rich_wallet_address();
@@ -580,6 +587,8 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
     let proposer_client = proposer_client();
+
+    read_env_file_by_config();
 
     // Check balances on L1 and L2
     println!("Checking initial balances on L1 and L2");
@@ -806,4 +815,26 @@ fn random_account() -> (Address, SecretKey) {
     let (sk, pk) = secp256k1::generate_keypair(&mut rand::thread_rng());
     let address = Address::from(keccak_hash::keccak(&pk.serialize_uncompressed()[1..]));
     (address, sk)
+}
+
+pub fn read_env_file_by_config() {
+    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".env");
+    let reader = BufReader::new(File::open(env_file_path).expect("Failed to open .env file"));
+
+    for line in reader.lines() {
+        let line = line.expect("Failed to read line");
+        if line.starts_with("#") {
+            // Skip comments
+            continue;
+        };
+        match line.split_once('=') {
+            Some((key, value)) => {
+                if std::env::vars().any(|(k, _)| k == key) {
+                    continue;
+                }
+                std::env::set_var(key, value)
+            }
+            None => continue,
+        };
+    }
 }
