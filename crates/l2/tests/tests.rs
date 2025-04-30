@@ -800,7 +800,10 @@ fn l1_rich_wallet_address() -> Address {
 }
 
 fn common_bridge_address() -> Address {
-    DEFAULT_BRIDGE_ADDRESS
+    std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
+        .expect("ETHREX_WATCHER_BRIDGE_ADDRESS env var not set")
+        .parse()
+        .unwrap_or(DEFAULT_BRIDGE_ADDRESS)
 }
 
 fn fees_vault() -> Address {
