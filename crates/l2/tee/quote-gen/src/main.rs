@@ -33,7 +33,7 @@ async fn main() -> GenericError {
         digest_slice.split_at_mut(32).1.copy_from_slice(digest.as_bytes());
         let quote = create_tdx_quote(digest_slice).unwrap();
         println!("{} -> {}", bound_data.input, bound_data.output);
-        println!("0x{:x?}", quote);
+        println!("0x{}", hex::encode(quote));
         thread::sleep(Duration::from_millis(5000));
     }
 }
