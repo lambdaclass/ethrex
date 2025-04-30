@@ -4,9 +4,9 @@ use ethrex_common::{
     Address as EthrexAddress, U256,
 };
 use ethrex_levm::{
-    db::{cache, CacheDB},
+    db::{cache, gen_db::GeneralizedDatabase, CacheDB},
     errors::{TxResult, VMError},
-    vm::{GeneralizedDatabase, VM},
+    vm::VM,
     Environment,
 };
 use ethrex_vm::db::ExecutionDB;
@@ -66,7 +66,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
     cache::insert_account(
         &mut db.cache,
         accounts[0].0,
-        ethrex_levm::Account::new(
+        Account::new(
             accounts[0].1.info.balance,
             accounts[0].1.code.clone(),
             accounts[0].1.info.nonce,
@@ -76,7 +76,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
     cache::insert_account(
         &mut db.cache,
         accounts[1].0,
-        ethrex_levm::Account::new(
+        Account::new(
             accounts[1].1.info.balance,
             accounts[1].1.code.clone(),
             accounts[1].1.info.nonce,
@@ -84,7 +84,8 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         ),
     );
 
-    for _ in 0..runs - 1 {
+    // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
+    for _nonce in 0..runs - 1 {
         let mut vm = new_vm_with_bytecode(&mut db, 0).unwrap();
         vm.call_frames.last_mut().unwrap().calldata = calldata.clone();
         vm.env.gas_limit = u64::MAX - 1;

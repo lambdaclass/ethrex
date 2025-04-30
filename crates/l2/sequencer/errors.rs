@@ -1,6 +1,7 @@
 use crate::utils::config::errors::ConfigError;
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
+use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
@@ -24,6 +25,8 @@ pub enum L1WatcherError {
     FailedToRetrieveChainConfig(String),
     #[error("L1Watcher failed to get config: {0}")]
     FailedToGetConfig(#[from] ConfigError),
+    #[error("L1Watcher failed to access Store: {0}")]
+    FailedAccessingStore(#[from] StoreError),
     #[error("{0}")]
     Custom(String),
 }
@@ -61,6 +64,20 @@ pub enum ProverServerError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum ProofSenderError {
+    #[error("Failed because of an EthClient error: {0}")]
+    EthClientError(#[from] EthClientError),
+    #[error("Failed to encode calldata: {0}")]
+    CalldataEncodeError(#[from] CalldataEncodeError),
+    #[error("Failed with a SaveStateError: {0}")]
+    SaveStateError(#[from] SaveStateError),
+    #[error("{0} proof is not present")]
+    ProofNotPresent(ProverType),
+    #[error("Unexpected Error: {0}")]
+    InternalError(String),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum BlockProducerError {
     #[error("Block Producer failed because of an EngineClient error: {0}")]
     EngineClientError(#[from] EngineClientError),
@@ -76,7 +93,7 @@ pub enum BlockProducerError {
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
     #[error("Block Producer failed because of a store error: {0}")]
     StoreError(#[from] StoreError),
-    #[error("Block Producer failed retrieve block from storaga, data is None.")]
+    #[error("Block Producer failed retrieve block from storage, data is None.")]
     StorageDataIsNone,
     #[error("Block Producer failed to read jwt_secret: {0}")]
     FailedToReadJWT(#[from] std::io::Error),
@@ -99,7 +116,7 @@ pub enum CommitterError {
     #[error("Committer failed to  {0}")]
     FailedToParseLastCommittedBlock(#[from] FromStrRadixErr),
     #[error("Committer failed retrieve block from storage: {0}")]
-    FailedToRetrieveBlockFromStorage(#[from] StoreError),
+    StoreError(#[from] StoreError),
     #[error("Committer failed because of an execution cache error")]
     ExecutionCache(#[from] ExecutionCacheError),
     #[error("Committer failed retrieve data from storage")]
