@@ -224,11 +224,12 @@ impl Command {
 
                 // Iterate over each blob
                 let files: Vec<std::fs::DirEntry> = read_dir(blobs_dir)?.try_collect()?;
-                for (batch_number, file) in files
+                for (file_number, file) in files
                     .into_iter()
                     .sorted_by_key(|f| f.file_name())
                     .enumerate()
                 {
+                    let batch_number = file_number as u64 + 1;
                     let blob = std::fs::read(file.path())?;
 
                     if blob.len() != BYTES_PER_BLOB {
@@ -294,7 +295,7 @@ impl Command {
                     // Store batch info in L2 storage
                     rollup_store
                         .store_batch(
-                            batch_number as u64 + 1,
+                            batch_number,
                             first_block_number,
                             last_block_number,
                             withdrawal_hashes,
