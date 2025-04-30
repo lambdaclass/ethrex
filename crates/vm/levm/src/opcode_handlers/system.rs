@@ -71,7 +71,7 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (account_info, address_was_cold) =
+        let (account, address_was_cold) =
             self.db.access_account(&mut self.accrued_substate, callee)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
@@ -89,8 +89,7 @@ impl<'a> VM<'a> {
             new_memory_size,
             current_memory_size,
             address_was_cold,
-            account_info.is_empty(),
-            account_exists(self.db, callee),
+            account.is_empty(),
             value_to_transfer,
             gas,
             gas_left,
