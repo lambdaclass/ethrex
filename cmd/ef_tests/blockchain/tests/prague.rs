@@ -64,7 +64,6 @@ const SKIPPED_TESTS_LEVM: [&str; 38] = [
 // code with a cost of +29 million gas that when is being sumed to the 21k base intrinsic gas it goes over the 30 million limit.
 // "tests/prague/eip7002_el_triggerable_withdrawals/test_modified_withdrawal_contract.py::test_system_contract_errors[fork_Prague-blockchain_test-system_contract_reaches_gas_limit-system_contract_0x00000961ef480eb55e80d19ad83579a64c007002]",
 
-
 #[cfg(not(feature = "levm"))]
 fn parse_and_execute_with_revm(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, EvmEngine::REVM, Some(&SKIPPED_TESTS_REVM));
