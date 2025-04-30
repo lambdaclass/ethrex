@@ -1,4 +1,5 @@
 use bytes::{BufMut, Bytes};
+use ethrex_common::types::ForkId;
 use ethrex_common::{H264, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -13,7 +14,6 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
 };
-use tracing::warn;
 
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
@@ -224,7 +224,7 @@ pub struct NodeRecordDecodedPairs {
     pub udp_port: Option<u16>,
     pub secp256k1: Option<H264>,
     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
-    pub eth: Option<Vec<[u8; 4]>>,
+    pub eth: Option<ForkId>,
     // TODO implement ipv6 addresses
 }
 
@@ -251,12 +251,8 @@ impl NodeRecord {
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
                 "eth" => {
-                    let mut result = Vec::new();
-                    for chunk in value.chunks_exact(4) {
-                        let arr: [u8; 4] = chunk.try_into().expect("Chunk size should be 4");
-                        result.push(arr);
-                    }
-                    decoded_pairs.eth = Some(result)
+                    // the first byte is ignored as an array of array is received
+                    decoded_pairs.eth = ForkId::decode(&value[1..]).ok();
                 }
                 _ => {}
             }

@@ -16,6 +16,7 @@ use crate::{
 };
 use ethrex_common::types::ForkId;
 use ethrex_common::H256;
+use ethrex_rlp::decode::RLPDecode;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 use std::{
     collections::HashSet,
@@ -389,19 +390,27 @@ impl Discv4Server {
                 };
 
                 if let Some(eth) = record.eth {
-                    let chain_config = self.ctx.storage.get_chain_config().unwrap();
-                    let genesis_header = self.ctx.storage.get_block_header(0).unwrap();
-                    let block_number = self.ctx.storage.get_latest_block_number().await.unwrap();
-                    let block_header = self.ctx.storage.get_block_header(block_number).unwrap();
+                    // let chain_config = self.ctx.storage.get_chain_config().unwrap();
+                    // let genesis_header = self.ctx.storage.get_block_header(0).unwrap();
+                    // let block_number = self.ctx.storage.get_latest_block_number().await.unwrap();
+                    // let block_header = self.ctx.storage.get_block_header(block_number).unwrap();
 
-                    let fork_id = ForkId::new(
-                        chain_config,
-                        genesis_header.unwrap(),
-                        block_header.unwrap().timestamp,
-                        block_number,
-                    );
-                    warn!("Mi fork_id {:?}", fork_id);
-                    warn!("TENGO ETH {:?}", eth);
+                    // let fork_id = ForkId::new(
+                    //     chain_config,
+                    //     genesis_header.unwrap(),
+                    //     block_header.unwrap().timestamp,
+                    //     block_number,
+                    // );
+
+                    // if !fork_id.is_valid(
+                    //     eth,
+                    //     block_number,
+                    //     block_header.unwrap().timestamp,
+                    //     chain_config,
+                    //     genesis_header.unwrap(),
+                    // ) {}
+                    // warn!("My fork id{:?}", fork_id);
+                    warn!("eth {:?}", eth);
                 }
                 // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
                 let signature_valid = match id.as_str() {
