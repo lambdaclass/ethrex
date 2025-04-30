@@ -48,17 +48,15 @@ pub fn get_nonce_diff(
     db: &GeneralizedDatabase,
 ) -> Result<u16, EvmError> {
     // Get previous nonce
-    let prev_nonce = db
-        .cache
-        .get(&account_update.address)
-        .map(|acc| acc.info.clone())
-        .unwrap_or_else(|| {
-            db.store
-                .get_account_info(account_update.address)
-                .unwrap_or_default()
-        })
-        .nonce;
-
+    let prev_nonce = if let Some(account) = db.read_cache.get(&account_update.address) {
+        account.info.nonce
+    } else {
+        db.store
+            .get_account(account_update.address)
+            .map_err(|_| EvmError::Custom("Failed to get account".to_owned()))?
+            .info
+            .nonce
+    };
     // Get current nonce
     let new_nonce = if let Some(info) = account_update.info.clone() {
         info.nonce
