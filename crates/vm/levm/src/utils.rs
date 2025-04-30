@@ -419,7 +419,8 @@ impl<'a> VM<'a> {
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if !authority_account.is_empty() {
+            // Sadly we have to check directly in the DB if the account exists because it could theoretically exist and be empty, and we want to refund in those scenarios too...
+            if !authority_account.is_empty() || self.db.store.account_exists(authority_address) {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
                     .checked_add(refunded_gas_if_exists)
