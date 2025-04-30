@@ -910,21 +910,20 @@ impl<'a> VM<'a> {
 
     pub fn handle_return(
         &mut self,
-        call_frame: &CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<bool, VMError> {
-        if call_frame.depth == 0 {
-            self.call_frames.push(call_frame.clone());
+        if self.current_call_frame()?.depth == 0 {
             return Ok(false);
         }
         let retdata = self
             .return_data
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        let call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if retdata.is_create {
-            self.handle_return_create(call_frame, tx_report, retdata)?;
+            self.handle_return_create(&call_frame, tx_report, retdata)?;
         } else {
-            self.handle_return_call(call_frame, tx_report, retdata)?;
+            self.handle_return_call(&call_frame, tx_report, retdata)?;
         }
         Ok(true)
     }

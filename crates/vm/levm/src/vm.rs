@@ -299,17 +299,13 @@ impl<'a> VM<'a> {
         let fork = self.env.config.fork;
 
         if is_precompile(&self.current_call_frame()?.code_address, fork) {
-            let mut current_call_frame = self
-                .call_frames
-                .pop()
-                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let precompile_result = execute_precompile(&mut current_call_frame, fork);
+            let precompile_result = execute_precompile(self.current_call_frame_mut()?,fork);
             let backup = self
                 .backups
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
             let report =
-                self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
+                self.handle_precompile_result(precompile_result, backup)?;
             self.handle_return(&current_call_frame, &report)?;
             self.current_call_frame_mut()?.increment_pc_by(1)?;
             return Ok(report);
@@ -325,24 +321,16 @@ impl<'a> VM<'a> {
                     .current_call_frame_mut()?
                     .increment_pc_by(pc_increment)?,
                 Ok(OpcodeResult::Halt) => {
-                    let mut current_call_frame = self
-                        .call_frames
-                        .pop()
-                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_result(&mut current_call_frame)?;
-                    if self.handle_return(&current_call_frame, &report)? {
+                    let report = self.handle_opcode_result(self.current_call_frame_mut()?)?;
+                    if self.handle_return(&report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
                         return Ok(report);
                     }
                 }
                 Err(error) => {
-                    let mut current_call_frame = self
-                        .call_frames
-                        .pop()
-                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_error(error, &mut current_call_frame)?;
-                    if self.handle_return(&current_call_frame, &report)? {
+                    let report = self.handle_opcode_error(error)?;
+                    if self.handle_return(&report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
                         return Ok(report);
