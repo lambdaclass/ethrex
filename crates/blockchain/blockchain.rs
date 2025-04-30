@@ -564,7 +564,7 @@ pub fn validate_block(
 ) -> Result<(), ChainError> {
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
-    validate_block_body(&block).map_err(InvalidBlockError::from)?;
+    validate_block_body(block).map_err(InvalidBlockError::from)?;
 
     if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)
