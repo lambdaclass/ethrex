@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746023350447,
+  "lastUpdate": 1746024740933,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5155,6 +5155,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180070126380,
             "range": "± 727239469",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "20437d61973ac9be9e45939312f81754e8c425dc",
+          "message": "perf(core): make TrieDb use NodeHash as key (#2517)\n\n**Motivation**\n\nFollowup on #2516 using the fact that NodeHash is Copy to use it as the\nkey for the trie db instead of a Vec\n\n**Description**\n\nChanges the trait TrieDb to use a NodeHash as key instead of a generic\nvec, allowing less expensive clones when passing around keys since\nNodeHash is copy and doesn't do any allocation.",
+          "timestamp": "2025-04-30T13:40:51Z",
+          "tree_id": "7e0926194380b511b10f9a5ae6ce5917d0fa1df9",
+          "url": "https://github.com/lambdaclass/ethrex/commit/20437d61973ac9be9e45939312f81754e8c425dc"
+        },
+        "date": 1746024738514,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180431429933,
+            "range": "± 1283379438",
             "unit": "ns/iter"
           }
         ]
