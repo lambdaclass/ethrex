@@ -135,7 +135,7 @@ pub async fn init_rpc_api(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, signer)
+    let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, signer, None)
         .expect("Node record could not be created from local node");
 
     // Create SyncManager

@@ -379,7 +379,7 @@ pub mod test_utils {
         };
         let signer = SigningKey::random(&mut rand::rngs::OsRng);
 
-        NodeRecord::from_node(node, 0, &signer).unwrap()
+        NodeRecord::from_node(node, 0, &signer, None).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,
