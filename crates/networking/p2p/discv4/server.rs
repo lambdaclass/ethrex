@@ -14,6 +14,7 @@ use crate::{
     rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
     types::{Endpoint, Node, NodeRecord},
 };
+use ethrex_common::types::ForkId;
 use ethrex_common::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 use std::{
@@ -23,7 +24,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::UdpSocket, sync::MutexGuard};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
@@ -387,6 +388,21 @@ impl Discv4Server {
                     ));
                 };
 
+                if let Some(eth) = record.eth {
+                    let chain_config = self.ctx.storage.get_chain_config().unwrap();
+                    let genesis_header = self.ctx.storage.get_block_header(0).unwrap();
+                    let block_number = self.ctx.storage.get_latest_block_number().await.unwrap();
+                    let block_header = self.ctx.storage.get_block_header(block_number).unwrap();
+
+                    let fork_id = ForkId::new(
+                        chain_config,
+                        genesis_header.unwrap(),
+                        block_header.unwrap().timestamp,
+                        block_number,
+                    );
+                    warn!("Mi fork_id {:?}", fork_id);
+                    warn!("TENGO ETH {:?}", eth);
+                }
                 // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
                 let signature_valid = match id.as_str() {
                     "v4" => {
