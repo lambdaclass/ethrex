@@ -1,5 +1,5 @@
 use crate::{
-    call_frame::CallFrame,
+    call_frame::{self, CallFrame},
     constants::*,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
@@ -152,38 +152,40 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn handle_opcode_result(
-        &mut self,
-        current_call_frame: &mut CallFrame,
-    ) -> Result<ExecutionReport, VMError> {
+    pub fn handle_opcode_result(&mut self) -> Result<ExecutionReport, VMError> {
         let backup = self
             .backups
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-        // On successful create check output validity
-        if (self.is_create() && current_call_frame.depth == 0)
-            || current_call_frame.create_op_called
+        let refunded_gas = self.env.refunded_gas;
+        let mut transaction_result = TxResult::Success;
         {
-            let contract_code = std::mem::take(&mut current_call_frame.output);
-            let code_length = contract_code.len();
+            // Check for the case where the transaction is a contract creation one
+            let transaction_is_create = self.is_create();
+            let current_call_frame = self.current_call_frame_mut()?;
+            // On successful create check output validity
+            if (transaction_is_create && current_call_frame.depth == 0)
+                || current_call_frame.create_op_called
+            {
+                let contract_code = std::mem::take(&mut current_call_frame.output);
+                let code_length = contract_code.len();
 
-            let code_length_u64: u64 = code_length
-                .try_into()
-                .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
+                let code_length_u64: u64 = code_length
+                    .try_into()
+                    .map_err(|_| VMError::Internal(InternalError::ConversionError))?;
 
-            let code_deposit_cost: u64 =
-                code_length_u64
-                    .checked_mul(CODE_DEPOSIT_COST)
-                    .ok_or(VMError::Internal(
-                        InternalError::ArithmeticOperationOverflow,
-                    ))?;
+                let code_deposit_cost: u64 =
+                    code_length_u64
+                        .checked_mul(CODE_DEPOSIT_COST)
+                        .ok_or(VMError::Internal(
+                            InternalError::ArithmeticOperationOverflow,
+                        ))?;
 
-            // Revert
-            // If the first byte of code is 0xef
-            // If the code_length > MAX_CODE_SIZE
-            // If current_consumed_gas + code_deposit_cost > gas_limit
-            let validate_create =
-                if code_length > MAX_CODE_SIZE && self.env.config.fork >= Fork::SpuriousDragon {
+                // Revert
+                // If the first byte of code is 0xef
+                // If the code_length > MAX_CODE_SIZE
+                // If current_consumed_gas + code_deposit_cost > gas_limit
+                let validate_create = if code_length > MAX_CODE_SIZE {
                     Err(VMError::ContractOutputTooBig)
                 } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
                     Err(VMError::InvalidContractPrefix)
@@ -196,33 +198,39 @@ impl<'a> VM<'a> {
                     Ok(current_call_frame.to)
                 };
 
-            match validate_create {
-                Ok(new_address) => {
-                    // Set bytecode to new account if success
-                    self.update_account_bytecode(new_address, contract_code)?;
-                }
-                Err(error) => {
-                    // Revert if error
-                    current_call_frame.gas_used = current_call_frame.gas_limit;
-                    self.restore_state(backup, current_call_frame.cache_backup.clone())?;
-
-                    return Ok(ExecutionReport {
-                        result: TxResult::Revert(error),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
-                        output: std::mem::take(&mut current_call_frame.output),
-                        logs: vec![],
-                    });
+                match validate_create {
+                    Ok(new_address) => {
+                        // Set bytecode to new account if success
+                        self.update_account_bytecode(new_address, contract_code)?;
+                    }
+                    Err(error) => {
+                        // Revert if error
+                        current_call_frame.gas_used = current_call_frame.gas_limit;
+                        transaction_result = TxResult::Revert(error);
+                    }
                 }
             }
         }
 
+        let logs;
+        match transaction_result {
+            TxResult::Success => {
+                logs = std::mem::take(&mut self.current_call_frame_mut()?.logs);
+            }
+            TxResult::Revert(_) => {
+                logs = vec![];
+                // Restore state if error
+                self.restore_state(backup, self.current_call_frame()?.cache_backup.clone())?;
+            }
+        }
+        let current_call_frame = self.current_call_frame_mut()?;
+
         Ok(ExecutionReport {
-            result: TxResult::Success,
+            result: transaction_result,
             gas_used: current_call_frame.gas_used,
-            gas_refunded: self.env.refunded_gas,
+            gas_refunded: refunded_gas,
             output: std::mem::take(&mut current_call_frame.output),
-            logs: std::mem::take(&mut current_call_frame.logs),
+            logs,
         })
     }
 

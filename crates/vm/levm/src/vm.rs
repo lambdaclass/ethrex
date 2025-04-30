@@ -305,7 +305,7 @@ impl<'a> VM<'a> {
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
             let report = self.handle_precompile_result(precompile_result, backup)?;
-            self.handle_return(&current_call_frame, &report)?;
+            self.handle_return(&report)?;
             self.current_call_frame_mut()?.increment_pc_by(1)?;
             return Ok(report);
         }
@@ -320,7 +320,7 @@ impl<'a> VM<'a> {
                     .current_call_frame_mut()?
                     .increment_pc_by(pc_increment)?,
                 Ok(OpcodeResult::Halt) => {
-                    let report = self.handle_opcode_result(self.current_call_frame_mut()?)?;
+                    let report = self.handle_opcode_result()?;
                     if self.handle_return(&report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
