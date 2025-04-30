@@ -626,11 +626,6 @@ impl<'a> VM<'a> {
 
             self.accrued_substate.selfdestruct_set.insert(to);
         }
-        if target_account.is_empty() {
-            self.accrued_substate
-                .touched_accounts
-                .insert(target_address);
-        }
 
         Ok(OpcodeResult::Halt)
     }
