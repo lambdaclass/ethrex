@@ -1,9 +1,6 @@
 use crate::{
     constants::*,
-    db::{
-        cache::{self},
-        gen_db::GeneralizedDatabase,
-    },
+    db::gen_db::GeneralizedDatabase,
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
