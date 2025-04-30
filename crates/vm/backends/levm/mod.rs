@@ -244,11 +244,13 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.iter() {
-            let initial_state_account = if let Some(account) = db.read_cache.get(address) {
-                account
-            } else {
-                &db.store.get_account(*address)?
-            };
+            // let initial_state_account = if let Some(account) = db.read_cache.get(address) {
+            //     account
+            // } else {
+            //     println!("WOOOW NOT HERE {:?}", address);
+            //     &db.store.get_account(*address)?
+            // };
+            let initial_state_account = db.read_cache.get(address).unwrap();
             let account_existed = db.read_cache.contains_key(address);
 
             let mut acc_info_updated = false;
@@ -332,9 +334,12 @@ impl LEVM {
         {
             // We check if it was in block_cache, if not, we get it from DB.
             let mut account = db.cache.get(&address).cloned().unwrap_or({
-                db.store
+                let account = db
+                    .store
                     .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
+                    .map_err(|e| StoreError::Custom(e.to_string()))?;
+                db.read_cache.insert(address, account.clone());
+                account
             });
 
             account.info.balance += increment.into();
