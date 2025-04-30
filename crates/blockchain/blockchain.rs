@@ -131,14 +131,22 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&block.header, new_state_root)?;
 
+        let block_hash = block.hash();
+
         self.storage
             .add_block(block.clone())
             .await
             .map_err(ChainError::StoreError)?;
         self.storage
-            .add_receipts(block.hash(), execution_result.receipts)
+            .add_receipts(block_hash, execution_result.receipts)
             .await
-            .map_err(ChainError::StoreError)
+            .map_err(ChainError::StoreError)?;
+
+        self.storage
+            .update_snapshot(block_hash, new_state_root)
+            .await;
+
+        Ok(())
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {

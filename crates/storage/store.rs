@@ -20,7 +20,8 @@ use ethrex_trie::{Nibbles, Trie};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use tracing::info;
 
 /// Number of state trie segments to fetch concurrently during state sync
@@ -32,6 +33,12 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+    snapshots: Arc<RwLock<HashMap<H256, Snapshot>>>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct Snapshot {
+    account_states: HashMap<H256, AccountState>,
 }
 
 #[allow(dead_code)]
@@ -51,13 +58,16 @@ impl Store {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
                 engine: Arc::new(LibmdbxStore::new(path)?),
+                snapshots: Default::default(),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
+                snapshots: Default::default(),
             },
             #[cfg(feature = "redb")]
             EngineType::RedB => Self {
                 engine: Arc::new(RedBStore::new()?),
+                snapshots: Default::default(),
             },
         };
         info!("Started store engine");
@@ -79,6 +89,24 @@ impl Store {
         Ok(store)
     }
 
+    pub async fn update_snapshot(&self, block_hash: BlockHash, state_root: H256) {
+        let snapshots = self.snapshots.clone();
+        let iter = self.iter_accounts(state_root);
+
+        tokio::spawn(async move {
+            let now = Instant::now();
+            let accounts: HashMap<H256, AccountState> = iter.collect();
+            let mut snapshots = snapshots.write().unwrap();
+            let block_snapshot = snapshots.entry(block_hash).or_insert_with(|| Snapshot {
+                account_states: HashMap::with_capacity(accounts.len()),
+            });
+            block_snapshot.account_states.extend(accounts);
+
+            let elapsed = now.elapsed();
+            info!("Updated block snapshot, took {:?}", elapsed);
+        });
+    }
+
     pub async fn get_account_info(
         &self,
         block_number: BlockNumber,
@@ -95,14 +123,29 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
+        let snapshot = self.snapshots.read().unwrap();
+        let block_snapshot = snapshot.get(&block_hash);
+
+        let hashed_address = hash_address_fixed(&address);
+
+        let account_state = if let Some(account_state) =
+            block_snapshot.and_then(|x| x.account_states.get(&hashed_address))
+        {
+            account_state.clone()
+        } else {
+            let Some(state_trie) = self.state_trie(block_hash)? else {
+                return Ok(None);
+            };
+
+            let hashed_address_vec = hash_address(&address);
+
+            let Some(encoded_state) = state_trie.get(&hashed_address_vec)? else {
+                return Ok(None);
+            };
+
+            AccountState::decode(&encoded_state)?
         };
-        let hashed_address = hash_address(&address);
-        let Some(encoded_state) = state_trie.get(&hashed_address)? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
+
         Ok(Some(AccountInfo {
             code_hash: account_state.code_hash,
             balance: account_state.balance,
@@ -357,6 +400,7 @@ impl Store {
                     }
                     account_state.storage_root = storage_trie.hash()?;
                 }
+
                 state_trie.insert(hashed_address, account_state.encode_to_vec())?;
             }
         }
@@ -635,7 +679,7 @@ impl Store {
         self.engine.unset_canonical_block(number).await
     }
 
-    /// Obtain the storage trie for the given block
+    /// Obtain the state trie for the given block
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
@@ -674,10 +718,22 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        self.get_account_state_from_trie(&state_trie, address)
+
+        let snapshots = self.snapshots.read().unwrap();
+        let block_snapshot = snapshots.get(&block_hash);
+
+        let hashed_address = hash_address_fixed(&address);
+
+        if let Some(account_state) =
+            block_snapshot.and_then(|x| x.account_states.get(&hashed_address))
+        {
+            Ok(Some(account_state.clone()))
+        } else {
+            let Some(state_trie) = self.state_trie(block_hash)? else {
+                return Ok(None);
+            };
+            self.get_account_state_from_trie(&state_trie, address)
+        }
     }
 
     pub fn get_account_state_by_hash(
@@ -685,10 +741,22 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
-            return Ok(None);
-        };
-        self.get_account_state_from_trie(&state_trie, address)
+        let snapshots = self.snapshots.read().unwrap();
+        let block_snapshot = snapshots.get(&block_hash);
+
+        let hashed_address = hash_address_fixed(&address);
+
+        if let Some(account_state) =
+            block_snapshot.and_then(|x| x.account_states.get(&hashed_address))
+        {
+            Ok(Some(account_state.clone()))
+        } else {
+            let Some(state_trie) = self.state_trie(block_hash)? else {
+                return Ok(None);
+            };
+
+            self.get_account_state_from_trie(&state_trie, address)
+        }
     }
 
     pub fn get_account_state_from_trie(
@@ -1189,6 +1257,7 @@ mod tests {
             .add_initial_state(genesis_kurtosis)
             .await
             .expect("second genesis with same block");
+
         panic::catch_unwind(move || {
             let rt = tokio::runtime::Runtime::new().expect("runtime creation failed");
             let _ = rt.block_on(store.add_initial_state(genesis_hive));

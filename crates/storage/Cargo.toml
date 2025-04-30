@@ -27,7 +27,7 @@ redb = { workspace = true, optional = true }
 tokio = { version = "1.41.1", optional = true, default-features = false, features = ["rt"] }
 
 [features]
-default = []
+default = ["dep:tokio"]
 libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "dep:tokio"]
 redb = ["dep:redb", "dep:tokio"]
 

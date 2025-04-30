@@ -166,6 +166,7 @@ impl Hook for DefaultHook {
 
         // check for nonce mismatch
         if sender_account.info.nonce != vm.env.tx_nonce {
+            dbg!(sender_account.info.nonce, vm.env.tx_nonce);
             return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
         }
 

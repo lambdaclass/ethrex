@@ -242,7 +242,11 @@ impl Command {
                     // Apply all account updates to trie
                     let account_updates = state_diff.to_account_updates(&new_trie)?;
                     new_trie = store
-                        .apply_account_updates_from_trie(new_trie, &account_updates)
+                        .apply_account_updates_from_trie(
+                            new_trie,
+                            &account_updates,
+                            genesis_block_hash,
+                        )
                         .await
                         .expect("Error applying account updates");
 
