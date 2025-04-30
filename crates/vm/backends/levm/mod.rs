@@ -132,7 +132,6 @@ impl LEVM {
             block_gas_limit: block_header.gas_limit,
             transient_storage: HashMap::new(),
             difficulty: block_header.difficulty,
-            #[cfg(feature = "l2")]
             is_privilege: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
@@ -723,9 +722,6 @@ fn env_from_generic(
         block_gas_limit: header.gas_limit,
         transient_storage: HashMap::new(),
         difficulty: header.difficulty,
-        // TODO: Review this. In theory, privilege txs should not be turned into
-        // generic txs.
-        #[cfg(feature = "l2")]
         is_privilege: false,
     })
 }
