@@ -985,7 +985,7 @@ impl<'a> VM<'a> {
         tx_report: &ExecutionReport,
         retdata: RetData,
     ) -> Result<(), VMError> {
-        let call_frame = self
+        let previous_call_frame = self
             .call_frames
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
@@ -995,14 +995,14 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::GasOverflow)?;
 
         {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let call_frame_to_execute = self.current_call_frame_mut()?;
             // Return reserved gas
-            current_call_frame.gas_used = current_call_frame
+            call_frame_to_execute.gas_used = call_frame_to_execute
                 .gas_used
                 .checked_sub(unused_gas)
                 .ok_or(InternalError::GasOverflow)?;
 
-            current_call_frame.logs.extend(tx_report.logs.clone());
+            call_frame_to_execute.logs.extend(tx_report.logs.clone());
         }
 
         match tx_report.result.clone() {
@@ -1010,7 +1010,7 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(address_to_word(retdata.to))?;
-                for (address, account_opt) in call_frame.cache_backup.clone() {
+                for (address, account_opt) in previous_call_frame.cache_backup.clone() {
                     self.current_call_frame_mut()?
                         .cache_backup
                         .entry(address)
@@ -1025,12 +1025,12 @@ impl<'a> VM<'a> {
                 cache::remove_account(&mut self.db.cache, &retdata.to);
                 self.accrued_substate.created_accounts.remove(&retdata.to);
 
-                let current_call_frame = self.current_call_frame_mut()?;
+                let call_frame_to_execute = self.current_call_frame_mut()?;
                 // If revert we have to copy the return_data
                 if err == VMError::RevertOpcode {
-                    current_call_frame.sub_return_data = tx_report.output.clone();
+                    call_frame_to_execute.sub_return_data = tx_report.output.clone();
                 }
-                current_call_frame.stack.push(CREATE_DEPLOYMENT_FAIL)?;
+                call_frame_to_execute.stack.push(CREATE_DEPLOYMENT_FAIL)?;
             }
         }
         Ok(())
