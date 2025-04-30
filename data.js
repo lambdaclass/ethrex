@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746027388573,
+  "lastUpdate": 1746029010324,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5245,6 +5245,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181546202431,
             "range": "± 514808196",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "aa3c41b8da043ff5cd1ad699ce882c41edefc460",
+          "message": "docs(l2): clarify config parameters (#2582)\n\n**Motivation**\n\nThis pull request updates the `crates/l2/docs/sequencer.md`\ndocumentation to improve clarity and provide more detailed descriptions\nof configuration parameters.\n\n**Description**\n\n* Renamed \"Prover Server\" to \"Proof Coordinator\".\n* Expanded descriptions of configuration parameters under `[deployer]`,\n`[watcher]`, `[proposer]`, and `[committer]` sections.\n\nCloses #2525\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>",
+          "timestamp": "2025-04-30T15:03:29Z",
+          "tree_id": "51715d4610ff7e85a825ccbfb67783cc65d38879",
+          "url": "https://github.com/lambdaclass/ethrex/commit/aa3c41b8da043ff5cd1ad699ce882c41edefc460"
+        },
+        "date": 1746029008493,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179526474703,
+            "range": "± 479733581",
             "unit": "ns/iter"
           }
         ]
