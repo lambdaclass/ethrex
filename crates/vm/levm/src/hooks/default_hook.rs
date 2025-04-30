@@ -156,7 +156,7 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
         )?;
     }
 
-    vm.increase_account_balance(sender_address, vm.current_call_frame()?.msg_value)
+    vm.increase_account_balance(vm.env.origin, vm.current_call_frame()?.msg_value)
 }
 
 pub fn refund_sender(
@@ -182,7 +182,7 @@ pub fn refund_sender(
         .checked_mul(U256::from(gas_to_return))
         .ok_or(VMError::Internal(InternalError::UndefinedState(1)))?;
 
-    vm.increase_account_balance(sender_address, wei_return_amount)
+    vm.increase_account_balance(vm.env.origin, wei_return_amount)
 }
 
 // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
@@ -224,7 +224,7 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         .checked_sub(vm.env.base_fee_per_gas)
         .ok_or(VMError::GasPriceIsLowerThanBaseFee)?;
 
-    let coinbase_fee = U256::from(actual_gas_used)
+    let coinbase_fee = U256::from(gas_to_pay)
         .checked_mul(priority_fee_per_gas)
         .ok_or(VMError::BalanceOverflow)?;
 
@@ -397,7 +397,7 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
 }
 
 pub fn validate_sender(sender_account: &Account) -> Result<(), VMError> {
-    if sender_account.has_code() && !has_delegation(&sender_account)? {
+    if sender_account.has_code() && !has_delegation(sender_account)? {
         return Err(VMError::TxValidation(TxValidationError::SenderNotEOA));
     }
     Ok(())

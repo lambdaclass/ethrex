@@ -1,16 +1,11 @@
 use crate::{
-    call_frame::CallFrame,
-    db::cache::get_account,
     errors::{ExecutionReport, InternalError, TxValidationError, VMError},
     hooks::{default_hook, hook::Hook},
     utils::get_valid_jump_destinations,
     vm::VM,
 };
 
-use ethrex_common::{
-    types::{Account, Fork},
-    Address, U256,
-};
+use ethrex_common::{types::Fork, Address, U256};
 
 pub struct L2Hook {
     pub recipient: Option<Address>,
@@ -29,7 +24,7 @@ impl Hook for L2Hook {
         }
 
         let sender_address = vm.env.origin;
-        let sender_account = vm.get_account_mut(sender_address)?;
+        let sender_account = vm.db.get_account(sender_address)?;
 
         if vm.env.config.fork >= Fork::Prague {
             default_hook::validate_min_gas_limit(vm)?;
@@ -133,7 +128,7 @@ impl Hook for L2Hook {
             } else {
                 default_hook::undo_value_transfer(vm)?;
             }
-            vm.increase_account_balance(sender_address, vm.current_call_frame()?.msg_value)?;
+            vm.increase_account_balance(vm.env.origin, vm.current_call_frame()?.msg_value)?;
         }
 
         if vm.env.is_privilege {
