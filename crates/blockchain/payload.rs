@@ -485,6 +485,7 @@ impl Blockchain {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
+        // Apply transaction
         let receipt = self.apply_plain_transaction(head, context)?;
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();

@@ -28,8 +28,7 @@ pub fn calc_modified_accounts_size(
             modified_accounts_size += 32; // 32bytes | new_balance(U256)
         }
 
-        let nonce_diff = get_nonce_diff(account_update, db)?;
-        if nonce_diff != 0 {
+        if has_nonce_changed(account_update, db)? {
             modified_accounts_size += 2; // 2bytes | nonce_diff(u16)
         }
         // for each added_storage: 32bytes + 32bytes | key(H256) + value(U256)
@@ -43,37 +42,24 @@ pub fn calc_modified_accounts_size(
     Ok(modified_accounts_size)
 }
 
-pub fn get_nonce_diff(
+pub fn has_nonce_changed(
     account_update: &AccountUpdate,
     db: &GeneralizedDatabase,
-) -> Result<u16, EvmError> {
+) -> Result<bool, EvmError> {
     // Get previous nonce
-    let prev_nonce = if let Some(account) = db.previous_state_cache.get(&account_update.address) {
-        account.info.nonce
-    } else {
-        db.store
-            .get_account(account_update.address)
-            .map_err(|_| EvmError::Custom("Failed to get account".to_owned()))?
-            .info
-            .nonce
-    };
+    let prev_nonce = db
+        .previous_state_cache
+        .get(&account_update.address)
+        .ok_or_else(|| EvmError::Custom("Failed to get account".to_owned()))?
+        .info
+        .nonce;
     // Get current nonce
-    let new_nonce = if let Some(info) = account_update.info.clone() {
-        info.nonce
+    let new_nonce = if let Some(info) = &account_update.info {
+        prev_nonce == info.nonce
     } else {
-        prev_nonce
+        false
     };
-
-    // Calculate nonce diff
-    let nonce_diff = new_nonce
-        .checked_sub(prev_nonce)
-        .ok_or(EvmError::Custom(
-            "Underflow on calculating nonce diff".to_owned(),
-        ))?
-        .try_into()
-        .map_err(|_| EvmError::Custom("Nonce diff to high".to_owned()))?;
-
-    Ok(nonce_diff)
+    Ok(new_nonce)
 }
 
 /// Calculates the size of the current `StateDiff` of the block.
