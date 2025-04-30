@@ -101,10 +101,10 @@ async fn run_with_levm(
     println!("{}", report::progress(reports, levm_run_time.elapsed()));
 
     for test in ef_tests.iter() {
-        if opts.specific_tests.is_some()
-            && !opts.specific_tests.clone().unwrap().contains(&test.name)
-        {
-            continue;
+        if let Some(specific_tests) = &opts.specific_tests {
+            if !specific_tests.iter().any(|name| test.name.contains(name)) {
+                continue;
+            }
         }
         if opts.verbose {
             println!("Running test: {:?}", test.name);
