@@ -328,12 +328,12 @@ pub fn eip7702_recover_address(
 /// The idea of this function comes from ethereum/execution-specs:
 /// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
 pub fn eip7702_get_code(
-    db: &GeneralizedDatabase,
+    db: &mut GeneralizedDatabase,
     accrued_substate: &mut Substate,
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = db.get_account_no_push_cache(address)?;
+    let account = db.get_account(address)?;
     let bytecode = account.code.clone();
 
     // If the Address doesn't have a delegation code
@@ -355,7 +355,7 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = db.get_account_no_push_cache(auth_address)?.code;
+    let authorized_bytecode = db.get_account(auth_address)?.code;
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
