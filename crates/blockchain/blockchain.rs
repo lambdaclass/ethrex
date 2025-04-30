@@ -10,12 +10,12 @@ use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
-use ethrex_common::types::MempoolTransaction;
 use ethrex_common::types::{
     compute_receipts_root, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
+use ethrex_common::types::{validate_block_body, MempoolTransaction};
 use ethrex_common::types::{BlobsBundle, Fork};
 
 use ethrex_common::{Address, H256};
@@ -564,6 +564,7 @@ pub fn validate_block(
 ) -> Result<(), ChainError> {
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
+    validate_block_body(&block).map_err(InvalidBlockError::from)?;
 
     if chain_config.is_prague_activated(block.header.timestamp) {
         validate_prague_header_fields(&block.header, parent_header, chain_config)

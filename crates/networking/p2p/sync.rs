@@ -7,7 +7,10 @@ mod storage_healing;
 mod trie_rebuild;
 
 use bytecode_fetcher::bytecode_fetcher;
-use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
+use ethrex_blockchain::{
+    error::{ChainError, InvalidBlockError},
+    BatchBlockProcessingFailure, Blockchain,
+};
 use ethrex_common::{
     types::{Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
@@ -223,6 +226,25 @@ impl Syncer {
                 .iter()
                 .map(|header| header.compute_block_hash())
                 .collect::<Vec<_>>();
+
+            // Validate that, for each header, its parent root is equal to the previous header's
+            // hash. If that's not true, then we have received an invalid header from our peer and we
+            // have to discard it.
+            // Starts from 1, since we know that the current head is valid
+            let any_invalid =
+                block_headers
+                    .iter()
+                    .skip(1)
+                    .enumerate()
+                    .any(|(i, current_header)| {
+                        let previous_hash = block_hashes[i - 1];
+                        current_header.parent_hash != previous_hash
+                    });
+
+            if any_invalid {
+                warn!("Received invalid header chain from peer, discarding and retrying...");
+                continue;
+            }
 
             debug!(
                 "Received {} block headers| First Number: {} Last Number: {}",
@@ -471,6 +493,13 @@ impl Syncer {
                 store
                     .set_latest_valid_ancestor(sync_head, last_valid_hash)
                     .await?;
+            }
+
+            // NOTE: Do we want to discard the peer for other InvalidBlock errors?
+            if let ChainError::InvalidBlock(InvalidBlockError::InvalidBody(ref e)) = error {
+                // We have received an invalid body from our peer, so we discard it
+                warn!("Invalid block body error {e}, discarding peer");
+                // TODO: Discard the peer
             }
 
             return Err(error.into());
