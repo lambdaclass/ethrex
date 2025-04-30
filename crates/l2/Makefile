@@ -132,13 +132,13 @@ update-system-contracts:
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
-# Helper to read COMMITTER_ON_CHAIN_PROPOSER_ADDRESS from .env
+# Helper to read ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS from .env
 on-chain-proposer-address:
-	@grep '^COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=' .env | sed 's/^COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=//'
+	@grep '^ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=' .env | sed 's/^ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=//'
 
-# Helper to read L1_WATCHER_BRIDGE_ADDRESS from .env
+# Helper to read ETHREX_WATCHER_BRIDGE_ADDRESS from .env
 bridge-address:
-	@grep '^L1_WATCHER_BRIDGE_ADDRESS=' .env | sed 's/^L1_WATCHER_BRIDGE_ADDRESS=//'
+	@grep '^ETHREX_WATCHER_BRIDGE_ADDRESS=' .env | sed 's/^ETHREX_WATCHER_BRIDGE_ADDRESS=//'
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
@@ -214,7 +214,10 @@ integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
+	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
+	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
+	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
+	cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover
 
 integration-test-gpu: rm-db-l2 rm-db-l1
