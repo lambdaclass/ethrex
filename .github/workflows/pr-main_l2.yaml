@@ -184,11 +184,32 @@ jobs:
           sudo add-apt-repository ppa:ethereum/ethereum
           sudo apt-get update && sudo apt-get -y install solc
 
-      - name: Run tests
+      - name: Deploy L1 Contracts
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          make state-diff-test
+          touch .env
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach contract_deployer
+
+      - name: Reconstruct State
+        run: |
+          cd crates/l2
+          cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
+          cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
+          cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s /store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
+          cargo b --manifest-path ../../Cargo.toml --release
+
+      - name: Start Sequencer
+        run: |
+          sleep 30
+          cd crates/l2
+          CI_ETHREX_WORKDIR=/usr/local/bin \
+          docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
+
+      - name: Run tests
+        run: |
+          cd crates/l2
+          cargo test state_reconstruct --release
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
