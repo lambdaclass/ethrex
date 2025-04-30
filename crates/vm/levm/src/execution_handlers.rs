@@ -17,10 +17,9 @@ impl<'a> VM<'a> {
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
             Ok(output) => {
-                let current_call_frame = self.current_call_frame()?;
                 Ok(ExecutionReport {
                     result: TxResult::Success,
-                    gas_used: current_call_frame.gas_used,
+                    gas_used: self.current_call_frame()?.gas_used,
                     gas_refunded: self.env.refunded_gas,
                     output,
                     logs: std::mem::take(&mut self.current_call_frame_mut()?.logs),
@@ -32,10 +31,9 @@ impl<'a> VM<'a> {
                 }
 
                 self.restore_state(backup, self.current_call_frame()?.cache_backup.clone())?;
-                let current_call_frame = self.current_call_frame()?;
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
-                    gas_used: current_call_frame.gas_limit,
+                    gas_used: self.current_call_frame()?.gas_limit,
                     gas_refunded: self.env.refunded_gas,
                     output: Bytes::new(),
                     logs: vec![],
@@ -244,6 +242,9 @@ impl<'a> VM<'a> {
 
         {
             let current_call_frame = self.current_call_frame_mut()?;
+            let refunded = backup.refunded_gas;
+            let output = std::mem::take(&mut current_call_frame.output); // Bytes::new() if error is not RevertOpcode
+            let gas_used = current_call_frame.gas_used;
             // Unless error is from Revert opcode, all gas is consumed
             if error != VMError::RevertOpcode {
                 let left_gas = current_call_frame
@@ -251,10 +252,7 @@ impl<'a> VM<'a> {
                     .saturating_sub(current_call_frame.gas_used);
                 current_call_frame.gas_used = current_call_frame.gas_used.saturating_add(left_gas);
             }
-
-            let refunded = backup.refunded_gas;
-            let output = std::mem::take(&mut current_call_frame.output); // Bytes::new() if error is not RevertOpcode
-            let gas_used = current_call_frame.gas_used;
+            
             execution_report = Ok(ExecutionReport {
                 result: TxResult::Revert(error),
                 gas_used,
