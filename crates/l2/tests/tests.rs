@@ -33,13 +33,14 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 ///
 /// 1. Check balances on L1 and L2
 /// 2. Deposit from L1 to L2
-/// 3. Check balances on L1 and L2
-/// 4. Transfer funds on L2
-/// 5. Check balances on L2
-/// 6. Withdraw funds from L2 to L1
-/// 7. Check balances on L1 and L2
-/// 8. Claim funds on L1
-/// 9. Check balances on L1 and L2
+/// 3. Check deposit receipt in L2
+/// 4. Check balances on L1 and L2
+/// 5. Transfer funds on L2
+/// 6. Check balances on L2
+/// 7. Withdraw funds from L2 to L1
+/// 8. Check balances on L1 and L2
+/// 9. Claim funds on L1
+/// 10. Check balances on L1 and L2
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
@@ -100,7 +101,28 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         recoverable_fees_vault_balance
     );
 
-    // 3. Check balances on L1 and L2
+    // 3. Check deposit receipt on L2
+
+    let topic =
+        keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
+    let logs = eth_client
+        .get_logs(
+            U256::from(deposit_tx_receipt.block_info.block_number),
+            U256::from(deposit_tx_receipt.block_info.block_number),
+            common_bridge_address(),
+            topic,
+        )
+        .await?;
+
+    let l2_deposit_tx_hash =
+        H256::from_slice(logs.first().unwrap().log.data.get(128..160).unwrap());
+
+    println!("Waiting for deposit transaction receipt on L2");
+
+    let _ = ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, &proposer_client, 1000)
+        .await?;
+
+    // 4. Check balances on L1 and L2
 
     println!("Checking balances on L1 and L2 after deposit");
 
@@ -159,7 +181,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "Recoverable Fees Balance: {}, This amount is given because of the L2 Privileged Transaction, a deposit shouldn't give a tip to the coinbase address if the gas sent as tip doesn't come from the L1.",
         first_deposit_recoverable_fees_vault_balance
     );
-    // 4. Transfer funds on L2
+    // 5. Transfer funds on L2
 
     println!("Transferring funds on L2");
 
@@ -188,7 +210,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         recoverable_fees_vault_balance
     );
 
-    // 5. Check balances on L2
+    // 6. Check balances on L2
 
     println!("Checking balances on L2 after transfer");
 
@@ -214,7 +236,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "Random account balance should increase with transfer value"
     );
 
-    // 6. Withdraw funds from L2 to L1
+    // 7. Withdraw funds from L2 to L1
 
     println!("Withdrawing funds from L2 to L1");
     let withdraw_value = U256::from(100000000000000000000u128);
@@ -230,7 +252,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .expect("Withdraw tx receipt not found");
 
-    // 7. Check balances on L1 and L2
+    // 8. Check balances on L1 and L2
 
     println!("Checking balances on L1 and L2 after withdrawal");
 
@@ -254,7 +276,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "L2 balance should decrease with withdraw value + gas costs"
     );
 
-    // 8. Claim funds on L1
+    // 9. Claim funds on L1
 
     println!("Claiming funds on L1");
 
@@ -301,7 +323,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let claim_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(claim_tx, &eth_client, 15).await?;
 
-    // 9. Check balances on L1 and L2
+    // 10. Check balances on L1 and L2
 
     println!("Checking balances on L1 and L2 after claim");
 
