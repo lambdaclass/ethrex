@@ -28,4 +28,6 @@ pub enum DeployerError {
     FailedToDeployContract(#[from] DeployError),
     #[error("Internal error: {0}")]
     InternalError(String),
+    #[error("Failed to write contract addresses to .env: {0}")]
+    FailedToWriteContractAddressesToEnv(#[from] std::io::Error),
 }

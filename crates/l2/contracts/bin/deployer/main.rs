@@ -1,5 +1,7 @@
 use std::{
-    fs::read_to_string,
+    fs::{read_to_string, OpenOptions},
+    io::{BufWriter, Write},
+    path::PathBuf,
     process::{Command, ExitStatus},
     str::FromStr,
 };
@@ -39,7 +41,7 @@ async fn main() -> Result<(), DeployerError> {
 
     compile_contracts(&opts)?;
 
-    let (on_chain_proposer, bridge_address, sp1_verifier_address, pico_verifier_address) =
+    let (on_chain_proposer_address, bridge_address, sp1_verifier_address, pico_verifier_address) =
         deploy_contracts(&eth_client, &opts).await?;
 
     let sp1_verifier_address = sp1_verifier_address.unwrap_or(opts.sp1_verifier_address);
@@ -47,7 +49,7 @@ async fn main() -> Result<(), DeployerError> {
     let pico_verifier_address = pico_verifier_address.unwrap_or(opts.pico_verifier_address);
 
     initialize_contracts(
-        on_chain_proposer,
+        on_chain_proposer_address,
         bridge_address,
         opts.risc0_verifier_address,
         sp1_verifier_address,
@@ -61,7 +63,14 @@ async fn main() -> Result<(), DeployerError> {
         make_deposits(bridge_address, &eth_client, &opts).await?;
     }
 
-    Ok(())
+    write_contract_addresses_to_env(
+        on_chain_proposer_address,
+        bridge_address,
+        sp1_verifier_address,
+        pico_verifier_address,
+        opts.risc0_verifier_address,
+        opts.env_file_path,
+    )
 }
 
 fn download_contract_deps(opts: &DeployerOptions) -> Result<(), DeployerError> {
@@ -400,6 +409,40 @@ async fn make_deposits(
             }
         }
     }
+    Ok(())
+}
+
+fn write_contract_addresses_to_env(
+    on_chain_proposer_address: Address,
+    bridge_address: Address,
+    sp1_verifier_address: Address,
+    pico_verifier_address: Address,
+    risc0_verifier_address: Address,
+    env_file_path: Option<PathBuf>,
+) -> Result<(), DeployerError> {
+    let env_file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(env_file_path.unwrap_or(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env")))?; // ethrex/crates/l2/.env
+    let mut writer = BufWriter::new(env_file);
+    writeln!(
+        writer,
+        "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS={on_chain_proposer_address:#x}"
+    )?;
+    writeln!(writer, "ETHREX_WATCHER_BRIDGE_ADDRESS={bridge_address:#x}")?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER={sp1_verifier_address:#x}"
+    )?;
+
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER={pico_verifier_address:#x}"
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER={risc0_verifier_address:#x}"
+    )?;
     Ok(())
 }
 

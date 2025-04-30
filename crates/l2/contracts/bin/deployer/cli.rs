@@ -28,6 +28,14 @@ pub struct DeployerOptions {
     pub private_key: SecretKey,
     #[arg(
         long,
+        value_name = "PATH",
+        env = "ETHREX_DEPLOYER_ENV_FILE_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the .env file."
+    )]
+    pub env_file_path: Option<PathBuf>,
+    #[arg(
+        long,
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_DEPLOYER_DEPLOY_RICH",
@@ -162,6 +170,7 @@ impl Default for DeployerOptions {
                 .as_bytes(),
             )
             .unwrap(),
+            env_file_path: None,
             deposit_rich: false,
             private_keys_file_path: "../../test_data/private_keys_l1.txt".to_string(),
             genesis_l1_path: "../../test_data/genesis-l1-dev.json".to_string(),
