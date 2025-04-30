@@ -1,13 +1,15 @@
 use std::cmp::max;
 
-use ethrex_common::{types::Fork, Address, U256};
+use ethrex_common::{
+    types::{Account, Fork},
+    Address, U256,
+};
 
 use crate::{
     constants::{INIT_CODE_MAX_SIZE, TX_BASE_COST, VALID_BLOB_PREFIXES},
     errors::{InternalError, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     utils::{get_base_fee_per_blob_gas, get_valid_jump_destinations},
-    Account,
 };
 
 use super::{
