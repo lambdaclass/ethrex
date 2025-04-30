@@ -24,6 +24,11 @@ const DEFAULT_L1_RICH_WALLET_PRIVATE_KEY: H256 = H256([
     0xbc, 0xdf, 0x20, 0x24, 0x9a, 0xbf, 0x0e, 0xd6, 0xd9, 0x44, 0xc0, 0x28, 0x8f, 0xad, 0x48, 0x9e,
     0x33, 0xf6, 0x6b, 0x39, 0x60, 0xd9, 0xe6, 0x22, 0x9c, 0x1c, 0xd2, 0x14, 0xed, 0x3b, 0xbe, 0x31,
 ]);
+// 0xf31d5383c0dfb1c8e3e64654b31d22d08762f6de
+const DEFAULT_BRIDGE_ADDRESS: Address = H160([
+    0xf3, 0x1d, 0x53, 0x83, 0xc0, 0xdf, 0xb1, 0xc8, 0xe3, 0xe6, 0x46, 0x54, 0xb3, 0x1d, 0x22, 0xd0,
+    0x87, 0x62, 0xf6, 0xde,
+]);
 // 0x0007a881CD95B1484fca47615B64803dad620C8d
 const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
     0x00, 0x07, 0xa8, 0x81, 0xcd, 0x95, 0xb1, 0x48, 0x4f, 0xca, 0x47, 0x61, 0x5b, 0x64, 0x80, 0x3d,
@@ -774,27 +779,19 @@ async fn get_fees_details_l2(tx_receipt: RpcReceipt, l2_client: &EthClient) -> F
 }
 
 fn eth_client() -> EthClient {
-    EthClient::new(&std::env::var("ETHREX_ETH_RPC_URL").unwrap_or(DEFAULT_ETH_URL.to_owned()))
+    EthClient::new(DEFAULT_ETH_URL)
 }
 
 fn proposer_client() -> EthClient {
-    EthClient::new(
-        &std::env::var("ETHREX_PROPOSER_RPC_URL").unwrap_or(DEFAULT_PROPOSER_URL.to_owned()),
-    )
+    EthClient::new(DEFAULT_PROPOSER_URL)
 }
 
 fn l1_rich_wallet_address() -> Address {
-    std::env::var("ETHREX_L1_RICH_WALLET_ADDRESS")
-        .unwrap_or(format!("{DEFAULT_L1_RICH_WALLET_ADDRESS:#x}"))
-        .parse()
-        .unwrap()
+    DEFAULT_L1_RICH_WALLET_ADDRESS
 }
 
 fn common_bridge_address() -> Address {
-    std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
-        .expect("ETHREX_WATCHER_BRIDGE_ADDRESS env var not set")
-        .parse()
-        .unwrap()
+    DEFAULT_BRIDGE_ADDRESS
 }
 
 fn fees_vault() -> Address {
