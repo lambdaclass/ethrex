@@ -7,8 +7,8 @@ This document aims to explain how the Lambda ethrex L2 and all its moving parts 
 At a high level, the way an L2 works is as follows:
 
 - There is a contract in L1 that tracks the current state of the L2. Anyone who wants to know the current state of the network need only consult this contract.
-- Every once in a while, someone (usually the sequencer, but could be a decentralized network, or even anyone at all in the case of a based contestable rollup) builds a new L2 block and publishes it to L1. We will call this the `commit` L1 transaction.
-- For L2 blocks to be considered finalized, a zero-knowledge proof attesting to the validity of said block needs to be sent to L1, and its verification needs to pass. If it does, everyone is assured that the block was valid and thus the new state is. We call this the `verification` L1 transaction.
+- Every once in a while, someone (usually the sequencer, but could be a decentralized network, or even anyone at all in the case of a based contestable rollup) builds a batch of new L2 blocks and publishes it to L1. We will call this the `commit` L1 transaction.
+- For L2 batches to be considered finalized, a zero-knowledge proof attesting to the validity of the batch needs to be sent to L1, and its verification needs to pass. If it does, everyone is assured that all blocks in the batch were valid and thus the new state is. We call this the `verification` L1 transaction.
 
 We ommited a lot of details in this high level explanation. Some questions that arise are:
 
@@ -23,7 +23,7 @@ Below some answers to these questions, along with an overview of all the moving 
 
 Now that general purpose `zkVM`s exist, most people have little trouble with the idea that you can prove execution. Just take the usual EVM code you wrote in Rust, compile to some `zkVM` target instead and you're mostly done. You can now prove it.
 
-What's usually less clear is how you prove state. Let's say we want to prove a new L2 block that was just built. Running the `ethrex` `execute_block` function on a Rust `zkVM` does the trick, but that only proves that you ran the VM correctly on **some** previous state/block. How do you know it was the actual previous state of the L2 and not some other, modified one?
+What's usually less clear is how you prove state. Let's say we want to prove a new L2 batch of blocks that were just built. Running the `ethrex` `execute_block` function on a Rust `zkVM` for all the blocks in the batch does the trick, but that only proves that you ran the VM correctly on **some** previous state/batch. How do you know it was the actual previous state of the L2 and not some other, modified one?
 
 In other words, how do you ensure that:
 
@@ -31,29 +31,29 @@ In other words, how do you ensure that:
 
 For this, the VM needs to take as a public input the previous state of the L2, so the prover can show that every storage slot it reads is consistent with it, and the verifier contract on L1 can check that the given public input is the actual previous state it had stored. However, we can't send the entire previous state as public input because it would be too big; this input needs to be sent on the `verification` transaction, and the entire L2 state does not fit on it.
 
-To solve this, we do what we always do: instead of having the actual previous state be the public input, we build a **Merkle Tree** of the state and **use its root as the input**. Now the state is compressed into a single 32-byte value, an unforgeable representation of it; if you try to change a single bit, the root will change. This means we now have, for every L2 block, a single hash that we use to represent it, which we call the block `commitment` (we call it "commitment" and not simply "state root" because, as we'll see later, this won't just be the state root, but rather the hash of a few different values including the state root).
+To solve this, we do what we always do: instead of having the actual previous state be the public input, we build a **Merkle Tree** of the state and **use its root as the input**. Now the state is compressed into a single 32-byte value, an unforgeable representation of it; if you try to change a single bit, the root will change. This means we now have, for every L2 batch, a single hash that we use to represent it, which we call the batch `commitment` (we call it "commitment" and not simply "state root" because, as we'll see later, this won't just be the state root, but rather the hash of a few different values including the state root).
 
 The flow for the prover is then roughly as follows:
 
-- Take as public input the previous block commitment and the next (output) block commitment.
-- Execute the current block to prove its execution is valid. Here "execution" means more than just transaction execution; there's also header validation, transaction validation, etc. (essentially all the logic `ethrex` needs to follow when executing and adding a new block to the chain).
-- For every storage slot read, present and verify a merkle path from it to the previous state root (i.e. previous block commitment).
-- For every storage slot written, present and verify a merkle path from it to the next state root (i.e. next block commitment).
+- Take as public input the previous batch commitment and the next (output) batch commitment.
+- Execute all blocks in the batch to prove its execution is valid. Here "execution" means more than just transaction execution; there's also header validation, transaction validation, etc. (essentially all the logic `ethrex` needs to follow when executing and adding a new block to the chain).
+- For every storage slot read, present and verify a merkle path from it to the previous state root (i.e. previous batch commitment).
+- For every storage slot written, present and verify a merkle path from it to the next state root (i.e. next batch commitment).
 
-As a final note, to keep the public input a 32 byte value, instead of passing the previous and next block commitments separately, we hash the two of them and pass that. The L1 contract will then have an extra step of first taking both commitments and hashing them together to form the public input.
+As a final note, to keep the public input a 32 byte value, instead of passing the previous and next batch commitments separately, we hash the two of them and pass that. The L1 contract will then have an extra step of first taking both commitments and hashing them together to form the public input.
 
 These two ideas will be used extensively throughout the rest of the documentation:
 
 - Whenever we need to add some state as input, we build a merkle tree and use its **root** instead. Whenever we use some part of that state in some way, the prover provides merkle paths to the values involved. Sometimes, if we don't care about efficient inclusion proofs of parts of the state, we just hash the data altogether and use that instead.
-- To keep the block commitment (i.e. the value attesting to the entire state of the network) a 32 byte value, we hash the different public inputs into one. The L1 contract is given all the public inputs on `commit`, checks their validity and then squashes them into one through hashing.
+- To keep the batch commitment (i.e. the value attesting to the entire state of the network) a 32 byte value, we hash the different public inputs into one. The L1 contract is given all the public inputs on `commit`, checks their validity and then squashes them into one through hashing.
 
 ## Reconstructing state/Data Availability
 
 While using a merkle root as a public input for the proof works well, there is still a need to have the state on L1. If the only thing that's published to it is the state root, then the sequencer could withhold data on the state of the network. Because it is the one proposing and executing blocks, if it refuses to deliver certain data (like a merkle path to prove a withdrawal on L1), people may not have any place to get it from and get locked out of the network or some of their funds.
 
-This is called the **Data Availability** problem. As discussed before, sending the entire state of the network on every new L2 block is impossible; state is too big. As a first next step, what we could do is:
+This is called the **Data Availability** problem. As discussed before, sending the entire state of the network on every new L2 batch is impossible; state is too big. As a first next step, what we could do is:
 
-- For every new L2 block, send as part of the `commit` transaction the list of transactions in the block. Anyone who needs to access the state of the L2 at any point in time can track all `commit` transactions, start executing them from the beginning and recontruct the state.
+- For every new L2 batch, send as part of the `commit` transaction the list of transactions in the batch. Anyone who needs to access the state of the L2 at any point in time can track all `commit` transactions, start executing them from the beginning and recontruct the state.
 
 This is now feasible; if we take 200 bytes as a rough estimate for the size of a single transfer between two users (see [this post](https://ethereum.stackexchange.com/questions/30175/what-is-the-size-bytes-of-a-simple-ethereum-transaction-versus-a-bitcoin-trans) for the calculation on legacy transactions) and 128 KB as [a reasonable transaction size limit](https://github.com/ethereum/go-ethereum/blob/830f3c764c21f0d314ae0f7e60d6dd581dc540ce/core/txpool/legacypool/legacypool.go#L49-L53) we get around ~650 transactions at maximum per `commit` transaction (we are assuming we use calldata here, blobs can increase this limit as each one is 128 KB and we could use multiple per transaction).
 
@@ -65,11 +65,11 @@ Detailed documentation on the state diffs spec [here](./state_diffs.md).
 
 ### How do we prevent the sequencer from publishing the wrong state diffs?
 
-Once again, state diffs have to be part of the public input. With them, the prover can show that they are equal to the ones returned by the VM after executing the block. As always, the actual state diffs are not part of the public input, but **their hash** is, so the size is a fixed 32 bytes. This hash is then part of the block commitment. The prover then assures us that the given state diff hash is correct (i.e. it exactly corresponds to the changes in state of the executed block).
+Once again, state diffs have to be part of the public input. With them, the prover can show that they are equal to the ones returned by the VM after executing all blocks in the batch. As always, the actual state diffs are not part of the public input, but **their hash** is, so the size is a fixed 32 bytes. This hash is then part of the batch commitment. The prover then assures us that the given state diff hash is correct (i.e. it exactly corresponds to the changes in state of the executed blocks).
 
 There's still a problem however: the L1 contract needs to have the actual state diff for data availability, not just the hash. This is sent as part of calldata of the `commit` transaction (actually later as a blob, we'll get to that), so the sequencer could in theory send the wrong state diff. To make sure this can't happen, the L1 contract hashes it to make sure that it matches the actual state diff hash that is included as part of the public input.
 
-With that, we can be sure that state diffs are published and that they are correct. The sequencer cannot mess with them at all; either it publishes the correct state diffs or the L1 contract will reject its block.
+With that, we can be sure that state diffs are published and that they are correct. The sequencer cannot mess with them at all; either it publishes the correct state diffs or the L1 contract will reject its batch.
 
 ### Compression
 
@@ -121,15 +121,15 @@ TODO: Explain it a high level maybe?
 
 ## Recap
 
-### Block Commitment
+### Batch Commitment
 
-An L2 block commitment is the hash of the following things:
+An L2 batch commitment is the hash of the following things:
 
-- The L2 state root.
+- The new L2 state root.
 - The state diff hash or polynomial commitments, depending on whether we are using calldata or blobs.
 - The Withdrawal logs merkle root.
 
-The public input to the proof is then the hash of the previous block commitment and the new one.
+The public input to the proof is then the hash of the previous batch commitment and the new one.
 
 ## L1 contract checks
 
@@ -137,35 +137,35 @@ The public input to the proof is then the hash of the previous block commitment 
 
 For the `commit` transaction, the L1 verifier contract receives the following things from the sequencer:
 
-- The L2 block number to be commited.
+- The L2 batch number to be commited.
 - The new L2 state root.
 - The Withdrawal logs merkle root.
 - The state diffs hash or polynomial commitment scheme accordingly.
 
 The contract will then:
 
-- Check that the block number is the immediate successor of the last block processed.
+- Check that the batch number is the immediate successor of the last batch processed.
 - Check that the state diffs are valid, either through hashing or the point evaluation precompile.
-- Calculate the new block commitment and store it.
+- Calculate the new batch commitment and store it.
 
 ### Verify transaction
 
 On a `verification` transaction, the L1 contract receives the following:
 
-- The block number.
-- The block proof.
+- The batch number.
+- The batch proof.
 
 The contract will then:
 
-- Compute the proof public input from the new and previous block commitments (both are already stored in the contract).
+- Compute the proof public input from the new and previous batch commitments (both are already stored in the contract).
 - Pass the proof and public inputs to the verifier and assert the proof passes.
-- If the proof passes, finalize the L2 state, setting the latest block as the given one and allowing any withdrawals for that block to occur.
+- If the proof passes, finalize the L2 state, setting the latest batch as the given one and allowing any withdrawals for that batch to occur.
 
 
 ## What the sequencer cannot do
 
 - **Forge Transactions**: Invalid transactions (e.g. sending money from someone who did not authorize it) are not possible, since part of transaction execution requires signature verification. Every transaction has to come along with a signature from the sender. That signature needs to be verified; the L1 verifier will reject any block containing a transaction whose signature is not valid.
-- **Withhold State**: Every L1 `commit` transaction needs to send the corresponding state diffs for it and the contract, along with the proof, make sure that they indeed correspond to the given block. TODO: Expand with docs on how this works.
+- **Withhold State**: Every L1 `commit` transaction needs to send the corresponding state diffs for it and the contract, along with the proof, make sure that they indeed correspond to the given batch. TODO: Expand with docs on how this works.
 - **Mint money for itself or others**: The only valid protocol transaction that can mint money for a user is an L1 deposit. Every one of these mint transactions is linked to exactly one deposit transaction on L1. TODO: Expand with some docs on the exact details of how this works.
 
 ## What the sequencer can do

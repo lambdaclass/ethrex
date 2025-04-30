@@ -29,13 +29,13 @@ In the future, it will also be watching for other L1->L2 messages.
 
 As the name suggests, this component sends transactions to the L1. But not any transaction, only commit and verify transactions.
 
-Commit transactions are sent when the Proposer wants to commit to a new block. These transactions contain the block data to be committed in the L1.
+Commit transactions are sent when the Proposer wants to commit to a new batch of blocks. These transactions contain the batch data to be committed in the L1.
 
-Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contain the proof to be verified in the L1.
+Verify transactions are sent by the Proposer after the prover has successfully generated a proof of batch execution to verify it. These transactions contain the proof to be verified in the L1.
 
 ### Prover Server
 
-The Prover Server is a simple TCP server that manages communication with a component called the `Prover Client`. The Prover Client acts as a simple TCP client, handling incoming requests to prove a block. It then "calls" a zkVM, generates the Groth16 proof, and sends it back to the Server. In this setup, the state is managed solely by the Prover Server, which, in theory, makes it less error-prone than the zkVMs.
+The Prover Server is a simple TCP server that manages communication with a component called the `Prover Client`. The Prover Client acts as a simple TCP client, handling incoming requests to prove a batch. It then "calls" a zkVM, generates the Groth16 proof, and sends it back to the Server. In this setup, the state is managed solely by the Prover Server, which, in theory, makes it less error-prone than the zkVMs.
 
 For more information about the Prover Server, the Prover Client, and the proving process itself, see the [Prover Docs](./prover.md).
 
@@ -89,6 +89,12 @@ The following environment variables are available to configure the Proposer cons
   - `listen_ip`: IP to listen for proof data requests.
   - `listen_port`: Port to listen for proof data requests.
   - `dev_mode`: Whether `dev_mode` is activated or not.
+
+- Under the `[eth]` section:
+
+  - `rpc_url`: The URL for interacting with the RPC endpoint from the client.
+  - `maximum_allowed_max_fee_per_gas`: Sets a hard cap on the maximum fee per gas you are willing to pay for a single transaction.
+  - `maximum_allowed_max_fee_per_blob_gas`: Sets a hard cap on the maximum fee per blob gas you are willing to pay for a single transaction.
 
 If you want to use a different configuration file, you can set the:
 

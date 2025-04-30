@@ -167,6 +167,7 @@ pub struct VM<'a> {
     pub hooks: Vec<Arc<dyn Hook>>,
     pub return_data: Vec<RetData>,
     pub backups: Vec<StateBackup>,
+    pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
 }
 
 pub struct RetData {
@@ -217,13 +218,6 @@ impl<'a> VM<'a> {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        // When instantiating a new vm the current value of the storage slots are actually the original values because it is a new transaction
-        for account in db.cache.values_mut() {
-            for storage_slot in account.storage.values_mut() {
-                storage_slot.original_value = storage_slot.current_value;
-            }
-        }
-
         let hooks: Vec<Arc<dyn Hook>> = match tx {
             Transaction::PrivilegedL2Transaction(privileged_tx) => vec![Arc::new(L2Hook {
                 recipient: privileged_tx.recipient,
@@ -231,89 +225,74 @@ impl<'a> VM<'a> {
             _ => vec![Arc::new(DefaultHook)],
         };
 
+        let mut substate = Substate {
+            selfdestruct_set: HashSet::new(),
+            touched_accounts: default_touched_accounts,
+            touched_storage_slots: default_touched_storage_slots,
+            created_accounts: HashSet::new(),
+        };
+
+        let bytecode;
+        let destination_and_code_address;
+
         match tx.to() {
             TxKind::Call(address_to) => {
-                default_touched_accounts.insert(address_to);
+                substate.touched_accounts.insert(address_to);
 
-                let mut substate = Substate {
-                    selfdestruct_set: HashSet::new(),
-                    touched_accounts: default_touched_accounts,
-                    touched_storage_slots: default_touched_storage_slots,
-                    created_accounts: HashSet::new(),
-                };
-
-                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytecode) =
+                let (_is_delegation, _eip7702_gas_consumed, _code_address, bytes) =
                     eip7702_get_code(db, &mut substate, address_to)?;
-
-                let initial_call_frame = CallFrame::new(
-                    env.origin,
-                    address_to,
-                    address_to,
-                    bytecode,
-                    tx.value(),
-                    tx.data().clone(),
-                    false,
-                    env.gas_limit,
-                    0,
-                    0,
-                    false,
-                );
-
-                Ok(Self {
-                    call_frames: vec![initial_call_frame],
-                    env,
-                    accrued_substate: substate,
-                    db,
-                    tx_kind: TxKind::Call(address_to),
-                    access_list: tx.access_list(),
-                    authorization_list: tx.authorization_list(),
-                    hooks,
-                    return_data: vec![],
-                    backups: vec![],
-                })
+                destination_and_code_address = address_to;
+                bytecode = bytes;
             }
+
             TxKind::Create => {
                 let sender_nonce = db.get_account(env.origin)?.info.nonce;
-                let new_contract_address = calculate_create_address(env.origin, sender_nonce)
-                    .map_err(|_| VMError::Internal(InternalError::CouldNotComputeCreateAddress))?;
 
-                default_touched_accounts.insert(new_contract_address);
+                // In this case, the destination address which also holds the code would be the address of the newly created contract
+                destination_and_code_address = calculate_create_address(env.origin, sender_nonce)
+                    .map_err(|_| {
+                    VMError::Internal(InternalError::CouldNotComputeCreateAddress)
+                })?;
 
-                let initial_call_frame = CallFrame::new(
-                    env.origin,
-                    new_contract_address,
-                    new_contract_address,
-                    Bytes::new(), // Bytecode is assigned after passing validations.
-                    tx.value(),
-                    tx.data().clone(), // Calldata is removed after passing validations.
-                    false,
-                    env.gas_limit,
-                    0,
-                    0,
-                    false,
-                );
+                substate
+                    .touched_accounts
+                    .insert(destination_and_code_address);
 
-                let substate = Substate {
-                    selfdestruct_set: HashSet::new(),
-                    touched_accounts: default_touched_accounts,
-                    touched_storage_slots: default_touched_storage_slots,
-                    created_accounts: HashSet::from([new_contract_address]),
-                };
+                substate
+                    .created_accounts
+                    .insert(destination_and_code_address);
 
-                Ok(Self {
-                    call_frames: vec![initial_call_frame],
-                    env,
-                    accrued_substate: substate,
-                    db,
-                    tx_kind: TxKind::Create,
-                    access_list: tx.access_list(),
-                    authorization_list: tx.authorization_list(),
-                    hooks,
-                    return_data: vec![],
-                    backups: vec![],
-                })
+                bytecode = Bytes::new() //Bytecode will be later assigned from the calldata after passing validations;
             }
         }
+
+        let initial_call_frame = CallFrame::new(
+            env.origin,
+            destination_and_code_address,
+            destination_and_code_address,
+            bytecode,
+            tx.value(),
+            tx.data().clone(),
+            false,
+            env.gas_limit,
+            0,
+            0,
+            false,
+        );
+
+        Ok(Self {
+            call_frames: vec![initial_call_frame],
+            env,
+            accrued_substate: substate,
+            db,
+            tx_kind: tx.to(),
+            access_list: tx.access_list(),
+            authorization_list: tx.authorization_list(),
+            hooks,
+            return_data: vec![],
+            backups: vec![],
+            storage_original_values: HashMap::new(),
+        })
     }
 
     pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
@@ -439,6 +418,7 @@ impl<'a> VM<'a> {
             self.env.refunded_gas,
             self.env.transient_storage.clone(),
         );
+
         self.backups.push(backup);
 
         let mut report = self.run_execution()?;
@@ -480,7 +460,6 @@ impl<'a> VM<'a> {
         for hook in self.hooks.clone() {
             hook.prepare_execution(self)?;
         }
-
         Ok(())
     }
 

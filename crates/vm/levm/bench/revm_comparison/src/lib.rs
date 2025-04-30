@@ -66,7 +66,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
     cache::insert_account(
         &mut db.cache,
         accounts[0].0,
-        ethrex_levm::Account::new(
+        Account::new(
             accounts[0].1.info.balance,
             accounts[0].1.code.clone(),
             accounts[0].1.info.nonce,
@@ -76,7 +76,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
     cache::insert_account(
         &mut db.cache,
         accounts[1].0,
-        ethrex_levm::Account::new(
+        Account::new(
             accounts[1].1.info.balance,
             accounts[1].1.code.clone(),
             accounts[1].1.info.nonce,
