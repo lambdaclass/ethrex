@@ -626,7 +626,7 @@ impl<'a> VM<'a> {
 
             self.accrued_substate.selfdestruct_set.insert(to);
         }
-        if account_exists(self.db, target_address) && target_account.is_empty() {
+        if target_account.is_empty() {
             self.accrued_substate
                 .touched_accounts
                 .insert(target_address);
