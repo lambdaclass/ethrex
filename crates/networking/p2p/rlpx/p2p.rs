@@ -6,7 +6,6 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
-
 use k256::PublicKey;
 
 use crate::rlpx::utils::{id2pubkey, snappy_decompress};
