@@ -31,6 +31,5 @@ pub struct Environment {
     pub tx_nonce: u64,
     pub block_gas_limit: u64,
     pub transient_storage: TransientStorage,
-    #[cfg(feature = "l2")]
     pub is_privilege: bool,
 }
