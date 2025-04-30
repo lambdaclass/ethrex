@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-04-28
+
+- Make TrieDb trait use NodeHash as key [2517](https://github.com/lambdaclass/ethrex/pull/2517)
+
 ### 2025-04-22
 
 - Avoid calculating state transitions after every block in bulk mode [2519](https://github.com/lambdaclass/ethrex/pull/2519)
