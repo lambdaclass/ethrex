@@ -21,12 +21,7 @@ pub async fn get_status(storage: &Store, eth_version: u32) -> Result<StatusMessa
 
     let genesis = genesis_header.compute_block_hash();
     let block_hash = block_header.compute_block_hash();
-    let fork_id = ForkId::new(
-        chain_config,
-        genesis_header,
-        block_header.timestamp,
-        block_number,
-    );
+    let fork_id = storage.get_fork_id().await?;
     Ok(StatusMessage {
         eth_version,
         network_id,
