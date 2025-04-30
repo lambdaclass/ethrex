@@ -496,6 +496,9 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
         )
         .await?;
 
+    // Gets the current block_number to search logs later.
+    let first_block = proposer_client.get_block_number().await?;
+
     let deposit_tx_hash = eth_client
         .send_eip1559_transaction(&deposit_tx, &l1_rich_wallet_private_key())
         .await?;
@@ -519,10 +522,10 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
         .await?;
 
     // Wait for the event to be emitted
-    let mut blk_number = U256::zero();
+    let mut blk_number = first_block;
     let topic = keccak(b"NumberSet(uint256)");
     while proposer_client
-        .get_logs(U256::from(0), blk_number, contract_address, topic)
+        .get_logs(first_block, blk_number, contract_address, topic)
         .await
         .is_ok_and(|logs| logs.is_empty())
     {
@@ -532,7 +535,7 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     }
 
     let logs = proposer_client
-        .get_logs(U256::from(0), blk_number, contract_address, topic)
+        .get_logs(first_block, blk_number, contract_address, topic)
         .await?;
     println!("Logs: {logs:?}");
 
