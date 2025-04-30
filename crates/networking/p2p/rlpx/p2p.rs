@@ -50,13 +50,15 @@ impl RLPDecode for Capability {
 pub(crate) struct HelloMessage {
     pub(crate) capabilities: Vec<(Capability, u8)>,
     pub(crate) node_id: PublicKey,
+    pub(crate) client_id: String,
 }
 
 impl HelloMessage {
-    pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey) -> Self {
+    pub fn new(capabilities: Vec<(Capability, u8)>, node_id: PublicKey, client_id: String) -> Self {
         Self {
             capabilities,
             node_id,
+            client_id,
         }
     }
 }
@@ -66,7 +68,7 @@ impl RLPxMessage for HelloMessage {
     fn encode(&self, mut buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         Encoder::new(&mut buf)
             .encode_field(&5_u8) // protocolVersion
-            .encode_field(&"Ethrex/0.1.0") // clientId
+            .encode_field(&self.client_id) // clientId
             .encode_field(&self.capabilities) // capabilities
             .encode_field(&0u8) // listenPort (ignored)
             .encode_field(&pubkey2id(&self.node_id)) // nodeKey
@@ -81,8 +83,7 @@ impl RLPxMessage for HelloMessage {
 
         assert_eq!(protocol_version, 5, "only protocol version 5 is supported");
 
-        let (_client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
-        // TODO: store client id for debugging purposes
+        let (client_id, decoder): (String, _) = decoder.decode_field("clientId")?;
 
         // [[cap1, capVersion1], [cap2, capVersion2], ...]
         let (capabilities, decoder): (Vec<(Capability, u8)>, _) =
@@ -99,6 +100,7 @@ impl RLPxMessage for HelloMessage {
         Ok(Self::new(
             capabilities,
             id2pubkey(node_id).ok_or(RLPDecodeError::MalformedData)?,
+            client_id,
         ))
     }
 }

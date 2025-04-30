@@ -8,7 +8,6 @@ mod eth;
 pub mod l2;
 mod net;
 mod rpc;
-mod web3;
 
 pub mod clients;
 pub mod types;

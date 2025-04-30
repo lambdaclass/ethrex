@@ -12,18 +12,16 @@ use tracing::{info, warn, Level};
 
 use crate::{
     initializers::{init_blockchain, init_store},
-    utils::{self, set_datadir},
+    utils::{self, get_client_version, set_datadir},
     DEFAULT_DATADIR,
 };
 
 #[cfg(any(feature = "l2", feature = "based"))]
 use crate::l2;
 
-pub const VERSION_STRING: &str = env!("CARGO_PKG_VERSION");
-
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=VERSION_STRING, about, about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version(), about, about = "ethrex Execution client")]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
