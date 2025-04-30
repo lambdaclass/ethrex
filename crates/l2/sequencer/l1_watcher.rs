@@ -150,12 +150,6 @@ impl L1Watcher {
     ) -> Result<Vec<H256>, L1WatcherError> {
         let mut deposit_txs = Vec::new();
 
-        // Get the pending deposits from the contract.
-        let pending_deposits = self
-            .eth_client
-            .get_pending_deposit_logs(self.address)
-            .await?;
-
         for log in logs {
             let (
                 mint_value,
@@ -168,10 +162,7 @@ impl L1Watcher {
                 deposit_hash,
             ) = parse_values_log(log.log)?;
 
-            if self
-                .deposit_already_processed(deposit_hash, &pending_deposits, store)
-                .await?
-            {
+            if self.deposit_already_processed(deposit_hash, store).await? {
                 warn!("Deposit already processed (to: {recipient:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
                 continue;
             }
@@ -238,7 +229,6 @@ impl L1Watcher {
     async fn deposit_already_processed(
         &self,
         deposit_hash: H256,
-        pending_deposits: &[H256],
         store: &Store,
     ) -> Result<bool, L1WatcherError> {
         if store
@@ -252,6 +242,10 @@ impl L1Watcher {
 
         // If we have a reconstructed state, we don't have the transaction in our store.
         // Check if the deposit is marked as pending in the contract.
+        let pending_deposits = self
+            .eth_client
+            .get_pending_deposit_logs(self.address)
+            .await?;
         Ok(!pending_deposits.contains(&deposit_hash))
     }
 }
