@@ -91,7 +91,7 @@ impl Hook for L2Hook {
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if vm.env.tx_max_fee_per_blob_gas.is_some() {
-            default_hook::validate_type_3_tx(vm)?;
+            default_hook::validate_4844_tx(vm)?;
         }
 
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702

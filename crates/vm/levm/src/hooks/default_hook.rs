@@ -95,7 +95,7 @@ impl Hook for DefaultHook {
 
         // Transaction is type 3 if tx_max_fee_per_blob_gas is Some
         if vm.env.tx_max_fee_per_blob_gas.is_some() {
-            validate_type_3_tx(vm)?;
+            validate_4844_tx(vm)?;
         }
 
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
@@ -305,7 +305,7 @@ pub fn validate_sufficient_max_fee_per_gas(vm: &mut VM<'_>) -> Result<(), VMErro
     Ok(())
 }
 
-pub fn validate_type_3_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
+pub fn validate_4844_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     // (11) TYPE_3_TX_PRE_FORK
     if vm.env.config.fork < Fork::Cancun {
         return Err(VMError::TxValidation(TxValidationError::Type3TxPreFork));
