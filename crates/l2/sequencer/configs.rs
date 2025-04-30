@@ -28,6 +28,8 @@ pub struct CommitterConfig {
 
 pub struct EthConfig {
     pub rpc_url: String,
+    pub maximum_allowed_max_fee_per_gas: u64,
+    pub maximum_allowed_max_fee_per_blob_gas: u64,
 }
 
 pub struct L1WatcherConfig {

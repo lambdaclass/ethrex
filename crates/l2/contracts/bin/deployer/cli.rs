@@ -18,6 +18,22 @@ pub struct DeployerOptions {
     pub rpc_url: String,
     #[arg(
         long,
+        default_value = "10000000000",
+        value_name = "UINT64",
+        env = "ETHREX_MAXIMUM_ALLOWED_MAX_FEE_PER_GAS",
+        help_heading = "Eth options"
+    )]
+    pub maximum_allowed_max_fee_per_gas: u64,
+    #[arg(
+        long,
+        default_value = "10000000000",
+        value_name = "UINT64",
+        env = "ETHREX_MAXIMUM_ALLOWED_MAX_FEE_PER_BLOB_GAS",
+        help_heading = "Eth options"
+    )]
+    pub maximum_allowed_max_fee_per_blob_gas: u64,
+    #[arg(
+        long,
         default_value = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
         value_name = "PRIVATE_KEY",
         value_parser = parse_private_key,
@@ -160,6 +176,8 @@ impl Default for DeployerOptions {
     fn default() -> Self {
         Self {
             rpc_url: "http://localhost:8545".to_string(),
+            maximum_allowed_max_fee_per_gas: 10_000_000_000,
+            maximum_allowed_max_fee_per_blob_gas: 10_000_000_000,
             #[allow(clippy::unwrap_used)]
             private_key: SecretKey::from_slice(
                 H256([

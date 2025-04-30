@@ -35,7 +35,11 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 async fn main() -> Result<(), DeployerError> {
     let opts = DeployerOptions::parse();
 
-    let eth_client = EthClient::new(&opts.rpc_url);
+    let eth_client = EthClient::new_with_maximum_fees(
+        &opts.rpc_url,
+        opts.maximum_allowed_max_fee_per_gas,
+        opts.maximum_allowed_max_fee_per_blob_gas,
+    );
 
     download_contract_deps(&opts)?;
 
