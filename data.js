@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746054365307,
+  "lastUpdate": 1746055684446,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5305,6 +5305,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178408173083,
             "range": "± 969233794",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bb8ceced97ae73df71ee4e8574676e18a3d6fda9",
+          "message": "refactor(levm,l2): hooks (#2508)\n\n**Motivation**\n\n- Remove duplicated code between `DefaultHook` and `L2Hook`\nimplementations.\n- Use the `L2Hook` for every tx (regular ETH txs and L2's privilege txs)\nwhen running the L2.\n\n**Description**\n\nThis PR:\n- Generates abstractions to be used in `DefaultHook` and `L2Hook` to\nremove repeated code.\n- Adds the `is_privilege` field to LEVM's `Environment` only compiled\nunder the `l2` feature flag.\n- `L2Hook` now supports executing every tx (before only privileged).\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-04-30T22:07:19Z",
+          "tree_id": "01a65027b768009340536e6ddfa8adadb7dd7449",
+          "url": "https://github.com/lambdaclass/ethrex/commit/bb8ceced97ae73df71ee4e8574676e18a3d6fda9"
+        },
+        "date": 1746055682531,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181502123198,
+            "range": "± 7469040500",
             "unit": "ns/iter"
           }
         ]
