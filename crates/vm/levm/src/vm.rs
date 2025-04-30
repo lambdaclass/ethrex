@@ -4,7 +4,7 @@ use crate::{
     db::{cache, gen_db::GeneralizedDatabase},
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
-    hooks::{default_hook::DefaultHook, hook::Hook, l2_hook::L2Hook},
+    hooks::hook::Hook,
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
@@ -16,7 +16,8 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, Transaction, TxKind,
+        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, PrivilegedL2Transaction, Transaction,
+        TxKind,
     },
     Address, H256, U256,
 };
@@ -25,6 +26,12 @@ use std::{
     fmt::Debug,
     sync::Arc,
 };
+
+#[cfg(not(feature = "l2"))]
+use crate::hooks::DefaultHook;
+#[cfg(feature = "l2")]
+use crate::hooks::L2Hook;
+
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
@@ -218,11 +225,20 @@ impl<'a> VM<'a> {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let hooks: Vec<Arc<dyn Hook>> = match tx {
-            Transaction::PrivilegedL2Transaction(privileged_tx) => vec![Arc::new(L2Hook {
-                recipient: privileged_tx.recipient,
-            })],
-            _ => vec![Arc::new(DefaultHook)],
+        #[cfg(not(feature = "l2"))]
+        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
+        #[cfg(feature = "l2")]
+        let hooks: Vec<Arc<dyn Hook>> = {
+            let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
+                recipient,
+                ..
+            }) = tx
+            {
+                Some(*recipient)
+            } else {
+                None
+            };
+            vec![Arc::new(L2Hook { recipient })]
         };
 
         let mut substate = Substate {
