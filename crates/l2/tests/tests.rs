@@ -2,6 +2,7 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
+use ethrex_common::types::BlockNumber;
 use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{
@@ -103,24 +104,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Check deposit receipt on L2
 
-    let topic =
-        keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
-    let logs = eth_client
-        .get_logs(
-            U256::from(deposit_tx_receipt.block_info.block_number),
-            U256::from(deposit_tx_receipt.block_info.block_number),
-            common_bridge_address(),
-            topic,
-        )
-        .await?;
-
-    let l2_deposit_tx_hash =
-        H256::from_slice(logs.first().unwrap().log.data.get(128..160).unwrap());
-
-    println!("Waiting for deposit transaction receipt on L2");
-
-    let _ = ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, &proposer_client, 1000)
-        .await?;
+    wait_for_l2_deposit_receipt(
+        deposit_tx_receipt.block_info.block_number,
+        &eth_client,
+        &proposer_client,
+    )
+    .await?;
 
     // 4. Check balances on L1 and L2
 
@@ -527,6 +516,19 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     println!("Deposit tx hash: {deposit_tx_hash:?}");
 
+    println!("Waiting for deposit transaction receipt");
+
+    let deposit_tx_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, &eth_client, 5).await?;
+
+    // Check deposit receipt on L2
+    wait_for_l2_deposit_receipt(
+        deposit_tx_receipt.block_info.block_number,
+        &eth_client,
+        &proposer_client,
+    )
+    .await?;
+
     // Check balances on L2 after deposit
     let mut l2_after_deposit_balance = proposer_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
@@ -703,6 +705,14 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
         ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, &eth_client, 30).await?;
     println!("Deposit tx receipt: {deposit_tx_receipt:?}");
 
+    // Check deposit receipt on L2
+    wait_for_l2_deposit_receipt(
+        deposit_tx_receipt.block_info.block_number,
+        &eth_client,
+        &proposer_client,
+    )
+    .await?;
+
     let l2_contract_balance = proposer_client
         .get_balance(contract_address, BlockByNumber::Latest)
         .await?;
@@ -839,4 +849,30 @@ fn random_account() -> (Address, SecretKey) {
     let (sk, pk) = secp256k1::generate_keypair(&mut rand::thread_rng());
     let address = Address::from(keccak_hash::keccak(&pk.serialize_uncompressed()[1..]));
     (address, sk)
+}
+
+async fn wait_for_l2_deposit_receipt(
+    l1_receipt_block_number: BlockNumber,
+    eth_client: &EthClient,
+    proposer_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let topic =
+        keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
+    let logs = eth_client
+        .get_logs(
+            U256::from(l1_receipt_block_number),
+            U256::from(l1_receipt_block_number),
+            common_bridge_address(),
+            topic,
+        )
+        .await?;
+
+    let l2_deposit_tx_hash =
+        H256::from_slice(logs.first().unwrap().log.data.get(128..160).unwrap());
+
+    println!("Waiting for deposit transaction receipt on L2");
+
+    let _ = ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, proposer_client, 1000)
+        .await?;
+    Ok(())
 }
