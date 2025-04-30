@@ -44,9 +44,7 @@ services:
       # Proposer
       - 127.0.0.1:3900:3900
     environment: # Default values are taken from cmd/ethrex/l2/options.rs defaults.
-      - ETH_RPC_URL=http://ethrex_l1:8545
       - ETHREX_ETH_RPC_URL=http://ethrex_l1:8545
-      - ENV_FILE=/.env
       - ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM:-false}
       - ETHREX_PROPOSER_BLOCK_TIME_MS=${ETHREX_PROPOSER_BLOCK_TIME_MS:-5000}
       - ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER:-false}
@@ -54,7 +52,7 @@ services:
       - ../../test_data/genesis-l2.json:/genesis-l2.json
       - ./.env:/.env:ro
       - ./config.toml:/config.toml:ro
-    # L1_WATCHER_BRIDGE_ADDRESS and COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
+    # ETHREX_WATCHER_BRIDGE_ADDRESS and ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS are set in the .env file by the contract_deployer service.
     command: >
       l2 init 
       --network /genesis-l2.json 
