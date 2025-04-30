@@ -247,7 +247,7 @@ impl LEVM {
             let initial_state_account = if let Some(account) = db.read_cache.get(address) {
                 account
             } else {
-                &db.store.get_account_info(*address)?
+                &db.store.get_account(*address)?
             };
             let account_existed = db.read_cache.contains_key(address);
 
@@ -255,18 +255,17 @@ impl LEVM {
             let mut storage_updated = false;
 
             // 1. Account Info has been updated if balance, nonce or bytecode changed.
-            if initial_state_account.balance != new_state_account.info.balance {
+            if initial_state_account.info.balance != new_state_account.info.balance {
                 acc_info_updated = true;
             }
 
-            if initial_state_account.nonce != new_state_account.info.nonce {
+            if initial_state_account.info.nonce != new_state_account.info.nonce {
                 acc_info_updated = true;
             }
 
-            let new_state_code_hash = code_hash(&new_state_account.info.bytecode);
-            let code = if initial_state_account.bytecode_hash() != new_state_code_hash {
+            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
                 acc_info_updated = true;
-                Some(new_state_account.info.bytecode.clone())
+                Some(new_state_account.code.clone())
             } else {
                 None
             };
@@ -274,19 +273,15 @@ impl LEVM {
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
             for (key, storage_slot) in &new_state_account.storage {
-                let storage_before_block = db.store.get_storage_slot(*address, *key)?;
-                if storage_slot.current_value != storage_before_block {
-                    added_storage.insert(*key, storage_slot.current_value);
+                let storage_before_block = db.store.get_storage_value(*address, *key)?;
+                if *storage_slot != storage_before_block {
+                    added_storage.insert(*key, *storage_slot);
                     storage_updated = true;
                 }
             }
 
             let info = if acc_info_updated {
-                Some(AccountInfo {
-                    code_hash: new_state_code_hash,
-                    balance: new_state_account.info.balance,
-                    nonce: new_state_account.info.nonce,
-                })
+                Some(new_state_account.info.clone())
             } else {
                 None
             };
