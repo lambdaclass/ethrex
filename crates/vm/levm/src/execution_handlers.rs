@@ -1,5 +1,4 @@
 use crate::{
-    call_frame::{self, CallFrame},
     constants::*,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
@@ -7,8 +6,6 @@ use crate::{
     utils::*,
     vm::{StateBackup, VM},
 };
-
-use ethrex_common::types::Fork;
 
 use bytes::Bytes;
 
