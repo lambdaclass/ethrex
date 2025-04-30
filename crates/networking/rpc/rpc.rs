@@ -9,6 +9,7 @@ use crate::engine::{
     },
     ExchangeCapabilitiesRequest,
 };
+use crate::eth;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -36,7 +37,6 @@ use crate::utils::{
     RpcSuccessResponse,
 };
 use crate::{admin, net};
-use crate::{eth, web3};
 #[cfg(feature = "based")]
 use crate::{EngineClient, EthClient};
 use axum::extract::State;
@@ -457,7 +457,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => web3::client_version(req, context.storage, context.client_version),
+        "web3_clientVersion" => Ok(Value::String(context.client_version)),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
