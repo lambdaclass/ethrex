@@ -276,8 +276,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         eth_client
             .call(
                 Address::from_str(
-                    &std::env::var("COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
-                        .expect("ON_CHAIN_PROPOSER env var not set"),
+                    &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
+                        .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
                 )
                 .unwrap(),
                 calldata::encode_calldata("lastVerifiedBatch()", &[])?.into(),
