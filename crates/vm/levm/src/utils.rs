@@ -400,10 +400,9 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            self.accrued_substate
-                .touched_accounts
-                .insert(authority_address);
-            let authority_account = self.db.get_account_no_push_cache(authority_address)?;
+            let (authority_account, _address_was_cold) = self
+                .db
+                .access_account(&mut self.accrued_substate, authority_address)?;
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
@@ -420,9 +419,7 @@ impl<'a> VM<'a> {
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if cache::is_account_cached(&self.db.cache, &authority_address)
-                || account_exists(self.db, authority_address)
-            {
+            if !authority_account.is_empty() {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
                     .checked_add(refunded_gas_if_exists)
