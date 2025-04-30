@@ -32,6 +32,10 @@ const IGNORED_TESTS: [&str; 11] = [
     "InitCollision.json",              // Skip because it fails on REVM
 ];
 
+// One .json can have multiple tests, sometimes we want to skip one of those.
+pub const SPECIFIC_IGNORED_TESTS: [&str; 1] =
+    ["test_set_code_to_non_empty_storage[fork_Prague-state_test-zero_nonce]"];
+
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
     let parsing_time = std::time::Instant::now();
     let cargo_manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));

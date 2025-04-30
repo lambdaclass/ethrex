@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    parser::SPECIFIC_IGNORED_TESTS,
     report::{self, format_duration_as_mm_ss, EFTestReport, TestReRunReport},
     types::EFTest,
 };
@@ -103,8 +104,20 @@ async fn run_with_levm(
     for test in ef_tests.iter() {
         if let Some(specific_tests) = &opts.specific_tests {
             if !specific_tests.iter().any(|name| test.name.contains(name)) {
+                if opts.verbose {
+                    println!("Skipping test: {:?}", test.name);
+                }
                 continue;
             }
+        }
+        if SPECIFIC_IGNORED_TESTS
+            .iter()
+            .any(|skip| test.name.contains(skip))
+        {
+            if opts.verbose {
+                println!("Skipping test: {:?}", test.name);
+            }
+            continue;
         }
         if opts.verbose {
             println!("Running test: {:?}", test.name);
