@@ -21,16 +21,20 @@ use super::Database;
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
-    pub cache: CacheDB,
-    pub read_cache: HashMap<Address, Account>,
+    pub new_state_cache: CacheDB,
+    pub previous_state_cache: CacheDB,
 }
 
+/// A generalized database used for executing transactions.
+/// - `store`: The underlying database storing the state.
+/// - `new_state_cache`: A cache for storing all changes made during execution. All updates are first written here.
+/// - `previous_state_cache`: A cache for storing the previous state of accounts. Every read from the store is cached here.
 impl GeneralizedDatabase {
-    pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
+    pub fn new(store: Arc<dyn Database>, new_state_cache: CacheDB) -> Self {
         Self {
             store,
-            cache,
-            read_cache: HashMap::new(),
+            new_state_cache,
+            previous_state_cache: HashMap::new(),
         }
     }
 
@@ -38,12 +42,14 @@ impl GeneralizedDatabase {
     /// Gets account, first checking the cache and then the database
     /// (caching in the second case)
     pub fn get_account(&mut self, address: Address) -> Result<Account, DatabaseError> {
-        match cache::get_account(&self.cache, &address) {
+        match cache::get_account(&self.new_state_cache, &address) {
             Some(acc) => Ok(acc.clone()),
             None => {
                 let account = self.store.get_account(address)?;
-                cache::insert_account(&mut self.cache, address, account.clone());
-                self.read_cache.entry(address).or_insert(account.clone());
+                cache::insert_account(&mut self.new_state_cache, address, account.clone());
+                self.previous_state_cache
+                    .entry(address)
+                    .or_insert(account.clone());
                 Ok(account)
             }
         }
@@ -54,11 +60,13 @@ impl GeneralizedDatabase {
         &mut self,
         address: Address,
     ) -> Result<Account, DatabaseError> {
-        match cache::get_account(&self.cache, &address) {
+        match cache::get_account(&self.new_state_cache, &address) {
             Some(acc) => Ok(acc.clone()),
             None => {
                 let account = self.store.get_account(address)?;
-                self.read_cache.entry(address).or_insert(account.clone());
+                self.previous_state_cache
+                    .entry(address)
+                    .or_insert(account.clone());
                 Ok(account)
             }
         }
@@ -75,7 +83,9 @@ impl GeneralizedDatabase {
     ) -> Result<(Account, bool), DatabaseError> {
         let address_was_cold = accrued_substate.touched_accounts.insert(address);
         let account = self.get_account(address)?;
-        self.read_cache.entry(address).or_insert(account.clone());
+        self.previous_state_cache
+            .entry(address)
+            .or_insert(account.clone());
 
         Ok((account, address_was_cold))
     }
@@ -85,11 +95,11 @@ impl<'a> VM<'a> {
     // ================== Account related functions =====================
 
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
-        let backup_account = match cache::get_account(&self.db.cache, &address) {
+        let backup_account = match cache::get_account(&self.db.new_state_cache, &address) {
             Some(acc) => acc.clone(),
             None => {
                 let acc = self.db.store.get_account(address)?;
-                cache::insert_account(&mut self.db.cache, address, acc.clone());
+                cache::insert_account(&mut self.db.new_state_cache, address, acc.clone());
                 acc
             }
         };
@@ -101,10 +111,13 @@ impl<'a> VM<'a> {
                 .or_insert_with(|| Some(backup_account));
         }
 
-        let account = cache::get_account_mut(&mut self.db.cache, &address)
+        let account = cache::get_account_mut(&mut self.db.new_state_cache, &address)
             .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
 
-        self.db.read_cache.entry(address).or_insert(account.clone());
+        self.db
+            .previous_state_cache
+            .entry(address)
+            .or_insert(account.clone());
 
         Ok(account)
     }
@@ -161,7 +174,8 @@ impl<'a> VM<'a> {
 
     /// Inserts account to cache backing up the previous state of it in the CacheBackup (if it wasn't already backed up)
     pub fn insert_account(&mut self, address: Address, account: Account) -> Result<(), VMError> {
-        let previous_account = cache::insert_account(&mut self.db.cache, address, account);
+        let previous_account =
+            cache::insert_account(&mut self.db.new_state_cache, address, account);
 
         if let Ok(frame) = self.current_call_frame_mut() {
             frame
@@ -175,7 +189,7 @@ impl<'a> VM<'a> {
 
     /// Removes account from cache backing up the previus state of it in the CacheBackup (if it wasn't already backed up)
     pub fn remove_account(&mut self, address: Address) -> Result<(), VMError> {
-        let previous_account = cache::remove_account(&mut self.db.cache, &address);
+        let previous_account = cache::remove_account(&mut self.db.new_state_cache, &address);
 
         if let Ok(frame) = self.current_call_frame_mut() {
             frame
@@ -233,7 +247,7 @@ impl<'a> VM<'a> {
 
     /// Gets storage value of an account, caching it if not already cached.
     pub fn get_storage_value(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
-        if let Some(account) = cache::get_account(&self.db.cache, &address) {
+        if let Some(account) = cache::get_account(&self.db.new_state_cache, &address) {
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
             }

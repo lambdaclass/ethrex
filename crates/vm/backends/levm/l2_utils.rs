@@ -48,7 +48,7 @@ pub fn get_nonce_diff(
     db: &GeneralizedDatabase,
 ) -> Result<u16, EvmError> {
     // Get previous nonce
-    let prev_nonce = if let Some(account) = db.read_cache.get(&account_update.address) {
+    let prev_nonce = if let Some(account) = db.previous_state_cache.get(&account_update.address) {
         account.info.nonce
     } else {
         db.store

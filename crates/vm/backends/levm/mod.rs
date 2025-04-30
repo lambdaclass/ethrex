@@ -166,7 +166,7 @@ impl LEVM {
         fork: Fork,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.cache.drain() {
+        for (address, new_state_account) in db.new_state_cache.drain() {
             let initial_state_account = db.store.get_account(address)?;
             let account_existed = db.store.account_exists(address);
 
@@ -244,14 +244,14 @@ impl LEVM {
         fork: Fork,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.cache.iter() {
+        for (address, new_state_account) in db.new_state_cache.iter() {
             let initial_state_account =
-                db.read_cache
+                db.previous_state_cache
                     .get(address)
                     .ok_or(EvmError::LevmDatabaseError(DatabaseError::Custom(
                         "Account not found in the cache".to_string(),
                     )))?;
-            let account_existed = db.read_cache.contains_key(address);
+            let account_existed = db.previous_state_cache.contains_key(address);
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -276,7 +276,7 @@ impl LEVM {
             let mut added_storage = HashMap::new();
             for (key, storage_slot) in &new_state_account.storage {
                 let storage_before_block = *db
-                    .read_cache
+                    .previous_state_cache
                     .get(address)
                     .ok_or(EvmError::LevmDatabaseError(DatabaseError::Custom(
                         "Account not found in the cache".to_string(),
@@ -341,17 +341,17 @@ impl LEVM {
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
             // We check if it was in block_cache, if not, we get it from DB.
-            let mut account = db.cache.get(&address).cloned().unwrap_or({
+            let mut account = db.new_state_cache.get(&address).cloned().unwrap_or({
                 let account = db
                     .store
                     .get_account(address)
                     .map_err(|e| StoreError::Custom(e.to_string()))?;
-                db.read_cache.insert(address, account.clone());
+                db.previous_state_cache.insert(address, account.clone());
                 account
             });
 
             account.info.balance += increment.into();
-            db.cache.insert(address, account);
+            db.new_state_cache.insert(address, account);
         }
         Ok(())
     }
@@ -658,8 +658,8 @@ pub fn generic_system_contract_levm(
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config();
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-    let system_account_backup = db.cache.get(&system_address).cloned();
-    let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
+    let system_account_backup = db.new_state_cache.get(&system_address).cloned();
+    let coinbase_backup = db.new_state_cache.get(&block_header.coinbase).cloned();
     let env = Environment {
         origin: system_address,
         gas_limit: 30_000_000,
@@ -688,17 +688,18 @@ pub fn generic_system_contract_levm(
     let report = vm.execute().map_err(EvmError::from)?;
 
     if let Some(system_account) = system_account_backup {
-        db.cache.insert(system_address, system_account);
+        db.new_state_cache.insert(system_address, system_account);
     } else {
         // If the system account was not in the cache, we need to remove it
-        db.cache.remove(&system_address);
+        db.new_state_cache.remove(&system_address);
     }
 
     if let Some(coinbase_account) = coinbase_backup {
-        db.cache.insert(block_header.coinbase, coinbase_account);
+        db.new_state_cache
+            .insert(block_header.coinbase, coinbase_account);
     } else {
         // If the coinbase account was not in the cache, we need to remove it
-        db.cache.remove(&block_header.coinbase);
+        db.new_state_cache.remove(&block_header.coinbase);
     }
 
     Ok(report)

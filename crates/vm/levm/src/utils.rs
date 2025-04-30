@@ -365,7 +365,7 @@ pub fn eip7702_get_code(
 
 /// Checks if a given account exists in the database or cache
 pub fn account_exists(db: &mut GeneralizedDatabase, address: Address) -> bool {
-    match cache::get_account(&db.cache, &address) {
+    match cache::get_account(&db.new_state_cache, &address) {
         Some(_) => true,
         None => db.store.account_exists(address),
     }
@@ -420,7 +420,7 @@ impl<'a> VM<'a> {
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if cache::is_account_cached(&self.db.cache, &authority_address)
+            if cache::is_account_cached(&self.db.new_state_cache, &authority_address)
                 || account_exists(self.db, authority_address)
             {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
