@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.29;
 
-import "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import "../../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./interfaces/IOnChainProposer.sol";
 import {CommonBridge} from "./CommonBridge.sol";
 import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
@@ -12,7 +13,12 @@ import {IPicoVerifier} from "./interfaces/IPicoVerifier.sol";
 
 /// @title OnChainProposer contract.
 /// @author LambdaClass
-contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
+contract OnChainProposer is
+    IOnChainProposer,
+    Initializable,
+    UUPSUpgradeable,
+    OwnableUpgradeable
+{
     /// @notice Committed batches data.
     /// @dev This struct holds the information about the committed batches.
     /// @dev processedDepositLogsRollingHash is the Merkle root of the logs of the
@@ -63,13 +69,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
     /// @notice Indicates whether the contract operates in validium mode.
     /// @dev This value is immutable and can only be set during contract deployment.
-    bool public immutable VALIDIUM;
-
-    /// @notice Constructor to initialize the immutable validium value.
-    /// @param _validium A boolean indicating if the contract operates in validium mode.
-    constructor(bool _validium) {
-        VALIDIUM = _validium;
-    }
+    bool public VALIDIUM;
 
     modifier onlySequencer() {
         require(
@@ -81,12 +81,15 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
     /// @inheritdoc IOnChainProposer
     function initialize(
+        bool _validium,
         address bridge,
         address r0verifier,
         address sp1verifier,
         address picoverifier,
         address[] calldata sequencerAddresses
-    ) public nonReentrant {
+    ) public initializer {
+        VALIDIUM = _validium;
+
         // Set the CommonBridge address
         require(
             BRIDGE == address(0),
@@ -150,6 +153,8 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
+
+        OwnableUpgradeable.__Ownable_init(msg.sender);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -274,4 +279,8 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
         emit BatchVerified(lastVerifiedBatch);
     }
+
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyOwner {}
 }
