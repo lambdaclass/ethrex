@@ -58,7 +58,7 @@ pub struct EFTestRunnerOptions {
     pub tests: Vec<String>,
     /// For running tests with a specific name
     #[arg(value_name = "SPECIFIC_TESTS", use_value_delimiter = true)]
-    pub specific_tests: Option<Vec<String>>,
+    pub specific_tests: Vec<String>,
     /// For running tests only with LEVM without the REVM re-run.
     #[arg(short, long, value_name = "SUMMARY", default_value = "false")]
     pub summary: bool,
@@ -102,21 +102,17 @@ async fn run_with_levm(
     println!("{}", report::progress(reports, levm_run_time.elapsed()));
 
     for test in ef_tests.iter() {
-        if let Some(specific_tests) = &opts.specific_tests {
-            if !specific_tests.iter().any(|name| test.name.contains(name)) {
-                if opts.verbose {
-                    println!("Skipping test: {:?}", test.name);
-                }
-                continue;
-            }
-        }
-        if SPECIFIC_IGNORED_TESTS
+        let is_not_specific = !opts.specific_tests.is_empty()
+            && !opts
+                .specific_tests
+                .iter()
+                .any(|name| test.name.contains(name));
+        let is_ignored = SPECIFIC_IGNORED_TESTS
             .iter()
-            .any(|skip| test.name.contains(skip))
-        {
-            if opts.verbose {
-                println!("Skipping test: {:?}", test.name);
-            }
+            .any(|skip| test.name.contains(skip));
+
+        // Skip tests that are not specific (if specific tests were indicated) and ignored ones.
+        if is_not_specific || is_ignored {
             continue;
         }
         if opts.verbose {
