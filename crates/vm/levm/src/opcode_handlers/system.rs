@@ -589,15 +589,10 @@ impl<'a> VM<'a> {
             self.db.access_account(&mut self.accrued_substate, to)?;
         let balance_to_transfer = current_account.info.balance;
 
-        let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
-            target_account.is_empty()
-        } else {
-            !account_exists(self.db, target_address)
-        };
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
-                account_is_empty,
+                target_account.is_empty(),
                 balance_to_transfer,
                 fork,
             )?)?;
