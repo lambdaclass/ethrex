@@ -114,15 +114,15 @@ impl SyncManager {
         let sync_head = self.last_fcu_head.clone();
 
         tokio::spawn(async move {
-            let current_head = H256::from_slice(
-                &hex::decode("6351db0406764252afbd1c54ff49818e434f0b7ab7a2472de925a2153aec1109")
-                    .unwrap(),
-            );
+            // let current_head = H256::from_slice(
+            //     &hex::decode("6351db0406764252afbd1c54ff49818e434f0b7ab7a2472de925a2153aec1109")
+            //         .unwrap(),
+            // );
 
-            // let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
-            //     tracing::error!("Failed to fetch latest canonical block, unable to sync");
-            //     return;
-            // };
+            let Ok(Some(current_head)) = store.get_latest_canonical_block_hash().await else {
+                tracing::error!("Failed to fetch latest canonical block, unable to sync");
+                return;
+            };
 
             // If we can't get hold of the syncer, then it means that there is an active sync in process
             let Ok(mut syncer) = syncer.try_lock() else {
