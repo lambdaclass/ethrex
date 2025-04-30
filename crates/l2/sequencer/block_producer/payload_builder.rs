@@ -14,7 +14,7 @@ use ethrex_metrics::metrics_transactions::{MetricsTxStatus, MetricsTxType, METRI
 use ethrex_storage::Store;
 use std::ops::Div;
 use tokio::time::Instant;
-use tracing::{debug, error};
+use tracing::debug;
 
 use crate::sequencer::{errors::BlockProducerError, state_diff::TX_STATE_DIFF_SIZE};
 
@@ -39,17 +39,12 @@ pub async fn build_payload(
 
     let interval = Instant::now().duration_since(since).as_millis();
     tracing::info!("[METRIC] BUILDING PAYLOAD TOOK: {interval} ms");
-
     #[allow(clippy::as_conversions)]
     if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
         let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
         if interval != 0 {
             let throughput = (as_gigas) / (interval as f64) * 1000_f64;
-            tracing::info!(
-                "[METRIC] BLOCK BUILDING PAYLOAD SIZE: {}",
-                context.payload.body.transactions.len()
-            );
             tracing::info!(
                 "[METRIC] BLOCK BUILDING THROUGHPUT: {throughput} Gigagas/s TIME SPENT: {interval} msecs"
             );
@@ -172,7 +167,7 @@ pub async fn fill_transactions(
             }
             // Ignore following txs from sender
             Err(e) => {
-                error!("Failed to execute transaction: {}, {e}", tx_hash);
+                debug!("Failed to execute transaction: {}, {e}", tx_hash);
                 metrics!(METRICS_TX.inc_tx_with_status_and_type(
                     MetricsTxStatus::Failed,
                     MetricsTxType(head_tx.tx_type())
