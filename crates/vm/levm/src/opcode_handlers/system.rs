@@ -908,10 +908,7 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
-    pub fn handle_return(
-        &mut self,
-        tx_report: &ExecutionReport,
-    ) -> Result<bool, VMError> {
+    pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<bool, VMError> {
         if self.current_call_frame()?.depth == 0 {
             return Ok(false);
         }
@@ -919,7 +916,10 @@ impl<'a> VM<'a> {
             .return_data
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-        let call_frame = self.call_frames.pop().ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        let call_frame = self
+            .call_frames
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if retdata.is_create {
             self.handle_return_create(&call_frame, tx_report, retdata)?;
         } else {

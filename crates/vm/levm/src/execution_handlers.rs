@@ -19,16 +19,16 @@ impl<'a> VM<'a> {
         backup: StateBackup,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
-                Ok(output) => { 
-                    let current_call_frame = self.current_call_frame()?;
-                    Ok(ExecutionReport {
+            Ok(output) => {
+                let current_call_frame = self.current_call_frame()?;
+                Ok(ExecutionReport {
                     result: TxResult::Success,
                     gas_used: current_call_frame.gas_used,
                     gas_refunded: self.env.refunded_gas,
                     output,
                     logs: std::mem::take(&mut self.current_call_frame_mut()?.logs),
                 })
-            },
+            }
             Err(error) => {
                 if error.is_internal() {
                     return Err(error);
@@ -226,10 +226,7 @@ impl<'a> VM<'a> {
         })
     }
 
-    pub fn handle_opcode_error(
-        &mut self,
-        error: VMError,
-    ) -> Result<ExecutionReport, VMError> {
+    pub fn handle_opcode_error(&mut self, error: VMError) -> Result<ExecutionReport, VMError> {
         let backup = self
             .backups
             .pop()

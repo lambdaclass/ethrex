@@ -299,13 +299,12 @@ impl<'a> VM<'a> {
         let fork = self.env.config.fork;
 
         if is_precompile(&self.current_call_frame()?.code_address, fork) {
-            let precompile_result = execute_precompile(self.current_call_frame_mut()?,fork);
+            let precompile_result = execute_precompile(self.current_call_frame_mut()?, fork);
             let backup = self
                 .backups
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let report =
-                self.handle_precompile_result(precompile_result, backup)?;
+            let report = self.handle_precompile_result(precompile_result, backup)?;
             self.handle_return(&current_call_frame, &report)?;
             self.current_call_frame_mut()?.increment_pc_by(1)?;
             return Ok(report);
