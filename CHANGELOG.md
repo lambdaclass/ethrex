@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2025-04-30
+
+- Reduce transaction clone and Vec grow overhead in mempool [2637](https://github.com/lambdaclass/ethrex/pull/2637)
+
 ### 2025-04-22
 
 - Avoid calculating state transitions after every block in bulk mode [2519](https://github.com/lambdaclass/ethrex/pull/2519)
