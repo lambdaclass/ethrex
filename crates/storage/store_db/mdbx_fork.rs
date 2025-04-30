@@ -4,6 +4,7 @@ use reth_primitives::revm_primitives::db::components::block_hash;
 use reth_provider::providers::StaticFileProvider;
 use serde_json::value;
 use std::cell::{Cell, LazyCell, OnceCell};
+use std::iter;
 use std::marker::PhantomData;
 use std::ops::Div;
 use std::path::Path;
@@ -120,6 +121,9 @@ impl MDBXFork {
             .unwrap();
 
         tx.create_db(Some("StorageSnapShot"), DatabaseFlags::DUP_SORT)
+            .unwrap();
+
+        tx.create_db(Some("StorageHealPaths"), DatabaseFlags::DUP_SORT)
             .unwrap();
 
         tx.commit().unwrap();
@@ -290,6 +294,7 @@ tables! {
     table Payloads<Key = u64, Value = Vec<u8>>;
     table StateSnapShot<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
     table StorageSnapshot<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
+    table StorageHealPaths<Key = Vec<u8>, Value = Vec<u8>>;
 }
 
 #[async_trait::async_trait]
@@ -447,7 +452,24 @@ impl StoreEngine for MDBXFork {
         &self,
         limit: usize,
     ) -> Result<Vec<(H256, Vec<Nibbles>)>, StoreError> {
-        todo!()
+        let tx = self.env.tx_mut().unwrap();
+        let res: Vec<(H256, Vec<Nibbles>)> = tx
+            .cursor_read::<StorageHealPaths>()
+            .unwrap()
+            .walk(None)
+            .unwrap()
+            .take(limit)
+            .map(|fetched| {
+                let (encoded_h, encoded_nibbles) = fetched.unwrap();
+                let hash = H256::decode(&encoded_h).unwrap();
+                let nibbles = <Vec<Nibbles>>::decode(&encoded_nibbles).unwrap();
+                (hash, nibbles)
+            })
+            .collect();
+        for (hash, _) in res.iter() {
+            tx.delete::<StorageHealPaths>(hash.encode_to_vec(), None).unwrap();
+        }
+        Ok(res)
     }
 
     async fn get_block_body_by_hash(
@@ -1022,20 +1044,14 @@ impl StoreEngine for MDBXFork {
         &self,
         accounts: Vec<(H256, Vec<Nibbles>)>,
     ) -> Result<(), StoreError> {
-        let encoded = accounts.encode_to_vec();
+        let encoded: Vec<_> = accounts.into_iter().map(|(hash, nibbles)| (hash.encode_to_vec(), nibbles.encode_to_vec())).collect();
         let tx = self.env.tx_mut().unwrap();
-        tx.put::<SnapState>(SnapStateIndex::StateHealPaths as u8, encoded)
-            .unwrap();
+        for (k, v) in encoded {
+            tx.put::<StorageHealPaths>(k, v).unwrap();
+        }
         Ok(())
     }
 
-    // async fn get_storage_heal_paths(&self) -> Result<Option<Vec<(H256, Vec<Nibbles>)>>, StoreError> {
-    //     let tx = self.env.tx().unwrap();
-    //     Ok(tx
-    //         .get::<SnapState>(SnapStateIndex::StateHealPaths as u8)
-    //         .unwrap()
-    //         .map(|ref encoded| <Vec<(H256, Vec<Nibbles>)>>::decode(encoded).unwrap()))
-    // }
 
     async fn is_synced(&self) -> Result<bool, StoreError> {
         let tx = self.env.tx().unwrap();
