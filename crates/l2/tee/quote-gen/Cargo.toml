@@ -5,7 +5,10 @@ edition = "2021"
 
 [dependencies]
 configfs-tsm = "0.0.1"
-dcap-qvl = "0.2"
 tokio = { version = "1.41.1", features = ["full"] }
+keccak-hash = "0.11"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+hex = "0.4"
 
 [workspace]
