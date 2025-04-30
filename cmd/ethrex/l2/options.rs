@@ -63,6 +63,10 @@ impl From<SequencerOptions> for SequencerConfig {
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
+                maximum_allowed_max_fee_per_gas: opts.eth_opts.maximum_allowed_max_fee_per_gas,
+                maximum_allowed_max_fee_per_blob_gas: opts
+                    .eth_opts
+                    .maximum_allowed_max_fee_per_blob_gas,
             },
             l1_watcher: L1WatcherConfig {
                 bridge_address: opts.watcher_opts.bridge_address,
@@ -186,6 +190,22 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub rpc_url: String,
+    #[arg(
+        long = "eth-maximum-allowed-max-fee-per-gas",
+        default_value = "10000000000",
+        value_name = "UINT64",
+        env = "ETHREX_MAXIMUM_ALLOWED_MAX_FEE_PER_GAS",
+        help_heading = "Eth options"
+    )]
+    pub maximum_allowed_max_fee_per_gas: u64,
+    #[arg(
+        long = "eth-maximum-allowed-max-fee-per-blob-gas",
+        default_value = "10000000000",
+        value_name = "UINT64",
+        env = "ETHREX_MAXIMUM_ALLOWED_MAX_FEE_PER_BLOB_GAS",
+        help_heading = "Eth options"
+    )]
+    pub maximum_allowed_max_fee_per_blob_gas: u64,
 }
 
 #[derive(Parser)]
