@@ -33,8 +33,9 @@ const IGNORED_TESTS: [&str; 11] = [
 ];
 
 // One .json can have multiple tests, sometimes we want to skip one of those.
-pub const SPECIFIC_IGNORED_TESTS: [&str; 1] =
-    ["test_set_code_to_non_empty_storage[fork_Prague-state_test-zero_nonce]"];
+pub const SPECIFIC_IGNORED_TESTS: [&str; 1] = [
+    "test_set_code_to_non_empty_storage[fork_Prague-state_test-zero_nonce]", // Skip because EIP-7702 has changed. See https://github.com/ethereum/EIPs/pull/9710
+];
 
 pub fn parse_ef_tests(opts: &EFTestRunnerOptions) -> Result<Vec<EFTest>, EFTestParseError> {
     let parsing_time = std::time::Instant::now();
