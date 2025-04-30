@@ -13,7 +13,7 @@ pub struct L2Hook {
 
 impl Hook for L2Hook {
     fn prepare_execution(&self, vm: &mut crate::vm::VM<'_>) -> Result<(), crate::errors::VMError> {
-        if vm.env.is_privilege {
+        if vm.env.is_privileged {
             let Some(recipient) = self.recipient else {
                 return Err(VMError::Internal(
                     InternalError::RecipientNotFoundForPrivilegeTransaction,
@@ -30,7 +30,7 @@ impl Hook for L2Hook {
             default_hook::validate_min_gas_limit(vm)?;
         }
 
-        if !vm.env.is_privilege {
+        if !vm.env.is_privileged {
             // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
             let gaslimit_price_product = vm
                 .env
@@ -106,7 +106,7 @@ impl Hook for L2Hook {
                 std::mem::take(&mut vm.current_call_frame_mut()?.calldata);
             vm.current_call_frame_mut()?.valid_jump_destinations =
                 get_valid_jump_destinations(&vm.current_call_frame()?.bytecode).unwrap_or_default();
-        } else if !vm.env.is_privilege {
+        } else if !vm.env.is_privileged {
             // Transfer value to receiver
             // It's here to avoid storing the "to" address in the cache before eip7702_set_access_code() step 7).
             vm.increase_account_balance(
@@ -123,7 +123,7 @@ impl Hook for L2Hook {
         report: &mut crate::errors::ExecutionReport,
     ) -> Result<(), crate::errors::VMError> {
         if !report.is_success() {
-            if vm.env.is_privilege {
+            if vm.env.is_privileged {
                 undo_value_transfer(vm)?;
             } else {
                 default_hook::undo_value_transfer(vm)?;
@@ -131,7 +131,7 @@ impl Hook for L2Hook {
             vm.increase_account_balance(vm.env.origin, vm.current_call_frame()?.msg_value)?;
         }
 
-        if vm.env.is_privilege {
+        if vm.env.is_privileged {
             let gas_to_pay_coinbase = compute_coinbase_fee(vm, report)?;
             default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
         } else {

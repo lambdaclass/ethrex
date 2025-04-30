@@ -188,7 +188,7 @@ pub fn prepare_vm_for_tx<'a>(
             tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
             transient_storage: HashMap::new(),
-            is_privilege: false,
+            is_privileged: false,
         },
         db,
         &tx,
