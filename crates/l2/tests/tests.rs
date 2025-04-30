@@ -803,7 +803,12 @@ fn common_bridge_address() -> Address {
     std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
         .expect("ETHREX_WATCHER_BRIDGE_ADDRESS env var not set")
         .parse()
-        .unwrap_or(DEFAULT_BRIDGE_ADDRESS)
+        .unwrap_or_else(|_| {
+            println!(
+                "ETHREX_WATCHER_BRIDGE_ADDRESS env var not set, using default: {DEFAULT_BRIDGE_ADDRESS}"
+            );
+            DEFAULT_BRIDGE_ADDRESS
+        })
 }
 
 fn fees_vault() -> Address {
