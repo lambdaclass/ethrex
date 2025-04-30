@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1745969540054,
+  "lastUpdate": 1746023350447,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5125,6 +5125,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180356296640,
             "range": "± 762876067",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6370ccb392a16099bafbeb040ed28293bd4699cf",
+          "message": "fix(l1): extend fetch head timeout for hive sync test (#2648)\n\n**Motivation**\nSnap sync hive test has been flaky lately, after running with debug\noutput on the CI the problem seems to be a timeout when fetching the\nlatest block. A [PR](https://github.com/lambdaclass/hive/pull/22) was\nadded to our hive fork to extend this timeout so the test doesn't fail.\nThe timeout for the whole sync process has been left unchanged\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Extends the timeout for fetching the latest block on the sync hive\ntest suite\n* Update Hive ref\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-04-30T13:27:44Z",
+          "tree_id": "f9a1349acabcf56bf4b2d23926d0033601dbf27b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6370ccb392a16099bafbeb040ed28293bd4699cf"
+        },
+        "date": 1746023348699,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180070126380,
+            "range": "± 727239469",
             "unit": "ns/iter"
           }
         ]
