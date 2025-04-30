@@ -1,3 +1,4 @@
+mod cache;
 pub mod db;
 pub mod error;
 mod nibbles;
@@ -21,7 +22,7 @@ pub use self::verify_range::verify_range;
 pub use self::{node::Node, state::TrieState};
 
 pub use self::error::TrieError;
-use self::{node::LeafNode, trie_iter::TrieIterator};
+use self::{cache::CacheKey, node::LeafNode, trie_iter::TrieIterator};
 
 use lazy_static::lazy_static;
 
@@ -45,7 +46,7 @@ pub type NodeRLP = Vec<u8>;
 /// Libmdx-based Ethereum Compatible Merkle Patricia Trie
 pub struct Trie {
     /// Hash of the current node
-    root: Option<NodeHash>,
+    root: Option<CacheKey>,
     /// Contains the trie's nodes
     pub(crate) state: TrieState,
 }
@@ -70,12 +71,8 @@ impl Trie {
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
-        if let Some(root) = &self.root {
-            let root_node = self
-                .state
-                .get_node(*root)?
-                .ok_or(TrieError::InconsistentTree)?;
-            root_node.get(&self.state, Nibbles::from_bytes(path))
+        if let Some(root) = self.root {
+            self.state[root].get(&self.state, Nibbles::from_bytes(path))
         } else {
             Ok(None)
         }
@@ -84,18 +81,14 @@ impl Trie {
     /// Insert an RLP-encoded value into the trie.
     pub fn insert(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
         let root = self.root.take();
-        if let Some(root_node) = root
-            .map(|root| self.state.get_node(root))
-            .transpose()?
-            .flatten()
-        {
+        if let Some(root_node) = root.map(|root| self.state[root].clone()) {
             // If the trie is not empty, call the root node's insertion logic
             let root_node = root_node.insert(&mut self.state, Nibbles::from_bytes(&path), value)?;
-            self.root = Some(root_node.insert_self(&mut self.state)?)
+            self.root = Some(root_node.insert_self(&mut self.state))
         } else {
             // If the trie is empty, just add a leaf.
             let new_leaf = Node::from(LeafNode::new(Nibbles::from_bytes(&path), value));
-            self.root = Some(new_leaf.insert_self(&mut self.state)?)
+            self.root = Some(new_leaf.insert_self(&mut self.state))
         }
         Ok(())
     }
@@ -105,15 +98,10 @@ impl Trie {
     pub fn remove(&mut self, path: PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         let root = self.root.take();
         if let Some(root) = root {
-            let root_node = self
-                .state
-                .get_node(root)?
-                .ok_or(TrieError::InconsistentTree)?;
+            let root_node = self.state[root].clone();
             let (root_node, old_value) =
                 root_node.remove(&mut self.state, Nibbles::from_bytes(&path))?;
-            self.root = root_node
-                .map(|root| root.insert_self(&mut self.state))
-                .transpose()?;
+            self.root = root_node.map(|root| root.insert_self(&mut self.state));
             Ok(old_value)
         } else {
             Ok(None)
@@ -125,11 +113,7 @@ impl Trie {
     /// Also commits changes to the DB
     pub fn hash(&mut self) -> Result<H256, TrieError> {
         self.commit()?;
-        Ok(self
-            .root
-            .as_ref()
-            .map(|root| root.finalize())
-            .unwrap_or(*EMPTY_TRIE_HASH))
+        Ok(self.hash_no_commit())
     }
 
     /// Return the hash of the trie's root node.
@@ -137,7 +121,7 @@ impl Trie {
     pub fn hash_no_commit(&self) -> H256 {
         self.root
             .as_ref()
-            .map(|root| root.finalize())
+            .map(|root| root.clone().finalize())
             .unwrap_or(*EMPTY_TRIE_HASH)
     }
 
@@ -158,10 +142,10 @@ impl Trie {
             return Ok(node_path);
         };
         // If the root is inlined, add it to the node_path
-        if let NodeHash::Inline(_) = root {
-            node_path.push(root.as_ref().to_vec());
+        if let NodeHash::Inline(node) = root {
+            node_path.push(node.to_vec());
         }
-        if let Some(root_node) = self.state.get_node(*root)? {
+        if let Some(root_node) = self.state.get_node(root.clone())? {
             root_node.get_path(&self.state, Nibbles::from_bytes(path), &mut node_path)?;
         }
         Ok(node_path)
@@ -177,7 +161,7 @@ impl Trie {
         let Some(root_node) = self
             .root
             .as_ref()
-            .map(|root| self.state.get_node(*root))
+            .map(|root| self.state.get_node(root.clone()))
             .transpose()?
             .flatten()
         else {
@@ -196,7 +180,7 @@ impl Trie {
         // duplicates
         let node_path: HashSet<_> = node_path.into_iter().collect();
         let node_path = Vec::from_iter(node_path);
-        Ok((Some(root_node.encode_raw()), node_path))
+        Ok((Some(root_node.encode_raw(&self.state)), node_path))
     }
 
     /// Creates a cached Trie (with [NullTrieDB]) from a list of encoded nodes.
@@ -209,11 +193,12 @@ impl Trie {
 
         if let Some(root_node) = root_node {
             let root_node = Node::decode_raw(root_node)?;
-            trie.root = Some(root_node.insert_self(&mut trie.state)?);
+            trie.root = Some(root_node.insert_self(&mut trie.state));
         }
 
-        for node in other_nodes.iter().map(|node| Node::decode_raw(node)) {
-            node?.insert_self(&mut trie.state)?;
+        for node in other_nodes.iter() {
+            let node = Node::decode_raw(node)?;
+            node.insert_self(&mut trie.state);
         }
 
         Ok(trie)
@@ -230,7 +215,7 @@ impl Trie {
         }
         trie.root
             .as_ref()
-            .map(|root| root.finalize())
+            .map(|root| root.clone().finalize())
             .unwrap_or(*EMPTY_TRIE_HASH)
     }
 
@@ -274,7 +259,7 @@ impl Trie {
         let Some(root_node) = self
             .root
             .as_ref()
-            .map(|root| self.state.get_node(*root))
+            .map(|root| self.state.get_node(root.clone()))
             .transpose()?
             .flatten()
         else {
@@ -286,17 +271,14 @@ impl Trie {
     fn get_node_inner(&self, node: Node, mut partial_path: Nibbles) -> Result<Vec<u8>, TrieError> {
         // If we reached the end of the partial path, return the current node
         if partial_path.is_empty() {
-            return Ok(node.encode_raw());
+            return Ok(node.encode_raw(&self.state));
         }
         match node {
             Node::Branch(branch_node) => match partial_path.next_choice() {
                 Some(idx) => {
                     let child_hash = &branch_node.choices[idx];
                     if child_hash.is_valid() {
-                        let child_node = self
-                            .state
-                            .get_node(*child_hash)?
-                            .ok_or(TrieError::InconsistentTree)?;
+                        let child_node = self.state[child_hash.clone()].clone();
                         self.get_node_inner(child_node, partial_path)
                     } else {
                         Ok(vec![])
@@ -308,10 +290,7 @@ impl Trie {
                 if partial_path.skip_prefix(&extension_node.prefix)
                     && extension_node.child.is_valid()
                 {
-                    let child_node = self
-                        .state
-                        .get_node(extension_node.child)?
-                        .ok_or(TrieError::InconsistentTree)?;
+                    let child_node = self.state[extension_node.child.clone()].clone();
                     self.get_node_inner(child_node, partial_path)
                 } else {
                     Ok(vec![])
