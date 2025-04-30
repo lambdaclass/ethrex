@@ -227,19 +227,16 @@ impl Syncer {
             // Validate that, for each header, its parent root is equal to the previous header's
             // hash. If that's not true, then we have received an invalid header from our peer and we
             // have to discard it.
-            // Starts from 1, since we know that the current head is valid
-            let any_invalid =
-                block_headers
-                    .iter()
-                    .skip(1)
-                    .enumerate()
-                    .any(|(i, current_header)| {
-                        let previous_hash = block_hashes[i - 1];
-                        current_header.parent_hash != previous_hash
-                    });
+            let any_invalid = block_headers
+                .iter()
+                .skip(1) // Skip the first, since we know the current head is valid
+                .zip(block_hashes.iter())
+                .any(|(current_header, previous_hash)| {
+                    current_header.parent_hash != *previous_hash
+                });
 
             if any_invalid {
-                warn!("Received invalid header chain from peer, discarding and retrying...");
+                warn!("Received invalid header chain from peer, discarding peer {peer_id} and retrying...");
                 self.peers.remove_peer(peer_id).await;
                 continue;
             }
