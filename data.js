@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746024740933,
+  "lastUpdate": 1746026009809,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5185,6 +5185,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180431429933,
             "range": "± 1283379438",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6f4ce055fdb6ab8e7fd57e11c047fdfebd3afbef",
+          "message": "docs(l2): add quick handsOn on bridging assets between L1 and L2  (#2589)\n\n**Motivation**\n\nThis PR tries to show some basic walkthrough on moving assets between\nthe two chains in the docs\n\n**Description**\n\n* Add an example of how to deposit and how to withdraw funds in L2 and\nL1.\n* Explain the deposit functions from the CommonBridge contract in the L1\n\nCloses #2524\n\n---------\n\nCo-authored-by: Ivan Litteri <67517699+ilitteri@users.noreply.github.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-04-30T14:05:51Z",
+          "tree_id": "fac44e75b2437357cdc85b9ec449d72efd78e07b",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6f4ce055fdb6ab8e7fd57e11c047fdfebd3afbef"
+        },
+        "date": 1746026007524,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180813110848,
+            "range": "± 494505008",
             "unit": "ns/iter"
           }
         ]
