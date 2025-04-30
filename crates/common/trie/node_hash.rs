@@ -87,6 +87,20 @@ impl NodeHash {
         }
         encoder
     }
+
+    pub fn len(&self) -> usize {
+        match self {
+            NodeHash::Hashed(h256) => h256.as_bytes().len(),
+            NodeHash::Inline(value) => value.1 as usize,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            NodeHash::Hashed(h256) => h256.as_bytes().is_empty(),
+            NodeHash::Inline(value) => value.1 == 0,
+        }
+    }
 }
 
 impl From<Vec<u8>> for NodeHash {
