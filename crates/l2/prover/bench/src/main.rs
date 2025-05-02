@@ -6,6 +6,7 @@ use ethrex_prover_bench::{
     rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
 use ethrex_prover_lib::execute;
+use serde_json::json;
 use zkvm_interface::io::ProgramInput;
 
 #[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
@@ -81,6 +82,7 @@ async fn main() {
     };
 
     let now = std::time::Instant::now();
+    let gas_used = block.header.gas_used as f64;
     if prove {
         println!("proving");
         ethrex_prover_lib::prove(ProgramInput {
@@ -100,10 +102,19 @@ async fn main() {
     }
     let elapsed = now.elapsed().as_secs();
     println!(
-        "finished in {} minutes for block {}",
+        "finished in {} minutes for block {} with gas {}",
         elapsed / 60,
-        block_number
+        block_number,
+        gas_used
     );
 
-    // TODO: Print total gas from pre-execution (to_exec_db() call)
+    // write benchmark file for github action
+    let rate = gas_used / 10e6 / elapsed as f64;
+    let benchmark_json = &json!({
+        "name": "Proving gas rate",
+        "unit": "Mgas/s",
+        "value": rate
+    });
+    let file = File::create("bench_latest.json").expect("failed to create bench_latest.json");
+    serde_json::to_writer(file, benchmark_json).expect("failed to write to bench_latest.json");
 }
