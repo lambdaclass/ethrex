@@ -12,7 +12,7 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType},
+    types::{BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction},
     Address, H256, U256,
 };
 use ethrex_storage::error::StoreError;
@@ -72,7 +72,7 @@ impl Mempool {
             .write()
             .map_err(|error| StoreError::MempoolWriteLock(error.to_string()))?;
         if let Some(tx) = tx_pool.get(hash) {
-            if matches!(tx.tx_type(), TxType::EIP4844) {
+            if tx.is_blob_tx() {
                 self.blobs_bundle_pool
                     .lock()
                     .map_err(|error| StoreError::Custom(error.to_string()))?
@@ -93,7 +93,7 @@ impl Mempool {
     ) -> Result<HashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let filter_tx = |tx: &Transaction| -> bool {
             // Filter by tx type
-            let is_blob_tx = matches!(tx, Transaction::EIP4844Transaction(_));
+            let is_blob_tx = tx.is_blob_tx();
             if filter.only_plain_txs && is_blob_tx || filter.only_blob_txs && !is_blob_tx {
                 return false;
             }
@@ -645,8 +645,7 @@ mod tests {
         let plain_tx_hash = plain_tx.compute_hash();
         let blob_tx_hash = blob_tx.compute_hash();
         let mempool = Mempool::new();
-        let filter =
-            |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
+        let filter = Transaction::is_blob_tx;
         mempool
             .add_transaction(blob_tx_hash, blob_tx.clone())
             .unwrap();

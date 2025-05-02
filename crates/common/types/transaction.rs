@@ -289,7 +289,7 @@ pub trait Signable {
 }
 
 impl Transaction {
-    pub fn tx_type(&self) -> TxType {
+    pub const fn tx_type(&self) -> TxType {
         match self {
             Transaction::LegacyTransaction(_) => TxType::Legacy,
             Transaction::EIP2930Transaction(_) => TxType::EIP2930,
@@ -298,6 +298,11 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => TxType::EIP7702,
             Transaction::PrivilegedL2Transaction(_) => TxType::Privileged,
         }
+    }
+
+    #[inline]
+    pub fn is_blob_tx(&self) -> bool {
+        self.tx_type() == TxType::EIP4844
     }
 
     fn calc_effective_gas_price(&self, base_fee_per_gas: Option<u64>) -> Option<u64> {
