@@ -44,7 +44,7 @@ jobs:
       - name: Build
         run: |
           cd crates/l2/prover/bench
-          cargo b -r --features "sp1,gpu"
+          cargo b -r --features "sp1"
 
       - name: Run
         env:
@@ -52,7 +52,7 @@ jobs:
           RPC_URL: https://eth-mainnet.g.alchemy.com/v2/gAC4X6-UnHrye4_cQYYUbswDXbY2p0UL
         run: |
           cd crates/l2/prover/bench
-          make prove-sp1-gpu
+          make sp1
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
