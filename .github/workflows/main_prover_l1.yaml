@@ -13,6 +13,12 @@ env:
   CI_ETHREX_WORKDIR: /usr/local/bin
   PROVER: sp1
 
+permissions:
+  # deployments permission to deploy GitHub pages website
+  deployments: write
+  # contents permission to update benchmark contents in gh-pages branch
+  contents: write
+
 jobs:
   test:
     name: L1 block proving test
@@ -20,11 +26,6 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Checkout LFS objects
-        run: git lfs checkout
 
       - name: Rustup toolchain install
         uses: dtolnay/rust-toolchain@stable
