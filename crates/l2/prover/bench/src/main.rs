@@ -108,7 +108,6 @@ async fn main() {
         gas_used
     );
 
-    // a
     // write benchmark file for github action
     let rate = gas_used / 10e6 / elapsed as f64;
     let benchmark_json = &json!({
