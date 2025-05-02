@@ -42,14 +42,14 @@ jobs:
       - name: Build
         run: |
           cd crates/l2/prover/bench
-          cargo b -r --features "sp1"
+          cargo b -r --features "sp1,gpu"
 
       - name: Run
         env:
           RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
         run: |
           cd crates/l2/prover/bench
-          make sp1
+          make prove-sp1-gpu
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
