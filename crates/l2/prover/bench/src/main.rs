@@ -110,11 +110,11 @@ async fn main() {
 
     // write benchmark file for github action
     let rate = gas_used / 10e6 / elapsed as f64;
-    let benchmark_json = &json!({
+    let benchmark_json = &json!([{
         "name": "Proving gas rate",
         "unit": "Mgas/s",
         "value": rate
-    });
+    }]);
     let file = File::create("bench_latest.json").expect("failed to create bench_latest.json");
     serde_json::to_writer(file, benchmark_json).expect("failed to write to bench_latest.json");
 }
