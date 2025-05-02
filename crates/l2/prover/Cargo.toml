@@ -55,7 +55,7 @@ risc0 = [
 ]
 sp1 = ["zkvm_interface/sp1", "dep:sp1-sdk"]
 
-gpu = ["risc0-zkvm/cuda", "sp1-sdk/cuda"]
+gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
 l2 = [
   "ethrex-vm/l2",
   "zkvm_interface/l2",
