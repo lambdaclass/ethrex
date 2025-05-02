@@ -1,7 +1,6 @@
 use std::{fs::File, io::Write};
 
 use clap::Parser;
-use ethrex_l2::utils::prover::proving_systems::ProverType;
 use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
