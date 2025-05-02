@@ -110,8 +110,20 @@ async fn main() {
 
     // write benchmark file for github action
     let rate = gas_used / 10e6 / elapsed as f64;
+
+    let backend = if cfg!(feature = "sp1") {
+        "SP1"
+    } else if cfg!(feature = "risc0") {
+        "Risc0"
+    } else if cfg!(feature = "pico") {
+        "Pico"
+    } else {
+        unreachable!();
+    };
+    let processing_unit = if cfg!(feature = "gpu") { "GPU" } else { "CPU" };
+
     let benchmark_json = &json!([{
-        "name": "Proving gas rate",
+        "name": format!("{backend} backend, {processing_unit}"),
         "unit": "Mgas/s",
         "value": rate
     }]);

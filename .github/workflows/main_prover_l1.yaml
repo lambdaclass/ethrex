@@ -57,7 +57,7 @@ jobs:
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
-          name: "L1 block proving benchmark (SP1 backend)"
+          name: "L1 block proving benchmark"
           tool: "customBiggerIsBetter"
           output-file-path: crates/l2/prover/bench/bench_latest.json
           benchmark-data-dir-path: "dev/l1-prover-test"
