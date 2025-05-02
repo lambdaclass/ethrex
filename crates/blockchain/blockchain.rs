@@ -144,7 +144,7 @@ impl Blockchain {
 
         self.storage
             .update_snapshot(block_hash, new_state_root)
-            .await;
+            .await?;
 
         Ok(())
     }
