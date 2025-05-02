@@ -2,8 +2,6 @@ name: RPC Prover (SP1 Backend)
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["**"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -48,8 +46,7 @@ jobs:
 
       - name: Run
         env:
-          # throwaway url
-          RPC_URL: https://eth-mainnet.g.alchemy.com/v2/gAC4X6-UnHrye4_cQYYUbswDXbY2p0UL
+          RPC_URL: $${{ secrets.ETHREX_L2_RPC_URL }}
         run: |
           cd crates/l2/prover/bench
           make sp1
@@ -60,7 +57,7 @@ jobs:
           name: "L1 block proving benchmark"
           tool: "customBiggerIsBetter"
           output-file-path: crates/l2/prover/bench/bench_latest.json
-          benchmark-data-dir-path: "dev/l1-prover-test"
+          benchmark-data-dir-path: "."
           # Access token to deploy GitHub Pages branch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Push and deploy GitHub pages branch automatically
