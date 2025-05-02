@@ -115,6 +115,10 @@ impl Blockchain {
         Ok(execution_result)
     }
 
+    pub fn init_new_snapshot(&self, prev_hash: BlockHash, block_hash: BlockHash) {
+        self.storage.init_new_snapshot(prev_hash, block_hash);
+    }
+
     pub async fn store_block(
         &self,
         block: &Block,

@@ -720,6 +720,10 @@ async fn try_execute_payload(
             "Missing latest canonical block".to_owned(),
         ))?;
 
+    context
+        .blockchain
+        .init_new_snapshot(latest_valid_hash, block_hash);
+
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync

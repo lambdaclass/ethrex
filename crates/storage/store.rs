@@ -40,7 +40,6 @@ pub struct Store {
 #[derive(Debug, Default, Clone)]
 struct Snapshot {
     account_states: HashMap<H256, AccountState>,
-    storages: HashMap<H256, HashMap<H256, U256>>,
 }
 
 #[allow(dead_code)]
@@ -94,6 +93,12 @@ impl Store {
         Ok(store)
     }
 
+    pub fn init_new_snapshot(&self, prev_hash: BlockHash, block_hash: BlockHash) {
+        if let Some(s) = self.snapshots.get(&prev_hash) {
+            self.snapshots.insert(block_hash, s.clone());
+        }
+    }
+
     pub async fn update_snapshot(
         &self,
         block_hash: BlockHash,
@@ -101,33 +106,18 @@ impl Store {
     ) -> Result<(), StoreError> {
         let now = Instant::now();
 
-        let snapshots = self.snapshots.clone();
+        let accounts: HashMap<H256, AccountState> = self.iter_accounts(state_root).collect();
 
-        let mut accounts: HashMap<H256, AccountState> = HashMap::with_capacity(64);
-        let mut storages: HashMap<H256, HashMap<H256, U256>> = HashMap::with_capacity(64);
-
-        for (hash, acc) in self.iter_accounts(state_root) {
-            accounts.insert(hash, acc.clone());
-            let storage = storages.entry(hash).or_default();
-
-            if let Some(storage_iter) = self.iter_storage(state_root, hash)? {
-                for (key, val) in storage_iter {
-                    storage.insert(key, val);
-                }
-            }
-        }
-
-        let mut block_snapshot = snapshots
+        let mut block_snapshot = self
+            .snapshots
             .get(&block_hash)
             .map(|x| (*x).clone())
             .unwrap_or_else(|| Snapshot {
                 account_states: HashMap::with_capacity(accounts.len()),
-                storages: HashMap::with_capacity(accounts.len()),
             });
         block_snapshot.account_states.extend(accounts);
-        block_snapshot.storages.extend(storages);
 
-        snapshots.insert(block_hash, Arc::new(block_snapshot));
+        self.snapshots.insert(block_hash, Arc::new(block_snapshot));
 
         let elapsed = now.elapsed();
         info!("Updated block snapshot, took {:?}", elapsed);
@@ -594,23 +584,14 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let block_snapshot = self.snapshots.get(&block_hash);
-
-        let hashed_address = hash_address_fixed(&address);
-
-        if let Some(storage) = block_snapshot.and_then(|x| x.storages.get(&hashed_address).cloned())
-        {
-            Ok(storage.get(&storage_key).cloned())
-        } else {
-            let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
-                return Ok(None);
-            };
-            let hashed_key = hash_key(&storage_key);
-            storage_trie
-                .get(&hashed_key)?
-                .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
-                .transpose()
-        }
+        let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
+            return Ok(None);
+        };
+        let hashed_key = hash_key(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
     }
 
     pub async fn set_chain_config(&self, chain_config: &ChainConfig) -> Result<(), StoreError> {
