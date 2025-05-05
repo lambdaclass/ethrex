@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746055684446,
+  "lastUpdate": 1746461026741,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5335,6 +5335,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181502123198,
             "range": "± 7469040500",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "3f006c1aaa0e3aded73fdfb69d08361a11699554",
+          "message": "chore(l2): bump sp1 version to 4.1.7 (#2610)\n\nAlso update some docs\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-05-05T15:02:57Z",
+          "tree_id": "3c5eddbd6ad70766696d5e4a7cdc1d64d8b12409",
+          "url": "https://github.com/lambdaclass/ethrex/commit/3f006c1aaa0e3aded73fdfb69d08361a11699554"
+        },
+        "date": 1746461024491,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177577802410,
+            "range": "± 451229834",
             "unit": "ns/iter"
           }
         ]
