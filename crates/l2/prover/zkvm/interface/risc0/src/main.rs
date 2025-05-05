@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
+    withdrawals::get_withdrawals_root,
 };
 
 fn main() {
@@ -16,6 +17,8 @@ fn main() {
         block,
         parent_block_header,
         mut db,
+        #[cfg(feature = "l2")]
+        withdrawals_merkle_roots,
     } = env::read();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -38,7 +41,7 @@ fn main() {
 
     let mut cumulative_gas_used = 0;
 
-    for block in blocks {
+    for (i, block) in blocks.into_iter().enumerate() {
         let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
@@ -50,6 +53,18 @@ fn main() {
         let account_updates = vm
             .get_state_transitions(fork)
             .expect("failed to get state transitions");
+
+        // Validate L2 withdrawals
+        #[cfg(feature = "l2")]
+        {
+            if let Some(withdrawals_root) = withdrawals_merkle_roots.get(i) {
+                if *withdrawals_root != get_withdrawals_root(&block.body.transactions, &receipts)? {
+                    panic!("invalid withdrawals merkle root");
+                }
+            } else {
+                panic!("failed to get withdrawal root for block");
+            }
+        }
 
         cumulative_gas_used += receipts
             .last()
