@@ -930,7 +930,7 @@ impl<'a> VM<'a> {
             .call_frames
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-        let retdata = call_frame.retdata;
+        let retdata = &call_frame.retdata;
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = call_frame
             .gas_limit
@@ -967,6 +967,7 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(_) => {
+                self.restore_state(call_frame.state_backup, call_frame.cache_backup)?;
                 // Revert value transfer
                 if retdata.should_transfer_value {
                     self.decrease_account_balance(retdata.to, retdata.value)?;
@@ -991,14 +992,14 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::GasOverflow)?;
 
         {
-            let call_frame_to_execute = self.current_call_frame_mut()?;
+            let current_call_frame = self.current_call_frame_mut()?;
             // Return reserved gas
-            call_frame_to_execute.gas_used = call_frame_to_execute
+            current_call_frame.gas_used = current_call_frame
                 .gas_used
                 .checked_sub(unused_gas)
                 .ok_or(InternalError::GasOverflow)?;
 
-            call_frame_to_execute.logs.extend(tx_report.logs.clone());
+            current_call_frame.logs.extend(tx_report.logs.clone());
         }
 
         match tx_report.result.clone() {
@@ -1014,6 +1015,7 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(err) => {
+                self.restore_state(previous_call_frame.state_backup, previous_call_frame.cache_backup)?;
                 // Return value to sender
                 self.increase_account_balance(retdata.msg_sender, retdata.value)?;
 

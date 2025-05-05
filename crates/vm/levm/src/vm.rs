@@ -335,12 +335,12 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn restore_state(&mut self, call_frame_backup: CacheBackup) -> Result<(), VMError> {
+    pub fn restore_state(&mut self, state_backup: StateBackup, call_frame_backup: CacheBackup) -> Result<(), VMError> {
+        self.accrued_substate = state_backup.substate;
+        self.env.refunded_gas = state_backup.refunded_gas;
+        self.env.transient_storage = state_backup.transient_storage;
         self.restore_cache_state(call_frame_backup)?;
-        let backup = self.current_call_frame()?.state_backup.clone();
-        self.accrued_substate = backup.substate;
-        self.env.refunded_gas = backup.refunded_gas;
-        self.env.transient_storage = backup.transient_storage;
+
         Ok(())
     }
 

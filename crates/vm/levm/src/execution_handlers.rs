@@ -26,8 +26,6 @@ impl<'a> VM<'a> {
                 if error.is_internal() {
                     return Err(error);
                 }
-
-                self.restore_state(self.current_call_frame()?.cache_backup.clone())?;
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
                     gas_used: self.current_call_frame()?.gas_limit,
@@ -206,8 +204,6 @@ impl<'a> VM<'a> {
             }
             TxResult::Revert(_) => {
                 logs = vec![];
-                // Restore state if error
-                self.restore_state(self.current_call_frame()?.cache_backup.clone())?;
             }
         }
         let refunded_gas = self.env.refunded_gas;
@@ -249,8 +245,6 @@ impl<'a> VM<'a> {
                 logs: vec![],
             });
         }
-
-        self.restore_state(self.current_call_frame()?.cache_backup.clone())?;
 
         execution_report
     }
