@@ -1,5 +1,6 @@
 use crate::decode;
 use bytes::Bytes;
+use clap::builder::{OsStr, Resettable, Str};
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{kademlia::KademliaTable, sync::SyncMode, types::Node};

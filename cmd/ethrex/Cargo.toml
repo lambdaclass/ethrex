@@ -22,7 +22,7 @@ hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 k256.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["string"] }
 clap_complete.workspace = true
 eyre.workspace = true
 directories = "5.0.1"
@@ -65,12 +65,12 @@ libmdbx = ["ethrex-storage/libmdbx"]
 redb = ["dep:redb", "ethrex-storage/redb"]
 blst = ["ethrex-vm/blst"]
 l2 = [
-    "dep:ethrex-l2",
-    "ethrex-vm/l2",
-    "ethrex-blockchain/l2",
-    "ethrex-rpc/l2",
-    "dep:secp256k1",
-    "ethrex-storage-rollup"
+  "dep:ethrex-l2",
+  "ethrex-vm/l2",
+  "ethrex-blockchain/l2",
+  "ethrex-rpc/l2",
+  "dep:secp256k1",
+  "ethrex-storage-rollup",
 ]
 rollup_storage_libmdbx = ["ethrex-storage-rollup/libmdbx"]
 rollup_storage_redb = ["ethrex-storage-rollup/redb"]
@@ -86,4 +86,4 @@ name = "criterion_benchmark"
 harness = false
 
 [build-dependencies]
-vergen = { version = "9.0.0", features = ["rustc"] }    
+vergen = { version = "9.0.0", features = ["rustc"] }
