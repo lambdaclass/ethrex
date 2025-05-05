@@ -179,9 +179,9 @@ impl LEVM {
         for (address, new_state_account) in db.cache.iter() {
             let initial_state_account = db
                 .in_memory_db
-                .get(&address)
+                .get(address)
                 .cloned()
-                .unwrap_or(db.store.get_account(address)?);
+                .unwrap_or(db.store.get_account(*address)?);
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
