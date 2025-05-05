@@ -331,12 +331,15 @@ impl Discv4Server {
                 if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
-                let fork_id = self.ctx.storage.get_fork_id().await.unwrap();
+                let fork_id = match self.ctx.storage.get_fork_id().await {
+                    Ok(fi) => Some(fi),
+                    Err(_) => None,
+                };
                 let Ok(node_record) = NodeRecord::from_node(
                     self.ctx.local_node,
                     self.ctx.enr_seq,
                     &self.ctx.signer,
-                    Some(fork_id),
+                    fork_id,
                 ) else {
                     return Err(DiscoveryError::InvalidMessage(
                         "could not build local node record".into(),
