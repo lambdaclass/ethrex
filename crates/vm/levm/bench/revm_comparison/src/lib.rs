@@ -83,7 +83,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
             HashMap::new(),
         ),
     );
-    db.in_memory_db = db.cache;
+    db.in_memory_db = db.cache.clone();
 
     // when using stateful execute() we have to use nonce when instantiating the vm. Otherwise use 0.
     for _nonce in 0..runs - 1 {
