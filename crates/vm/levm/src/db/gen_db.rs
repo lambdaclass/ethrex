@@ -62,6 +62,24 @@ impl GeneralizedDatabase {
         Ok(account)
     }
 
+    /// Gets storage slot from Database, storing in InMemoryDB for efficiency when getting AccountUpdates.
+    pub fn get_value_from_database(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<U256, DatabaseError> {
+        let value = self.store.get_storage_value(address, key)?;
+        // Account must be already in in_memory_db
+        self.in_memory_db
+            .get_mut(&address)
+            .ok_or(DatabaseError::Custom(
+                "Account not found in InMemoryDB".to_string(),
+            ))?
+            .storage
+            .insert(key, value);
+        Ok(value)
+    }
+
     /// Gets account without pushing it to the cache
     pub fn get_account_no_push_cache(
         &mut self,
@@ -253,7 +271,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        let value = self.db.store.get_storage_value(address, key)?;
+        let value = self.db.get_value_from_database(address, key)?;
 
         // When getting storage value of an account that's not yet cached we need to store it in the account
         // We don't actually know if the account is cached so we cache it anyway
