@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -21,11 +22,16 @@ use super::Database;
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub cache: CacheDB,
+    pub in_memory_db: HashMap<Address, Account>,
 }
 
 impl GeneralizedDatabase {
     pub fn new(store: Arc<dyn Database>, cache: CacheDB) -> Self {
-        Self { store, cache }
+        Self {
+            store,
+            cache,
+            in_memory_db: HashMap::new(),
+        }
     }
 
     // ================== Account related functions =====================
@@ -35,18 +41,49 @@ impl GeneralizedDatabase {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
             None => {
-                let account = self.store.get_account(address)?;
+                let account = self.get_account_from_database(address)?;
                 cache::insert_account(&mut self.cache, address, account.clone());
                 Ok(account)
             }
         }
     }
 
+    /// Gets account from storage, storing in InMemoryDB for efficiency when getting AccountUpdates.
+    pub fn get_account_from_database(
+        &mut self,
+        address: Address,
+    ) -> Result<Account, DatabaseError> {
+        let account = self.store.get_account(address)?;
+        self.in_memory_db.insert(address, account.clone());
+        Ok(account)
+    }
+
+    /// Gets storage slot from Database, storing in InMemoryDB for efficiency when getting AccountUpdates.
+    pub fn get_value_from_database(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<U256, DatabaseError> {
+        let value = self.store.get_storage_value(address, key)?;
+        // Account must be already in in_memory_db
+        if let Some(account) = self.in_memory_db.get_mut(&address) {
+            account.storage.insert(key, value);
+        } else {
+            return Err(DatabaseError::Custom(
+                "Account not found in InMemoryDB".to_string(),
+            ));
+        }
+        Ok(value)
+    }
+
     /// Gets account without pushing it to the cache
-    pub fn get_account_no_push_cache(&self, address: Address) -> Result<Account, DatabaseError> {
+    pub fn get_account_no_push_cache(
+        &mut self,
+        address: Address,
+    ) -> Result<Account, DatabaseError> {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
-            None => self.store.get_account(address),
+            None => self.get_account_from_database(address),
         }
     }
 
