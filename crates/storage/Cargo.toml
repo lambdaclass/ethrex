@@ -26,6 +26,9 @@ redb = { workspace = true, optional = true }
 # We only need the runtime for the blocking databases to spawn blocking tasks
 tokio = { version = "1.41.1", optional = true, default-features = false, features = ["rt"] }
 
+# in memory concurrent cache
+moka = { version = "0.12.10", features = ["sync"]}
+
 [features]
 default = []
 libmdbx = ["dep:libmdbx", "ethrex-trie/libmdbx", "dep:tokio"]
