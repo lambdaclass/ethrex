@@ -35,7 +35,7 @@ impl TrieState {
             return Ok(Some(node.clone()));
         };
         self.db
-            .get(hash.into())?
+            .get(hash)?
             .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
             .transpose()
     }
@@ -70,7 +70,7 @@ impl TrieState {
     fn commit_node_tail_recursive(
         &mut self,
         node_hash: &NodeHash,
-        acc: &mut Vec<(Vec<u8>, Vec<u8>)>,
+        acc: &mut Vec<(NodeHash, Vec<u8>)>,
     ) -> Result<(), TrieError> {
         let Some(node) = self.cache.remove(node_hash) else {
             // If the node is not in the cache then it means it is already stored in the DB
@@ -89,7 +89,7 @@ impl TrieState {
             Node::Leaf(_) => {}
         }
         // Commit self
-        acc.push((node_hash.into(), node.encode_to_vec()));
+        acc.push((*node_hash, node.encode_to_vec()));
 
         Ok(())
     }
@@ -98,7 +98,7 @@ impl TrieState {
     pub fn write_node(&mut self, node: Node, hash: NodeHash) -> Result<(), TrieError> {
         // Don't insert the node if it is already inlined on the parent
         if matches!(hash, NodeHash::Hashed(_)) {
-            self.db.put(hash.into(), node.encode_to_vec())?;
+            self.db.put(hash, node.encode_to_vec())?;
         }
         Ok(())
     }
@@ -110,7 +110,7 @@ impl TrieState {
             .iter()
             .filter_map(|node| {
                 let hash = node.compute_hash();
-                matches!(hash, NodeHash::Hashed(_)).then(|| (hash.into(), node.encode_to_vec()))
+                matches!(hash, NodeHash::Hashed(_)).then(|| (hash, node.encode_to_vec()))
             })
             .collect();
         self.db.put_batch(key_values)?;

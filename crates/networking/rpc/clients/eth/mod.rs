@@ -44,6 +44,8 @@ pub enum RpcResponse {
 pub struct EthClient {
     client: Client,
     pub url: String,
+    pub maximum_allowed_max_fee_per_gas: Option<u64>,
+    pub maximum_allowed_max_fee_per_blob_gas: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +103,21 @@ impl EthClient {
         Self {
             client: Client::new(),
             url: url.to_string(),
+            maximum_allowed_max_fee_per_gas: None,
+            maximum_allowed_max_fee_per_blob_gas: None,
+        }
+    }
+
+    pub fn new_with_maximum_fees(
+        url: &str,
+        max_fee_per_gas: u64,
+        max_fee_per_blob_gas: u64,
+    ) -> Self {
+        Self {
+            client: Client::new(),
+            url: url.to_string(),
+            maximum_allowed_max_fee_per_gas: Some(max_fee_per_gas),
+            maximum_allowed_max_fee_per_blob_gas: Some(max_fee_per_blob_gas),
         }
     }
 
@@ -199,6 +216,30 @@ impl EthClient {
         let mut number_of_retries = 0;
 
         'outer: while number_of_retries < MAX_NUMBER_OF_RETRIES {
+            if let Some(max_fee_per_gas) = self.maximum_allowed_max_fee_per_gas {
+                let tx_max_fee = match wrapped_tx {
+                    WrappedTransaction::EIP4844(tx) => &mut tx.tx.max_fee_per_gas,
+                    WrappedTransaction::EIP1559(tx) => &mut tx.max_fee_per_gas,
+                    WrappedTransaction::L2(tx) => &mut tx.max_fee_per_gas,
+                };
+
+                if *tx_max_fee > max_fee_per_gas {
+                    *tx_max_fee = max_fee_per_gas;
+                    warn!("max_fee_per_gas exceeds the allowed limit, adjusting it to {max_fee_per_gas}");
+                }
+            }
+
+            // Check blob gas fees only for EIP4844 transactions
+            if let WrappedTransaction::EIP4844(tx) = wrapped_tx {
+                if let Some(max_fee_per_blob_gas) = self.maximum_allowed_max_fee_per_blob_gas {
+                    if tx.tx.max_fee_per_blob_gas > U256::from(max_fee_per_blob_gas) {
+                        tx.tx.max_fee_per_blob_gas = U256::from(max_fee_per_blob_gas);
+                        warn!(
+                            "max_fee_per_blob_gas exceeds the allowed limit, adjusting it to {max_fee_per_blob_gas}"
+                        );
+                    }
+                }
+            }
             let tx_hash = self
                 .send_wrapped_transaction(wrapped_tx, private_key)
                 .await?;
@@ -909,10 +950,53 @@ impl EthClient {
             .await
     }
 
+    pub async fn get_pending_deposit_logs(
+        &self,
+        common_bridge_address: Address,
+    ) -> Result<Vec<H256>, EthClientError> {
+        let response = self
+            ._generic_call(b"getPendingDepositLogs()", common_bridge_address)
+            .await?;
+        Self::from_hex_string_to_h256_array(&response)
+    }
+
+    pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthClientError> {
+        let bytes = hex::decode(hex_string.strip_prefix("0x").unwrap_or(hex_string))
+            .map_err(|_| EthClientError::Custom("Invalid hex string".to_owned()))?;
+
+        // The ABI encoding for dynamic arrays is:
+        // 1. Offset to data (32 bytes)
+        // 2. Length of array (32 bytes)
+        // 3. Array elements (each 32 bytes)
+        if bytes.len() < 64 {
+            return Err(EthClientError::Custom("Response too short".to_owned()));
+        }
+
+        // Get the offset (should be 0x20 for simple arrays)
+        let offset = U256::from_big_endian(&bytes[0..32]).as_usize();
+
+        // Get the length of the array
+        let length = U256::from_big_endian(&bytes[offset..offset + 32]).as_usize();
+
+        // Calculate the start of the array data
+        let data_start = offset + 32;
+        let data_end = data_start + (length * 32);
+
+        if data_end > bytes.len() {
+            return Err(EthClientError::Custom("Invalid array length".to_owned()));
+        }
+
+        // Convert the slice directly to H256 array
+        bytes[data_start..data_end]
+            .chunks_exact(32)
+            .map(|chunk| Ok(H256::from_slice(chunk)))
+            .collect()
+    }
+
     async fn _generic_call(
         &self,
         selector: &[u8],
-        on_chain_proposer_address: Address,
+        contract_address: Address,
     ) -> Result<String, EthClientError> {
         let selector = keccak(selector)
             .as_bytes()
@@ -927,11 +1011,7 @@ impl EthClient {
         calldata.extend(vec![0; leading_zeros]);
 
         let hex_string = self
-            .call(
-                on_chain_proposer_address,
-                calldata.into(),
-                Overrides::default(),
-            )
+            .call(contract_address, calldata.into(), Overrides::default())
             .await?;
 
         Ok(hex_string)
