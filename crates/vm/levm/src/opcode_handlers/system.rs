@@ -93,7 +93,6 @@ impl<'a> VM<'a> {
             value_to_transfer,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -195,7 +194,6 @@ impl<'a> VM<'a> {
             value_to_transfer,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -320,7 +318,6 @@ impl<'a> VM<'a> {
             address_was_cold,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -418,7 +415,6 @@ impl<'a> VM<'a> {
             address_was_cold,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -563,7 +559,6 @@ impl<'a> VM<'a> {
             let to = current_call_frame.to;
             (target_address, to)
         };
-        let fork = self.env.config.fork;
 
         let (target_account, target_account_is_cold) = self
             .db
@@ -573,14 +568,11 @@ impl<'a> VM<'a> {
             self.db.access_account(&mut self.accrued_substate, to)?;
         let balance_to_transfer = current_account.info.balance;
 
-        let account_is_empty = target_account.is_empty();
-        
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
                 target_account.is_empty(),
                 balance_to_transfer,
-                fork,
             )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
@@ -601,8 +593,7 @@ impl<'a> VM<'a> {
 
             // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
             // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
-            if !self.accrued_substate.selfdestruct_set.contains(&to)
-            {
+            if !self.accrued_substate.selfdestruct_set.contains(&to) {
                 self.env.refunded_gas = self
                     .env
                     .refunded_gas
@@ -716,7 +707,7 @@ impl<'a> VM<'a> {
 
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
         let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
-        
+
         self.insert_account(new_address, new_account)?;
 
         // 2. Increment sender's nonce.

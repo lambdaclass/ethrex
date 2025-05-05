@@ -296,14 +296,15 @@ impl<'a> VM<'a> {
     }
 
     pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
-        let fork = self.env.config.fork;
-
-        if is_precompile(&self.current_call_frame()?.code_address, fork) {
+        if is_precompile(
+            &self.current_call_frame()?.code_address,
+            self.env.config.fork,
+        ) {
             let mut current_call_frame = self
                 .call_frames
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let precompile_result = execute_precompile(&mut current_call_frame, fork);
+            let precompile_result = execute_precompile(&mut current_call_frame);
             let backup = self
                 .backups
                 .pop()

@@ -227,7 +227,7 @@ pub const BLS12_381_G2_K_DISCOUNT: [u64; 128] = [
 ];
 pub const G2_MUL_COST: u64 = 22500;
 
-pub fn exp(exponent: U256, fork: Fork) -> Result<u64, VMError> {
+pub fn exp(exponent: U256) -> Result<u64, VMError> {
     let exponent_byte_size = (exponent
         .bits()
         .checked_add(7)
@@ -538,7 +538,6 @@ pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
     balance_to_transfer: U256,
-    fork: Fork,
 ) -> Result<u64, OutOfGasError> {
     let mut dynamic_cost = if address_was_cold {
         COLD_ADDRESS_ACCESS_COST
@@ -560,7 +559,7 @@ pub fn selfdestruct(
         .ok_or(OutOfGasError::GasCostOverflow)
 }
 
-pub fn tx_calldata(calldata: &Bytes, fork: Fork) -> Result<u64, OutOfGasError> {
+pub fn tx_calldata(calldata: &Bytes) -> Result<u64, OutOfGasError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
     let mut calldata_cost: u64 = 0;
@@ -614,8 +613,9 @@ fn address_access_cost(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (BALANCE_STATIC, BALANCE_COLD_DYNAMIC, BALANCE_WARM_DYNAMIC);
+pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) =
+        (BALANCE_STATIC, BALANCE_COLD_DYNAMIC, BALANCE_WARM_DYNAMIC);
 
     address_access_cost(
         address_was_cold,
@@ -625,13 +625,12 @@ pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     )
 }
 
-pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
+pub fn extcodesize(address_was_cold: bool) -> Result<u64, VMError> {
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            EXTCODESIZE_STATIC,
-            EXTCODESIZE_COLD_DYNAMIC,
-            EXTCODESIZE_WARM_DYNAMIC,
+        EXTCODESIZE_STATIC,
+        EXTCODESIZE_COLD_DYNAMIC,
+        EXTCODESIZE_WARM_DYNAMIC,
     );
-    
 
     address_access_cost(
         address_was_cold,
@@ -646,7 +645,6 @@ pub fn extcodecopy(
     new_memory_size: usize,
     current_memory_size: usize,
     address_was_cold: bool,
-    fork: Fork,
 ) -> Result<u64, VMError> {
     let base_access_cost = copy_behavior(
         new_memory_size,
@@ -657,10 +655,10 @@ pub fn extcodecopy(
     )?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            EXTCODECOPY_STATIC,
-            EXTCODECOPY_COLD_DYNAMIC,
-            EXTCODECOPY_WARM_DYNAMIC,
-        );
+        EXTCODECOPY_STATIC,
+        EXTCODECOPY_COLD_DYNAMIC,
+        EXTCODECOPY_WARM_DYNAMIC,
+    );
 
     let expansion_access_cost = address_access_cost(
         address_was_cold,
@@ -674,12 +672,12 @@ pub fn extcodecopy(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn extcodehash(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
+pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            EXTCODEHASH_STATIC,
-            EXTCODEHASH_COLD_DYNAMIC,
-            EXTCODEHASH_WARM_DYNAMIC,
-        );
+        EXTCODEHASH_STATIC,
+        EXTCODEHASH_COLD_DYNAMIC,
+        EXTCODEHASH_WARM_DYNAMIC,
+    );
 
     address_access_cost(
         address_was_cold,
@@ -698,11 +696,11 @@ pub fn call(
     value_to_transfer: U256,
     gas_from_stack: U256,
     gas_left: u64,
-    fork: Fork,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC);
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) =
+        (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC);
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -736,7 +734,6 @@ pub fn call(
         gas_left,
         call_gas_costs,
         CALL_POSITIVE_VALUE_STIPEND,
-        fork,
     )
 }
 
@@ -747,14 +744,13 @@ pub fn callcode(
     value_to_transfer: U256,
     gas_from_stack: U256,
     gas_left: u64,
-    fork: Fork,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            DELEGATECALL_STATIC,
-            DELEGATECALL_COLD_DYNAMIC,
-            DELEGATECALL_WARM_DYNAMIC,
+        DELEGATECALL_STATIC,
+        DELEGATECALL_COLD_DYNAMIC,
+        DELEGATECALL_WARM_DYNAMIC,
     );
 
     let address_access_cost = address_access_cost(
@@ -781,7 +777,6 @@ pub fn callcode(
         gas_left,
         call_gas_costs,
         CALLCODE_POSITIVE_VALUE_STIPEND,
-        fork,
     )
 }
 
@@ -791,14 +786,13 @@ pub fn delegatecall(
     address_was_cold: bool,
     gas_from_stack: U256,
     gas_left: u64,
-    fork: Fork,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            DELEGATECALL_STATIC,
-            DELEGATECALL_COLD_DYNAMIC,
-            DELEGATECALL_WARM_DYNAMIC,
+        DELEGATECALL_STATIC,
+        DELEGATECALL_COLD_DYNAMIC,
+        DELEGATECALL_WARM_DYNAMIC,
     );
 
     let address_access_cost = address_access_cost(
@@ -812,7 +806,7 @@ pub fn delegatecall(
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0, fork)
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
 pub fn staticcall(
@@ -821,14 +815,13 @@ pub fn staticcall(
     address_was_cold: bool,
     gas_from_stack: U256,
     gas_left: u64,
-    fork: Fork,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            STATICCALL_STATIC,
-            STATICCALL_COLD_DYNAMIC,
-            STATICCALL_WARM_DYNAMIC,
+        STATICCALL_STATIC,
+        STATICCALL_COLD_DYNAMIC,
+        STATICCALL_WARM_DYNAMIC,
     );
 
     let address_access_cost = address_access_cost(
@@ -842,7 +835,7 @@ pub fn staticcall(
         .checked_add(address_access_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?;
 
-    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0, fork)
+    calculate_cost_and_gas_limit_call(true, gas_from_stack, gas_left, call_gas_costs, 0)
 }
 
 pub fn fake_exponential(factor: U256, numerator: U256, denominator: U256) -> Result<U256, VMError> {
@@ -973,7 +966,7 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn ecpairing(groups_number: usize, fork: Fork) -> Result<u64, VMError> {
+pub fn ecpairing(groups_number: usize) -> Result<u64, VMError> {
     let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::ConversionError)?;
 
     let groups_cost = groups_number
@@ -1005,7 +998,6 @@ fn calculate_cost_and_gas_limit_call(
     gas_left: u64,
     call_gas_costs: u64,
     stipend: u64,
-    fork: Fork,
 ) -> Result<(u64, u64), VMError> {
     let gas_stipend = if value_is_zero { 0 } else { stipend };
     let gas_left = gas_left
@@ -1017,8 +1009,9 @@ fn calculate_cost_and_gas_limit_call(
         .checked_sub(gas_left / 64)
         .ok_or(OutOfGasError::GasUsedOverflow)?;
 
-    let gas: u64 = gas_from_stack.min(max_gas_for_call.into())
-        .try_into() 
+    let gas: u64 = gas_from_stack
+        .min(max_gas_for_call.into())
+        .try_into()
         .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
 
     Ok((

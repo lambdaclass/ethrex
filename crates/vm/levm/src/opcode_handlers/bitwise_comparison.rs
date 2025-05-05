@@ -4,7 +4,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::U256;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 

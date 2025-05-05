@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use ethrex_common::types::Account;
-use ethrex_common::types::Fork;
 use ethrex_common::Address;
 use ethrex_common::U256;
 use keccak_hash::H256;

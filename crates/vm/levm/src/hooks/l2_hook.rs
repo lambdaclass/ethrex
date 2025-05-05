@@ -12,10 +12,7 @@ use crate::{
     utils::{get_base_fee_per_blob_gas, get_valid_jump_destinations},
 };
 
-use super::{
-    default_hook::MAX_REFUND_QUOTIENT,
-    hook::Hook,
-};
+use super::{default_hook::MAX_REFUND_QUOTIENT, hook::Hook};
 
 pub struct L2Hook {
     pub recipient: Address,
@@ -32,9 +29,8 @@ impl Hook for L2Hook {
             let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
             // calldata_cost = tokens_in_calldata * 4
-            let calldata_cost: u64 =
-                gas_cost::tx_calldata(&vm.current_call_frame()?.calldata, vm.env.config.fork)
-                    .map_err(VMError::OutOfGas)?;
+            let calldata_cost: u64 = gas_cost::tx_calldata(&vm.current_call_frame()?.calldata)
+                .map_err(VMError::OutOfGas)?;
 
             // same as calculated in gas_used()
             let tokens_in_calldata: u64 = calldata_cost

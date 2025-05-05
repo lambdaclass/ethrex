@@ -136,7 +136,6 @@ impl<'a> VM<'a> {
 
     // SLOAD operation
     pub fn op_sload(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let (storage_slot_key, address) = {
             let current_call_frame = self.current_call_frame_mut()?;
             let storage_slot_key = current_call_frame.stack.pop()?;
@@ -192,8 +191,7 @@ impl<'a> VM<'a> {
         // https://eips.ethereum.org/EIPS/eip-2929
         let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) = (4800, 19900, 2800);
 
-        if new_storage_slot_value != current_value
-        {
+        if new_storage_slot_value != current_value {
             if current_value == original_value {
                 if original_value != U256::zero() && new_storage_slot_value == U256::zero() {
                     gas_refunds = gas_refunds
@@ -227,7 +225,6 @@ impl<'a> VM<'a> {
         }
 
         self.env.refunded_gas = gas_refunds;
-        let fork = self.env.config.fork;
 
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::sstore(
