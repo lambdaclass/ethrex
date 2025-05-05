@@ -70,13 +70,21 @@ impl GeneralizedDatabase {
     ) -> Result<U256, DatabaseError> {
         let value = self.store.get_storage_value(address, key)?;
         // Account must be already in in_memory_db
-        self.in_memory_db
-            .get_mut(&address)
-            .ok_or(DatabaseError::Custom(
-                "Account not found in InMemoryDB".to_string(),
-            ))?
-            .storage
-            .insert(key, value);
+        match self.in_memory_db.get_mut(&address) {
+            Some(account) => {
+                account.storage.insert(key, value);
+            }
+            None => {
+                self.get_account_from_database(address)?;
+                self.in_memory_db
+                    .get_mut(&address)
+                    .ok_or(DatabaseError::Custom(
+                        "Account not found in InMemoryDB after fetching from database".to_string(),
+                    ))?
+                    .storage
+                    .insert(key, value);
+            }
+        }
         Ok(value)
     }
 
