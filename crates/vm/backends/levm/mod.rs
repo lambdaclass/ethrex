@@ -1,6 +1,5 @@
 pub mod db;
 mod l2_utils;
-use ethrex_levm::db::error::DatabaseError;
 pub use l2_utils::update_state_diff_size;
 
 use super::revm::db::get_potential_child_nodes;
@@ -168,7 +167,7 @@ impl LEVM {
         let account_updates = LEVM::get_state_transitions_no_drain(db, fork)?;
         db.cache.clear();
         db.in_memory_db.clear();
-        return Ok(account_updates);
+        Ok(account_updates)
     }
 
     fn get_state_transitions_no_drain(
