@@ -53,7 +53,11 @@ contract CommonBridge is
         _;
     }
 
-    /// @inheritdoc ICommonBridge
+    /// @notice Initializes the contract.
+    /// @dev This method is called only once after the contract is deployed.
+    /// @dev It sets the OnChainProposer address.
+    /// @param owner the address of the owner who can perform upgrades.
+    /// @param onChainProposer the address of the OnChainProposer contract.
     function initialize(
         address owner,
         address onChainProposer
@@ -272,6 +276,7 @@ contract CommonBridge is
     }
 
     /// @notice Allow owner to upgrade the contract.
+    /// @param newImplementation the address of the new implementation
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override onlyOwner {}

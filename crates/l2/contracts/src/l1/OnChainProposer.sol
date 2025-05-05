@@ -79,7 +79,14 @@ contract OnChainProposer is
         _;
     }
 
-    /// @inheritdoc IOnChainProposer
+    /// @notice Initializes the contract.
+    /// @dev This method is called only once after the contract is deployed.
+    /// @dev It sets the bridge address.
+    /// @param _validium initialize the contract in validium mode.
+    /// @param owner the address of the owner who can perform upgrades.
+    /// @param bridge the address of the bridge contract.
+    /// @param r0verifier the address of the risc0 groth16 verifier.
+    /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
         bool _validium,
         address owner,
@@ -282,6 +289,7 @@ contract OnChainProposer is
     }
 
     /// @notice Allow owner to upgrade the contract.
+    /// @param newImplementation the address of the new implementation
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override onlyOwner {}
