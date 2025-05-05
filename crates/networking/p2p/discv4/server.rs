@@ -14,6 +14,7 @@ use crate::{
     rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
     types::{Endpoint, Node, NodeRecord},
 };
+use ethrex_common::types::ForkId;
 use ethrex_common::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 use std::{
@@ -80,7 +81,12 @@ impl Discv4Server {
 
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
-            async move { self_clone.receive().await }
+            // the fork id is passed as a param in order to avoid accesing to the db when handling msgs
+            let fork_id = match self_clone.ctx.storage.get_fork_id().await {
+                Ok(fi) => Some(fi),
+                Err(_) => None,
+            };
+            async move { self_clone.receive(fork_id).await }
         });
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
@@ -100,7 +106,7 @@ impl Discv4Server {
         }
     }
 
-    pub async fn receive(&self) {
+    pub async fn receive(&self, fork_id: Option<ForkId>) {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
         loop {
@@ -119,7 +125,7 @@ impl Discv4Server {
                     let msg = packet.get_message();
                     let msg_name = msg.to_string();
                     debug!("Message: {:?} from {}", msg, packet.get_node_id());
-                    if let Err(e) = self.handle_message(packet, from).await {
+                    if let Err(e) = self.handle_message(packet, from, fork_id.clone()).await {
                         debug!("Error while processing {} message: {:?}", msg_name, e);
                     };
                 }
@@ -127,7 +133,12 @@ impl Discv4Server {
         }
     }
 
-    async fn handle_message(&self, packet: Packet, from: SocketAddr) -> Result<(), DiscoveryError> {
+    async fn handle_message(
+        &self,
+        packet: Packet,
+        from: SocketAddr,
+        fork_id: Option<ForkId>,
+    ) -> Result<(), DiscoveryError> {
         match packet.get_message() {
             Message::Ping(msg) => {
                 if is_msg_expired(msg.expiration) {
@@ -331,10 +342,6 @@ impl Discv4Server {
                 if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
-                let fork_id = match self.ctx.storage.get_fork_id().await {
-                    Ok(fi) => Some(fi),
-                    Err(_) => None,
-                };
                 let Ok(node_record) = NodeRecord::from_node(
                     self.ctx.local_node,
                     self.ctx.enr_seq,
@@ -763,7 +770,7 @@ pub(super) mod tests {
             tracker.spawn({
                 let discv4 = discv4.clone();
                 async move {
-                    discv4.receive().await;
+                    discv4.receive(None).await;
                 }
             });
             // we need to spawn the p2p service, as the nodes will try to connect each other via tcp once bonded
