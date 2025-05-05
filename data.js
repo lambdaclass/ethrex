@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746461026741,
+  "lastUpdate": 1746463640255,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5365,6 +5365,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177577802410,
             "range": "± 451229834",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "72628438+avilagaston9@users.noreply.github.com",
+            "name": "Avila Gastón",
+            "username": "avilagaston9"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b817a9a73511343006a60c37e4be464a5452a4a5",
+          "message": "fix(l2): ignore deposits after state reconstruction (#2642)\n\n**Motivation**\n\nCurrently, If we start our l2 node with a reconstructed state, the node\nwill process all deposit logs from l1 and mint them again in l2. This is\nbecause, in a reconstructed store, we don't have the included\ntransactions to determine whether a deposit was previously processed or\nnot.\n\n**Description**\n\n- Fixes the reconstruct algorithm to start from batch_number=1.\n- Fixes the `l2MintTxHash` emitted in the `CommonBridge` contract.\n- Adds an additional check to the `integration_test` to wait for the\ndeposit receipt on L2.\n- Reuses the emitted `l2MintTxHash` instead of recalculating it in the\nwatcher.\n- Checks, in the `CommonBridge` contract, whether a deposit is pending\nor not before minting the transaction.\n- Creates `DepositData` struct in `l1_watcher`\n\n### How to test\n\nHere we are going to run the integration test on a node with a\nreconstructed state.\nYou may want to lower the `commit_time_ms`.\n\n1. Start the prover and network  with:\n\n```\nmake init-prover\nmake init\n```\n\n2. Wait until batch 6 is verified and stop the l2 node with `ctrl + c`:\n\n```\nINFO ethrex_l2::sequencer::l1_proof_sender: Sent proof for batch 6...\nctrl + c\n```\n\n\n> [!NOTE]\n> This is because we are going to use already created blobs with 6\nbatches and we need\n> to advance the L1 until that point.\n\n\n3. Clean db:\n\n```\nmake rm-db-l2\n```\n\n4. Reconstruct the state choosing a `path_to_store`:\n```\ncargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s path_to_store -c 0x0007a881CD95B1484fca47615B64803dad620C8d\n```\n\n5. Start the l2 node using `path_to_store`:\n\n```\nmake init-l2 ethrex_L2_DEV_LIBMDBX=path_to_store\n```\n\nYou should observe that all deposits are skipped now.\n\n6. In a new terminal, run the integration test:\n\n```\ncd crates/l2\nmake test\n```\n\n> [!WARNING]\n> Before running the integration test, wait for 20 blocks to be built in\nthe L2.\n> This is because the test currently uses\n[estimate_gas_tip](https://github.com/lambdaclass/ethrex/blob/aa3c41b8da043ff5cd1ad699ce882c41edefc460/crates/networking/rpc/eth/fee_calculator.rs#L30)\nthat needs at least 20 blocks to estimate the gas price.\n\nCloses #1279",
+          "timestamp": "2025-05-05T15:45:26Z",
+          "tree_id": "ed439d0b62fa3fc2631f7429301389feee87ae52",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b817a9a73511343006a60c37e4be464a5452a4a5"
+        },
+        "date": 1746463638421,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179227682735,
+            "range": "± 584334148",
             "unit": "ns/iter"
           }
         ]
