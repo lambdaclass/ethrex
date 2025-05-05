@@ -486,10 +486,6 @@ impl<'a> VM<'a> {
 
     // CREATE2 operation
     pub fn op_create2(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-1014
-        if self.env.config.fork < Fork::Constantinople {
-            return Err(VMError::InvalidOpcode);
-        }
         let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
