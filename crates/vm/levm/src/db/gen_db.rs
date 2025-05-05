@@ -133,11 +133,6 @@ impl<'a> VM<'a> {
         let account = cache::get_account_mut(&mut self.db.cache, &address)
             .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
 
-        self.db
-            .in_memory_db
-            .entry(address)
-            .or_insert(account.clone());
-
         Ok(account)
     }
 
