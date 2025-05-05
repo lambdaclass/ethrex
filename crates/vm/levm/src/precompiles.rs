@@ -67,8 +67,7 @@ use crate::{
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
         BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST,
-        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECADD_COST_PRE_ISTANBUL, ECMUL_COST,
-        ECMUL_COST_PRE_ISTANBUL, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
+        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
         POINT_EVALUATION_COST,
     },
 };
@@ -595,13 +594,8 @@ pub fn ecadd(
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 128);
-    // https://eips.ethereum.org/EIPS/eip-1108
-    let gas_cost = if fork < Fork::Istanbul {
-        ECADD_COST_PRE_ISTANBUL
-    } else {
-        ECADD_COST
-    };
-    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+
+    increase_precompile_consumed_gas(gas_for_call, ECADD_COST, consumed_gas)?;
     let first_point_x = calldata
         .get(0..32)
         .ok_or(PrecompileError::ParsingInputError)?;
@@ -681,14 +675,8 @@ pub fn ecmul(
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
-    // https://eips.ethereum.org/EIPS/eip-1108
-    let gas_cost = if fork < Fork::Istanbul {
-        ECMUL_COST_PRE_ISTANBUL
-    } else {
-        ECMUL_COST
-    };
 
-    increase_precompile_consumed_gas(gas_for_call, gas_cost, consumed_gas)?;
+    increase_precompile_consumed_gas(gas_for_call, ECMUL_COST, consumed_gas)?;
 
     let point_x = calldata
         .get(0..32)

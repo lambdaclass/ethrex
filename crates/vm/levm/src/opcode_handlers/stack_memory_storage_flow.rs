@@ -235,7 +235,6 @@ impl<'a> VM<'a> {
                 current_value,
                 new_storage_slot_value,
                 storage_slot_was_cold,
-                fork,
             )?)?;
 
         self.update_account_storage(to, key, new_storage_slot_value)?;

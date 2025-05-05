@@ -102,7 +102,6 @@ pub const SLOAD_WARM_DYNAMIC: u64 = 100;
 pub const SSTORE_STATIC: u64 = 0;
 pub const SSTORE_COLD_DYNAMIC: u64 = 2100;
 pub const SSTORE_DEFAULT_DYNAMIC: u64 = 100;
-pub const SSTORE_DEFAULT_ISTANBUL_MUIR_GLACIER: u64 = 800;
 pub const SSTORE_DEFAULT_CONSTANTINOPLE: u64 = 200;
 pub const SSTORE_STORAGE_CREATION: u64 = 20000;
 pub const SSTORE_STORAGE_MODIFICATION: u64 = 2900;
@@ -119,7 +118,6 @@ pub const EXTCODESIZE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const EXTCODEHASH_STATIC: u64 = DEFAULT_STATIC;
 pub const EXTCODEHASH_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
-pub const EXTCODEHASH_STATIC_PRE_ISTANBUL: u64 = 400;
 
 pub const EXTCODECOPY_STATIC: u64 = 0;
 pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
@@ -162,7 +160,6 @@ pub const CREATE_BASE_COST: u64 = 32000;
 // Calldata costs
 pub const CALLDATA_COST_ZERO_BYTE: u64 = 4;
 pub const CALLDATA_COST_NON_ZERO_BYTE: u64 = 16;
-pub const CALLDATA_COST_NON_ZERO_BYTE_PRE_ISTANBUL: u64 = 68;
 pub const STANDARD_TOKEN_COST: u64 = 4;
 
 // Blob gas costs
@@ -202,14 +199,10 @@ pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 pub const MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN: u64 = 20;
 
 pub const ECADD_COST: u64 = 150;
-pub const ECADD_COST_PRE_ISTANBUL: u64 = 500;
 pub const ECMUL_COST: u64 = 6000;
-pub const ECMUL_COST_PRE_ISTANBUL: u64 = 40000;
 
 pub const ECPAIRING_BASE_COST: u64 = 45000;
 pub const ECPAIRING_GROUP_COST: u64 = 34000;
-pub const ECPAIRING_BASE_COST_PRE_ISTANBUL: u64 = 100000;
-pub const ECPAIRING_GROUP_COST_PRE_ISTANBUL: u64 = 80000;
 
 pub const POINT_EVALUATION_COST: u64 = 50000;
 
@@ -414,22 +407,11 @@ pub fn sstore(
     current_value: U256,
     new_value: U256,
     storage_slot_was_cold: bool,
-    fork: Fork,
 ) -> Result<u64, VMError> {
     let static_gas = SSTORE_STATIC;
-    let default_dynamic = match fork {
-        // https://eips.ethereum.org/EIPS/eip-1283
-        Fork::Constantinople => SSTORE_DEFAULT_CONSTANTINOPLE,
-        // https://eips.ethereum.org/EIPS/eip-2200
-        f if f == Fork::Istanbul || f == Fork::MuirGlacier => {
-            SSTORE_DEFAULT_ISTANBUL_MUIR_GLACIER
-        }
-        // https://eips.ethereum.org/EIPS/eip-2929
-        _ => SSTORE_DEFAULT_DYNAMIC,
-    };
 
     let mut base_dynamic_gas = if new_value == current_value {
-        default_dynamic
+        SSTORE_DEFAULT_DYNAMIC
     } else if current_value == original_value {
         if original_value.is_zero() {
             SSTORE_STORAGE_CREATION
@@ -437,7 +419,7 @@ pub fn sstore(
             SSTORE_STORAGE_MODIFICATION
         }
     } else {
-        default_dynamic
+        SSTORE_DEFAULT_DYNAMIC
     };
     // https://eips.ethereum.org/EIPS/eip-2929
     if storage_slot_was_cold {
@@ -587,16 +569,9 @@ pub fn tx_calldata(calldata: &Bytes, fork: Fork) -> Result<u64, OutOfGasError> {
     let mut calldata_cost: u64 = 0;
     for byte in calldata {
         calldata_cost = if *byte != 0 {
-            if fork >= Fork::Istanbul {
-                calldata_cost
-                    .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
-                    .ok_or(OutOfGasError::GasUsedOverflow)?
-            } else {
-                // EIP-2028
-                calldata_cost
-                    .checked_add(CALLDATA_COST_NON_ZERO_BYTE_PRE_ISTANBUL)
-                    .ok_or(OutOfGasError::GasUsedOverflow)?
-            }
+            calldata_cost
+                .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
+                .ok_or(OutOfGasError::GasUsedOverflow)?
         } else {
             calldata_cost
                 .checked_add(CALLDATA_COST_ZERO_BYTE)
@@ -1003,21 +978,12 @@ fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u
 
 pub fn ecpairing(groups_number: usize, fork: Fork) -> Result<u64, VMError> {
     let groups_number = u64::try_from(groups_number).map_err(|_| InternalError::ConversionError)?;
-    // https://eips.ethereum.org/EIPS/eip-1108
-    let (group_cost_scalar, base_cost) = if fork < Fork::Istanbul {
-        (
-            ECPAIRING_GROUP_COST_PRE_ISTANBUL,
-            ECPAIRING_GROUP_COST_PRE_ISTANBUL,
-        )
-    } else {
-        (ECPAIRING_GROUP_COST, ECPAIRING_BASE_COST)
-    };
 
     let groups_cost = groups_number
-        .checked_mul(group_cost_scalar)
+        .checked_mul(ECPAIRING_GROUP_COST)
         .ok_or(OutOfGasError::GasCostOverflow)?;
     groups_cost
-        .checked_add(base_cost)
+        .checked_add(ECPAIRING_BASE_COST)
         .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))
 }
 
