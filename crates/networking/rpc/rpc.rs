@@ -9,6 +9,7 @@ use crate::engine::{
     },
     ExchangeCapabilitiesRequest,
 };
+use crate::eth;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -36,7 +37,6 @@ use crate::utils::{
     RpcSuccessResponse,
 };
 use crate::{admin, net};
-use crate::{eth, web3};
 #[cfg(feature = "based")]
 use crate::{EngineClient, EthClient};
 use axum::extract::State;
@@ -71,6 +71,7 @@ cfg_if::cfg_if! {
         use crate::l2::transaction::SponsoredTx;
         use ethrex_common::Address;
         use secp256k1::SecretKey;
+        use ethrex_storage_rollup::StoreRollup;
     }
 }
 
@@ -93,6 +94,7 @@ pub struct RpcApiContext {
     pub local_node_record: NodeRecord,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
+    pub client_version: String,
     #[cfg(feature = "based")]
     pub gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -103,6 +105,8 @@ pub struct RpcApiContext {
     pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
     pub sponsor_pk: SecretKey,
+    #[cfg(feature = "l2")]
+    pub rollup_store: StoreRollup,
 }
 
 pub trait RpcHandler: Sized {
@@ -146,11 +150,13 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    client_version: String,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "based")] gateway_pubkey: Public,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
+    #[cfg(feature = "l2")] rollup_store: StoreRollup,
 ) {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -163,6 +169,7 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
+        client_version,
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
@@ -173,6 +180,8 @@ pub async fn start_api(
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
         sponsor_pk,
+        #[cfg(feature = "l2")]
+        rollup_store,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -440,6 +449,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
             context.storage,
             context.local_p2p_node,
             context.local_node_record,
+            context.client_version,
         ),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
@@ -447,7 +457,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => web3::client_version(req, context.storage),
+        "web3_clientVersion" => Ok(Value::String(context.client_version)),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -472,8 +482,11 @@ pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 
 #[cfg(feature = "l2")]
 pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+    use crate::l2::withdrawal::GetWithdrawalProof;
+
     match req.method.as_str() {
         "ethrex_sendTransaction" => SponsoredTx::call(req, context).await,
+        "ethrex_getWithdrawalProof" => GetWithdrawalProof::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()))
         }
@@ -502,8 +515,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::test_utils::{example_local_node_record, example_p2p_node};
-    use ethrex_blockchain::Blockchain;
+    use crate::utils::test_utils::default_context_with_storage;
     use ethrex_common::{
         types::{ChainConfig, Genesis},
         H160,
@@ -513,13 +525,6 @@ mod tests {
     use std::fs::File;
     use std::io::BufReader;
     use std::str::FromStr;
-
-    #[cfg(feature = "based")]
-    use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
-    use bytes::Bytes;
-    #[cfg(feature = "l2")]
-    use secp256k1::rand;
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses
@@ -531,33 +536,15 @@ mod tests {
     async fn admin_nodeinfo_request() {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
-        let local_p2p_node = example_p2p_node();
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())
             .await
             .unwrap();
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let context = RpcApiContext {
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            storage: storage.clone(),
-            blockchain,
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let context = default_context_with_storage(storage).await;
+        let local_p2p_node = context.local_p2p_node;
+
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
@@ -573,7 +560,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
                 "ip": "127.0.0.1",
-                "name": "ethrex/0.1.0/rust1.82",
+                "name": "ethrex/test",
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303
@@ -608,8 +595,8 @@ mod tests {
                     }
                 },
             }
-        }).to_string();
-        let expected_response = to_rpc_response_success_value(&json);
+        });
+        let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 
@@ -630,33 +617,13 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let genesis = read_execution_api_genesis_file();
         storage
             .add_initial_state(genesis)
             .await
             .expect("Failed to add genesis block to DB");
-        let local_p2p_node = example_p2p_node();
         // Process request
-        let context = RpcApiContext {
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let context = default_context_with_storage(storage).await;
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
         let expected_response = to_rpc_response_success_value(
@@ -674,33 +641,14 @@ mod tests {
         // Setup initial storage
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let genesis = read_execution_api_genesis_file();
         storage
             .add_initial_state(genesis)
             .await
             .expect("Failed to add genesis block to DB");
-        let local_p2p_node = example_p2p_node();
         // Process request
-        let context = RpcApiContext {
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            storage,
-            blockchain,
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let context = default_context_with_storage(storage).await;
+
         let result = map_http_requests(&request, context).await;
         let response =
             serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result))
@@ -753,32 +701,12 @@ mod tests {
             .set_chain_config(&example_chain_config())
             .await
             .unwrap();
-        let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let chain_id = storage
             .get_chain_config()
             .expect("failed to get chain_id")
             .chain_id
             .to_string();
-        let local_p2p_node = example_p2p_node();
-        let context = RpcApiContext {
-            storage,
-            blockchain,
-            local_p2p_node,
-            local_node_record: example_local_node_record(),
-            jwt_secret: Default::default(),
-            active_filters: Default::default(),
-            syncer: Arc::new(SyncManager::dummy()),
-            #[cfg(feature = "based")]
-            gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
-            gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
-            gateway_pubkey: Default::default(),
-            #[cfg(feature = "l2")]
-            valid_delegation_addresses: Vec::new(),
-            #[cfg(feature = "l2")]
-            sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
-        };
+        let context = default_context_with_storage(storage).await;
         // Process request
         let result = map_http_requests(&request, context).await;
         let response = rpc_response(request.id, result);
