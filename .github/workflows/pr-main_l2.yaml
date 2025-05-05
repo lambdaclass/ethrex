@@ -194,6 +194,7 @@ jobs:
       - name: Run tests
         run: |
           cd crates/l2
+          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           touch .env
           cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
           cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
