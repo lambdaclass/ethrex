@@ -68,13 +68,13 @@ impl Trie {
     }
 
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
-    pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, path: impl AsRef<[u8]>) -> Result<Option<ValueRLP>, TrieError> {
         if let Some(root) = &self.root {
             let root_node = self
                 .state
                 .get_node(*root)?
                 .ok_or(TrieError::InconsistentTree)?;
-            root_node.get(&self.state, Nibbles::from_bytes(path))
+            root_node.get(&self.state, Nibbles::from_bytes(path.as_ref()))
         } else {
             Ok(None)
         }

@@ -16,9 +16,11 @@ pub trait SnapshotLayer {
     fn get_account_rlp(&self, hash: H256) -> Option<AccountStateRLP>;
 
     /// Get a storage value by its account and storage hash.
-    fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<Vec<u8>>;
+    fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<&Vec<u8>>;
 
     // TODO: maybe move these to a private trait.
+
+    fn stale(&self) -> bool;
 
     fn parent(&self) -> Option<Box<dyn SnapshotLayer>>;
 

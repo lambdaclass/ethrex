@@ -43,15 +43,11 @@ impl SnapshotTree {
         accounts: HashMap<H256, AccountState>,
         storages: HashMap<(H256, H256), H256>,
     ) {
-
     }
 }
 
 impl SnapshotLayer {
-    pub fn new(store: Store, state_root: H256, ) {
-
-    }
-
+    pub fn new(store: Store, state_root: H256) {}
 
     pub fn get_account(&self, hash: H256) -> Option<&AccountState> {
         self.accounts.get(&hash)

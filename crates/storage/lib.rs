@@ -1,13 +1,13 @@
 mod api;
 
 mod account_update;
+mod cache;
 mod rlp;
 mod snapshot;
 mod store;
 mod store_db;
 mod trie_db;
 mod utils;
-mod cache;
 
 pub mod error;
 pub use account_update::AccountUpdate;

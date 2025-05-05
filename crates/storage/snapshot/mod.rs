@@ -1,5 +1,5 @@
-mod snapshot;
 mod difflayer;
-mod layer;
 mod disklayer;
+mod layer;
+mod snapshot;
 pub use snapshot::{SnapshotLayer, SnapshotTree};
