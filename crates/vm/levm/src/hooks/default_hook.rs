@@ -159,31 +159,11 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        let gas_refunded: u64 = compute_gas_refunded(vm, report)?;
+        let gas_refunded: u64 = compute_gas_refunded(report)?;
         let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
         refund_sender(vm, report, gas_refunded, actual_gas_used)?;
 
         pay_coinbase(vm, actual_gas_used)?;
-
-        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
-        let refunded_gas = report.gas_refunded.min(
-            gas_used_without_refunds
-                .checked_div(MAX_REFUND_QUOTIENT)
-                .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
-        );
-
-        // b. Calculate actual gas used in the whole transaction. Since Prague there is a base minimum to be consumed.
-        let exec_gas_consumed = gas_used_without_refunds
-            .checked_sub(refunded_gas)
-            .ok_or(VMError::Internal(InternalError::UndefinedState(-2)))?;
-
-        let actual_gas_used = if vm.env.config.fork >= Fork::Prague {
-            let minimum_gas_consumed = vm.get_min_gas_used()?;
-            exec_gas_consumed.max(minimum_gas_consumed)
-        } else {
-            exec_gas_consumed
-        };
 
         delete_self_destruct_accounts(vm)?;
 
@@ -230,16 +210,11 @@ pub fn refund_sender(
 }
 
 // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-pub fn compute_gas_refunded(vm: &mut VM<'_>, report: &ExecutionReport) -> Result<u64, VMError> {
-    let refund_quotient = if vm.env.config.fork < Fork::London {
-        MAX_REFUND_QUOTIENT_PRE_LONDON
-    } else {
-        MAX_REFUND_QUOTIENT
-    };
+pub fn compute_gas_refunded(report: &ExecutionReport) -> Result<u64, VMError> {
     Ok(report.gas_refunded.min(
         report
             .gas_used
-            .checked_div(refund_quotient)
+            .checked_div(MAX_REFUND_QUOTIENT)
             .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
     ))
 }
@@ -292,7 +267,7 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
 
     // calldata_cost = tokens_in_calldata * 4
     let calldata_cost: u64 =
-        gas_cost::tx_calldata(&calldata, vm.env.config.fork).map_err(VMError::OutOfGas)?;
+        gas_cost::tx_calldata(&calldata).map_err(VMError::OutOfGas)?;
 
     // same as calculated in gas_used()
     let tokens_in_calldata: u64 = calldata_cost

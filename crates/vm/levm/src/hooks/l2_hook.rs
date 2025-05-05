@@ -1,11 +1,7 @@
 use crate::{
-    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
-    hooks::{default_hook, hook::Hook},
-    utils::get_valid_jump_destinations,
-    vm::VM,
+    errors::{ExecutionReport, InternalError, TxValidationError, VMError}, hooks::{default_hook, hook::Hook}, utils::get_valid_jump_destinations, vm::VM
 };
 
-use super::{default_hook::MAX_REFUND_QUOTIENT, hook::Hook};
 use ethrex_common::{types::Fork, Address, U256};
 
 pub struct L2Hook {
@@ -30,11 +26,6 @@ impl Hook for L2Hook {
         if vm.env.config.fork >= Fork::Prague {
             default_hook::validate_min_gas_limit(vm)?;
         }
-
-
-        // calldata_cost = tokens_in_calldata * 4
-        let calldata_cost: u64 = gas_cost::tx_calldata(&vm.current_call_frame()?.calldata)
-                .map_err(VMError::OutOfGas)?;
 
         if !vm.env.is_privileged {
             // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
@@ -140,22 +131,11 @@ impl Hook for L2Hook {
 
         // 2. Return unused gas + gas refunds to the sender.
 
-        // a. Calculate refunded gas
-        let gas_used_without_refunds = report.gas_used;
-
-        // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-        // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
-        let refunded_gas = report.gas_refunded.min(
-            gas_used_without_refunds
-                .checked_div(MAX_REFUND_QUOTIENT)
-                .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
-        );
-
         if vm.env.is_privileged {
             let gas_to_pay_coinbase = compute_coinbase_fee(vm, report)?;
             default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
         } else {
-            let gas_refunded = default_hook::compute_gas_refunded(vm, report)?;
+            let gas_refunded = default_hook::compute_gas_refunded(report)?;
             let actual_gas_used =
                 default_hook::compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
             default_hook::refund_sender(vm, report, gas_refunded, actual_gas_used)?;
@@ -179,7 +159,7 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
 }
 
 pub fn compute_coinbase_fee(vm: &mut VM<'_>, report: &mut ExecutionReport) -> Result<u64, VMError> {
-    let mut gas_refunded = default_hook::compute_gas_refunded(vm, report)?;
+    let mut gas_refunded = default_hook::compute_gas_refunded(report)?;
     let mut gas_consumed = report.gas_used;
 
     report.gas_refunded = gas_refunded;
