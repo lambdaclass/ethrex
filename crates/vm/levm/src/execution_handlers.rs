@@ -4,7 +4,7 @@ use crate::{
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
-    vm::{StateBackup, VM},
+    vm::{VM},
 };
 
 use bytes::Bytes;
@@ -145,7 +145,6 @@ impl<'a> VM<'a> {
     }
 
     pub fn handle_opcode_result(&mut self) -> Result<ExecutionReport, VMError> {
-        let backup = &self.current_call_frame()?.state_backup;
         let mut transaction_result = TxResult::Success;
         {
             // Check for the case where the transaction is a contract creation one
