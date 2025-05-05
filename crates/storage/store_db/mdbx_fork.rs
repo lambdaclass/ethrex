@@ -1,4 +1,4 @@
-use ethrex_trie::InMemoryTrieDB;
+use ethrex_trie::{InMemoryTrieDB, NodeHash};
 use reth_db::table::DupSort;
 use reth_primitives::revm_primitives::db::components::block_hash;
 use reth_provider::providers::StaticFileProvider;
@@ -179,22 +179,25 @@ impl<T> TrieDB for MDBXTrieDB<T>
 where
     T: RethTable<Key = Vec<u8>, Value = Vec<u8>>,
 {
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let tx = self.db.tx().unwrap();
-        Ok(tx.get::<T>(key).unwrap())
+        let node_hash_bytes = key.as_ref().clone().to_vec();
+        Ok(tx.get::<T>(node_hash_bytes).unwrap())
     }
 
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
+    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
         let tx = self.db.tx_mut().unwrap();
-        tx.put::<T>(key, value).unwrap();
+        let node_hash_bytes = key.as_ref().clone().to_vec();
+        tx.put::<T>(node_hash_bytes, value).unwrap();
         tx.commit().unwrap();
         Ok(())
     }
 
-    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.tx_mut().unwrap();
         for (k, v) in key_values {
-            txn.put::<T>(k, v).unwrap();
+            let node_hash_bytes = k.as_ref().clone().to_vec();
+            txn.put::<T>(node_hash_bytes, v).unwrap();
         }
         txn.commit().unwrap();
         Ok(())
@@ -228,21 +231,21 @@ impl<T> TrieDB for MDBXTrieDupsort<T>
 where
     T: DupSort<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>,
 {
-    fn get(&self, subkey: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, subkey: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let tx = self.db.tx().unwrap();
         let mut cursor = tx.cursor_dup_read::<T>().unwrap();
-
+        let node_hash_bytes = subkey.as_ref().to_vec();
         let value = cursor
             .seek_by_key_subkey(
                 self.fixed_key.lock().unwrap().as_ref().unwrap().clone(),
-                subkey,
+                node_hash_bytes,
             )
             .unwrap();
 
         Ok(value)
     }
 
-    fn put(&self, subkey: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
+    fn put(&self, subkey: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
         let tx = self.db.tx_mut().unwrap();
         let mut cursor = tx.cursor_dup_write::<T>().unwrap();
 
@@ -250,13 +253,13 @@ where
             .seek_exact(self.fixed_key.lock().unwrap().as_ref().unwrap().clone())
             .unwrap();
 
-        cursor.append_dup(subkey.clone(), value).unwrap();
+        cursor.append_dup(subkey.as_ref().clone().to_vec(), value).unwrap();
 
         tx.commit().unwrap();
         Ok(())
     }
 
-    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let tx = self.db.tx_mut().unwrap();
         let mut cursor = tx.cursor_dup_write::<T>().unwrap();
 
@@ -267,7 +270,7 @@ where
 
         for (subkey, value) in key_values {
             // Append each subkey+value pair
-            cursor.append_dup(subkey.clone(), value).unwrap();
+            cursor.append_dup(subkey.as_ref().clone().to_vec(), value).unwrap();
         }
 
         tx.commit().unwrap();
