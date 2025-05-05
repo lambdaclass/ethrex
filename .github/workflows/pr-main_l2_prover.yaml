@@ -30,7 +30,7 @@ jobs:
       - name: RISC-V SP1 toolchain install
         run: |
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.0
+          ~/.sp1/bin/sp1up --version 4.1.7
       - name: Check sp1
         run: |
             cargo check -p ethrex-prover -F sp1
@@ -75,7 +75,7 @@ jobs:
       - name: RISC-V SP1 toolchain install
         run: |
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 4.1.0
+          ~/.sp1/bin/sp1up --version 4.1.7
       - name: Build prover and SP1's zkVM
         run: |
           cd crates/l2/prover
