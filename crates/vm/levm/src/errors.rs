@@ -194,6 +194,8 @@ pub enum InternalError {
     InvalidSpecId,
     #[error("Account should had been delegated")]
     AccountNotDelegated,
+    #[error("No recipient found for privilege transaction")]
+    RecipientNotFoundForPrivilegeTransaction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
