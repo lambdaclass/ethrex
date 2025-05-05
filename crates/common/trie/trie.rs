@@ -345,7 +345,7 @@ impl Trie {
         let hmap: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
-        Trie::new(Box::new(db))
+        Trie::new(Arc::new(db))
     }
 }
 
