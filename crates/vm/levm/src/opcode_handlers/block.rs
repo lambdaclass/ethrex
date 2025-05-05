@@ -120,11 +120,6 @@ impl<'a> VM<'a> {
 
     // SELFBALANCE operation
     pub fn op_selfbalance(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-1884
-        if self.env.config.fork < Fork::London {
-            return Err(VMError::InvalidOpcode);
-        }
-
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 

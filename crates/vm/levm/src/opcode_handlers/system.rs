@@ -616,8 +616,7 @@ impl<'a> VM<'a> {
 
             // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
             // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
-            if self.env.config.fork < Fork::London
-                && !self.accrued_substate.selfdestruct_set.contains(&to)
+            if !self.accrued_substate.selfdestruct_set.contains(&to)
             {
                 self.env.refunded_gas = self
                     .env

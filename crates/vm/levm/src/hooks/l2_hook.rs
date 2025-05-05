@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    default_hook::{MAX_REFUND_QUOTIENT, MAX_REFUND_QUOTIENT_PRE_LONDON},
+    default_hook::MAX_REFUND_QUOTIENT,
     hook::Hook,
 };
 
@@ -220,14 +220,9 @@ impl Hook for L2Hook {
 
         // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
         // "The max refundable proportion of gas was reduced from one half to one fifth by EIP-3529 by Buterin and Swende [2021] in the London release"
-        let refund_quotient = if vm.env.config.fork < Fork::London {
-            MAX_REFUND_QUOTIENT_PRE_LONDON
-        } else {
-            MAX_REFUND_QUOTIENT
-        };
         let refunded_gas = report.gas_refunded.min(
             gas_used_without_refunds
-                .checked_div(refund_quotient)
+                .checked_div(MAX_REFUND_QUOTIENT)
                 .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
         );
 
