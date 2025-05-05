@@ -126,6 +126,9 @@ impl MDBXFork {
         tx.create_db(Some("StorageHealPaths"), DatabaseFlags::DUP_SORT)
             .unwrap();
 
+        tx.create_db(Some("InvalidAncestor"), DatabaseFlags::default())
+            .unwrap();
+
         tx.commit().unwrap();
 
         let env_account_trie = DatabaseEnv::open(
@@ -298,6 +301,7 @@ tables! {
     table StateSnapShot<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
     table StorageSnapshot<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
     table StorageHealPaths<Key = Vec<u8>, Value = Vec<u8>>;
+    table InvalidAncestor<Key = Vec<u8>, Value = Vec<u8>>;
 }
 
 #[async_trait::async_trait]
@@ -1298,10 +1302,23 @@ impl StoreEngine for MDBXFork {
         &self,
         bad_block: BlockHash,
         latest_valid: BlockHash,
-) -> Result<(), StoreError> { todo!() }
+) -> Result<(), StoreError> {
+        let key = bad_block.encode_to_vec();
+        let encoded_value = latest_valid.encode_to_vec();
+        let tx = self.env.tx_mut().unwrap();
+        tx.put::<InvalidAncestor>(key, encoded_value).unwrap();
+        Ok(())
+    }
 
     async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,
-    ) -> Result<Option<BlockHash>, StoreError> { todo!() }
+    ) -> Result<Option<BlockHash>, StoreError> {
+        let key = block.encode_to_vec();
+        let tx = self.env.tx().unwrap();
+        let Some(result) = tx.get::<InvalidAncestor>(key).unwrap() else {
+            return Ok(None);
+        };
+        Ok(Some(BlockHash::decode(&result).unwrap()))
+    }
 }
