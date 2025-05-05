@@ -45,12 +45,21 @@ impl GeneralizedDatabase {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
             None => {
-                let account = self.store.get_account(address)?;
+                let account = self.get_account_from_database(address)?;
                 cache::insert_account(&mut self.cache, address, account.clone());
-                self.in_memory_db.entry(address).or_insert(account.clone());
                 Ok(account)
             }
         }
+    }
+
+    /// Gets account from storage, storing in InMemoryDB for efficiency when getting AccountUpdates.
+    pub fn get_account_from_database(
+        &mut self,
+        address: Address,
+    ) -> Result<Account, DatabaseError> {
+        let account = self.store.get_account(address)?;
+        self.in_memory_db.insert(address, account.clone());
+        Ok(account)
     }
 
     /// Gets account without pushing it to the cache
@@ -61,8 +70,7 @@ impl GeneralizedDatabase {
         match cache::get_account(&self.cache, &address) {
             Some(acc) => Ok(acc.clone()),
             None => {
-                let account = self.store.get_account(address)?;
-                self.in_memory_db.entry(address).or_insert(account.clone());
+                let account = self.get_account_from_database(address)?;
                 Ok(account)
             }
         }
@@ -79,7 +87,6 @@ impl GeneralizedDatabase {
     ) -> Result<(Account, bool), DatabaseError> {
         let address_was_cold = accrued_substate.touched_accounts.insert(address);
         let account = self.get_account(address)?;
-        self.in_memory_db.entry(address).or_insert(account.clone());
 
         Ok((account, address_was_cold))
     }
@@ -92,7 +99,7 @@ impl<'a> VM<'a> {
         let backup_account = match cache::get_account(&self.db.cache, &address) {
             Some(acc) => acc.clone(),
             None => {
-                let acc = self.db.store.get_account(address)?;
+                let acc = self.db.get_account_from_database(address)?;
                 cache::insert_account(&mut self.db.cache, address, acc.clone());
                 acc
             }

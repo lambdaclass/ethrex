@@ -251,7 +251,7 @@ impl LEVM {
                     .ok_or(EvmError::LevmDatabaseError(DatabaseError::Custom(
                         "Account not found in the cache".to_string(),
                     )))?;
-            let account_existed = db.in_memory_db.contains_key(address);
+            let account_existed = db.store.account_exists(*address);
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -274,18 +274,15 @@ impl LEVM {
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
-            for (key, storage_slot) in &new_state_account.storage {
-                let storage_before_block = *db
-                    .in_memory_db
-                    .get(address)
-                    .ok_or(EvmError::LevmDatabaseError(DatabaseError::Custom(
-                        "Account not found in the cache".to_string(),
-                    )))?
+            for (key, &new_value) in &new_state_account.storage {
+                let old_value = initial_state_account
                     .storage
                     .get(key)
-                    .unwrap_or(&U256::zero());
-                if *storage_slot != storage_before_block {
-                    added_storage.insert(*key, *storage_slot);
+                    .copied()
+                    .unwrap_or(U256::zero());
+
+                if new_value != old_value {
+                    added_storage.insert(*key, new_value);
                     storage_updated = true;
                 }
             }
