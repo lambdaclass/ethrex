@@ -256,10 +256,6 @@ impl<'a> VM<'a> {
 
     // DELEGATECALL operation
     pub fn op_delegatecall(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-7
-        if self.env.config.fork < Fork::Homestead {
-            return Err(VMError::InvalidOpcode);
-        }
         // STACK
         let (
             gas,

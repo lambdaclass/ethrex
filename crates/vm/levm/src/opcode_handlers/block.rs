@@ -105,10 +105,6 @@ impl<'a> VM<'a> {
 
     // CHAINID operation
     pub fn op_chainid(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-1344
-        if self.env.config.fork < Fork::Istanbul {
-            return Err(VMError::InvalidOpcode);
-        }
         let chain_id = self.env.chain_id;
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;

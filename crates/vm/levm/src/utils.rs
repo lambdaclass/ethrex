@@ -499,11 +499,10 @@ impl<'a> VM<'a> {
         // Create Cost
         if self.is_create() {
             // https://eips.ethereum.org/EIPS/eip-2#specification
-            if self.env.config.fork >= Fork::Homestead {
-                intrinsic_gas = intrinsic_gas
-                    .checked_add(CREATE_BASE_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            }
+            intrinsic_gas = intrinsic_gas
+                .checked_add(CREATE_BASE_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {

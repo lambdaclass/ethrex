@@ -195,8 +195,6 @@ pub const MODEXP_STATIC_COST: u64 = 200;
 pub const MODEXP_DYNAMIC_BASE: u64 = 200;
 pub const MODEXP_DYNAMIC_QUOTIENT: u64 = 3;
 
-pub const MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN: u64 = 20;
-
 pub const ECADD_COST: u64 = 150;
 pub const ECMUL_COST: u64 = 6000;
 
