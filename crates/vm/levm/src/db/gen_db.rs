@@ -192,14 +192,12 @@ impl<'a> VM<'a> {
     ) -> Result<(U256, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
         let mut storage_slot_was_cold = false;
-        if self.env.config.fork >= Fork::Berlin {
             storage_slot_was_cold = self
                 .accrued_substate
                 .touched_storage_slots
                 .entry(address)
                 .or_default()
                 .insert(key);
-        }
 
         let storage_slot = self.get_storage_value(address, key)?;
 

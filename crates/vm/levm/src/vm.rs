@@ -407,9 +407,7 @@ impl<'a> VM<'a> {
             )?;
 
             // https://eips.ethereum.org/EIPS/eip-161
-            if self.env.config.fork >= Fork::SpuriousDragon {
-                self.increment_account_nonce(new_contract_address)?;
-            };
+            self.increment_account_nonce(new_contract_address)?;
         }
 
         // Backup of Substate, Gas Refunds and Transient Storage if sub-context is reverted

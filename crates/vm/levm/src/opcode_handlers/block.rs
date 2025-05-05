@@ -141,9 +141,6 @@ impl<'a> VM<'a> {
     // BASEFEE operation
     pub fn op_basefee(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-3198
-        if self.env.config.fork < Fork::London {
-            return Err(VMError::InvalidOpcode);
-        }
         let base_fee_per_gas = self.env.base_fee_per_gas;
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;

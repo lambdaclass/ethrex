@@ -588,6 +588,8 @@ impl<'a> VM<'a> {
             self.db.access_account(&mut self.accrued_substate, to)?;
         let balance_to_transfer = current_account.info.balance;
 
+        let account_is_empty = target_account.is_empty();
+        
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
@@ -729,11 +731,8 @@ impl<'a> VM<'a> {
             .ok_or(VMError::BalanceOverflow)?;
 
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
-        let new_account = if self.env.config.fork < Fork::SpuriousDragon {
-            Account::new(new_balance, Bytes::new(), 0, Default::default())
-        } else {
-            Account::new(new_balance, Bytes::new(), 1, Default::default())
-        };
+        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
+        
         self.insert_account(new_address, new_account)?;
 
         // 2. Increment sender's nonce.

@@ -21,7 +21,6 @@ pub const SMOD: u64 = 5;
 pub const ADDMOD: u64 = 8;
 pub const MULMOD: u64 = 8;
 pub const EXP_STATIC: u64 = 10;
-pub const EXP_DYNAMIC_BASE_PRE_SPURIOUS_DRAGON: u64 = 10;
 pub const EXP_DYNAMIC_BASE: u64 = 50;
 pub const SIGNEXTEND: u64 = 5;
 pub const LT: u64 = 3;
@@ -88,7 +87,6 @@ pub const CODECOPY_STATIC: u64 = 3;
 pub const CODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const GASPRICE: u64 = 2;
 
-pub const SELFDESTRUCT_STATIC_PRE_TANGERINE: u64 = 0;
 pub const SELFDESTRUCT_STATIC: u64 = 5000;
 pub const SELFDESTRUCT_DYNAMIC: u64 = 25000;
 pub const SELFDESTRUCT_REFUND: u64 = 24000;
@@ -97,8 +95,6 @@ pub const DEFAULT_STATIC: u64 = 0;
 pub const DEFAULT_COLD_DYNAMIC: u64 = 2600;
 pub const DEFAULT_WARM_DYNAMIC: u64 = 100;
 
-pub const SLOAD_COST_PRE_BERLIN: u64 = 200;
-pub const SLOAD_COST_PRE_TANGERINE: u64 = 50;
 pub const SLOAD_STATIC: u64 = 0;
 pub const SLOAD_COLD_DYNAMIC: u64 = 2100;
 pub const SLOAD_WARM_DYNAMIC: u64 = 100;
@@ -114,14 +110,10 @@ pub const SSTORE_STIPEND: u64 = 2300;
 pub const SSTORE_PRE_BERLIN_NON_ZERO: u64 = 20000;
 pub const SSTORE_PRE_BERLIN: u64 = 5000;
 
-pub const BALANCE_PRE_TANGERINE: u64 = 20;
-pub const BALANCE_TANGERINE: u64 = 400;
 pub const BALANCE_STATIC: u64 = DEFAULT_STATIC;
 pub const BALANCE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const BALANCE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const EXTCODESIZE_PRE_TANGERINE: u64 = 20;
-pub const EXTCODESIZE_TANGERINE: u64 = 700;
 pub const EXTCODESIZE_STATIC: u64 = DEFAULT_STATIC;
 pub const EXTCODESIZE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODESIZE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
@@ -132,48 +124,33 @@ pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const EXTCODEHASH_STATIC_PRE_ISTANBUL: u64 = 400;
 pub const EXTCODEHASH_STATIC_PRE_BERLIN: u64 = 700;
 
-pub const EXTCODECOPY_STATIC_PRE_TANGERINE: u64 = 20;
-pub const EXTCODECOPY_STATIC_PRE_BERLIN: u64 = 700;
 pub const EXTCODECOPY_STATIC: u64 = 0;
 pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
 pub const EXTCODECOPY_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODECOPY_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const DEFAULT_CALL_STATIC_PRE_TANGERINE: u64 = 40;
-pub const DEFAULT_CALL_STATIC_PRE_BERLIN: u64 = 700;
-
-pub const CALL_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
-pub const CALL_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const CALL_STATIC: u64 = DEFAULT_STATIC;
 pub const CALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
-pub const CALL_PRE_BERLIN: u64 = 700;
 pub const CALL_POSITIVE_VALUE: u64 = 9000;
 pub const CALL_POSITIVE_VALUE_STIPEND: u64 = 2300;
 pub const CALL_TO_EMPTY_ACCOUNT: u64 = 25000;
 
-pub const CALLCODE_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
-pub const CALLCODE_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const CALLCODE_STATIC: u64 = DEFAULT_STATIC;
 pub const CALLCODE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const CALLCODE_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const CALLCODE_POSITIVE_VALUE: u64 = 9000;
 pub const CALLCODE_POSITIVE_VALUE_STIPEND: u64 = 2300;
 
-pub const DELEGATECALL_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
-pub const DELEGATECALL_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const DELEGATECALL_STATIC: u64 = DEFAULT_STATIC;
 pub const DELEGATECALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const DELEGATECALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
-pub const STATICCALLCALL_STATIC_PRE_TANGERINE: u64 = DEFAULT_CALL_STATIC_PRE_TANGERINE;
-pub const STATICCALLCALL_STATIC_PRE_BERLIN: u64 = DEFAULT_CALL_STATIC_PRE_BERLIN;
 pub const STATICCALL_STATIC: u64 = DEFAULT_STATIC;
 pub const STATICCALL_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const STATICCALL_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 
 // Costs in gas for call opcodes
-pub const ADDRESS_COST_PRE_BERLIN: u64 = 700;
 pub const WARM_ADDRESS_ACCESS_COST: u64 = 100;
 pub const COLD_ADDRESS_ACCESS_COST: u64 = 2600;
 pub const NON_ZERO_VALUE_COST: u64 = 9000;
@@ -274,14 +251,7 @@ pub fn exp(exponent: U256, fork: Fork) -> Result<u64, VMError> {
         .try_into()
         .map_err(|_| VMError::VeryLargeNumber)?;
 
-    // https://eips.ethereum.org/EIPS/eip-160
-    let dynamic_base = if fork < Fork::SpuriousDragon {
-        EXP_DYNAMIC_BASE_PRE_SPURIOUS_DRAGON
-    } else {
-        EXP_DYNAMIC_BASE
-    };
-
-    let exponent_byte_size_cost = dynamic_base
+    let exponent_byte_size_cost = EXP_DYNAMIC_BASE
         .checked_mul(exponent_byte_size)
         .ok_or(VMError::OutOfGas(OutOfGasError::GasCostOverflow))?;
 
@@ -430,27 +400,16 @@ fn mem_expansion_behavior(
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
-pub fn sload(storage_slot_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    match fork {
-        f if f < Fork::Tangerine => Ok(SLOAD_COST_PRE_TANGERINE),
-        f if f >= Fork::Tangerine && f < Fork::Berlin => {
-            // EIP https://eips.ethereum.org/EIPS/eip-2929
-            Ok(SLOAD_COST_PRE_BERLIN)
-        }
-        _ => {
-            let static_gas = SLOAD_STATIC;
-
-            let dynamic_cost = if storage_slot_was_cold {
-                SLOAD_COLD_DYNAMIC
-            } else {
-                SLOAD_WARM_DYNAMIC
-            };
-
-            Ok(static_gas
-                .checked_add(dynamic_cost)
-                .ok_or(OutOfGasError::GasCostOverflow)?)
-        }
+pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
+    let static_gas = SLOAD_STATIC
+    let dynamic_cost = if storage_slot_was_cold {
+        SLOAD_COLD_DYNAMIC
+    } else {
+        SLOAD_WARM_DYNAMIC
     }
+    Ok(static_gas
+        .checked_add(dynamic_cost)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn sstore(
@@ -626,41 +585,21 @@ pub fn selfdestruct(
     balance_to_transfer: U256,
     fork: Fork,
 ) -> Result<u64, OutOfGasError> {
-    let (static_cost, dynamic_cost) = match fork {
-        f if f <= Fork::DaoFork => (SELFDESTRUCT_STATIC_PRE_TANGERINE, 0),
-        Fork::Tangerine => {
-            let dynamic_cost = if account_is_empty {
-                SELFDESTRUCT_DYNAMIC
-            } else {
-                0
-            };
-            (SELFDESTRUCT_STATIC, dynamic_cost)
-        }
-        f if f > Fork::Tangerine && f < Fork::Berlin => {
-            let dynamic_cost = if account_is_empty && balance_to_transfer > U256::zero() {
-                SELFDESTRUCT_DYNAMIC
-            } else {
-                0
-            };
-
-            (SELFDESTRUCT_STATIC, dynamic_cost)
-        }
-        _ => {
-            let mut dynamic_cost = if address_was_cold {
-                COLD_ADDRESS_ACCESS_COST
-            } else {
-                0
-            };
-
-            // If a positive balance is sent to an empty account, the dynamic gas is 25000
-            if account_is_empty && balance_to_transfer > U256::zero() {
-                dynamic_cost = dynamic_cost
-                    .checked_add(SELFDESTRUCT_DYNAMIC)
-                    .ok_or(OutOfGasError::GasCostOverflow)?;
-            }
-            (SELFDESTRUCT_STATIC, dynamic_cost)
-        }
+    let mut dynamic_cost = if address_was_cold {
+        COLD_ADDRESS_ACCESS_COST
+    } else {
+        0
     };
+
+    // If a positive balance is sent to an empty account, the dynamic gas is 25000
+    if account_is_empty && balance_to_transfer > U256::zero() {
+        dynamic_cost = dynamic_cost
+            .checked_add(SELFDESTRUCT_DYNAMIC)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
+    }
+
+    let (static_cost, dynamic_cost) = (SELFDESTRUCT_STATIC, dynamic_cost);
+
     static_cost
         .checked_add(dynamic_cost)
         .ok_or(OutOfGasError::GasCostOverflow)
@@ -728,12 +667,7 @@ fn address_access_cost(
 }
 
 pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (BALANCE_PRE_TANGERINE, 0, 0),
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => (BALANCE_TANGERINE, 0, 0),
-        _ => (BALANCE_STATIC, BALANCE_COLD_DYNAMIC, BALANCE_WARM_DYNAMIC),
-    };
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (BALANCE_STATIC, BALANCE_COLD_DYNAMIC, BALANCE_WARM_DYNAMIC);
 
     address_access_cost(
         address_was_cold,
@@ -744,16 +678,12 @@ pub fn balance(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
 }
 
 pub fn extcodesize(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (EXTCODESIZE_PRE_TANGERINE, 0, 0),
-        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2929.md#storage-read-changes
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => (EXTCODESIZE_TANGERINE, 0, 0),
-        _ => (
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
             EXTCODESIZE_STATIC,
             EXTCODESIZE_COLD_DYNAMIC,
             EXTCODESIZE_WARM_DYNAMIC,
-        ),
-    };
+    );
+    
 
     address_access_cost(
         address_was_cold,
@@ -770,29 +700,19 @@ pub fn extcodecopy(
     address_was_cold: bool,
     fork: Fork,
 ) -> Result<u64, VMError> {
-    let base_cost = match fork {
-        f if f < Fork::Tangerine => EXTCODECOPY_STATIC_PRE_TANGERINE,
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => EXTCODECOPY_STATIC_PRE_BERLIN,
-        _ => EXTCODECOPY_STATIC,
-    };
-
     let base_access_cost = copy_behavior(
         new_memory_size,
         current_memory_size,
         size,
         EXTCODECOPY_DYNAMIC_BASE,
-        base_cost,
+        EXTCODECOPY_STATIC,
     )?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (0, 0, 0),
-        f if f >= Fork::Tangerine && fork < Fork::Berlin => (0, 0, 0),
-        _ => (
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
             EXTCODECOPY_STATIC,
             EXTCODECOPY_COLD_DYNAMIC,
             EXTCODECOPY_WARM_DYNAMIC,
-        ),
-    };
+        );
 
     let expansion_access_cost = address_access_cost(
         address_was_cold,
@@ -840,7 +760,6 @@ pub fn call(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (CALL_STATIC_PRE_TANGERINE, 0, 0),
         f if f < Fork::Berlin => (CALL_STATIC_PRE_BERLIN, 0, 0),
         f if f < Fork::Berlin => (0, 0, 0),
         _ => (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC),
@@ -894,7 +813,6 @@ pub fn callcode(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (CALLCODE_STATIC_PRE_TANGERINE, 0, 0),
         f if f < Fork::Berlin => (CALLCODE_STATIC_PRE_BERLIN, 0, 0),
         f if f < Fork::Berlin => (0, 0, 0),
         _ => (
@@ -943,7 +861,6 @@ pub fn delegatecall(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (DELEGATECALL_STATIC_PRE_TANGERINE, 0, 0),
         f if f < Fork::Berlin => (DELEGATECALL_STATIC_PRE_BERLIN, 0, 0),
         f if f < Fork::Berlin => (0, 0, 0),
         _ => (
@@ -978,7 +895,6 @@ pub fn staticcall(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Tangerine => (STATICCALLCALL_STATIC_PRE_TANGERINE, 0, 0),
         f if f < Fork::Berlin => (STATICCALLCALL_STATIC_PRE_BERLIN, 0, 0),
         f if f < Fork::Berlin => (0, 0, 0),
         _ => (
@@ -1052,12 +968,26 @@ pub fn identity(data_size: usize) -> Result<u64, VMError> {
     precompile(data_size, IDENTITY_STATIC_COST, IDENTITY_DYNAMIC_BASE)
 }
 
-//https://eips.ethereum.org/EIPS/eip-2565
-pub fn modexp_eip2565(
-    max_length: u64,
+pub fn modexp(
     exponent_first_32_bytes: &BigUint,
-    exponent_size: u64,
+    base_size: usize,
+    exponent_size: usize,
+    modulus_size: usize,
 ) -> Result<u64, VMError> {
+    let base_size: u64 = base_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let exponent_size: u64 = exponent_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+    let modulus_size: u64 = modulus_size
+        .try_into()
+        .map_err(|_| PrecompileError::ParsingInputError)?;
+
+    let max_length = base_size.max(modulus_size);
+
+    //https://eips.ethereum.org/EIPS/eip-2565
+
     let words = (max_length
         .checked_add(7)
         .ok_or(OutOfGasError::GasCostOverflow)?)
@@ -1094,96 +1024,6 @@ pub fn modexp_eip2565(
             / MODEXP_DYNAMIC_QUOTIENT,
     );
     Ok(cost)
-}
-
-//https://eips.ethereum.org/EIPS/eip-198
-pub fn modexp_eip198(
-    max_length: u64,
-    exponent_first_32_bytes: &BigUint,
-    exponent_size: u64,
-) -> Result<u64, VMError> {
-    let multiplication_complexity = if max_length <= 64 {
-        max_length
-            .checked_pow(2)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-    } else if max_length <= 1024 {
-        max_length
-            .checked_pow(2)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            .checked_div(4)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            .checked_add(
-                max_length
-                    .checked_mul(96)
-                    .ok_or(OutOfGasError::GasCostOverflow)?,
-            )
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            .checked_sub(3072)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-    } else {
-        max_length
-            .checked_pow(2)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            .checked_div(16)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            .checked_add(
-                max_length
-                    .checked_mul(480)
-                    .ok_or(OutOfGasError::GasCostOverflow)?,
-            )
-            .ok_or(OutOfGasError::GasCostOverflow)?
-            .checked_sub(199680)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-    };
-
-    let calculate_iteration_count = if exponent_size < 32 {
-        exponent_first_32_bytes.bits().saturating_sub(1)
-    } else {
-        let extra_size = (exponent_size
-            .checked_sub(32)
-            .ok_or(InternalError::ArithmeticOperationUnderflow)?)
-        .checked_mul(8)
-        .ok_or(OutOfGasError::GasCostOverflow)?;
-
-        let bits_part = exponent_first_32_bytes.bits().saturating_sub(1);
-
-        extra_size
-            .checked_add(bits_part)
-            .ok_or(OutOfGasError::GasCostOverflow)?
-    }
-    .max(1);
-
-    let cost = multiplication_complexity
-        .checked_mul(calculate_iteration_count)
-        .ok_or(OutOfGasError::GasCostOverflow)?
-        / MODEXP_DYNAMIC_QUOTIENT_PRE_BERLIN;
-    Ok(cost)
-}
-
-pub fn modexp(
-    exponent_first_32_bytes: &BigUint,
-    base_size: usize,
-    exponent_size: usize,
-    modulus_size: usize,
-    fork: Fork,
-) -> Result<u64, VMError> {
-    let base_size: u64 = base_size
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-    let exponent_size: u64 = exponent_size
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-    let modulus_size: u64 = modulus_size
-        .try_into()
-        .map_err(|_| PrecompileError::ParsingInputError)?;
-
-    let max_length = base_size.max(modulus_size);
-
-    if fork >= Fork::Berlin {
-        modexp_eip2565(max_length, exponent_first_32_bytes, exponent_size)
-    } else {
-        modexp_eip198(max_length, exponent_first_32_bytes, exponent_size)
-    }
 }
 
 fn precompile(data_size: usize, static_cost: u64, dynamic_base: u64) -> Result<u64, VMError> {
@@ -1254,17 +1094,14 @@ fn calculate_cost_and_gas_limit_call(
         .checked_sub(call_gas_costs)
         .ok_or(OutOfGasError::GasUsedOverflow)?;
 
-    let gas: u64 = if fork < Fork::Tangerine {
-        gas_from_stack
-    } else {
-        // EIP 150, https://eips.ethereum.org/EIPS/eip-150
-        let max_gas_for_call = gas_left
-            .checked_sub(gas_left / 64)
-            .ok_or(OutOfGasError::GasUsedOverflow)?;
-        gas_from_stack.min(max_gas_for_call.into())
-    }
-    .try_into()
-    .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
+    // EIP 150, https://eips.ethereum.org/EIPS/eip-150
+    let max_gas_for_call = gas_left
+        .checked_sub(gas_left / 64)
+        .ok_or(OutOfGasError::GasUsedOverflow)?;
+
+    let gas: u64 = gas_from_stack.min(max_gas_for_call.into())
+        .try_into() 
+        .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
 
     Ok((
         gas.checked_add(call_gas_costs)
