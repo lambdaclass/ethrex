@@ -66,7 +66,7 @@ interface ICommonBridge {
     /// @dev This method is called only once after the contract is deployed.
     /// @dev It sets the OnChainProposer address.
     /// @param onChainProposer the address of the OnChainProposer contract.
-    function initialize(address onChainProposer) external;
+    function initialize(address owner, address onChainProposer) external;
 
     /// @notice Method that starts an L2 ETH deposit process.
     /// @dev The deposit process starts here by emitting a DepositInitiated

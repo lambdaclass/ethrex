@@ -12,7 +12,6 @@ use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::BlockByNumber;
-use ethrex_rpc::clients::eth::WrappedTransaction;
 use ethrex_rpc::clients::eth::{
     errors::{CalldataEncodeError, EthClientError},
     eth_sender::Overrides,
@@ -82,7 +81,7 @@ lazy_static::lazy_static! {
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
     "initialize(bool,address,address,address,address,address[])";
 
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
@@ -499,24 +498,14 @@ async fn deploy_bridge(
     eth_client: &EthClient,
     contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
-    let mut bridge_init_code =
-        hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
-            DeployError::DecodingError(format!("Failed to read bridge_init_code: {err}"))
-        })?)
-        .map_err(|err| {
-            DeployError::DecodingError(format!("Failed to decode bridge_init_code: {err}"))
-        })?;
+    let bridge_init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
+        DeployError::DecodingError(format!("Failed to read bridge_init_code: {err}"))
+    })?)
+    .map_err(|err| {
+        DeployError::DecodingError(format!("Failed to decode bridge_init_code: {err}"))
+    })?;
 
-    let encoded_owner = {
-        let offset = 32 - deployer.as_bytes().len() % 32;
-        let mut encoded_owner = vec![0; offset];
-        encoded_owner.extend_from_slice(deployer.as_bytes());
-        encoded_owner
-    };
-
-    bridge_init_code.extend_from_slice(&encoded_owner);
-
-    let (deploy_tx_hash, bridge_address) = create2_deploy(
+    let (deploy_tx_hash, implementation_address) = create2_deploy(
         deployer,
         deployer_private_key,
         &bridge_init_code.into(),
@@ -524,7 +513,7 @@ async fn deploy_bridge(
     )
     .await?;
 
-    Ok((deploy_tx_hash, bridge_address))
+    Ok((deploy_tx_hash, implementation_address))
 }
 
 async fn create2_deploy(
@@ -648,7 +637,8 @@ async fn initialize_contracts(
         "Initializing CommonBridge",
         Color::Cyan,
     );
-    let initialize_tx_hash = initialize_bridge(
+    let initialize_tx_hash = deploy_bridge_proxy(
+        contracts_path,
         on_chain_proposer,
         bridge,
         deployer,
@@ -737,47 +727,52 @@ async fn deploy_on_chain_proposer_proxy(
     Ok(deploy_tx_hash)
 }
 
-async fn initialize_bridge(
+async fn deploy_bridge_proxy(
+    contracts_path: &Path,
     on_chain_proposer: Address,
-    bridge: Address,
+    implementation_address: Address,
     deployer: Address,
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
 ) -> Result<H256, DeployError> {
-    let calldata_values = vec![Value::Address(on_chain_proposer)];
+    let mut init_code = hex::decode(
+        std::fs::read_to_string(contracts_path.join("solc_out/ERC1967Proxy.bin")).map_err(
+            |err| {
+                DeployError::DecodingError(format!(
+                    "Failed to read on_chain_proposer_init_code: {err}"
+                ))
+            },
+        )?,
+    )
+    .map_err(|err| {
+        DeployError::DecodingError(format!(
+            "Failed to decode on_chain_proposer_init_code: {err}"
+        ))
+    })?;
+
+    // address implementation
+    init_code.extend(H256::from(implementation_address).0);
+
+    // bytes _data
+    let calldata_values = vec![Value::Address(deployer), Value::Address(on_chain_proposer)];
     let bridge_initialization_calldata =
         encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
-    let gas_price = eth_client
-        .get_gas_price_with_extra(20)
-        .await?
-        .try_into()
-        .map_err(|_| {
-            EthClientError::InternalError("Failed to convert gas_price to a u64".to_owned())
-        })?;
+    init_code.extend(H256::from_low_u64_be(0x40).0);
+    init_code.extend(H256::from_low_u64_be(bridge_initialization_calldata.len() as u64).0);
+    init_code.extend(bridge_initialization_calldata);
 
-    let initialize_tx = eth_client
-        .build_eip1559_transaction(
-            bridge,
-            deployer,
-            bridge_initialization_calldata.into(),
-            Overrides {
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(DeployError::from)?;
-    let mut wrapped_tx = WrappedTransaction::EIP1559(initialize_tx);
-    eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
-        .await?;
-    let initialize_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
-        .await?;
+    let (deploy_tx_hash, proxy_address) = create2_deploy(
+        deployer,
+        deployer_private_key,
+        &Bytes::from(init_code),
+        eth_client,
+    )
+    .await
+    .map_err(DeployError::from)?;
 
-    Ok(initialize_tx_hash)
+    println!("Proxy: {proxy_address:#x}");
+    Ok(deploy_tx_hash)
 }
 
 async fn wait_for_transaction_receipt(
