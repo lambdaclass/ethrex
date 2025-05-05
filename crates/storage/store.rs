@@ -48,9 +48,18 @@ pub enum EngineType {
 impl Store {
     pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
-        // FIXME: Restore other options
-        let store = Self {
-            engine: Arc::new(MDBXFork::new(path).unwrap()),
+        let store = match engine_type {
+            #[cfg(feature = "libmdbx")]
+            EngineType::Libmdbx => Self {
+                engine: Arc::new(LibmdbxStore::new(path)?),
+            },
+            EngineType::InMemory => Self {
+                engine: Arc::new(InMemoryStore::new()),
+            },
+            #[cfg(feature = "redb")]
+            EngineType::RedB => Self {
+                engine: Arc::new(RedBStore::new()?),
+            },
         };
         info!("Started store engine");
         Ok(store)
