@@ -9,6 +9,7 @@ use tracing::warn;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
+    withdrawals::get_withdrawals_root,
 };
 
 pub struct ProveOutput(pub ProgramOutput);
@@ -42,6 +43,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         blocks,
         parent_block_header,
         mut db,
+        #[cfg(feature = "l2")]
+        withdrawals_merkle_roots,
     } = input;
 
     // Tries used for validating initial and final state root
@@ -61,7 +64,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
-    for block in blocks {
+    for (i, block) in blocks.into_iter().enumerate() {
         let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config)?;
@@ -71,6 +74,18 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         let result = vm.execute_block(&block)?;
         let receipts = result.receipts;
         let account_updates = vm.get_state_transitions(fork)?;
+
+        // Validate L2 withdrawals
+        #[cfg(feature = "l2")]
+        {
+            if let Some(withdrawals_root) = withdrawals_merkle_roots.get(i) {
+                if *withdrawals_root != get_withdrawals_root(&block.body.transactions, &receipts)? {
+                    return Err("invalid withdrawals merkle root".to_string().into());
+                }
+            } else {
+                return Err("failed to get withdrawal root for block".to_string().into());
+            }
+        }
 
         // Update db for the next block
         db.apply_account_updates(&account_updates);
