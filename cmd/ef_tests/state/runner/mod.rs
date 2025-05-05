@@ -6,7 +6,7 @@ use crate::{
 };
 use clap::Parser;
 use colored::Colorize;
-use ethrex_common::Address;
+use ethrex_common::{types::Account, Address};
 use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_vm::SpecId;
 use serde::{Deserialize, Serialize};
@@ -24,11 +24,7 @@ pub enum EFTestRunnerError {
     #[error("Failed to ensure pre-state: {0}")]
     FailedToEnsurePreState(String),
     #[error("Failed to ensure post-state: {1}")]
-    FailedToEnsurePostState(
-        ExecutionReport,
-        String,
-        HashMap<Address, ethrex_levm::Account>,
-    ),
+    FailedToEnsurePostState(ExecutionReport, String, HashMap<Address, Account>),
     #[error("VM run mismatch: {0}")]
     VMExecutionMismatch(String),
     #[error("Exception does not match the expected: {0}")]
