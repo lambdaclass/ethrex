@@ -61,6 +61,8 @@ pub enum ProverServerError {
     InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("ProverServer failed to get withdrawals for batch {0}")]
+    WithdrawalsError(u64),
 }
 
 #[derive(Debug, thiserror::Error)]

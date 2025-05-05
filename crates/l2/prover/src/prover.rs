@@ -83,7 +83,8 @@ impl Prover {
                         input:  ProgramInput {
                             blocks: input.blocks,
                             parent_block_header: input.parent_block_header,
-                            db: input.db
+                            db: input.db,
+                            withdrawals_merkle_roots: input.withdrawals_merkle_roots
                         }
                     };
                     Ok(prover_data)
