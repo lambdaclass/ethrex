@@ -19,9 +19,10 @@ contract Counter {
         (bool success, bytes memory report) = quoteVerifier.verifyAndAttestOnChain(quote);
         require(success, "quote verification failed");
         bytes memory expected = expectedHash(current, newval);
-        require(_rangeEquals(report, 341, RTMR0), "rtmr0 mismatch");
-        require(_rangeEquals(report, 389, RTMR1), "rtmr1 mismatch");
-        require(_rangeEquals(report, 437, RTMR2), "rtmr2 mismatch");
+        require(report[6] == 0, "TCB_STATUS != OK");
+        require(_rangeEquals(report, 341, RTMR0), "RTMR0 mismatch");
+        require(_rangeEquals(report, 389, RTMR1), "RTMR1 mismatch");
+        require(_rangeEquals(report, 437, RTMR2), "RTMR2 mismatch");
         // RTMR3 is ignored
         require(_rangeEquals(report, 533, expected), "hash mismatch");
         current = newval;
