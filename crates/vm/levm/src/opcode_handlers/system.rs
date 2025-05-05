@@ -930,6 +930,9 @@ impl<'a> VM<'a> {
             .call_frames
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        if !tx_report.is_success() {
+            self.restore_state(call_frame.state_backup, call_frame.cache_backup.clone())?;
+        }
         let retdata = &call_frame.retdata;
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = call_frame
@@ -967,7 +970,6 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(_) => {
-                self.restore_state(call_frame.state_backup, call_frame.cache_backup)?;
                 // Revert value transfer
                 if retdata.should_transfer_value {
                     self.decrease_account_balance(retdata.to, retdata.value)?;
@@ -985,6 +987,9 @@ impl<'a> VM<'a> {
             .call_frames
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        if !tx_report.is_success() {
+            self.restore_state(previous_call_frame.state_backup, previous_call_frame.cache_backup.clone())?;
+        }
         let retdata = previous_call_frame.retdata;
         let unused_gas = retdata
             .max_message_call_gas
@@ -1015,7 +1020,6 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(err) => {
-                self.restore_state(previous_call_frame.state_backup, previous_call_frame.cache_backup)?;
                 // Return value to sender
                 self.increase_account_balance(retdata.msg_sender, retdata.value)?;
 
