@@ -58,7 +58,10 @@ fn main() {
         #[cfg(feature = "l2")]
         {
             if let Some(withdrawals_root) = withdrawals_merkle_roots.get(i) {
-                if *withdrawals_root != get_withdrawals_root(&block.body.transactions, &receipts)? {
+                if *withdrawals_root
+                    != get_withdrawals_root(&block.body.transactions, &receipts)
+                        .expect("failed to get calculate withdrawal root")
+                {
                     panic!("invalid withdrawals merkle root");
                 }
             } else {
