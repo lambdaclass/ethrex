@@ -6,6 +6,7 @@ use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;
+use keccak_hash::H256;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -92,6 +93,8 @@ pub async fn generate_program_input(
         db,
         blocks,
         parent_block_header,
+        // TODO
+        withdrawals_merkle_roots: vec![H256::zero()],
     })
 }
 
