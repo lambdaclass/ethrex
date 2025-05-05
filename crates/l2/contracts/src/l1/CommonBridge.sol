@@ -76,30 +76,19 @@ contract CommonBridge is ICommonBridge, Ownable, ReentrancyGuard {
         require(msg.value > 0, "CommonBridge: amount to deposit is zero");
 
         bytes32 l2MintTxHash = keccak256(
-            abi.encodePacked(
-                msg.sender,
-                depositValues.to,
-                depositValues.recipient,
-                msg.value,
-                depositValues.gasLimit,
-                depositId,
-                depositValues.data
+            bytes.concat(
+                bytes20(depositValues.to),
+                bytes32(msg.value),
+                bytes32(depositId),
+                bytes20(depositValues.recipient),
+                bytes20(msg.sender),
+                bytes32(depositValues.gasLimit),
+                bytes32(keccak256(depositValues.data))
             )
         );
 
-        pendingDepositLogs.push(
-            keccak256(
-                bytes.concat(
-                    bytes20(depositValues.to),
-                    bytes32(msg.value),
-                    bytes32(depositId),
-                    bytes20(depositValues.recipient),
-                    bytes20(msg.sender),
-                    bytes32(depositValues.gasLimit),
-                    bytes32(keccak256(depositValues.data))
-                )
-            )
-        );
+        pendingDepositLogs.push(l2MintTxHash);
+
         emit DepositInitiated(
             msg.value,
             depositValues.to,

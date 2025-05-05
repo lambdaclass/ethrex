@@ -13,10 +13,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod calldata;
 pub mod merkle_tree;
 
-// 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
+// 0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x6b, 0xf2, 0x63, 0x97, 0xc5, 0x67, 0x6a, 0x20, 0x8d, 0x5c, 0x4e, 0x5f, 0x35, 0xcb, 0x47, 0x9b,
-    0xac, 0xbb, 0xe4, 0x54,
+    0x55, 0x4a, 0x14, 0xcd, 0x04, 0x7c, 0x48, 0x5b, 0x3a, 0xc3, 0xed, 0xbd, 0x9f, 0xbb, 0x37, 0x3d,
+    0x6f, 0x84, 0xad, 0x3f,
 ]);
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
@@ -32,7 +32,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
+/// BRIDGE_ADDRESS or 0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("L1_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
