@@ -331,10 +331,6 @@ impl<'a> VM<'a> {
 
     // RETURNDATASIZE operation
     pub fn op_returndatasize(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-211
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
@@ -347,10 +343,6 @@ impl<'a> VM<'a> {
 
     // RETURNDATACOPY operation
     pub fn op_returndatacopy(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-211
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         let current_call_frame = self.current_call_frame_mut()?;
         let dest_offset = current_call_frame.stack.pop()?;
         let returndata_offset: usize = current_call_frame

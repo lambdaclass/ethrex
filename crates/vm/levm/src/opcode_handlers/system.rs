@@ -358,10 +358,6 @@ impl<'a> VM<'a> {
 
     // STATICCALL operation
     pub fn op_staticcall(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-214
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         // STACK
         let (
             gas,
@@ -520,9 +516,6 @@ impl<'a> VM<'a> {
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        }
         let current_call_frame = self.current_call_frame_mut()?;
 
         let offset = current_call_frame.stack.pop()?;
