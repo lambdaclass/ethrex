@@ -1,10 +1,10 @@
-use ethrex_rlp::structs::Encoder;
+use ethrex_rlp::{encode::RLPEncode, structs::Encoder};
 
-use crate::nibbles::Nibbles;
 use crate::node_hash::NodeHash;
 use crate::state::TrieState;
 use crate::ValueRLP;
 use crate::{cache::CacheKey, error::TrieError};
+use crate::{nibbles::Nibbles, rlp::NodeEncoder};
 
 use super::{BranchNode, Node};
 use bytes::BytesMut;
@@ -144,7 +144,7 @@ impl ExtensionNode {
         let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
 
         let mut buf2 = BytesMut::new();
-        state[self.child].encode(&mut buf2, state);
+        NodeEncoder(&state[self.child], state).encode(&mut buf2);
         encoder = encoder.encode_raw(&buf2);
 
         encoder.finish();

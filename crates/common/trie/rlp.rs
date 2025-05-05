@@ -1,12 +1,16 @@
 // Contains RLP encoding and decoding implementations for Trie Nodes
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
 use ethrex_rlp::{
+    decode::RLPDecode,
+    encode::RLPEncode,
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
 
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
-use crate::{node_hash::NodeHash, TrieState};
+use crate::{
+    cache::CacheKey, node_hash::NodeHash, Nibbles, PathRLP, TrieState, ValueRLP, EMPTY_TRIE_HASH,
+};
 
 enum NodeType {
     Branch = 0,
@@ -25,48 +29,82 @@ impl NodeType {
     }
 }
 
-impl BranchNode {
-    pub fn encode(&self, buf: &mut dyn bytes::BufMut, state: &TrieState) {
-        let choices = self.choices.map(|key| {
+pub struct BranchNodeEncoder<'a>(pub &'a BranchNode, pub &'a TrieState);
+impl<'a> RLPEncode for BranchNodeEncoder<'a> {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let choices = self.0.choices.map(|key| {
             key.is_valid()
-                .then(|| state[key].compute_hash(state))
+                .then(|| self.1[key].compute_hash(self.1))
                 .unwrap_or_default()
         });
 
         // TODO: choices encoded as vec due to conflicting trait impls for [T;N] & [u8;N], check if we can fix this later
         Encoder::new(buf)
             .encode_field(&choices.to_vec())
-            .encode_field(&self.value)
+            .encode_field(&self.0.value)
             .finish()
     }
 }
 
-impl ExtensionNode {
-    pub fn encode(&self, buf: &mut dyn bytes::BufMut, state: &TrieState) {
+pub struct ExtensionNodeEncoder<'a>(pub &'a ExtensionNode, pub &'a TrieState);
+impl<'a> RLPEncode for ExtensionNodeEncoder<'a> {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
         let child = self
+            .0
             .child
             .is_valid()
-            .then(|| state[self.child].compute_hash(state))
+            .then(|| self.1[self.0.child].compute_hash(self.1))
             .unwrap_or_default();
 
         Encoder::new(buf)
-            .encode_field(&self.prefix)
+            .encode_field(&self.0.prefix)
             .encode_field(&child)
             .finish()
     }
 }
 
-impl LeafNode {
-    pub fn encode(&self, buf: &mut dyn bytes::BufMut) {
+pub struct LeafNodeEncoder<'a>(pub &'a LeafNode, pub &'a TrieState);
+impl<'a> RLPEncode for LeafNodeEncoder<'a> {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
-            .encode_field(&self.partial)
-            .encode_field(&self.value)
+            .encode_field(&self.0.partial)
+            .encode_field(&self.0.value)
             .finish()
     }
 }
 
-impl BranchNode {
-    pub fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+pub struct BranchNodeDecoder {
+    choices: Vec<NodeHash>,
+    value: ValueRLP,
+}
+impl BranchNodeDecoder {
+    pub fn finish(self, path: Nibbles, state: &mut TrieState) -> CacheKey {
+        let mut choices = [CacheKey::INVALID; 16];
+        for (nibble, choice) in self.choices.into_iter().enumerate() {
+            if choice.is_valid() {
+                // TODO: Is encode_compact() the correct method?
+                choices[nibble] = state
+                    .cache
+                    .insert(path.append_new(nibble as u8).encode_compact(), choice)
+                    .0;
+            }
+        }
+
+        state
+            .cache
+            .insert(
+                // TODO: Is encode_compact() the correct method?
+                path.encode_compact(),
+                Node::from(BranchNode {
+                    choices,
+                    value: self.value,
+                }),
+            )
+            .0
+    }
+}
+impl RLPDecode for BranchNodeDecoder {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         const CHOICES_LEN_ERROR_MSG: &str =
             "Error decoding field 'choices' of type [H256;16]: Invalid Length";
         let decoder = Decoder::new(rlp)?;
@@ -79,8 +117,36 @@ impl BranchNode {
     }
 }
 
-impl ExtensionNode {
-    pub fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+pub struct ExtensionNodeDecoder {
+    prefix: Nibbles,
+    child: NodeHash,
+}
+impl ExtensionNodeDecoder {
+    pub fn finish(self, path: Nibbles, state: &mut TrieState) -> CacheKey {
+        let child = state
+            .cache
+            .insert(
+                // TODO: Is encode_compact() the correct method?
+                path.concat(self.prefix.clone()).encode_compact(),
+                self.child,
+            )
+            .0;
+
+        state
+            .cache
+            .insert(
+                // TODO: Is encode_compact() the correct method?
+                path.encode_compact(),
+                Node::from(ExtensionNode {
+                    prefix: self.prefix,
+                    child,
+                }),
+            )
+            .0
+    }
+}
+impl RLPDecode for ExtensionNodeDecoder {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (prefix, decoder) = decoder.decode_field("prefix")?;
         let (child, decoder) = decoder.decode_field("child")?;
@@ -88,8 +154,27 @@ impl ExtensionNode {
     }
 }
 
-impl LeafNode {
-    pub fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+pub struct LeafNodeDecoder {
+    partial: Nibbles,
+    value: ValueRLP,
+}
+impl LeafNodeDecoder {
+    pub fn finish(self, path: Nibbles, state: &mut TrieState) -> CacheKey {
+        state
+            .cache
+            .insert(
+                // TODO: Is encode_compact() the correct method?
+                path.encode_compact(),
+                Node::from(LeafNode {
+                    partial: path.concat(self.partial),
+                    value: self.value,
+                }),
+            )
+            .0
+    }
+}
+impl RLPDecode for LeafNodeDecoder {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (partial, decoder) = decoder.decode_field("partial")?;
         let (value, decoder) = decoder.decode_field("value")?;
@@ -97,35 +182,45 @@ impl LeafNode {
     }
 }
 
-impl Node {
-    pub fn encode(&self, buf: &mut dyn bytes::BufMut, state: &TrieState) {
-        let node_type = match self {
+pub struct NodeEncoder<'a>(pub &'a Node, pub &'a TrieState);
+impl<'a> RLPEncode for NodeEncoder<'a> {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let node_type = match self.0 {
             Node::Branch(_) => NodeType::Branch,
             Node::Extension(_) => NodeType::Extension,
             Node::Leaf(_) => NodeType::Leaf,
         };
         buf.put_u8(node_type as u8);
-        match self {
-            Node::Branch(n) => n.encode(buf, state),
-            Node::Extension(n) => n.encode(buf, state),
-            Node::Leaf(n) => n.encode(buf),
+        match self.0 {
+            Node::Branch(n) => BranchNodeEncoder(n, self.1).encode(buf),
+            Node::Extension(n) => ExtensionNodeEncoder(n, self.1).encode(buf),
+            Node::Leaf(n) => LeafNodeEncoder(n, self.1).encode(buf),
         }
     }
 }
 
-impl Node {
-    pub fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+pub enum NodeDecoder {
+    Branch(BranchNodeDecoder),
+    Extension(ExtensionNodeDecoder),
+    Leaf(LeafNodeDecoder),
+}
+impl NodeDecoder {
+    pub fn finish(self, path: Nibbles, state: &mut TrieState) -> CacheKey {
+        todo!()
+    }
+}
+impl RLPDecode for NodeDecoder {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let node_type = rlp.first().ok_or(RLPDecodeError::InvalidLength)?;
         let node_type = NodeType::from_u8(*node_type).ok_or(RLPDecodeError::MalformedData)?;
         let rlp = &rlp[1..];
         match node_type {
-            NodeType::Branch => {
-                BranchNode::decode_unfinished(rlp).map(|(node, rem)| (Node::Branch(node), rem))
-            }
-            NodeType::Extension => ExtensionNode::decode_unfinished(rlp)
-                .map(|(node, rem)| (Node::Extension(node), rem)),
+            NodeType::Branch => BranchNodeDecoder::decode_unfinished(rlp)
+                .map(|(node, rem)| (Self::Branch(node), rem)),
+            NodeType::Extension => ExtensionNodeDecoder::decode_unfinished(rlp)
+                .map(|(node, rem)| (Self::Extension(node), rem)),
             NodeType::Leaf => {
-                LeafNode::decode_unfinished(rlp).map(|(node, rem)| (Node::Leaf(node), rem))
+                LeafNodeDecoder::decode_unfinished(rlp).map(|(node, rem)| (Self::Leaf(node), rem))
             }
         }
     }

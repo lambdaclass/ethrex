@@ -175,11 +175,20 @@ impl Node {
     }
 }
 
-fn decode_child(rlp: &[u8]) -> CacheKey {
-    // match decode_bytes(rlp) {
-    //     Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
-    //     Ok((&[], &[])) => NodeHash::default(),
-    //     _ => NodeHash::from_slice(rlp),
-    // }
-    todo!()
+fn decode_child(rlp: &[u8], state: &mut TrieState) -> CacheKey {
+    match decode_bytes(rlp) {
+        Ok((hash, &[])) if hash.len() == 32 => {
+            // NodeHash::from_slice(hash)
+            state.get_node(hash);
+            todo!()
+        }
+        Ok((&[], &[])) => {
+            // NodeHash::default()
+            todo!()
+        }
+        _ => {
+            // NodeHash::from_slice(rlp)
+            todo!()
+        }
+    }
 }
