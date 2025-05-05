@@ -988,7 +988,10 @@ impl<'a> VM<'a> {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if !tx_report.is_success() {
-            self.restore_state(previous_call_frame.state_backup, previous_call_frame.cache_backup.clone())?;
+            self.restore_state(
+                previous_call_frame.state_backup,
+                previous_call_frame.cache_backup.clone(),
+            )?;
         }
         let retdata = previous_call_frame.retdata;
         let unused_gas = retdata
