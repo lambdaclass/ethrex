@@ -280,6 +280,7 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
+    /// @notice Allow owner to upgrade the contract.
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override onlyOwner {}

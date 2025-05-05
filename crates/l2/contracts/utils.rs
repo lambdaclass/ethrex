@@ -33,6 +33,26 @@ pub fn compile_contract(
     if !Command::new("solc")
         .arg(bin_flag)
         .arg(
+            "@openzeppelin/contracts=".to_string()
+                + general_contracts_path
+                    .join("lib")
+                    .join("openzeppelin-contracts-upgradeable")
+                    .join("lib")
+                    .join("openzeppelin-contracts")
+                    .join("contracts")
+                    .to_str()
+                    .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+        )
+        .arg(
+            "@openzeppelin/contracts-upgradeable=".to_string()
+                + general_contracts_path
+                    .join("lib")
+                    .join("openzeppelin-contracts-upgradeable")
+                    .join("contracts")
+                    .to_str()
+                    .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+        )
+        .arg(
             general_contracts_path
                 .join(contract_path)
                 .to_str()
