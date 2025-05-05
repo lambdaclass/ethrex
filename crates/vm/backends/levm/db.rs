@@ -170,8 +170,8 @@ impl LevmDatabase for ExecutionDB {
             self.code
                 .get(&acc_info.code_hash)
                 .ok_or(DatabaseError::Custom(format!(
-                    "Could not find account's code hash {}",
-                    &acc_info.code_hash
+                    "Could not find account {} code hash {}",
+                    address, &acc_info.code_hash
                 )))?
         } else {
             &bytes::Bytes::new()
