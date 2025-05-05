@@ -4,7 +4,7 @@ use crate::{
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
-    vm::{VM},
+    vm::VM,
 };
 
 use bytes::Bytes;
