@@ -31,6 +31,7 @@ interface IOnChainProposer {
     /// @param sp1verifier the address of the sp1 groth16 verifier.
     function initialize(
         bool _validium,
+        address owner,
         address bridge,
         address r0verifier,
         address sp1verifier,

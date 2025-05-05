@@ -79,7 +79,7 @@ lazy_static::lazy_static! {
 }
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(bool,address,address,address,address,address[])";
+    "initialize(bool,address,address,address,address,address,address[])";
 
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
@@ -714,6 +714,7 @@ async fn initialize_on_chain_proposer(
 
     let calldata_values = vec![
         Value::Bool(validium),
+        Value::Address(deployer),
         Value::Address(bridge),
         Value::Address(risc0_verifier_address),
         Value::Address(sp1_verifier_address),

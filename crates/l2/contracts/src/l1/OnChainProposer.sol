@@ -82,6 +82,7 @@ contract OnChainProposer is
     /// @inheritdoc IOnChainProposer
     function initialize(
         bool _validium,
+        address owner,
         address bridge,
         address r0verifier,
         address sp1verifier,
@@ -154,7 +155,7 @@ contract OnChainProposer is
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
         }
 
-        OwnableUpgradeable.__Ownable_init(msg.sender);
+        OwnableUpgradeable.__Ownable_init(owner);
     }
 
     /// @inheritdoc IOnChainProposer
