@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
+    withdrawals::get_withdrawals_root,
 };
 
 pico_sdk::entrypoint!(main);
@@ -19,6 +20,8 @@ pub fn main() {
         blocks,
         parent_block_header,
         mut db,
+        #[cfg(feature = "l2")]
+        withdrawals_merkle_roots,
     } = read_as();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -39,7 +42,7 @@ pub fn main() {
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
-    for block in blocks {
+    for (i, block) in blocks.into_iter().enumerate() {
         let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
@@ -49,6 +52,18 @@ pub fn main() {
         let result = vm.execute_block(&block).expect("failed to execute block");
         let receipts = result.receipts;
         let account_updates = vm.get_state_transitions(fork)?;
+
+        // Validate L2 withdrawals
+        #[cfg(feature = "l2")]
+        {
+            if let Some(withdrawals_root) = withdrawals_merkle_roots.get(i) {
+                if *withdrawals_root != get_withdrawals_root(&block.body.transactions, &receipts)? {
+                    panic!("invalid withdrawals merkle root");
+                }
+            } else {
+                panic!("failed to get withdrawal root for block");
+            }
+        }
 
         // Update db for the next block
         db.apply_account_updates(&account_updates);
