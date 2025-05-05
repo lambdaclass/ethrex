@@ -185,6 +185,13 @@ jobs:
           sudo add-apt-repository ppa:ethereum/ethereum
           sudo apt-get update && sudo apt-get -y install solc
 
+      - name: Deploy L1 Contracts
+        run: |
+          cd crates/l2
+          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
+          touch .env
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach contract_deployer
+
       - name: Run tests
         run: |
           cd crates/l2
