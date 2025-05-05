@@ -4,6 +4,7 @@ use crate::{
     memory::Memory,
     opcodes::Opcode,
     utils::get_valid_jump_destinations,
+    vm::{RetData, StateBackup},
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -90,6 +91,10 @@ pub struct CallFrame {
     pub create_op_called: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub cache_backup: CacheBackup,
+    /// Backup of the state if it needs to be reverted
+    pub state_backup: StateBackup,
+    /// Return data for the context
+    pub retdata: RetData,
 }
 
 pub type CacheBackup = HashMap<Address, Option<Account>>;
@@ -108,6 +113,8 @@ impl CallFrame {
         gas_used: u64,
         depth: usize,
         create_op_called: bool,
+        state_backup: StateBackup,
+        retdata: RetData,
     ) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
@@ -123,6 +130,8 @@ impl CallFrame {
             gas_used,
             valid_jump_destinations,
             create_op_called,
+            state_backup,
+            retdata,
             ..Default::default()
         }
     }

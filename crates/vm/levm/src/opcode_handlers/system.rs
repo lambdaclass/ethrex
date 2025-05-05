@@ -753,6 +753,24 @@ impl<'a> VM<'a> {
         // 3. Decrease sender's balance.
         self.decrease_account_balance(deployer_address, value_in_wei_to_send)?;
 
+        let retdata = RetData {
+            is_create: true,
+            ret_offset: U256::zero(),
+            ret_size: 0,
+            should_transfer_value: true,
+            to: new_address,
+            msg_sender: deployer_address,
+            value: value_in_wei_to_send,
+            max_message_call_gas,
+        };
+
+        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
+        let backup = StateBackup::new(
+            self.accrued_substate.clone(),
+            self.env.refunded_gas,
+            self.env.transient_storage.clone(),
+        );
+
         let new_call_frame = CallFrame::new(
             deployer_address,
             new_address,
@@ -765,28 +783,13 @@ impl<'a> VM<'a> {
             0,
             new_depth,
             true,
+            backup,
+            retdata,
         );
         self.call_frames.push(new_call_frame);
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        self.return_data.push(RetData {
-            is_create: true,
-            ret_offset: U256::zero(),
-            ret_size: 0,
-            should_transfer_value: true,
-            to: new_address,
-            msg_sender: deployer_address,
-            value: value_in_wei_to_send,
-            max_message_call_gas,
-        });
-        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let backup = StateBackup::new(
-            self.accrued_substate.clone(),
-            self.env.refunded_gas,
-            self.env.transient_storage.clone(),
-        );
-        self.backups.push(backup);
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
@@ -870,7 +873,7 @@ impl<'a> VM<'a> {
             self.increase_account_balance(to, value)?;
         }
 
-        self.return_data.push(RetData {
+        let new_retdata = RetData {
             is_create: false,
             ret_offset,
             ret_size,
@@ -879,7 +882,15 @@ impl<'a> VM<'a> {
             msg_sender,
             value,
             max_message_call_gas: gas_limit,
-        });
+        };
+
+        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
+        let backup = StateBackup::new(
+            self.accrued_substate.clone(),
+            self.env.refunded_gas,
+            self.env.transient_storage.clone(),
+        );
+
         let new_call_frame = CallFrame::new(
             msg_sender,
             to,
@@ -892,15 +903,10 @@ impl<'a> VM<'a> {
             0,
             new_depth,
             false,
+            backup,
+            new_retdata,
         );
         self.call_frames.push(new_call_frame);
-        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let backup = StateBackup::new(
-            self.accrued_substate.clone(),
-            self.env.refunded_gas,
-            self.env.transient_storage.clone(),
-        );
-        self.backups.push(backup);
 
         if is_precompile(&code_address, self.env.config.fork) {
             let _report = self.run_execution()?;
@@ -912,26 +918,19 @@ impl<'a> VM<'a> {
         if self.current_call_frame()?.depth == 0 {
             return Ok(false);
         }
-        let retdata = self
-            .return_data
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-        if retdata.is_create {
-            self.handle_return_create(tx_report, retdata)?;
+        if self.current_call_frame()?.retdata.is_create {
+            self.handle_return_create(tx_report)?;
         } else {
-            self.handle_return_call(tx_report, retdata)?;
+            self.handle_return_call(tx_report)?;
         }
         Ok(true)
     }
-    pub fn handle_return_call(
-        &mut self,
-        tx_report: &ExecutionReport,
-        retdata: RetData,
-    ) -> Result<(), VMError> {
+    pub fn handle_return_call(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
         let call_frame = self
             .call_frames
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        let retdata = call_frame.retdata;
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = call_frame
             .gas_limit
@@ -980,15 +979,12 @@ impl<'a> VM<'a> {
         }
         Ok(())
     }
-    pub fn handle_return_create(
-        &mut self,
-        tx_report: &ExecutionReport,
-        retdata: RetData,
-    ) -> Result<(), VMError> {
+    pub fn handle_return_create(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
         let previous_call_frame = self
             .call_frames
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        let retdata = previous_call_frame.retdata;
         let unused_gas = retdata
             .max_message_call_gas
             .checked_sub(tx_report.gas_used)

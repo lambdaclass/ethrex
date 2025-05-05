@@ -27,7 +27,7 @@ use std::{
 };
 pub type Storage = HashMap<U256, H256>;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
@@ -39,6 +39,7 @@ pub struct Substate {
 ///   - Substate
 ///   - Gas Refunds
 ///   - Transient Storage
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct StateBackup {
     pub substate: Substate,
     pub refunded_gas: u64,
@@ -165,11 +166,10 @@ pub struct VM<'a> {
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
-    pub return_data: Vec<RetData>,
-    pub backups: Vec<StateBackup>,
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct RetData {
     pub is_create: bool,
     pub ret_offset: U256,
@@ -278,6 +278,8 @@ impl<'a> VM<'a> {
             0,
             0,
             false,
+            StateBackup::default(),
+            RetData::default(),
         );
 
         Ok(Self {
@@ -289,8 +291,6 @@ impl<'a> VM<'a> {
             access_list: tx.access_list(),
             authorization_list: tx.authorization_list(),
             hooks,
-            return_data: vec![],
-            backups: vec![],
             storage_original_values: HashMap::new(),
         })
     }
@@ -300,11 +300,7 @@ impl<'a> VM<'a> {
 
         if is_precompile(&self.current_call_frame()?.code_address, fork) {
             let precompile_result = execute_precompile(self.current_call_frame_mut()?, fork);
-            let backup = self
-                .backups
-                .pop()
-                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let report = self.handle_precompile_result(precompile_result, backup)?;
+            let report = self.handle_precompile_result(precompile_result)?;
             self.handle_return(&report)?;
             self.current_call_frame_mut()?.increment_pc_by(1)?;
             return Ok(report);
@@ -339,12 +335,9 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn restore_state(
-        &mut self,
-        backup: StateBackup,
-        call_frame_backup: CacheBackup,
-    ) -> Result<(), VMError> {
+    pub fn restore_state(&mut self, call_frame_backup: CacheBackup) -> Result<(), VMError> {
         self.restore_cache_state(call_frame_backup)?;
+        let backup = self.current_call_frame()?.state_backup.clone();
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
@@ -406,7 +399,7 @@ impl<'a> VM<'a> {
             self.env.transient_storage.clone(),
         );
 
-        self.backups.push(backup);
+        self.current_call_frame_mut()?.state_backup = backup;
 
         let mut report = self.run_execution()?;
 

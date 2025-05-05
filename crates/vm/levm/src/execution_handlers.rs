@@ -13,7 +13,6 @@ impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,
-        backup: StateBackup,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
             Ok(output) => Ok(ExecutionReport {
@@ -28,7 +27,7 @@ impl<'a> VM<'a> {
                     return Err(error);
                 }
 
-                self.restore_state(backup, self.current_call_frame()?.cache_backup.clone())?;
+                self.restore_state(self.current_call_frame()?.cache_backup.clone())?;
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
                     gas_used: self.current_call_frame()?.gas_limit,
@@ -146,10 +145,7 @@ impl<'a> VM<'a> {
     }
 
     pub fn handle_opcode_result(&mut self) -> Result<ExecutionReport, VMError> {
-        let backup = self
-            .backups
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        let backup = &self.current_call_frame()?.state_backup;
         let mut transaction_result = TxResult::Success;
         {
             // Check for the case where the transaction is a contract creation one
@@ -212,7 +208,7 @@ impl<'a> VM<'a> {
             TxResult::Revert(_) => {
                 logs = vec![];
                 // Restore state if error
-                self.restore_state(backup, self.current_call_frame()?.cache_backup.clone())?;
+                self.restore_state(self.current_call_frame()?.cache_backup.clone())?;
             }
         }
         let refunded_gas = self.env.refunded_gas;
@@ -228,10 +224,6 @@ impl<'a> VM<'a> {
     }
 
     pub fn handle_opcode_error(&mut self, error: VMError) -> Result<ExecutionReport, VMError> {
-        let backup = self
-            .backups
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if error.is_internal() {
             return Err(error);
         }
@@ -247,7 +239,7 @@ impl<'a> VM<'a> {
                     .saturating_sub(current_call_frame.gas_used);
                 current_call_frame.gas_used = current_call_frame.gas_used.saturating_add(left_gas);
             }
-            let refunded = backup.refunded_gas;
+            let refunded = current_call_frame.state_backup.refunded_gas;
             let output = std::mem::take(&mut current_call_frame.output); // Bytes::new() if error is not RevertOpcode
             let gas_used = current_call_frame.gas_used;
             execution_report = Ok(ExecutionReport {
@@ -259,7 +251,7 @@ impl<'a> VM<'a> {
             });
         }
 
-        self.restore_state(backup, self.current_call_frame()?.cache_backup.clone())?;
+        self.restore_state(self.current_call_frame()?.cache_backup.clone())?;
 
         execution_report
     }
