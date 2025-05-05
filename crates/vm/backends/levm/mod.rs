@@ -132,6 +132,7 @@ impl LEVM {
             block_gas_limit: block_header.gas_limit,
             transient_storage: HashMap::new(),
             difficulty: block_header.difficulty,
+            is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
         let mut vm = VM::new(env, db, tx)?;
@@ -716,6 +717,7 @@ fn env_from_generic(
         block_gas_limit: header.gas_limit,
         transient_storage: HashMap::new(),
         difficulty: header.difficulty,
+        is_privileged: false,
     })
 }
 
