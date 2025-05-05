@@ -195,16 +195,7 @@ jobs:
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          touch .env
-          cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config create ci --default
-          cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
-          cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
-          cargo b --manifest-path ../../Cargo.toml --release
-
-          CI_ETHREX_WORKDIR=/usr/local/bin \
-          docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
-
-          cargo test state_reconstruct --release
+          make state-diff-test
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
