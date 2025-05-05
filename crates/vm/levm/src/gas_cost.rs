@@ -107,8 +107,6 @@ pub const SSTORE_DEFAULT_CONSTANTINOPLE: u64 = 200;
 pub const SSTORE_STORAGE_CREATION: u64 = 20000;
 pub const SSTORE_STORAGE_MODIFICATION: u64 = 2900;
 pub const SSTORE_STIPEND: u64 = 2300;
-pub const SSTORE_PRE_BERLIN_NON_ZERO: u64 = 20000;
-pub const SSTORE_PRE_BERLIN: u64 = 5000;
 
 pub const BALANCE_STATIC: u64 = DEFAULT_STATIC;
 pub const BALANCE_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
@@ -122,7 +120,6 @@ pub const EXTCODEHASH_STATIC: u64 = DEFAULT_STATIC;
 pub const EXTCODEHASH_COLD_DYNAMIC: u64 = DEFAULT_COLD_DYNAMIC;
 pub const EXTCODEHASH_WARM_DYNAMIC: u64 = DEFAULT_WARM_DYNAMIC;
 pub const EXTCODEHASH_STATIC_PRE_ISTANBUL: u64 = 400;
-pub const EXTCODEHASH_STATIC_PRE_BERLIN: u64 = 700;
 
 pub const EXTCODECOPY_STATIC: u64 = 0;
 pub const EXTCODECOPY_DYNAMIC_BASE: u64 = 3;
@@ -401,12 +398,12 @@ fn mem_expansion_behavior(
 }
 
 pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
-    let static_gas = SLOAD_STATIC
+    let static_gas = SLOAD_STATIC;
     let dynamic_cost = if storage_slot_was_cold {
         SLOAD_COLD_DYNAMIC
     } else {
         SLOAD_WARM_DYNAMIC
-    }
+    };
     Ok(static_gas
         .checked_add(dynamic_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?)
@@ -419,59 +416,38 @@ pub fn sstore(
     storage_slot_was_cold: bool,
     fork: Fork,
 ) -> Result<u64, VMError> {
-    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1087.md
-    // Petersburg removes EIP-1283
-    // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1716.md
-    if fork <= Fork::Byzantium || fork == Fork::Petersburg {
-        if current_value.is_zero() && !new_value.is_zero() {
-            Ok(SSTORE_PRE_BERLIN_NON_ZERO)
+    let static_gas = SSTORE_STATIC;
+    let default_dynamic = match fork {
+        // https://eips.ethereum.org/EIPS/eip-1283
+        Fork::Constantinople => SSTORE_DEFAULT_CONSTANTINOPLE,
+        // https://eips.ethereum.org/EIPS/eip-2200
+        f if f == Fork::Istanbul || f == Fork::MuirGlacier => {
+            SSTORE_DEFAULT_ISTANBUL_MUIR_GLACIER
+        }
+        // https://eips.ethereum.org/EIPS/eip-2929
+        _ => SSTORE_DEFAULT_DYNAMIC,
+    };
+
+    let mut base_dynamic_gas = if new_value == current_value {
+        default_dynamic
+    } else if current_value == original_value {
+        if original_value.is_zero() {
+            SSTORE_STORAGE_CREATION
         } else {
-            Ok(SSTORE_PRE_BERLIN)
+            SSTORE_STORAGE_MODIFICATION
         }
     } else {
-        let static_gas = SSTORE_STATIC;
-
-        let default_dynamic = match fork {
-            // https://eips.ethereum.org/EIPS/eip-1283
-            Fork::Constantinople => SSTORE_DEFAULT_CONSTANTINOPLE,
-            // https://eips.ethereum.org/EIPS/eip-2200
-            f if f == Fork::Istanbul || f == Fork::MuirGlacier => {
-                SSTORE_DEFAULT_ISTANBUL_MUIR_GLACIER
-            }
-            // https://eips.ethereum.org/EIPS/eip-2929
-            _ => SSTORE_DEFAULT_DYNAMIC,
-        };
-
-        let dynamic_gas_modification = if fork < Fork::Berlin {
-            SSTORE_PRE_BERLIN
-        } else {
-            // https://eips.ethereum.org/EIPS/eip-3529
-            SSTORE_STORAGE_MODIFICATION
-        };
-
-        let mut base_dynamic_gas = if new_value == current_value {
-            default_dynamic
-        } else if current_value == original_value {
-            if original_value.is_zero() {
-                SSTORE_STORAGE_CREATION
-            } else {
-                dynamic_gas_modification
-            }
-        } else {
-            default_dynamic
-        };
-
-        // https://eips.ethereum.org/EIPS/eip-2929
-        if storage_slot_was_cold && fork >= Fork::Berlin {
-            base_dynamic_gas = base_dynamic_gas
-                .checked_add(SSTORE_COLD_DYNAMIC)
-                .ok_or(OutOfGasError::GasCostOverflow)?;
-        }
-
-        Ok(static_gas
-            .checked_add(base_dynamic_gas)
-            .ok_or(OutOfGasError::GasCostOverflow)?)
+        default_dynamic
+    };
+    // https://eips.ethereum.org/EIPS/eip-2929
+    if storage_slot_was_cold {
+        base_dynamic_gas = base_dynamic_gas
+            .checked_add(SSTORE_COLD_DYNAMIC)
+            .ok_or(OutOfGasError::GasCostOverflow)?;
     }
+    Ok(static_gas
+        .checked_add(base_dynamic_gas)
+        .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn mcopy(
@@ -727,16 +703,11 @@ pub fn extcodecopy(
 }
 
 pub fn extcodehash(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Constantinople => return Err(VMError::InvalidOpcode),
-        f if f < Fork::Istanbul => (EXTCODEHASH_STATIC_PRE_ISTANBUL, 0, 0),
-        f if f < Fork::Berlin => (EXTCODEHASH_STATIC_PRE_BERLIN, 0, 0),
-        _ => (
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
             EXTCODEHASH_STATIC,
             EXTCODEHASH_COLD_DYNAMIC,
             EXTCODEHASH_WARM_DYNAMIC,
-        ),
-    };
+        );
 
     address_access_cost(
         address_was_cold,
@@ -759,11 +730,7 @@ pub fn call(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Berlin => (CALL_STATIC_PRE_BERLIN, 0, 0),
-        f if f < Fork::Berlin => (0, 0, 0),
-        _ => (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC),
-    };
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC);
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -812,15 +779,11 @@ pub fn callcode(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Berlin => (CALLCODE_STATIC_PRE_BERLIN, 0, 0),
-        f if f < Fork::Berlin => (0, 0, 0),
-        _ => (
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
             DELEGATECALL_STATIC,
             DELEGATECALL_COLD_DYNAMIC,
             DELEGATECALL_WARM_DYNAMIC,
-        ),
-    };
+    );
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -860,15 +823,11 @@ pub fn delegatecall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Berlin => (DELEGATECALL_STATIC_PRE_BERLIN, 0, 0),
-        f if f < Fork::Berlin => (0, 0, 0),
-        _ => (
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
             DELEGATECALL_STATIC,
             DELEGATECALL_COLD_DYNAMIC,
             DELEGATECALL_WARM_DYNAMIC,
-        ),
-    };
+    );
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -894,15 +853,11 @@ pub fn staticcall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = match fork {
-        f if f < Fork::Berlin => (STATICCALLCALL_STATIC_PRE_BERLIN, 0, 0),
-        f if f < Fork::Berlin => (0, 0, 0),
-        _ => (
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
             STATICCALL_STATIC,
             STATICCALL_COLD_DYNAMIC,
             STATICCALL_WARM_DYNAMIC,
-        ),
-    };
+    );
 
     let address_access_cost = address_access_cost(
         address_was_cold,
