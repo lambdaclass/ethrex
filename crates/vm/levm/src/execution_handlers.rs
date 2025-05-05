@@ -152,7 +152,6 @@ impl<'a> VM<'a> {
             .backups
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-        let refunded_gas = self.env.refunded_gas;
         let mut transaction_result = TxResult::Success;
         {
             // Check for the case where the transaction is a contract creation one
@@ -218,6 +217,7 @@ impl<'a> VM<'a> {
                 self.restore_state(backup, self.current_call_frame()?.cache_backup.clone())?;
             }
         }
+        let refunded_gas = self.env.refunded_gas;
         let current_call_frame = self.current_call_frame_mut()?;
 
         Ok(ExecutionReport {
