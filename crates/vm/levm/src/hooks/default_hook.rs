@@ -57,7 +57,6 @@ impl Hook for DefaultHook {
             }
 
             validate_min_gas_limit(vm)?;
-
         }
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW
@@ -266,8 +265,7 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
     // calldata_cost = tokens_in_calldata * 4
-    let calldata_cost: u64 =
-        gas_cost::tx_calldata(&calldata).map_err(VMError::OutOfGas)?;
+    let calldata_cost: u64 = gas_cost::tx_calldata(&calldata).map_err(VMError::OutOfGas)?;
 
     // same as calculated in gas_used()
     let tokens_in_calldata: u64 = calldata_cost

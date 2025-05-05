@@ -1,5 +1,8 @@
 use crate::{
-    errors::{ExecutionReport, InternalError, TxValidationError, VMError}, hooks::{default_hook, hook::Hook}, utils::get_valid_jump_destinations, vm::VM
+    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
+    hooks::{default_hook, hook::Hook},
+    utils::get_valid_jump_destinations,
+    vm::VM,
 };
 
 use ethrex_common::{types::Fork, Address, U256};
@@ -36,7 +39,6 @@ impl Hook for L2Hook {
                 .ok_or(VMError::TxValidation(
                     TxValidationError::GasLimitPriceProductOverflow,
                 ))?;
-
 
             default_hook::validate_sender_balance(vm, &sender_account)?;
 
