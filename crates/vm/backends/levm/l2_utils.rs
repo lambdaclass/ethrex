@@ -48,7 +48,7 @@ pub fn has_nonce_changed(
 ) -> Result<bool, EvmError> {
     // Get previous nonce
     let prev_nonce = db
-        .previous_state_cache
+        .in_memory_db
         .get(&account_update.address)
         .ok_or_else(|| EvmError::Custom("Failed to get account".to_owned()))?
         .info

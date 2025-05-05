@@ -324,7 +324,7 @@ pub async fn ensure_post_state(
     fork: &Fork,
     db: &mut GeneralizedDatabase,
 ) -> Result<(), EFTestRunnerError> {
-    let cache = db.new_state_cache.clone();
+    let cache = db.cache.clone();
     match levm_execution_result {
         Ok(execution_report) => {
             match test.post.vector_post_value(vector, *fork).expect_exception {

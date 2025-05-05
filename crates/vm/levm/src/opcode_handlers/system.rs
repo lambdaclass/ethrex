@@ -1021,7 +1021,7 @@ impl<'a> VM<'a> {
                 self.increase_account_balance(retdata.msg_sender, retdata.value)?;
 
                 // Deployment failed so account shouldn't exist
-                cache::remove_account(&mut self.db.new_state_cache, &retdata.to);
+                cache::remove_account(&mut self.db.cache, &retdata.to);
                 self.accrued_substate.created_accounts.remove(&retdata.to);
 
                 let current_call_frame = self.current_call_frame_mut()?;

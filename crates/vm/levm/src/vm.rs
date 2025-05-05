@@ -370,10 +370,10 @@ impl<'a> VM<'a> {
 
     /// Executes without making changes to the cache.
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
-        let cache_backup = self.db.new_state_cache.clone();
+        let cache_backup = self.db.cache.clone();
         let report = self.execute()?;
         // Restore the cache to its original state
-        self.db.new_state_cache = cache_backup;
+        self.db.cache = cache_backup;
         Ok(report)
     }
 
@@ -479,10 +479,10 @@ impl<'a> VM<'a> {
         for (address, account_opt) in call_frame_backup {
             if let Some(account) = account_opt {
                 // restore the account to the state before the call
-                cache::insert_account(&mut self.db.new_state_cache, address, account.clone());
+                cache::insert_account(&mut self.db.cache, address, account.clone());
             } else {
                 // remove from cache if it wasn't there before
-                cache::remove_account(&mut self.db.new_state_cache, &address);
+                cache::remove_account(&mut self.db.cache, &address);
             }
         }
         Ok(())

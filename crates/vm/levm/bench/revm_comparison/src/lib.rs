@@ -64,7 +64,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
     let mut db = GeneralizedDatabase::new(Arc::new(execution_db), CacheDB::new());
 
     cache::insert_account(
-        &mut db.new_state_cache,
+        &mut db.cache,
         accounts[0].0,
         Account::new(
             accounts[0].1.info.balance,
@@ -74,7 +74,7 @@ pub fn run_with_levm(program: &str, runs: u64, calldata: &str) {
         ),
     );
     cache::insert_account(
-        &mut db.new_state_cache,
+        &mut db.cache,
         accounts[1].0,
         Account::new(
             accounts[1].1.info.balance,
