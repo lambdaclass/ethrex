@@ -14,7 +14,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
 };
-use tracing::warn;
+
 const MAX_NODE_RECORD_ENCODED_SIZE: usize = 300;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,7 +251,6 @@ impl NodeRecord {
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
                 "eth" => {
-                    warn!("RECIBO ETH {:?}", value);
                     // the first byte is ignored as an array of array is received
                     decoded_pairs.eth = ForkId::decode(&value[1..]).ok();
                 }
@@ -307,6 +306,7 @@ impl NodeRecord {
         if let Some(fi) = fork_id {
             record
                 .pairs
+                // a vec! is needed in order to have a single element list
                 .push(("eth".into(), vec![fi].encode_to_vec().into()));
         }
 

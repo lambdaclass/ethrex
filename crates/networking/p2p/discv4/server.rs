@@ -23,7 +23,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::UdpSocket, sync::MutexGuard};
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 const MAX_DISC_PACKET_SIZE: usize = 1280;
 const PROOF_EXPIRATION_IN_HS: u64 = 12;
@@ -391,6 +391,7 @@ impl Discv4Server {
                     ));
                 };
 
+                //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
                 if let Some(eth) = record.eth {
                     let Ok(fork_id) = self.ctx.storage.get_fork_id().await else {
                         return Err(DiscoveryError::InvalidMessage(
@@ -398,24 +399,44 @@ impl Discv4Server {
                         ));
                     };
 
-                    let block_number = self.ctx.storage.get_latest_block_number().await.unwrap();
-                    let block_header = self.ctx.storage.get_block_header(block_number).unwrap();
-                    let chain_config = self.ctx.storage.get_chain_config().unwrap();
-                    let genesis_header = self.ctx.storage.get_block_header(0).unwrap();
+                    let Ok(block_number) = self.ctx.storage.get_latest_block_number().await else {
+                        return Err(DiscoveryError::InvalidMessage(
+                            "Could not get last block number".into(),
+                        ));
+                    };
+                    let Ok(Some(block_header)) = self.ctx.storage.get_block_header(block_number)
+                    else {
+                        return Err(DiscoveryError::InvalidMessage(
+                            "Could not get last block number".into(),
+                        ));
+                    };
+
+                    let Ok(chain_config) = self.ctx.storage.get_chain_config() else {
+                        return Err(DiscoveryError::InvalidMessage(
+                            "Could not getchaing config".into(),
+                        ));
+                    };
+
+                    let Ok(Some(genesis_header)) = self.ctx.storage.get_block_header(0) else {
+                        return Err(DiscoveryError::InvalidMessage(
+                            "Could not get genesis block number".into(),
+                        ));
+                    };
 
                     if !fork_id.is_valid(
                         eth,
                         block_number,
-                        block_header.unwrap().timestamp,
+                        block_header.timestamp,
                         chain_config,
-                        genesis_header.unwrap(),
+                        genesis_header,
                     ) {
                         return Err(DiscoveryError::InvalidMessage(
-                            "Could not get fork id from storage".into(),
+                            "Could not validate fork id from new node".into(),
                         ));
                     }
-                    warn!("Eth block validation ok!");
+                    debug!("ENR eth pair validated");
                 }
+
                 // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
                 let signature_valid = match id.as_str() {
                     "v4" => {
