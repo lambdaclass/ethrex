@@ -2618,7 +2618,7 @@ mod tests {
             "from":"0x6177843db3138ae69679A54b95cf345ED759450d",
             "gas":"0x5208",
             "value":"0x01",
-            "input":"0x",
+            "input":"0x010203040506",
             "gasPrice":"0x07",
             "accessList": [
                 {
@@ -2639,7 +2639,7 @@ mod tests {
             ),
             gas: Some(0x5208),
             value: U256::from(1),
-            input: Bytes::new(),
+            input: Bytes::from(hex::decode("010203040506").unwrap()),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
@@ -2670,8 +2670,8 @@ mod tests {
             "from":"0x6177843db3138ae69679A54b95cf345ED759450d",
             "gas":"0x5208",
             "value":"0x01",
-            "input":"0x",
-            "data":"0x",
+            "input":"0x010203040506",
+            "data":"0x010203040506",
             "gasPrice":"0x07",
             "accessList": [
                 {
@@ -2692,7 +2692,7 @@ mod tests {
             ),
             gas: Some(0x5208),
             value: U256::from(1),
-            input: Bytes::new(),
+            input: Bytes::from(hex::decode("010203040506").unwrap()),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
