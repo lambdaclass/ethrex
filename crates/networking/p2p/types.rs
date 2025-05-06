@@ -213,7 +213,7 @@ pub struct NodeRecord {
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub struct NodeRecordDecodedPairs {
+pub struct NodeRecordPairs {
     pub id: Option<String>,
     pub ip: Option<u32>,
     // the record structure reference says that tcp_port and udp_ports are big-endian integers
@@ -226,8 +226,8 @@ pub struct NodeRecordDecodedPairs {
 }
 
 impl NodeRecord {
-    pub fn decode_pairs(&self) -> NodeRecordDecodedPairs {
-        let mut decoded_pairs = NodeRecordDecodedPairs::default();
+    pub fn decode_pairs(&self) -> NodeRecordPairs {
+        let mut decoded_pairs = NodeRecordPairs::default();
         for (key, value) in &self.pairs {
             let Ok(key) = String::from_utf8(key.to_vec()) else {
                 continue;
