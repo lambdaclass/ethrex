@@ -20,6 +20,7 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
+use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::{EVMConfig, Substate, VM},
@@ -108,7 +109,9 @@ impl LEVM {
         let chain_config = db.store.get_chain_config();
         let gas_price: U256 = tx
             .effective_gas_price(block_header.base_fee_per_gas)
-            .ok_or(VMError::InvalidTransaction)?
+            .ok_or(VMError::TxValidation(
+                TxValidationError::InsufficientMaxFeePerGas,
+            ))?
             .into();
 
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
@@ -134,6 +137,7 @@ impl LEVM {
             block_gas_limit: block_header.gas_limit,
             transient_storage: HashMap::new(),
             difficulty: block_header.difficulty,
+            is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
 
         let mut vm = VM::new(env, db, tx)?;
@@ -745,6 +749,7 @@ fn env_from_generic(
         block_gas_limit: header.gas_limit,
         transient_storage: HashMap::new(),
         difficulty: header.difficulty,
+        is_privileged: false,
     })
 }
 

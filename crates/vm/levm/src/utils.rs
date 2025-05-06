@@ -1,9 +1,6 @@
 use crate::{
     constants::*,
-    db::{
-        cache::{self},
-        gen_db::GeneralizedDatabase,
-    },
+    db::gen_db::GeneralizedDatabase,
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -336,7 +333,7 @@ pub fn eip7702_get_code(
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = db.get_account_no_push_cache(address)?;
+    let account = db.get_account(address)?;
     let bytecode = account.code.clone();
 
     // If the Address doesn't have a delegation code
@@ -358,17 +355,9 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = db.get_account_no_push_cache(auth_address)?.code;
+    let authorized_bytecode = db.get_account(auth_address)?.code;
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
-}
-
-/// Checks if a given account exists in the database or cache
-pub fn account_exists(db: &mut GeneralizedDatabase, address: Address) -> bool {
-    match cache::get_account(&db.cache, &address) {
-        Some(_) => true,
-        None => db.store.account_exists(address),
-    }
 }
 
 impl<'a> VM<'a> {
@@ -400,10 +389,9 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            self.accrued_substate
-                .touched_accounts
-                .insert(authority_address);
-            let authority_account = self.db.get_account_no_push_cache(authority_address)?;
+            let (authority_account, _address_was_cold) = self
+                .db
+                .access_account(&mut self.accrued_substate, authority_address)?;
 
             // 5. Verify the code of authority is either empty or already delegated.
             let empty_or_delegated =
@@ -420,9 +408,7 @@ impl<'a> VM<'a> {
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if cache::is_account_cached(&self.db.cache, &authority_address)
-                || account_exists(self.db, authority_address)
-            {
+            if !authority_account.is_empty() {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
                     .checked_add(refunded_gas_if_exists)

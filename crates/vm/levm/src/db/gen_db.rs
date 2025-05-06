@@ -88,20 +88,6 @@ impl GeneralizedDatabase {
         Ok(value)
     }
 
-    /// Gets account without pushing it to the cache
-    pub fn get_account_no_push_cache(
-        &mut self,
-        address: Address,
-    ) -> Result<Account, DatabaseError> {
-        match cache::get_account(&self.cache, &address) {
-            Some(acc) => Ok(acc.clone()),
-            None => {
-                let account = self.get_account_from_database(address)?;
-                Ok(account)
-            }
-        }
-    }
-
     /// **Accesses to an account's information.**
     ///
     /// Accessed accounts are stored in the `touched_accounts` set.
