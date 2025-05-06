@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746543550244,
+  "lastUpdate": 1746547826957,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5485,6 +5485,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182626211524,
             "range": "± 1258129811",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e08e959f43215e90a71f8642b275c8c9ddb2e490",
+          "message": "refactor(levm): improve and simplify some db functions (#2651)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Try to remove `account_exists` if possible because it adds complexity\nand unnecessary checks to the DB.\n- Try to finally remove `get_account_no_push_cache`, which is related to\nthe previous thing too.\n\n**Description**\n\n- We now ignore a specific test because [EIP-7702 spec has\nchanged](https://github.com/ethereum/EIPs/pull/9710) and we no longer\nneed to check if the account exists in the trie.\n- Remove `Option` from `specific_tests`\n- Remove `get_account_no_push_cache` and the usage of `account_exists`\nin LEVM. This method is not deleted from the Database because it's used\nin `get_state_transitions`, and even here it could be removed but I\nthink it is better to keep it in this PR and maybe decide later what to\ndo with this function. (If we remove it it wouldn't make a difference to\nthe state though).\n- We were able to remove a SpuriousDragon check because we don't support\npre-merge forks now\n\n\nNote: `account_exists` hasn't been completely removed from `Database`\nbecause we use it in `get_state_transitions` but that is going to change\nsoon and we'll be able to remove it.\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-06T15:06:27Z",
+          "tree_id": "df88f4a1dd9a86e832f5d5b6bef88450f059e3c7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e08e959f43215e90a71f8642b275c8c9ddb2e490"
+        },
+        "date": 1746547825082,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 190818320644,
+            "range": "± 3574101557",
             "unit": "ns/iter"
           }
         ]
