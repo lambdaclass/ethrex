@@ -105,7 +105,8 @@ pub fn verify_range(
     // Remove all references to the internal nodes that belong to the range so they can be reconstructed
     let empty = remove_internal_references(root, first_key, last_key, &mut trie.state)?;
     if !empty {
-        trie.root = Some(NodeHash::from(root));
+        // trie.root = Some(NodeHash::from(root));
+        todo!()
     }
     // Reconstruct the internal nodes by inserting the elements on the range
     for (key, value) in keys.iter().zip(values.iter()) {
@@ -151,22 +152,23 @@ fn fill_node(
     trie_state: &mut TrieState,
     proof_nodes: &ProofNodeStorage,
 ) -> Result<Vec<u8>, TrieError> {
-    let node = proof_nodes.get_node(node_key)?;
-    let child_hash = get_child(path, &node);
-    if let Some(ref child_key) = child_hash {
-        trie_state.insert_node(node_key, node);
-        fill_node(path, child_key, trie_state, proof_nodes)
-    } else {
-        let value = match &node {
-            Node::Branch(n) => n.value.clone(),
-            Node::Extension(_) => vec![],
-            Node::Leaf(n) => (*path == n.partial)
-                .then_some(n.value.clone())
-                .unwrap_or_default(),
-        };
-        trie_state.insert_node(node_key, node);
-        Ok(value)
-    }
+    // let node = proof_nodes.get_node(node_key)?;
+    // let child_hash = get_child(path, &node);
+    // if let Some(ref child_key) = child_hash {
+    //     trie_state.insert_node(node_key, node);
+    //     fill_node(path, child_key, trie_state, proof_nodes)
+    // } else {
+    //     let value = match &node {
+    //         Node::Branch(n) => n.value.clone(),
+    //         Node::Extension(_) => vec![],
+    //         Node::Leaf(n) => (*path == n.partial)
+    //             .then_some(n.value.clone())
+    //             .unwrap_or_default(),
+    //     };
+    //     trie_state.insert_node(node_key, node);
+    //     Ok(value)
+    // }
+    todo!()
 }
 
 /// Returns the node hash of the node's child (if any) following the given path
@@ -203,9 +205,11 @@ fn has_right_element_inner(
     mut path: Nibbles,
     trie_state: &TrieState,
 ) -> Result<bool, TrieError> {
-    let Ok(Some(node)) = trie_state.get_node(node_hash.clone()) else {
-        return Ok(false);
-    };
+    // let Ok(Some(node)) = trie_state.get_node(node_hash.clone()) else {
+    //     return Ok(false);
+    // };
+    let node = todo!();
+
     match node {
         Node::Branch(ref n) => {
             // Check if there are children to the right side
@@ -213,13 +217,15 @@ fn has_right_element_inner(
                 if n.choices[choice + 1..].iter().any(|child| child.is_valid()) {
                     return Ok(true);
                 } else if n.choices[choice].is_valid() {
-                    return has_right_element_inner(n.choices[choice].clone(), path, trie_state);
+                    // return has_right_element_inner(n.choices[choice].clone(), path, trie_state);
+                    todo!()
                 }
             }
         }
         Node::Extension(n) => {
             if path.skip_prefix(&n.prefix) {
-                return has_right_element_inner(n.child, path, trie_state);
+                // return has_right_element_inner(n.child, path, trie_state);
+                todo!()
             } else {
                 return Ok(n.prefix.as_ref() > path.as_ref());
             }
@@ -244,7 +250,8 @@ fn remove_internal_references(
     let left_path = Nibbles::from_bytes(&left_key.0);
     let right_path = Nibbles::from_bytes(&right_key.0);
 
-    remove_internal_references_inner(NodeHash::from(root_hash), left_path, right_path, trie_state)
+    // remove_internal_references_inner(NodeHash::from(root_hash), left_path, right_path, trie_state)
+    todo!()
 }
 
 /// Traverses the left and right path starting from the given node until the paths diverge
@@ -262,7 +269,7 @@ fn remove_internal_references_inner(
         return Ok(true);
     }
     // We already looked up the nodes when filling the state so this shouldn't fail
-    let node = trie_state[node_key];
+    let node = todo!(); // trie_state[node_key];
     match node {
         Node::Branch(mut n) => {
             // If none of the paths have a next choice nibble then it means that this is the end of the path
@@ -286,7 +293,8 @@ fn remove_internal_references_inner(
                     // Remove child node
                     n.choices[left_choice] = CacheKey::INVALID;
                     // Update node in the state
-                    trie_state.insert_node(node_key, n.into());
+                    // trie_state.insert_node(node_key, n.into());
+                    todo!()
                 }
             } else {
                 // We found our fork node, now we can remove the internal references
@@ -311,7 +319,8 @@ fn remove_internal_references_inner(
                     n.choices[right_choice] = CacheKey::INVALID;
                 }
                 // Update node in the state
-                trie_state.insert_node(node_key, n.into());
+                // trie_state.insert_node(node_key, n.into());
+                todo!()
             }
         }
         Node::Extension(n) => {
@@ -374,7 +383,7 @@ fn remove_node(
         return false;
     }
     // We already looked up the nodes when filling the state so this shouldn't fail
-    let node = trie_state[node_key];
+    let node = todo!(); // trie_state[node_key];
     match node {
         Node::Branch(mut n) => {
             // Remove child nodes
@@ -398,7 +407,8 @@ fn remove_node(
                 n.choices[choice] = CacheKey::INVALID;
             }
             // Update node in the state
-            trie_state.insert_node(node_key, n.into());
+            // trie_state.insert_node(node_key, n.into());
+            todo!()
         }
         Node::Extension(n) => {
             // If no child subtrie would result from this process remove the node entirely
@@ -444,9 +454,13 @@ impl<'a> ProofNodeStorage<'a> {
                 *encoded
             }
 
-            NodeHash::Inline(ref encoded) => encoded,
+            NodeHash::Inline(ref encoded) => {
+                // encoded
+                todo!()
+            }
         };
-        Ok(Node::decode_raw(encoded)?)
+        // Ok(Node::decode_raw(encoded)?)
+        todo!()
     }
 }
 

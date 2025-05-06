@@ -100,7 +100,7 @@ async fn heal_state_batch(
     state_root: H256,
     mut batch: Vec<Nibbles>,
     peers: PeerHandler,
-    store: Store,
+    mut store: Store,
     bytecode_sender: Sender<Vec<H256>>,
 ) -> Result<(Vec<Nibbles>, bool), SyncError> {
     if let Some(nodes) = peers
@@ -118,7 +118,7 @@ async fn heal_state_batch(
             let mut trie = store.open_state_trie(*EMPTY_TRIE_HASH);
             for node in nodes.iter() {
                 let path = batch.remove(0);
-                batch.extend(node_missing_children(node, &path, trie.state())?);
+                batch.extend(node_missing_children(node, &path, trie.state_mut())?);
                 if let Node::Leaf(node) = &node {
                     // Fetch bytecode & storage
                     let account = AccountState::decode(&node.value)?;

@@ -671,19 +671,21 @@ impl Syncer {
 fn node_missing_children(
     node: &Node,
     parent_path: &Nibbles,
-    trie_state: &TrieState,
+    trie_state: &mut TrieState,
 ) -> Result<Vec<Nibbles>, TrieError> {
     let mut paths = Vec::new();
     match &node {
         Node::Branch(node) => {
             for (index, child) in node.choices.iter().enumerate() {
-                if child.is_valid() && trie_state.get_node(*child)?.is_none() {
+                let child = trie_state[*child].compute_hash(trie_state);
+                if child.is_valid() && trie_state.get_node(child)?.is_none() {
                     paths.push(parent_path.append_new(index as u8));
                 }
             }
         }
         Node::Extension(node) => {
-            if node.child.is_valid() && trie_state.get_node(node.child)?.is_none() {
+            let child = trie_state[node.child].compute_hash(trie_state);
+            if node.child.is_valid() && trie_state.get_node(child)?.is_none() {
                 paths.push(parent_path.concat(node.prefix.clone()));
             }
         }

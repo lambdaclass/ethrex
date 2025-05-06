@@ -336,7 +336,7 @@ impl Trie {
     }
 
     /// Returns a reference to the trie's internal node state
-    pub fn state(&mut self) -> &TrieState {
+    pub fn state(&self) -> &TrieState {
         &self.state
     }
 

@@ -84,7 +84,7 @@ pub(crate) async fn state_sync(
 async fn state_sync_segment(
     state_root: H256,
     peers: PeerHandler,
-    store: Store,
+    mut store: Store,
     segment_number: usize,
     checkpoint: Option<H256>,
     state_sync_progress: StateSyncProgress,

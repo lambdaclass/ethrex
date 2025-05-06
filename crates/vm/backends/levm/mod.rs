@@ -479,10 +479,10 @@ impl LEVM {
             .collect();
 
         // get account proofs
-        let state_trie = store
+        let mut state_trie = store
             .state_trie(last_block.hash())?
             .ok_or(ExecutionDBError::NewMissingStateTrie(last_block.hash()))?;
-        let parent_state_trie = store.state_trie(first_block_parent_hash)?.ok_or(
+        let mut parent_state_trie = store.state_trie(first_block_parent_hash)?.ok_or(
             ExecutionDBError::NewMissingStateTrie(first_block_parent_hash),
         )?;
         let hashed_addresses: Vec<_> = state_accessed.keys().map(hash_address).collect();
@@ -494,7 +494,11 @@ impl LEVM {
         let potential_account_child_nodes = final_state_proofs
             .iter()
             .filter_map(|(hashed_address, proof)| get_potential_child_nodes(proof, hashed_address))
-            .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
+            .flat_map(|nodes| {
+                nodes
+                    .into_iter()
+                    .map(|node| node.encode_raw(state_trie.state()))
+            })
             .collect();
         let state_proofs = (
             initial_state_proofs.0,
@@ -505,13 +509,14 @@ impl LEVM {
         let mut storage_proofs = HashMap::new();
         let mut final_storage_proofs = HashMap::new();
         for (address, storage_keys) in state_accessed {
-            let Some(parent_storage_trie) = store.storage_trie(first_block_parent_hash, address)?
+            let Some(mut parent_storage_trie) =
+                store.storage_trie(first_block_parent_hash, address)?
             else {
                 // the storage of this account was empty or the account is newly created, either
                 // way the storage trie was initially empty so there aren't any proofs to add.
                 continue;
             };
-            let storage_trie = store.storage_trie(last_block.hash(), address)?.ok_or(
+            let mut storage_trie = store.storage_trie(last_block.hash(), address)?.ok_or(
                 ExecutionDBError::NewMissingStorageTrie(last_block.hash(), address),
             )?;
             let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
@@ -529,7 +534,11 @@ impl LEVM {
             let potential_child_nodes: Vec<NodeRLP> = final_proofs
                 .iter()
                 .filter_map(|(hashed_key, proof)| get_potential_child_nodes(proof, hashed_key))
-                .flat_map(|nodes| nodes.into_iter().map(|node| node.encode_raw()))
+                .flat_map(|nodes| {
+                    nodes
+                        .into_iter()
+                        .map(|node| node.encode_raw(state_trie.state()))
+                })
                 .collect();
             let proofs = (
                 initial_proofs.0,

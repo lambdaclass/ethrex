@@ -126,7 +126,7 @@ async fn heal_storage_batch(
             let children = trie_nodes
                 .iter()
                 .zip(paths.drain(..trie_nodes.len()))
-                .map(|(node, path)| node_missing_children(node, &path, trie.state()))
+                .map(|(node, path)| node_missing_children(node, &path, trie.state_mut()))
                 .collect::<Result<Vec<_>, _>>()?;
             paths.extend(children.into_iter().flatten());
             // Write nodes to trie

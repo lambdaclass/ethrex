@@ -95,7 +95,7 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
@@ -268,7 +268,7 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
@@ -287,7 +287,7 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
@@ -524,7 +524,7 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
+        let Some(mut storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
         let hashed_key = hash_key(&storage_key);
@@ -650,7 +650,7 @@ impl Store {
         address: Address,
     ) -> Result<Option<Trie>, StoreError> {
         // Fetch Account from state_trie
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
         let hashed_address = hash_address(&address);
@@ -674,10 +674,10 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        self.get_account_state_from_trie(&state_trie, address)
+        self.get_account_state_from_trie(&mut state_trie, address)
     }
 
     pub fn get_account_state_by_hash(
@@ -685,15 +685,15 @@ impl Store {
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
-        self.get_account_state_from_trie(&state_trie, address)
+        self.get_account_state_from_trie(&mut state_trie, address)
     }
 
     pub fn get_account_state_from_trie(
         &self,
-        state_trie: &Trie,
+        state_trie: &mut Trie,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
         let hashed_address = hash_address(&address);
@@ -711,7 +711,7 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
         Ok(Some(state_trie.get_proof(&hash_address(address))).transpose()?)
@@ -724,7 +724,7 @@ impl Store {
         storage_root: H256,
         storage_key: &H256,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
-        let trie = self
+        let mut trie = self
             .engine
             .open_storage_trie(hash_address_fixed(&address), storage_root);
         Ok(trie.get_proof(&hash_key(storage_key))?)
@@ -749,7 +749,7 @@ impl Store {
         state_root: H256,
         hashed_address: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root);
+        let mut state_trie = self.engine.open_state_trie(state_root);
         let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
         };
@@ -771,7 +771,7 @@ impl Store {
         starting_hash: H256,
         last_hash: Option<H256>,
     ) -> Result<Vec<Vec<u8>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root);
+        let mut state_trie = self.engine.open_state_trie(state_root);
         let mut proof = state_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
         if let Some(last_hash) = last_hash {
             proof.extend_from_slice(&state_trie.get_proof(&last_hash.as_bytes().to_vec())?);
@@ -786,12 +786,12 @@ impl Store {
         starting_hash: H256,
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
-        let state_trie = self.engine.open_state_trie(state_root);
+        let mut state_trie = self.engine.open_state_trie(state_root);
         let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
-        let storage_trie = self.engine.open_storage_trie(hashed_address, storage_root);
+        let mut storage_trie = self.engine.open_storage_trie(hashed_address, storage_root);
         let mut proof = storage_trie.get_proof(&starting_hash.as_bytes().to_vec())?;
         if let Some(last_hash) = last_hash {
             proof.extend_from_slice(&storage_trie.get_proof(&last_hash.as_bytes().to_vec())?);
@@ -814,7 +814,7 @@ impl Store {
         let Some(account_path) = paths.first() else {
             return Ok(vec![]);
         };
-        let state_trie = self.engine.open_state_trie(state_root);
+        let mut state_trie = self.engine.open_state_trie(state_root);
         // State Trie Nodes Request
         if paths.len() == 1 {
             // Fetch state trie node
@@ -833,7 +833,7 @@ impl Store {
         let Ok(hashed_address) = account_path.clone().try_into().map(H256) else {
             return Ok(vec![]);
         };
-        let storage_trie = self
+        let mut storage_trie = self
             .engine
             .open_storage_trie(hashed_address, account_state.storage_root);
         // Fetch storage trie nodes
@@ -893,25 +893,25 @@ impl Store {
     }
 
     /// Returns true if the given node is part of the state trie's internal storage
-    pub fn contains_state_node(&self, node_hash: H256) -> Result<bool, StoreError> {
+    pub fn contains_state_node(&mut self, node_hash: H256) -> Result<bool, StoreError> {
         // Root is irrelevant, we only care about the internal state
         Ok(self
             .open_state_trie(*EMPTY_TRIE_HASH)
-            .state()
+            .state_mut()
             .get_node(node_hash.into())?
             .is_some())
     }
 
     /// Returns true if the given node is part of the given storage trie's internal storage
     pub fn contains_storage_node(
-        &self,
+        &mut self,
         hashed_address: H256,
         node_hash: H256,
     ) -> Result<bool, StoreError> {
         // Root is irrelevant, we only care about the internal state
         Ok(self
             .open_storage_trie(hashed_address, *EMPTY_TRIE_HASH)
-            .state()
+            .state_mut()
             .get_node(node_hash.into())?
             .is_some())
     }

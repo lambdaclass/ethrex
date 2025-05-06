@@ -242,7 +242,7 @@ impl revm::DatabaseRef for StoreWrapper {
 /// calculate all posible child nodes.
 pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Node>> {
     // TODO: Perhaps it's possible to calculate the child nodes instead of storing all possible ones.
-    let trie = Trie::from_nodes(
+    let mut trie = Trie::from_nodes(
         proof.first(),
         &proof.iter().skip(1).cloned().collect::<Vec<_>>(),
     )
@@ -250,7 +250,7 @@ pub fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec
 
     // return some only if this is a proof of exclusion
     if trie.get(key).unwrap().is_none() {
-        let final_node = Node::decode_raw(proof.last().unwrap()).unwrap();
+        let final_node = Node::decode_raw(proof.last().unwrap(), trie.state_mut()).unwrap();
         match final_node {
             Node::Extension(mut node) => {
                 let mut variants = Vec::with_capacity(node.prefix.len());
