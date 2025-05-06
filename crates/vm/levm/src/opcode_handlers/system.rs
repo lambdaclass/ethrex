@@ -74,8 +74,7 @@ impl<'a> VM<'a> {
         let account_is_empty;
         let address_was_cold;
         {
-            let (account, was_cold) =
-                self.db.access_account(&mut self.accrued_substate, callee)?;
+            let (account, was_cold) = self.db.access_account(&mut self.accrued_substate, callee)?;
             account_is_empty = account.is_empty();
             address_was_cold = was_cold;
         }

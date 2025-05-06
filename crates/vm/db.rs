@@ -91,17 +91,15 @@ impl ExecutionDB {
                         //Update the account info
                         self.accounts.insert(update.address, account_info);
                     }
-                    
+
                     if let Some(code) = &update.code {
                         self.code.insert(info.code_hash, code.clone());
                     }
-                    
-
                 }
 
                 // Store the added storage
                 if !update.added_storage.is_empty() {
-                    let update_storage = | storage: &mut HashMap<H256, U256> | { 
+                    let update_storage = |storage: &mut HashMap<H256, U256>| {
                         for (storage_key, storage_value) in &update.added_storage {
                             if storage_value.is_zero() {
                                 storage.remove(storage_key);
@@ -116,7 +114,6 @@ impl ExecutionDB {
                         let mut storage = HashMap::default();
                         update_storage(&mut storage);
                         self.storage.insert(update.address, storage);
-
                     };
                 }
             }

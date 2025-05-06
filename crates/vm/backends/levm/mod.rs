@@ -251,9 +251,11 @@ impl LEVM {
             if let Some(account) = db.cache.get_mut(&address) {
                 account.info.balance += increment.into();
             } else {
-                let mut account = db.store
+                let mut account = db
+                    .store
                     .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?.clone();
+                    .map_err(|e| StoreError::Custom(e.to_string()))?
+                    .clone();
                 account.info.balance += increment.into();
                 db.cache.insert(address, account);
             }

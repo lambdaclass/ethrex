@@ -264,7 +264,7 @@ impl<'a> VM<'a> {
             .access_account(&mut self.accrued_substate, address)?;
 
         let account_code_length = account.code.len().into();
-    
+
         let current_call_frame = self.current_call_frame_mut()?;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold, fork)?)?;
@@ -423,13 +423,12 @@ impl<'a> VM<'a> {
                 .access_account(&mut self.accrued_substate, address)?;
             address_was_cold = was_cold;
             account_is_empty = account.is_empty();
-            account_code_hash = account.info.code_hash.0.clone();
+            account_code_hash = account.info.code_hash.0;
         }
         let current_call_frame = self.current_call_frame_mut()?;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold, fork)?)?;
 
-        
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {
             current_call_frame.stack.push(U256::zero())?;

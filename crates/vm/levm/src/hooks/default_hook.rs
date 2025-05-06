@@ -96,7 +96,7 @@ impl Hook for DefaultHook {
         // (9) SENDER_NOT_EOA
         {
             let sender_account = vm.db.get_account(sender_address)?;
-            validate_sender(&sender_account)?;
+            validate_sender(sender_account)?;
         }
 
         // (10) GAS_ALLOWANCE_EXCEEDED
