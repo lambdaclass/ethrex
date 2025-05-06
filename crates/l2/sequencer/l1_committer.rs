@@ -234,7 +234,7 @@ impl Committer {
                         .store
                         .get_chain_config()?
                         .fork(block_to_commit.header.timestamp);
-                    vm.get_state_transitions(fork)?
+                    vm.get_state_transitions()?
                 }
             };
 
