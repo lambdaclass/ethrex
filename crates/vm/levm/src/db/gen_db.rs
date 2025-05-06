@@ -75,14 +75,10 @@ impl GeneralizedDatabase {
                 account.storage.insert(key, value);
             }
             None => {
-                self.get_account_from_database(address)?;
-                self.in_memory_db
-                    .get_mut(&address)
-                    .ok_or(DatabaseError::Custom(
-                        "Account not found in InMemoryDB after fetching from database".to_string(),
-                    ))?
-                    .storage
-                    .insert(key, value);
+                // If we are fetching the storage of an account it means that we previously fetched the account from database before.
+                return Err(DatabaseError::Custom(
+                    "Account not found in InMemoryDB when fetching storage".to_string(),
+                ));
             }
         }
         Ok(value)
@@ -254,18 +250,23 @@ impl<'a> VM<'a> {
 
     /// Gets storage value of an account, caching it if not already cached.
     pub fn get_storage_value(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
+        // Try to get value from cache
         if let Some(account) = cache::get_account(&self.db.cache, &address) {
             if let Some(value) = account.storage.get(&key) {
                 return Ok(*value);
             }
+        } else {
+            return Err(VMError::Internal(
+                InternalError::AccountShouldHaveBeenCached,
+            ));
         }
 
+        // If not found in cache, load it from the database
         let value = self.db.get_value_from_database(address, key)?;
 
-        // When getting storage value of an account that's not yet cached we need to store it in the account
-        // We don't actually know if the account is cached so we cache it anyway
+        // Update the account with the fetched value
         let account = self.get_account_mut(address)?;
-        account.storage.entry(key).or_insert(value);
+        account.storage.insert(key, value);
 
         Ok(value)
     }
