@@ -9,10 +9,12 @@ use ethrex_common::{
     H256, U256,
 };
 use ethrex_levm::{
+    db::gen_db::GeneralizedDatabase,
     errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{EVMConfig, GeneralizedDatabase, VM},
+    vm::{EVMConfig, VM},
     Environment,
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::backends;
 use keccak_hash::keccak;
@@ -186,6 +188,7 @@ pub fn prepare_vm_for_tx<'a>(
             tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
             transient_storage: HashMap::new(),
+            is_privileged: false,
         },
         db,
         &tx,
@@ -196,29 +199,29 @@ pub fn prepare_vm_for_tx<'a>(
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
-        let account = world_state.get_account_info(*address).map_err(|e| {
+        let account = world_state.get_account(*address).map_err(|e| {
             EFTestRunnerError::Internal(InternalError::Custom(format!(
                 "Failed to get account info when ensuring pre state: {}",
                 e
             )))
         })?;
         ensure_pre_state_condition(
-            account.nonce == pre_value.nonce,
+            account.info.nonce == pre_value.nonce,
             format!(
                 "Nonce mismatch for account {:#x}: expected {}, got {}",
-                address, pre_value.nonce, account.nonce
+                address, pre_value.nonce, account.info.nonce
             ),
         )?;
         ensure_pre_state_condition(
-            account.balance == pre_value.balance,
+            account.info.balance == pre_value.balance,
             format!(
                 "Balance mismatch for account {:#x}: expected {}, got {}",
-                address, pre_value.balance, account.balance
+                address, pre_value.balance, account.info.balance
             ),
         )?;
         for (k, v) in &pre_value.storage {
             let storage_slot = world_state
-                .get_storage_slot(*address, H256::from_slice(&k.to_big_endian()))
+                .get_storage_value(*address, H256::from_slice(&k.to_big_endian()))
                 .unwrap();
             ensure_pre_state_condition(
                 &storage_slot == v,
@@ -229,12 +232,12 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )?;
         }
         ensure_pre_state_condition(
-            keccak(account.bytecode.clone()) == keccak(pre_value.code.as_ref()),
+            account.info.code_hash == keccak(pre_value.code.as_ref()),
             format!(
                 "Code hash mismatch for account {:#x}: expected {}, got {}",
                 address,
                 keccak(pre_value.code.as_ref()),
-                keccak(account.bytecode)
+                account.info.code_hash
             ),
         )?;
     }
@@ -344,13 +347,32 @@ pub async fn ensure_post_state(
                                     .to_owned(),
                             )
                         })?;
-                    let post_state_root_hash = post_state_root(&levm_account_updates, test).await;
-                    let expected_post_state_root_hash =
-                        test.post.vector_post_value(vector, *fork).hash;
-                    if expected_post_state_root_hash != post_state_root_hash {
+                    let vector_post_value = test.post.vector_post_value(vector, *fork);
+
+                    // 1. Compare the post-state root hash with the expected post-state root hash
+                    if vector_post_value.hash != post_state_root(&levm_account_updates, test).await
+                    {
                         return Err(EFTestRunnerError::FailedToEnsurePostState(
                             execution_report.clone(),
                             "Post-state root mismatch".to_string(),
+                            cache,
+                        ));
+                    }
+
+                    // 2. Compare keccak of logs with test's expected logs hash.
+
+                    // Do keccak of the RLP of logs
+                    let keccak_logs = {
+                        let logs = execution_report.logs.clone();
+                        let mut encoded_logs = Vec::new();
+                        logs.encode(&mut encoded_logs);
+                        keccak(encoded_logs)
+                    };
+
+                    if keccak_logs != vector_post_value.logs {
+                        return Err(EFTestRunnerError::FailedToEnsurePostState(
+                            execution_report.clone(),
+                            "Logs mismatch".to_string(),
                             cache,
                         ));
                     }

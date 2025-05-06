@@ -9,7 +9,7 @@ build: ## 🔨 Build the client
 	cargo build --workspace
 
 lint: ## 🧹 Linter check
-	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface -- -D warnings
+	cargo clippy --all-targets --all-features --workspace --exclude ethrex-prover --exclude zkvm_interface --exclude ethrex-prover-bench -- -D warnings
 
 CRATE ?= *
 test: ## 🧪 Run each crate's tests
@@ -112,6 +112,7 @@ TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 4
 EVM_BACKEND := revm
 SIM_PARALLELISM := 16
+SYNCMODE := full
 
 L1_CLIENT       ?= ethrex
 
@@ -128,13 +129,13 @@ display-hive-alternatives:
 # For example, to run the rpc-compat suites for eth_chainId & eth_blockNumber you should run:
 # `make run-hive SIMULATION=ethereum/rpc-compat TEST_PATTERN="/eth_chainId|eth_blockNumber"`
 run-hive: display-hive-alternatives build-image setup-hive ## 🧪 Run Hive testing suite
-	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
+	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim $(SIMULATION) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)"
 
 run-hive-all: display-hive-alternatives build-image setup-hive ## 🧪 Run all Hive testing suites
-	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
+	cd hive && ./hive --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim ".*" --sim.parallelism "$(SIM_PARALLELISM)"
 
 run-hive-debug: display-hive-alternatives build-image setup-hive ## 🐞 Run Hive testing suite in debug mode
-	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
+	cd hive && ./hive --sim $(SIMULATION) --client $(L1_CLIENT) --ethrex.flags "--evm $(EVM_BACKEND) --syncmode $(SYNCMODE)" --sim.loglevel $(SIM_LOG_LEVEL) --sim.limit "$(TEST_PATTERN)" --sim.parallelism "$(SIM_PARALLELISM)" --docker.output
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
