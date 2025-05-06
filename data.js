@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746547826957,
+  "lastUpdate": 1746548981364,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5515,6 +5515,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 190818320644,
             "range": "± 3574101557",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "8e9c3c57b92ea7c48b0314676a5949532ec12ac3",
+          "message": "feat(levm): replace ambiguous error with proper validation error when obtaining effective gas price (#2667)\n\n**Motivation**\nWhile implementing a mapper for our ethrex & levm error types for the\nconsume-engine hive test I ran into a test that was returning the error\n`Invalid Transaction: Invalid Transaction` which doesn't look useful at\nall. The error comes up when we fail to compute the effective gas for a\ntransaction (aka the block's base_fee is higher than the transaction's\nmax fee), so I replaced it with the appropriate error\n(TxValidationError::InsufficientMaxFeePerGas) which is also the one\nexpected by the test suite.\n\n**Description**\n* Replace ambiguous error used when calculating effective gas price\nbefore tx execution with proper validation error.\n\nCloses: None, but is needed to cleanly implement the error mapper needed\nfor #2474",
+          "timestamp": "2025-05-06T15:25:40Z",
+          "tree_id": "afe82607b68d6abb20a3781f37d1a9d7867e961f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/8e9c3c57b92ea7c48b0314676a5949532ec12ac3"
+        },
+        "date": 1746548979556,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178323401477,
+            "range": "± 409654033",
             "unit": "ns/iter"
           }
         ]
