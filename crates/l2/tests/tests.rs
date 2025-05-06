@@ -401,12 +401,28 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     let l1_rich_pk = H256::from_slice(&l1_rich_wallet_private_key().secret_bytes());
     println!("l1_rich_wallet_private_key: {l1_rich_pk:x?}");
 
+    println!("Depositing funds from L1 to L2");
+
+    let deposit_value = U256::from(1000000000000000000000u128);
+    let deposit_tx = ethrex_l2_sdk::deposit(
+        deposit_value,
+        l1_rich_wallet_address,
+        l1_rich_wallet_private_key(),
+        &eth_client,
+    )
+    .await?;
+
+    println!("Waiting for deposit transaction receipt");
+
+    ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5).await?;
+
     let l1_initial_balance = eth_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
     let mut l2_initial_balance = proposer_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
+
     println!("Waiting for L2 to update for initial deposit");
     let mut retries = 0;
     while retries < 30 && l2_initial_balance.is_zero() {
@@ -584,12 +600,28 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
     let l1_rich_pk = H256::from_slice(&l1_rich_wallet_private_key().secret_bytes());
     println!("l1_rich_wallet_private_key: {l1_rich_pk:x?}");
 
+    println!("Depositing funds from L1 to L2");
+
+    let deposit_value = U256::from(1000000000000000000000u128);
+    let deposit_tx = ethrex_l2_sdk::deposit(
+        deposit_value,
+        l1_rich_wallet_address,
+        l1_rich_wallet_private_key(),
+        &eth_client,
+    )
+    .await?;
+
+    println!("Waiting for deposit transaction receipt");
+
+    ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx, &eth_client, 5).await?;
+
     let l1_initial_balance = eth_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
     let mut l2_initial_balance = proposer_client
         .get_balance(l1_rich_wallet_address, BlockByNumber::Latest)
         .await?;
+
     println!("Waiting for L2 to update for initial deposit");
     let mut retries = 0;
     while retries < 30 && l2_initial_balance.is_zero() {
