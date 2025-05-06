@@ -10,7 +10,9 @@ use ethrex_common::{types::AccountState, Bloom, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::Trie;
 
-use crate::{cache::Cache, rlp::AccountStateRLP, Store};
+use crate::{
+    cache::Cache, hash_key, rlp::AccountStateRLP, store::hash_address_fixed, AccountUpdate, Store,
+};
 
 use super::{difflayer::DiffLayer, layer::SnapshotLayer};
 
@@ -28,9 +30,9 @@ impl SnapshotLayer for DiskLayer {
         self.root
     }
 
-    fn get_account(&self, hash: H256) -> Option<AccountState> {
+    fn get_account(&self, hash: H256) -> Option<Option<AccountState>> {
         if let Some(value) = self.cache.accounts.get(&hash) {
-            return Some((*value).clone());
+            return Some(value.clone());
         }
 
         let value = self
@@ -44,7 +46,7 @@ impl SnapshotLayer for DiskLayer {
 
         self.cache.accounts.insert(hash, value.clone().into());
 
-        Some(value)
+        Some(Some(value))
     }
 
     fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<U256> {
@@ -52,11 +54,12 @@ impl SnapshotLayer for DiskLayer {
             return Some(value);
         }
 
-        let account = self.get_account(account_hash)?;
+        let account = self.get_account(account_hash)??;
 
         let storage_trie = self
             .store
             .open_storage_trie(account_hash, account.storage_root);
+
         let value: U256 = U256::decode(&storage_trie.get(storage_hash).ok().flatten()?).ok()?;
 
         self.cache
@@ -73,7 +76,7 @@ impl SnapshotLayer for DiskLayer {
     fn update(
         &self,
         block: H256,
-        accounts: HashMap<H256, AccountState>,
+        accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Arc<dyn SnapshotLayer> {
         Arc::new(DiffLayer::new(
@@ -94,5 +97,9 @@ impl SnapshotLayer for DiskLayer {
 
     fn diffed(&self) -> Option<Bloom> {
         None
+    }
+
+    fn get_account_traverse(&self, hash: H256, _depth: usize) -> Option<Option<AccountState>> {
+        self.get_account(hash)
     }
 }

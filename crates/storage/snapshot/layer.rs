@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use ethrex_common::{types::AccountState, Bloom, H256, U256};
 
-use crate::rlp::AccountStateRLP;
+use crate::AccountUpdate;
 
 use super::DiskLayer;
 
@@ -12,7 +12,9 @@ pub trait SnapshotLayer: Send + Sync {
     fn root(&self) -> H256;
 
     /// Get a account state  by its hash.
-    fn get_account(&self, hash: H256) -> Option<AccountState>;
+    ///
+    /// Returned inner Option is None if deleted.
+    fn get_account(&self, hash: H256) -> Option<Option<AccountState>>;
 
     /// Get a storage value by its account and storage hash.
     fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<U256>;
@@ -27,11 +29,14 @@ pub trait SnapshotLayer: Send + Sync {
     fn update(
         &self,
         block: H256,
-        accounts: HashMap<H256, AccountState>,
+        accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Arc<dyn SnapshotLayer>;
 
     fn origin(&self) -> Arc<DiskLayer>;
 
     fn diffed(&self) -> Option<Bloom>;
+
+    // skips bloom checks, used if a higher layer bloom filter is hit
+    fn get_account_traverse(&self, hash: H256, depth: usize) -> Option<Option<AccountState>>;
 }

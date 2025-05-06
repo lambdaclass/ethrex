@@ -17,7 +17,7 @@ pub struct DiffLayer {
     parent: Arc<dyn SnapshotLayer>,
     root: H256,
     stale: Arc<AtomicBool>,
-    accounts: Arc<HashMap<H256, AccountState>>,
+    accounts: Arc<HashMap<H256, Option<AccountState>>>, // None if deleted
     storage: Arc<HashMap<H256, HashMap<H256, U256>>>,
     /// tracks all diffed items up to disk layer
     diffed: Bloom,
@@ -46,7 +46,7 @@ impl DiffLayer {
     pub fn new(
         parent: Arc<dyn SnapshotLayer>,
         root: H256,
-        accounts: HashMap<H256, AccountState>,
+        accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Self {
         let layer = DiffLayer {
@@ -78,10 +78,6 @@ impl DiffLayer {
             }
         }
     }
-
-    fn get_account_depth(&self, hash: H256, depth: usize) -> Option<AccountState> {
-        todo!()
-    }
 }
 
 impl SnapshotLayer for DiffLayer {
@@ -93,7 +89,7 @@ impl SnapshotLayer for DiffLayer {
         Some(self.diffed)
     }
 
-    fn get_account(&self, hash: H256) -> Option<AccountState> {
+    fn get_account(&self, hash: H256) -> Option<Option<AccountState>> {
         // todo: check stale
 
         let hit = self
@@ -106,7 +102,7 @@ impl SnapshotLayer for DiffLayer {
         }
 
         // Start traversing layers.
-        self.get_account_depth(hash, 0)
+        self.get_account_traverse(hash, 0)
     }
 
     fn get_storage(
@@ -128,7 +124,7 @@ impl SnapshotLayer for DiffLayer {
     fn update(
         &self,
         block: ethrex_common::H256,
-        accounts: HashMap<H256, AccountState>,
+        accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Arc<dyn SnapshotLayer> {
         todo!()
@@ -136,5 +132,18 @@ impl SnapshotLayer for DiffLayer {
 
     fn origin(&self) -> Arc<DiskLayer> {
         self.origin.clone()
+    }
+
+    // skips bloom checks, used if a higher layer bloom filter is hit
+    fn get_account_traverse(&self, hash: H256, depth: usize) -> Option<Option<AccountState>> {
+        // todo: check if its stale
+
+        // If it's in this layer, return it.
+        if let Some(value) = self.accounts.get(&hash) {
+            return Some(value.clone());
+        }
+
+        // delegate to parent
+        self.parent.get_account_traverse(hash, depth + 1)
     }
 }

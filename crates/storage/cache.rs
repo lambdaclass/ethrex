@@ -1,17 +1,13 @@
 //! An in memory cache.
 
-use std::sync::Arc;
-
 use ethrex_common::{types::AccountState, H256, U256};
-
-use crate::rlp::AccountStateRLP;
 
 /// In-memory cache.
 ///
 /// Can be cloned freely.
 #[derive(Debug, Clone)]
 pub struct Cache {
-    pub accounts: moka::sync::Cache<H256, Arc<AccountState>>,
+    pub accounts: moka::sync::Cache<H256, Option<AccountState>>,
     pub storages: moka::sync::Cache<(H256, H256), U256>,
 }
 
