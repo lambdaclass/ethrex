@@ -1,8 +1,5 @@
 # Dotenv file
 .env
 
-# Forge
+# Lib
 lib/
-out/
-cache/
-broadcast
