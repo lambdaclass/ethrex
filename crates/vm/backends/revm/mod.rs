@@ -10,7 +10,7 @@ use crate::errors::EvmError;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::spec_id;
 use db::EvmState;
-use ethrex_common::types::{AccountInfo, Fork};
+use ethrex_common::types::AccountInfo;
 use ethrex_common::{BigEndianHash, H256, U256};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 
@@ -227,7 +227,6 @@ impl REVM {
     /// Gets the state_transitions == [AccountUpdate] from the [EvmState].
     pub fn get_state_transitions(
         initial_state: &mut EvmState,
-        fork: Fork
     ) -> Vec<ethrex_storage::AccountUpdate> {
         match initial_state {
             EvmState::Store(db) => {

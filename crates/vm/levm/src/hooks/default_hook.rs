@@ -37,8 +37,7 @@ impl Hook for DefaultHook {
             let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
             // calldata_cost = tokens_in_calldata * 4
-            let calldata_cost: u64 =
-                gas_cost::tx_calldata(&calldata).map_err(VMError::OutOfGas)?;
+            let calldata_cost: u64 = gas_cost::tx_calldata(&calldata).map_err(VMError::OutOfGas)?;
 
             // same as calculated in gas_used()
             let tokens_in_calldata: u64 = calldata_cost

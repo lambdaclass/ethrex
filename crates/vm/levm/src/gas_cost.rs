@@ -612,7 +612,8 @@ fn address_access_cost(
 }
 
 pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (BALANCE_STATIC, BALANCE_COLD_DYNAMIC, BALANCE_WARM_DYNAMIC);
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) =
+        (BALANCE_STATIC, BALANCE_COLD_DYNAMIC, BALANCE_WARM_DYNAMIC);
 
     address_access_cost(
         address_was_cold,
@@ -624,11 +625,10 @@ pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
 
 pub fn extcodesize(address_was_cold: bool) -> Result<u64, VMError> {
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            EXTCODESIZE_STATIC,
-            EXTCODESIZE_COLD_DYNAMIC,
-            EXTCODESIZE_WARM_DYNAMIC,
+        EXTCODESIZE_STATIC,
+        EXTCODESIZE_COLD_DYNAMIC,
+        EXTCODESIZE_WARM_DYNAMIC,
     );
-    
 
     address_access_cost(
         address_was_cold,
@@ -653,10 +653,10 @@ pub fn extcodecopy(
     )?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            EXTCODECOPY_STATIC,
-            EXTCODECOPY_COLD_DYNAMIC,
-            EXTCODECOPY_WARM_DYNAMIC,
-        );
+        EXTCODECOPY_STATIC,
+        EXTCODECOPY_COLD_DYNAMIC,
+        EXTCODECOPY_WARM_DYNAMIC,
+    );
 
     let expansion_access_cost = address_access_cost(
         address_was_cold,
@@ -672,10 +672,10 @@ pub fn extcodecopy(
 
 pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            EXTCODEHASH_STATIC,
-            EXTCODEHASH_COLD_DYNAMIC,
-            EXTCODEHASH_WARM_DYNAMIC,
-        );
+        EXTCODEHASH_STATIC,
+        EXTCODEHASH_COLD_DYNAMIC,
+        EXTCODEHASH_WARM_DYNAMIC,
+    );
 
     address_access_cost(
         address_was_cold,
@@ -697,7 +697,8 @@ pub fn call(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC);
+    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) =
+        (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC);
 
     let address_access_cost = address_access_cost(
         address_was_cold,
@@ -745,9 +746,9 @@ pub fn callcode(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            DELEGATECALL_STATIC,
-            DELEGATECALL_COLD_DYNAMIC,
-            DELEGATECALL_WARM_DYNAMIC,
+        DELEGATECALL_STATIC,
+        DELEGATECALL_COLD_DYNAMIC,
+        DELEGATECALL_WARM_DYNAMIC,
     );
 
     let address_access_cost = address_access_cost(
@@ -787,9 +788,9 @@ pub fn delegatecall(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            DELEGATECALL_STATIC,
-            DELEGATECALL_COLD_DYNAMIC,
-            DELEGATECALL_WARM_DYNAMIC,
+        DELEGATECALL_STATIC,
+        DELEGATECALL_COLD_DYNAMIC,
+        DELEGATECALL_WARM_DYNAMIC,
     );
 
     let address_access_cost = address_access_cost(
@@ -816,9 +817,9 @@ pub fn staticcall(
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
     let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
-            STATICCALL_STATIC,
-            STATICCALL_COLD_DYNAMIC,
-            STATICCALL_WARM_DYNAMIC,
+        STATICCALL_STATIC,
+        STATICCALL_COLD_DYNAMIC,
+        STATICCALL_WARM_DYNAMIC,
     );
 
     let address_access_cost = address_access_cost(
@@ -1006,8 +1007,9 @@ fn calculate_cost_and_gas_limit_call(
         .checked_sub(gas_left / 64)
         .ok_or(OutOfGasError::GasUsedOverflow)?;
 
-    let gas: u64 = gas_from_stack.min(max_gas_for_call.into())
-        .try_into() 
+    let gas: u64 = gas_from_stack
+        .min(max_gas_for_call.into())
+        .try_into()
         .map_err(|_err| OutOfGasError::MaxGasLimitExceeded)?;
 
     Ok((
