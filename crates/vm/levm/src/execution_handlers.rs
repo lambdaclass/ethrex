@@ -28,7 +28,7 @@ impl<'a> VM<'a> {
                 logs: std::mem::take(&mut current_call_frame.logs),
             }),
             Err(error) => {
-                if error.is_internal() {
+                if error.should_propagate() {
                     return Err(error);
                 }
 
@@ -233,7 +233,7 @@ impl<'a> VM<'a> {
             .backups
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-        if error.is_internal() {
+        if error.should_propagate() {
             return Err(error);
         }
 

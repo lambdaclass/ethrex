@@ -24,8 +24,6 @@ pub enum VMError {
     InvalidContractPrefix,
     #[error("Very Large Number")]
     VeryLargeNumber,
-    #[error("Fatal Error")]
-    FatalError,
     #[error("Invalid Transaction")]
     InvalidTransaction,
     #[error("Revert Opcode")]
@@ -77,8 +75,10 @@ pub enum VMError {
 }
 
 impl VMError {
-    pub fn is_internal(&self) -> bool {
-        matches!(self, VMError::Internal(_))
+    /// These errors are unexpected and indicate critical issues.
+    /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
+    pub fn should_propagate(&self) -> bool {
+        matches!(self, VMError::Internal(_)) || matches!(self, VMError::DatabaseError(_))
     }
 }
 
