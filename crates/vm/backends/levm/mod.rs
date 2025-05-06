@@ -1,5 +1,6 @@
 pub mod db;
 mod l2_utils;
+use ethrex_levm::db::error::DatabaseError;
 pub use l2_utils::update_state_diff_size;
 
 use super::revm::db::get_potential_child_nodes;
@@ -180,11 +181,9 @@ impl LEVM {
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.iter() {
-            let initial_state_account = db
-                .in_memory_db
-                .get(address)
-                .cloned()
-                .unwrap_or(db.store.get_account(*address)?);
+            let initial_state_account = db.in_memory_db.get(address).cloned().ok_or_else(|| {
+                DatabaseError::Custom("Initial state account not found in in_memory_db".to_string())
+            })?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
