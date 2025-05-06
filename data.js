@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746533461641,
+  "lastUpdate": 1746534719430,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5425,6 +5425,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177292028864,
             "range": "± 493906369",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a44f435ba097fbfefb43080c8e7fac4f10e05143",
+          "message": "fix(levm): propagate database errors (#2639)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- We were just propagating Internal errors but we also want to propagate\nDatabaseErrors. Before this we were just reverting the transaction and\nthat is wrong.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-06T11:11:36Z",
+          "tree_id": "89dd354e3781b03f422c5b2ccc9ec511d8e30f6d",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a44f435ba097fbfefb43080c8e7fac4f10e05143"
+        },
+        "date": 1746534717026,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180250911049,
+            "range": "± 1006527421",
             "unit": "ns/iter"
           }
         ]
