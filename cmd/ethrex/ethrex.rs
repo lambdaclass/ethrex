@@ -102,7 +102,7 @@ async fn main() -> eyre::Result<()> {
             let config_path = PathBuf::from(data_dir + "/config.json");
             info!("Storing config at {:?}...", config_path);
             cancel_token.cancel();
-            let config = ConfigFile::new(peer_table, 0).await;
+            let config = ConfigFile::new(peer_table, local_node_record.lock().await.seq).await;
             store_config_file(config, config_path).await;
             tokio::time::sleep(Duration::from_secs(1)).await;
             info!("Server shutting down!");
