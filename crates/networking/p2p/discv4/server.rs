@@ -41,6 +41,7 @@ pub enum DiscoveryError {
     PartialMessageSent,
     MessageExpired,
     InvalidMessage(String),
+    StorageAccessError(String),
 }
 
 /// Implements the discv4 protocol see: https://github.com/ethereum/devp2p/blob/master/discv4.md
@@ -404,31 +405,31 @@ impl Discv4Server {
                 //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
                 if let Some(eth) = record.eth {
                     let Ok(fork_id) = self.ctx.storage.get_fork_id().await else {
-                        return Err(DiscoveryError::InvalidMessage(
+                        return Err(DiscoveryError::StorageAccessError(
                             "Could not get fork id from storage".into(),
                         ));
                     };
 
                     let Ok(block_number) = self.ctx.storage.get_latest_block_number().await else {
-                        return Err(DiscoveryError::InvalidMessage(
+                        return Err(DiscoveryError::StorageAccessError(
                             "Could not get last block number".into(),
                         ));
                     };
                     let Ok(Some(block_header)) = self.ctx.storage.get_block_header(block_number)
                     else {
-                        return Err(DiscoveryError::InvalidMessage(
+                        return Err(DiscoveryError::StorageAccessError(
                             "Could not get last block number".into(),
                         ));
                     };
 
                     let Ok(chain_config) = self.ctx.storage.get_chain_config() else {
-                        return Err(DiscoveryError::InvalidMessage(
+                        return Err(DiscoveryError::StorageAccessError(
                             "Could not getchaing config".into(),
                         ));
                     };
 
                     let Ok(Some(genesis_header)) = self.ctx.storage.get_block_header(0) else {
-                        return Err(DiscoveryError::InvalidMessage(
+                        return Err(DiscoveryError::StorageAccessError(
                             "Could not get genesis block number".into(),
                         ));
                     };
