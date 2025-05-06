@@ -46,6 +46,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         mut db,
         #[cfg(feature = "l2")]
         withdrawals_merkle_root,
+        ..
     } = input;
 
     // Tries used for validating initial and final state root

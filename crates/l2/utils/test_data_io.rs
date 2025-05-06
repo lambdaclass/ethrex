@@ -94,6 +94,7 @@ pub async fn generate_program_input(
         blocks,
         parent_block_header,
         // TODO
+        #[cfg(feature = "l2")]
         withdrawals_merkle_root: H256::zero(),
     })
 }
