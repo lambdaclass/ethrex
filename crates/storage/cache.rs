@@ -12,7 +12,6 @@ use crate::rlp::AccountStateRLP;
 #[derive(Debug, Clone)]
 pub struct Cache {
     pub accounts: moka::sync::Cache<H256, Arc<AccountState>>,
-    pub accounts_rlp: moka::sync::Cache<H256, Arc<AccountStateRLP>>,
     pub storages: moka::sync::Cache<(H256, H256), U256>,
 }
 
@@ -20,7 +19,6 @@ impl Cache {
     pub fn new(max_capacity_accounts: u64, max_capacity_storage: u64) -> Self {
         Self {
             accounts: moka::sync::Cache::new(max_capacity_accounts),
-            accounts_rlp: moka::sync::Cache::new(max_capacity_accounts),
             storages: moka::sync::Cache::new(max_capacity_storage),
         }
     }

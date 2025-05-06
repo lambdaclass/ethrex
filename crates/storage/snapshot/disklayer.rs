@@ -1,20 +1,26 @@
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use ethrex_common::{types::AccountState, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
-use ethrex_trie::{Trie, TrieDB};
-use libmdbx::orm::Encodable;
+use ethrex_trie::Trie;
 
-use crate::{cache::Cache, hash_key, rlp::AccountStateRLP, Store};
+use crate::{cache::Cache, rlp::AccountStateRLP, Store};
 
-use super::layer::SnapshotLayer;
+use super::{difflayer::DiffLayer, layer::SnapshotLayer};
 
+#[derive(Clone)]
 pub struct DiskLayer {
-    state_trie: Trie,
+    state_trie: Arc<Trie>,
     store: Store,
     cache: Cache,
     root: H256,
-    stale: bool,
+    stale: Arc<AtomicBool>,
 }
 
 impl SnapshotLayer for DiskLayer {
@@ -23,30 +29,22 @@ impl SnapshotLayer for DiskLayer {
     }
 
     fn get_account(&self, hash: H256) -> Option<AccountState> {
-        let value = self.get_account_rlp(hash)?;
-
-        AccountState::decode(value.bytes()).ok()
-    }
-
-    fn get_account_rlp(&self, hash: H256) -> Option<AccountStateRLP> {
-        if let Some(value) = self.cache.accounts_rlp.get(&hash) {
+        if let Some(value) = self.cache.accounts.get(&hash) {
             return Some((*value).clone());
         }
 
         let value = self
             .state_trie
-            .get(&hash)
+            .get(hash)
             .ok()
             .flatten()
-            .map(|x| AccountStateRLP::from_bytes(x));
+            .map(AccountStateRLP::from_bytes)?;
 
-        if let Some(value) = &value {
-            self.cache
-                .accounts_rlp
-                .insert(hash, Arc::new(value.clone()));
-        }
+        let value: AccountState = value.to();
 
-        value
+        self.cache.accounts.insert(hash, value.clone().into());
+
+        Some(value)
     }
 
     fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<U256> {
@@ -68,20 +66,29 @@ impl SnapshotLayer for DiskLayer {
         Some(value)
     }
 
-    fn parent(&self) -> Option<Box<dyn SnapshotLayer>> {
+    fn parent(&self) -> Option<Arc<dyn SnapshotLayer>> {
         None
     }
 
     fn update(
         &self,
         block: H256,
-        accounts: std::collections::HashMap<H256, ethrex_common::types::AccountState>,
-        storage: std::collections::HashMap<H256, std::collections::HashMap<H256, Vec<u8>>>,
-    ) -> Box<dyn SnapshotLayer> {
-        todo!()
+        accounts: HashMap<H256, AccountState>,
+        storage: HashMap<H256, HashMap<H256, U256>>,
+    ) -> Arc<dyn SnapshotLayer> {
+        Arc::new(DiffLayer::new(
+            Arc::new(self.clone()),
+            block,
+            accounts,
+            storage,
+        ))
     }
 
     fn stale(&self) -> bool {
-        self.stale
+        self.stale.load(Ordering::Acquire)
+    }
+
+    fn origin(&self) -> Arc<DiskLayer> {
+        Arc::new(self.clone())
     }
 }
