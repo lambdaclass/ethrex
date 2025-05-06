@@ -24,8 +24,6 @@ pub enum VMError {
     InvalidContractPrefix,
     #[error("Very Large Number")]
     VeryLargeNumber,
-    #[error("Fatal Error")]
-    FatalError,
     #[error("Invalid Transaction")]
     InvalidTransaction,
     #[error("Revert Opcode")]
@@ -60,8 +58,6 @@ pub enum VMError {
     MemorySizeOverflow,
     #[error("Nonce overflowed")]
     NonceOverflow,
-    #[error("Nonce underflowed")]
-    NonceUnderflow,
     // OutOfGas
     #[error("Out Of Gas")]
     OutOfGas(#[from] OutOfGasError),
@@ -79,8 +75,10 @@ pub enum VMError {
 }
 
 impl VMError {
-    pub fn is_internal(&self) -> bool {
-        matches!(self, VMError::Internal(_))
+    /// These errors are unexpected and indicate critical issues.
+    /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
+    pub fn should_propagate(&self) -> bool {
+        matches!(self, VMError::Internal(_)) || matches!(self, VMError::DatabaseError(_))
     }
 }
 
@@ -196,6 +194,8 @@ pub enum InternalError {
     InvalidSpecId,
     #[error("Account should had been delegated")]
     AccountNotDelegated,
+    #[error("No recipient found for privilege transaction")]
+    RecipientNotFoundForPrivilegeTransaction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -241,21 +241,6 @@ pub struct ExecutionReport {
 }
 
 impl ExecutionReport {
-    /// Function to add gas to report without exceeding the maximum gas limit
-    pub fn add_gas_with_max(&mut self, gas: u64, max: u64) -> Result<(), VMError> {
-        let new_gas_used = self
-            .gas_used
-            .checked_add(gas)
-            .ok_or(OutOfGasError::MaxGasLimitExceeded)?;
-
-        if new_gas_used > max {
-            return Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded));
-        }
-
-        self.gas_used = new_gas_used;
-        Ok(())
-    }
-
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
     }

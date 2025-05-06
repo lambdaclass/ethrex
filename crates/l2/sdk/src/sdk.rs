@@ -1,25 +1,22 @@
 use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
-use ethrex_common::types::{GenericTransaction, Transaction, TxKind};
+use ethrex_common::types::GenericTransaction;
 use ethrex_rpc::clients::eth::{
-    errors::{EthClientError, GetTransactionReceiptError},
-    eth_sender::Overrides,
-    EthClient,
+    errors::EthClientError, eth_sender::Overrides, EthClient, WithdrawalProof,
 };
-use ethrex_rpc::types::{block::BlockBodyWrapper, receipt::RpcReceipt};
-use itertools::Itertools;
+use ethrex_rpc::types::receipt::RpcReceipt;
+
 use keccak_hash::keccak;
-use merkle_tree::merkle_proof;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod calldata;
 pub mod merkle_tree;
 
-// 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
+// 0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0x6b, 0xf2, 0x63, 0x97, 0xc5, 0x67, 0x6a, 0x20, 0x8d, 0x5c, 0x4e, 0x5f, 0x35, 0xcb, 0x47, 0x9b,
-    0xac, 0xbb, 0xe4, 0x54,
+    0x55, 0x4a, 0x14, 0xcd, 0x04, 0x7c, 0x48, 0x5b, 0x3a, 0xc3, 0xed, 0xbd, 0x9f, 0xbb, 0x37, 0x3d,
+    0x6f, 0x84, 0xad, 0x3f,
 ]);
 
 pub const COMMON_BRIDGE_L2_ADDRESS: Address = H160([
@@ -35,7 +32,7 @@ pub enum SdkError {
     FailedToParseAddressFromHex,
 }
 
-/// BRIDGE_ADDRESS or 0x6bf26397c5676a208d5c4e5f35cb479bacbbe454
+/// BRIDGE_ADDRESS or 0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
 pub fn bridge_address() -> Result<Address, SdkError> {
     std::env::var("L1_WATCHER_BRIDGE_ADDRESS")
         .unwrap_or(format!("{DEFAULT_BRIDGE_ADDRESS:#x}"))
@@ -161,44 +158,28 @@ pub async fn withdraw(
 }
 
 pub async fn claim_withdraw(
-    l2_withdrawal_tx_hash: H256,
     amount: U256,
+    l2_withdrawal_tx_hash: H256,
     from: Address,
     from_pk: SecretKey,
-    proposer_client: &EthClient,
     eth_client: &EthClient,
+    withdrawal_proof: &WithdrawalProof,
 ) -> Result<H256, EthClientError> {
     println!("Claiming {amount} from bridge to {from:#x}");
 
     const CLAIM_WITHDRAWAL_SIGNATURE: &str =
         "claimWithdrawal(bytes32,uint256,uint256,uint256,bytes32[])";
 
-    let (withdrawal_l2_block_number, claimed_amount) = match proposer_client
-        .get_transaction_by_hash(l2_withdrawal_tx_hash)
-        .await?
-    {
-        Some(l2_withdrawal_tx) => (l2_withdrawal_tx.block_number, l2_withdrawal_tx.value),
-        None => {
-            println!("Withdrawal transaction not found in L2");
-            return Err(EthClientError::GetTransactionReceiptError(
-                GetTransactionReceiptError::RPCError(
-                    "Withdrawal transaction not found in L2".to_owned(),
-                ),
-            ));
-        }
-    };
-
-    let (index, proof) = get_withdraw_merkle_proof(proposer_client, l2_withdrawal_tx_hash).await?;
-
     let calldata_values = vec![
         Value::Uint(U256::from_big_endian(
             l2_withdrawal_tx_hash.as_fixed_bytes(),
         )),
-        Value::Uint(claimed_amount),
-        Value::Uint(withdrawal_l2_block_number),
-        Value::Uint(U256::from(index)),
+        Value::Uint(amount),
+        Value::Uint(withdrawal_proof.batch_number.into()),
+        Value::Uint(U256::from(withdrawal_proof.index)),
         Value::Array(
-            proof
+            withdrawal_proof
+                .merkle_proof
                 .iter()
                 .map(|hash| Value::FixedBytes(hash.as_fixed_bytes().to_vec().into()))
                 .collect(),
@@ -227,80 +208,6 @@ pub async fn claim_withdraw(
     eth_client
         .send_eip1559_transaction(&claim_tx, &from_pk)
         .await
-}
-
-/// Returns the formated hash of the withdrawal transaction,
-/// or None if the transaction is not a withdrawal.
-/// The hash is computed as keccak256(to || value || tx_hash)
-pub fn get_withdrawal_hash(tx: &Transaction) -> Option<H256> {
-    let to_bytes: [u8; 20] = match tx.data().get(16..36)?.try_into() {
-        Ok(value) => value,
-        Err(_) => return None,
-    };
-    let to = Address::from(to_bytes);
-
-    let value = tx.value().to_big_endian();
-
-    Some(keccak_hash::keccak(
-        [to.as_bytes(), &value, tx.compute_hash().as_bytes()].concat(),
-    ))
-}
-
-pub async fn get_withdraw_merkle_proof(
-    client: &EthClient,
-    tx_hash: H256,
-) -> Result<(u64, Vec<H256>), EthClientError> {
-    let tx_receipt =
-        client
-            .get_transaction_receipt(tx_hash)
-            .await?
-            .ok_or(EthClientError::Custom(
-                "Failed to get transaction receipt".to_string(),
-            ))?;
-
-    let block = client
-        .get_block_by_hash(tx_receipt.block_info.block_hash)
-        .await?;
-
-    let transactions = match block.body {
-        BlockBodyWrapper::Full(body) => body.transactions,
-        BlockBodyWrapper::OnlyHashes(_) => unreachable!(),
-    };
-    let Some(Some((index, tx_withdrawal_hash))) = transactions
-        .iter()
-        .filter(|tx| match &tx.tx.to() {
-            ethrex_common::types::TxKind::Call(to) => *to == COMMON_BRIDGE_L2_ADDRESS,
-            ethrex_common::types::TxKind::Create => false,
-        })
-        .find_position(|tx| tx.hash == tx_hash)
-        .map(|(i, tx)| get_withdrawal_hash(&tx.tx).map(|withdrawal_hash| (i, (withdrawal_hash))))
-    else {
-        return Err(EthClientError::Custom(
-            "Failed to get widthdrawal hash, transaction is not a withdrawal".to_string(),
-        ));
-    };
-
-    let path = merkle_proof(
-        transactions
-            .iter()
-            .filter_map(|tx| match tx.tx.to() {
-                TxKind::Call(to) if to == COMMON_BRIDGE_L2_ADDRESS => get_withdrawal_hash(&tx.tx),
-                _ => None,
-            })
-            .collect(),
-        tx_withdrawal_hash,
-    )
-    .map_err(|err| EthClientError::Custom(format!("Failed to generate merkle proof: {err}")))?
-    .ok_or(EthClientError::Custom(
-        "Failed to generate merkle proof, element is not on the tree".to_string(),
-    ))?;
-
-    Ok((
-        index
-            .try_into()
-            .map_err(|err| EthClientError::Custom(format!("index does not fit in u64: {}", err)))?,
-        path,
-    ))
 }
 
 pub fn secret_key_deserializer<'de, D>(deserializer: D) -> Result<SecretKey, D::Error>
