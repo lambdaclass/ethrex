@@ -6,6 +6,7 @@ use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;
+#[cfg(feature = "l2")]
 use keccak_hash::H256;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
