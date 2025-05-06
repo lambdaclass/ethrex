@@ -79,11 +79,11 @@ impl TrieState {
             Node::Branch(n) => {
                 for child in n.choices.iter() {
                     if child.is_valid() {
-                        self.commit_node_tail_recursive(child, acc)?;
+                        self.commit_node_tail_recursive(&child.compute_hash(), acc)?;
                     }
                 }
             }
-            Node::Extension(n) => self.commit_node_tail_recursive(&n.child, acc)?,
+            Node::Extension(n) => self.commit_node_tail_recursive(&n.child.compute_hash(), acc)?,
             Node::Leaf(_) => {}
         }
         // Commit self

@@ -58,23 +58,23 @@ impl LeafNode {
                 // Branch { [ Leaf { Value } , ... ], SelfValue}
                 let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?;
-                BranchNode::new_with_value(Box::new(choices), self.value)
+                choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?.into();
+                BranchNode::new_with_value(choices, self.value)
             } else if new_leaf_choice_idx == 16 {
                 // Create a branch node with self as a child and store the value in the branch node
                 // Branch { [Self,...], Value }
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[self_choice_idx] = self.insert_self(state)?;
-                BranchNode::new_with_value(Box::new(choices), value)
+                choices[self_choice_idx] = self.insert_self(state)?.into();
+                BranchNode::new_with_value(choices, value)
             } else {
                 // Create a new leaf node and store the path and value in it
                 // Create a new branch node with the leaf and self as children
                 // Branch { [ Leaf { Path, Value }, Self, ... ], None, None}
                 let new_leaf = LeafNode::new(path.offset(match_index + 1), value);
                 let mut choices = BranchNode::EMPTY_CHOICES;
-                choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?;
-                choices[self_choice_idx] = self.insert_self(state)?;
-                BranchNode::new(Box::new(choices))
+                choices[new_leaf_choice_idx] = new_leaf.insert_self(state)?.into();
+                choices[self_choice_idx] = self.insert_self(state)?.into();
+                BranchNode::new(choices)
             };
 
             let final_node = if match_index == 0 {
@@ -82,8 +82,11 @@ impl LeafNode {
             } else {
                 // Create an extension node with the branch node as child
                 // Extension { BranchNode }
-                ExtensionNode::new(path.slice(0, match_index), branch_node.insert_self(state)?)
-                    .into()
+                ExtensionNode::new(
+                    path.slice(0, match_index),
+                    branch_node.insert_self(state)?.into(),
+                )
+                .into()
             };
 
             Ok(final_node)

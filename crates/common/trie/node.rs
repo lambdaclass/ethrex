@@ -13,6 +13,60 @@ use crate::{error::TrieError, nibbles::Nibbles};
 
 use super::{node_hash::NodeHash, state::TrieState, ValueRLP};
 
+/// A reference to a node.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NodeRef {
+    /// The node is embedded within the reference.
+    Node(Box<Node>),
+    /// The node is in the database, referenced by its hash.
+    Hash(NodeHash),
+}
+
+impl NodeRef {
+    pub const fn const_default() -> Self {
+        Self::Hash(NodeHash::const_default())
+    }
+
+    pub fn get_node(&self, state: &TrieState) -> Result<Option<Node>, TrieError> {
+        match self {
+            NodeRef::Node(node) => Ok(Some(node.as_ref().clone())),
+            NodeRef::Hash(hash) => state.get_node(*hash),
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        match self {
+            NodeRef::Node(_) => true,
+            NodeRef::Hash(hash) => hash.is_valid(),
+        }
+    }
+
+    pub fn compute_hash(&self) -> NodeHash {
+        match self {
+            NodeRef::Node(node) => node.compute_hash(),
+            NodeRef::Hash(hash) => *hash,
+        }
+    }
+}
+
+impl Default for NodeRef {
+    fn default() -> Self {
+        Self::const_default()
+    }
+}
+
+impl From<Node> for NodeRef {
+    fn from(value: Node) -> Self {
+        Self::Node(Box::new(value))
+    }
+}
+
+impl From<NodeHash> for NodeRef {
+    fn from(value: NodeHash) -> Self {
+        Self::Hash(value)
+    }
+}
+
 /// A Node in an Ethereum Compatible Patricia Merkle Trie
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -142,17 +196,17 @@ impl Node {
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
-                        child: decode_child(&rlp_items[1]),
+                        child: decode_child(&rlp_items[1]).into(),
                     }
                     .into()
                 }
             }
             // Branch Node
             17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]));
+                let choices = array::from_fn(|i| decode_child(&rlp_items[i]).into());
                 let (value, _) = decode_bytes(&rlp_items[16])?;
                 BranchNode {
-                    choices: Box::new(choices),
+                    choices,
                     value: value.to_vec(),
                 }
                 .into()

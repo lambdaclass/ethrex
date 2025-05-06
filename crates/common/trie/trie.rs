@@ -292,9 +292,8 @@ impl Trie {
                 Some(idx) => {
                     let child_hash = &branch_node.choices[idx];
                     if child_hash.is_valid() {
-                        let child_node = self
-                            .state
-                            .get_node(*child_hash)?
+                        let child_node = child_hash
+                            .get_node(&self.state)?
                             .ok_or(TrieError::InconsistentTree)?;
                         self.get_node_inner(child_node, partial_path)
                     } else {
@@ -307,9 +306,9 @@ impl Trie {
                 if partial_path.skip_prefix(&extension_node.prefix)
                     && extension_node.child.is_valid()
                 {
-                    let child_node = self
-                        .state
-                        .get_node(extension_node.child)?
+                    let child_node = extension_node
+                        .child
+                        .get_node(&self.state)?
                         .ok_or(TrieError::InconsistentTree)?;
                     self.get_node_inner(child_node, partial_path)
                 } else {

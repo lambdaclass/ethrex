@@ -34,7 +34,7 @@ impl Iterator for TrieIterator {
                     if child.is_valid() {
                         let mut child_path = path.clone();
                         child_path.append(choice as u8);
-                        self.stack.push((child_path, *child))
+                        self.stack.push((child_path, child.compute_hash()))
                     }
                 }
             }
@@ -42,7 +42,8 @@ impl Iterator for TrieIterator {
                 // Update path
                 path.extend(&extension_node.prefix);
                 // Add child to the stack
-                self.stack.push((path.clone(), extension_node.child));
+                self.stack
+                    .push((path.clone(), extension_node.child.compute_hash()));
             }
             Node::Leaf(leaf) => {
                 path.extend(&leaf.partial);

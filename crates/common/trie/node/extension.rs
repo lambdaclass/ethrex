@@ -6,19 +6,19 @@ use crate::node_hash::NodeHash;
 use crate::state::TrieState;
 use crate::ValueRLP;
 
-use super::{BranchNode, Node};
+use super::{BranchNode, Node, NodeRef};
 
 /// Extension Node of an an Ethereum Compatible Patricia Merkle Trie
 /// Contains the node's prefix and a its child node hash, doesn't store any value
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtensionNode {
     pub prefix: Nibbles,
-    pub child: NodeHash,
+    pub child: NodeRef,
 }
 
 impl ExtensionNode {
     /// Creates a new extension node given its child hash and prefix
-    pub(crate) const fn new(prefix: Nibbles, child: NodeHash) -> Self {
+    pub(crate) const fn new(prefix: Nibbles, child: NodeRef) -> Self {
         Self { prefix, child }
     }
 
@@ -27,8 +27,9 @@ impl ExtensionNode {
         // If the path is prefixed by this node's prefix, delegate to its child.
         // Otherwise, no value is present.
         if path.skip_prefix(&self.prefix) {
-            let child_node = state
-                .get_node(self.child)?
+            let child_node = self
+                .child
+                .get_node(state)?
                 .ok_or(TrieError::InconsistentTree)?;
 
             child_node.get(state, path)
@@ -57,36 +58,37 @@ impl ExtensionNode {
         let match_index = path.count_prefix(&self.prefix);
         if match_index == self.prefix.len() {
             // Insert into child node
-            let child_node = state
-                .get_node(self.child)?
+            let child_node = self
+                .child
+                .get_node(state)?
                 .ok_or(TrieError::InconsistentTree)?;
             let new_child_node = child_node.insert(state, path.offset(match_index), value)?;
-            self.child = new_child_node.insert_self(state)?;
+            self.child = new_child_node.insert_self(state)?.into();
             Ok(self.into())
         } else if match_index == 0 {
             let new_node = if self.prefix.len() == 1 {
                 self.child
             } else {
-                ExtensionNode::new(self.prefix.offset(1), self.child).insert_self(state)?
+                ExtensionNode::new(self.prefix.offset(1), self.child)
+                    .insert_self(state)?
+                    .into()
             };
             let mut choices = BranchNode::EMPTY_CHOICES;
             let branch_node = if self.prefix.at(0) == 16 {
-                match state.get_node(new_node)? {
-                    Some(Node::Leaf(leaf)) => {
-                        BranchNode::new_with_value(Box::new(choices), leaf.value)
-                    }
+                match new_node.get_node(state)? {
+                    Some(Node::Leaf(leaf)) => BranchNode::new_with_value(choices, leaf.value),
                     _ => return Err(TrieError::InconsistentTree),
                 }
             } else {
                 choices[self.prefix.at(0)] = new_node;
-                BranchNode::new(Box::new(choices))
+                BranchNode::new(choices)
             };
             return branch_node.insert(state, path, value);
         } else {
             let new_extension = ExtensionNode::new(self.prefix.offset(match_index), self.child);
             let new_node = new_extension.insert(state, path.offset(match_index), value)?;
             self.prefix = self.prefix.slice(0, match_index);
-            self.child = new_node.insert_self(state)?;
+            self.child = new_node.insert_self(state)?.into();
             Ok(self.into())
         }
     }
@@ -106,8 +108,9 @@ impl ExtensionNode {
 
         // Check if the value is part of the child subtrie according to the prefix
         if path.skip_prefix(&self.prefix) {
-            let child_node = state
-                .get_node(self.child)?
+            let child_node = self
+                .child
+                .get_node(state)?
                 .ok_or(TrieError::InconsistentTree)?;
             // Remove value from child subtrie
             let (child_node, old_value) = child_node.remove(state, path)?;
@@ -118,7 +121,7 @@ impl ExtensionNode {
                 Some(node) => Some(match node {
                     // If it is a branch node set it as self's child
                     Node::Branch(branch_node) => {
-                        self.child = branch_node.insert_self(state)?;
+                        self.child = branch_node.insert_self(state)?.into();
                         self.into()
                     }
                     // If it is an extension replace self with it after updating its prefix
@@ -151,7 +154,7 @@ impl ExtensionNode {
     pub fn encode_raw(&self) -> Vec<u8> {
         let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
-        encoder = self.child.encode(encoder);
+        encoder = self.child.compute_hash().encode(encoder);
         encoder.finish();
         buf
     }
@@ -179,8 +182,9 @@ impl ExtensionNode {
         };
         // Continue to child
         if path.skip_prefix(&self.prefix) {
-            let child_node = state
-                .get_node(self.child)?
+            let child_node = self
+                .child
+                .get_node(state)?
                 .ok_or(TrieError::InconsistentTree)?;
             child_node.get_path(state, path, node_path)?;
         }
@@ -416,10 +420,13 @@ mod test {
         let leaf_node_a = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x12, 0x34]);
         let leaf_node_b = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x56, 0x78]);
         let mut choices = BranchNode::EMPTY_CHOICES;
-        choices[0] = leaf_node_a.compute_hash();
-        choices[1] = leaf_node_b.compute_hash();
-        let branch_node = BranchNode::new(Box::new(choices));
-        let node = ExtensionNode::new(Nibbles::from_hex(vec![0, 0]), branch_node.compute_hash());
+        choices[0] = leaf_node_a.compute_hash().into();
+        choices[1] = leaf_node_b.compute_hash().into();
+        let branch_node = BranchNode::new(choices);
+        let node = ExtensionNode::new(
+            Nibbles::from_hex(vec![0, 0]),
+            branch_node.compute_hash().into(),
+        );
 
         assert_eq!(
             node.compute_hash().as_ref(),
@@ -451,10 +458,13 @@ mod test {
             vec![0x34, 0x56, 0x78, 0x9A, 0xBC],
         );
         let mut choices = BranchNode::EMPTY_CHOICES;
-        choices[0] = leaf_node_a.compute_hash();
-        choices[1] = leaf_node_b.compute_hash();
-        let branch_node = BranchNode::new(Box::new(choices));
-        let node = ExtensionNode::new(Nibbles::from_hex(vec![0, 0]), branch_node.compute_hash());
+        choices[0] = leaf_node_a.compute_hash().into();
+        choices[1] = leaf_node_b.compute_hash().into();
+        let branch_node = BranchNode::new(choices);
+        let node = ExtensionNode::new(
+            Nibbles::from_hex(vec![0, 0]),
+            branch_node.compute_hash().into(),
+        );
 
         assert_eq!(
             node.compute_hash().as_ref(),
