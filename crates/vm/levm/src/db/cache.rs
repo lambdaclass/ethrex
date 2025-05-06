@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 pub type CacheDB = HashMap<Address, Account>;
 
-pub fn account_is_cached(cached_accounts: & CacheDB, address: &Address) -> bool {
+pub fn account_is_cached(cached_accounts: &CacheDB, address: &Address) -> bool {
     cached_accounts.contains_key(address)
 }
 

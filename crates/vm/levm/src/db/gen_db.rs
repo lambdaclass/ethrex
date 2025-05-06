@@ -36,7 +36,8 @@ impl GeneralizedDatabase {
             let account = self.store.get_account(address)?.clone();
             cache::insert_account(&mut self.cache, address, account);
         }
-        cache::get_account(& self.cache, &address).ok_or(DatabaseError::Custom("Cache error".to_owned()))
+        cache::get_account(&self.cache, &address)
+            .ok_or(DatabaseError::Custom("Cache error".to_owned()))
     }
 
     /// **Accesses to an account's information.**
