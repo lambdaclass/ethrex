@@ -102,13 +102,14 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_header = block.header;
     }
 
+    // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
     let Ok(batch_withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
         return Err("Failed to calculate withdrawals merkle root"
             .to_string()
             .into());
     };
-
+    // Check witdrawals root
     #[cfg(feature = "l2")]
     if batch_withdrawals_merkle_root != withdrawals_merkle_root {
         return Err("invalid withdrawals merkle root".to_string().into());
