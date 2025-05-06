@@ -36,7 +36,7 @@ impl NodeHash {
     }
 
     /// Converts a slice of an already hashed data (in case it's not inlineable) to a NodeHash.
-    /// Panics if the slice is over 32 bits
+    /// Panics if the slice is over 32 bytes
     /// If you need to hash it in case its len >= 32 see `from_encoded_raw`
     pub(crate) fn from_slice(slice: &[u8]) -> NodeHash {
         match slice.len() {
