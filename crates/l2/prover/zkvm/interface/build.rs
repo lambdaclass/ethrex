@@ -1,6 +1,5 @@
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
-
     #[cfg(not(clippy))]
     {
         #[cfg(any(feature = "risc0", feature = "sp1", feature = "pico"))]
@@ -22,15 +21,30 @@ fn main() {
         // We should use include_elf! instead of doing this.
         // I'm leaving this to avoid complex changes.
         #[cfg(feature = "sp1")]
-        sp1_build::build_program_with_args(
-            "./sp1",
-            sp1_build::BuildArgs {
-                output_directory: Some("./sp1/elf".to_string()),
-                elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
-                features: features.clone(),
-                ..Default::default()
-            },
-        );
+        {
+            use sp1_sdk::{HashableKey, ProverClient};
+
+            sp1_build::build_program_with_args(
+                "./sp1",
+                sp1_build::BuildArgs {
+                    output_directory: Some("./sp1/elf".to_string()),
+                    elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
+                    features: features.clone(),
+                    ..Default::default()
+                },
+            );
+
+            // Get verification key
+            // ref: https://github.com/succinctlabs/sp1/blob/dev/crates/cli/src/commands/vkey.rs
+            let elf = std::fs::read("./sp1/elf/riscv32im-succinct-zkvm-elf")
+                .expect("could not read SP1 elf file");
+            let prover = ProverClient::from_env();
+            let (_, vk) = prover.setup(&elf);
+            let vk = vk.vk.bytes32();
+            dbg!(&vk);
+            std::fs::write("./sp1/elf/riscv32im-succinct-zkvm-vk", &vk)
+                .expect("could not write SP1 vk to file");
+        }
 
         if cfg!(feature = "pico") {
             let output = std::process::Command::new("make")
