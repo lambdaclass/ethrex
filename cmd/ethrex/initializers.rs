@@ -9,7 +9,7 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
-    network::node_id_from_signing_key,
+    network::{node_id_from_signing_key, P2PContext},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -225,18 +225,19 @@ pub async fn init_network(
 
     let bootnodes = get_bootnodes(opts, network, data_dir);
 
-    ethrex_p2p::start_network(
+    let context = P2PContext::new(
         local_p2p_node,
         tracker.clone(),
-        bootnodes,
         signer,
         peer_table.clone(),
         store,
         blockchain,
         get_client_version(),
-    )
-    .await
-    .expect("Network starts");
+    );
+
+    ethrex_p2p::start_network(context, bootnodes)
+        .await
+        .expect("Network starts");
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(peer_table.clone()));
 }

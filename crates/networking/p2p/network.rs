@@ -55,36 +55,40 @@ pub struct P2PContext {
     pub client_version: String,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn start_network(
-    local_node: Node,
-    tracker: TaskTracker,
-    bootnodes: Vec<Node>,
-    signer: SigningKey,
-    peer_table: Arc<Mutex<KademliaTable>>,
-    storage: Store,
-    blockchain: Arc<Blockchain>,
-    client_version: String,
-) -> Result<(), NetworkError> {
-    let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
-        tokio::task::Id,
-        Arc<RLPxMessage>,
-    )>(MAX_MESSAGES_TO_BROADCAST);
+impl P2PContext {
+    pub fn new(
+        local_node: Node,
+        tracker: TaskTracker,
+        signer: SigningKey,
+        peer_table: Arc<Mutex<KademliaTable>>,
+        storage: Store,
+        blockchain: Arc<Blockchain>,
+        client_version: String,
+    ) -> Self {
+        let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
+            tokio::task::Id,
+            Arc<RLPxMessage>,
+        )>(MAX_MESSAGES_TO_BROADCAST);
 
-    let context = P2PContext {
-        local_node,
-        // Note we are passing the current timestamp as the sequence number
-        // This is because we are not storing our local_node updates in the db
-        // see #1756
-        enr_seq: current_unix_time(),
-        tracker,
-        signer,
-        table: peer_table,
-        storage,
-        blockchain,
-        broadcast: channel_broadcast_send_end,
-        client_version,
-    };
+        P2PContext {
+            local_node,
+            // Note we are passing the current timestamp as the sequence number
+            // This is because we are not storing our local_node updates in the db
+            // see #1756
+            enr_seq: current_unix_time(),
+            tracker,
+            signer,
+            table: peer_table,
+            storage,
+            blockchain,
+            broadcast: channel_broadcast_send_end,
+            client_version,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {
     let discovery = Discv4Server::try_new(context.clone())
         .await
         .map_err(NetworkError::DiscoveryStart)?;
