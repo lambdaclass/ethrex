@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746534719430,
+  "lastUpdate": 1746542102611,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5455,6 +5455,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180250911049,
             "range": "± 1006527421",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e920898c576371ff09ca1b610d08a8a2ccfacd97",
+          "message": "feat(docs): latest valid ancestor store methods (#2669)\n\n**Motivation**\nThe `Store` methods `set_latest_valid_ancestor` &\n`get_latest_valid_ancestor` can be confusing without proper\ndocumentation. These methods were properly documented on the\n`StoreEngine` trait, but they were not documented in the `Store`\nstructure where they will be most often called from. This PR adds\ndocumentation for these methods on the `Store` implementation while also\nsimplifying it, as the internal trait documentation provides more\ninformation on the context and design choices/requirements for the\nimplementation which are not necessary for the top-level methods.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add doc comments for `Store` methods `set_latest_valid_ancestor` &\n`get_latest_valid_ancestor`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None",
+          "timestamp": "2025-05-06T13:33:18Z",
+          "tree_id": "8275632b0c4590b77810dc8f928e473c5cbf7df1",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e920898c576371ff09ca1b610d08a8a2ccfacd97"
+        },
+        "date": 1746542100401,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182626211524,
+            "range": "± 1258129811",
             "unit": "ns/iter"
           }
         ]
