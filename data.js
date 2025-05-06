@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746558336430,
+  "lastUpdate": 1746562672621,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5575,6 +5575,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180480458002,
             "range": "± 1085212936",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c4e0b92abfd4a02f3c96cf62950d4b876ab3dae2",
+          "message": "feat(levm): add error messages for levm validation errors (#2678)\n\n**Motivation**\nSome levm validation errors use the enum variant's name as display\nmessage instead of displaying a proper error message.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add error messages for some levm validation errors\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-06T19:16:24Z",
+          "tree_id": "a70c482f85b5a5849cd9da3e1d69c9d4abd1cb4e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c4e0b92abfd4a02f3c96cf62950d4b876ab3dae2"
+        },
+        "date": 1746562670499,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182010271770,
+            "range": "± 1370093449",
             "unit": "ns/iter"
           }
         ]
