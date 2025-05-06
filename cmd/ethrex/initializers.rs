@@ -329,7 +329,7 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
 
     info!("Reading config from {:?}", peers_file);
 
-    match read_config_file(peers_file.clone()) {
+    match read_config_file(peers_file) {
         Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
         Err(e) => error!("Could not read from peers file: {e}"),
     };
