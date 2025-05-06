@@ -331,9 +331,11 @@ impl Discv4Server {
                 if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
-                let Ok(node_record) =
-                    NodeRecord::from_node(self.ctx.local_node, self.ctx.enr_seq, &self.ctx.signer)
-                else {
+                let Ok(node_record) = NodeRecord::from_node(
+                    &self.ctx.local_node,
+                    self.ctx.local_node_record.lock().await.seq,
+                    &self.ctx.signer,
+                ) else {
                     return Err(DiscoveryError::InvalidMessage(
                         "could not build local node record".into(),
                     ));
@@ -552,8 +554,10 @@ impl Discv4Server {
             tcp_port: node.tcp_port,
         };
 
-        let ping =
-            Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(self.ctx.enr_seq));
+        let ping = Message::Ping(
+            PingMessage::new(from, to, expiration)
+                .with_enr_seq(self.ctx.local_node_record.lock().await.seq),
+        );
         ping.encode_with_header(&mut buf, &self.ctx.signer);
         let bytes_sent = self
             .udp_socket
@@ -585,7 +589,8 @@ impl Discv4Server {
         };
 
         let pong = Message::Pong(
-            PongMessage::new(to, ping_hash, expiration).with_enr_seq(self.ctx.enr_seq),
+            PongMessage::new(to, ping_hash, expiration)
+                .with_enr_seq(self.ctx.local_node_record.lock().await.seq),
         );
         pong.encode_with_header(&mut buf, &self.ctx.signer);
 
@@ -692,9 +697,14 @@ pub(super) mod tests {
         );
         let tracker = tokio_util::task::TaskTracker::new();
 
+        let local_node_record = Arc::new(Mutex::new(
+            NodeRecord::from_node(&local_node, 0, &signer)
+                .expect("Node record could not be created from local node"),
+        ));
+
         let ctx = P2PContext {
             local_node,
-            enr_seq: current_unix_time(),
+            local_node_record,
             tracker: tracker.clone(),
             signer,
             table,
@@ -825,7 +835,7 @@ pub(super) mod tests {
         sleep(Duration::from_millis(2500)).await;
 
         let expected_record = NodeRecord::from_node(
-            server_b.ctx.local_node,
+            &server_b.ctx.local_node,
             current_unix_time(),
             &server_b.ctx.signer,
         )
@@ -858,7 +868,7 @@ pub(super) mod tests {
 
         // update the enr_seq of server_b so that server_a notices it is outdated
         // and sends a request to update it
-        server_b.ctx.enr_seq = current_unix_time();
+        server_b.ctx.local_node_record.lock().await.seq += 1;
 
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated

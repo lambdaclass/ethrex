@@ -2,8 +2,8 @@ use clap::Parser;
 use ethrex::{
     cli::CLI,
     initializers::{
-        get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_rpc_api,
-        init_store, init_tracing,
+        get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
+        init_metrics, init_rpc_api, init_store, init_tracing,
     },
     utils::{set_datadir, store_config_file, ConfigFile},
 };
@@ -39,6 +39,8 @@ async fn main() -> eyre::Result<()> {
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
+    let local_node_record = get_local_node_record(&data_dir, &local_p2p_node, &signer);
+
     let peer_table = peer_table(signer.clone());
 
     // TODO: Check every module starts properly.
@@ -50,9 +52,9 @@ async fn main() -> eyre::Result<()> {
         &opts,
         #[cfg(any(feature = "l2", feature = "based"))]
         &L2Options::default(),
-        &signer,
         peer_table.clone(),
         local_p2p_node,
+        local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
@@ -80,6 +82,7 @@ async fn main() -> eyre::Result<()> {
                     &network,
                     &data_dir,
                     local_p2p_node,
+                    local_node_record.clone(),
                     signer,
                     peer_table.clone(),
                     store.clone(),

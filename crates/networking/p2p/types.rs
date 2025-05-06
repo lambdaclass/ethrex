@@ -274,7 +274,7 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
+    pub fn from_node(node: &Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
@@ -471,7 +471,7 @@ mod tests {
             tcp_port: addr.port(),
             udp_port: addr.port(),
         };
-        let record = NodeRecord::from_node(node, 0, &signer).unwrap();
+        let record = NodeRecord::from_node(&node, 0, &signer).unwrap();
         let expected_enr_string = "enr:-Iu4QDOLZWVEdbtRUtrZ8PU1vxUJ0t_TUpVghJhJuakBUyYKE_ZfvhR2EKxDyJ8Z5wwoJE4mTSItAcYsErU0NrB7uzCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);
