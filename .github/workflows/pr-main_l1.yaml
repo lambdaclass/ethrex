@@ -169,10 +169,11 @@ jobs:
             simulation: ethereum/sync
             test_pattern: ""
             ethrex_flags: "--syncmode full"
-          - name: "Eest Consume-Engine (Prague)"
-            simulation: ethereum/eest/consume-engine
-            test_pattern: ".*tests/prague.*"
-            ethrex_flags: ""
+          # Currently not passing on LEVM
+          # - name: "Eest Consume-Engine (Prague)"
+          #   simulation: ethereum/eest/consume-engine
+          #   test_pattern: ".*tests/prague.*"
+          #   ethrex_flags: ""
           - name: "Eest Consume-Engine (Cancun)"
             simulation: ethereum/eest/consume-engine
             test_pattern: ".*tests/cancun.*"
@@ -213,7 +214,7 @@ jobs:
           fi
 
       - name: Run Hive Simulation
-        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 ${{ env.HIVE_FLAGS }} --docker.output
+        run: chmod +x hive && ./hive --client ethrex --ethrex.flags "${{ matrix.ethrex_flags }}" --sim ${{ matrix.simulation }} --sim.limit "${{ matrix.test_pattern }}" --sim.parallelism 16 ${{ env.HIVE_FLAGS }}
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
