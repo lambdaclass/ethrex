@@ -832,7 +832,6 @@ pub fn call(
     current_memory_size: usize,
     address_was_cold: bool,
     address_is_empty: bool,
-    address_exists: bool,
     value_to_transfer: U256,
     gas_from_stack: U256,
     gas_left: u64,
@@ -858,10 +857,8 @@ pub fn call(
     } else {
         0
     };
-    // https://eips.ethereum.org/EIPS/eip-161 change the definition of empty address
-    let value_to_empty_account = if (!address_exists && fork < Fork::SpuriousDragon)
-        || address_is_empty && !value_to_transfer.is_zero() && fork >= Fork::SpuriousDragon
-    {
+
+    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
         CALL_TO_EMPTY_ACCOUNT
     } else {
         0
