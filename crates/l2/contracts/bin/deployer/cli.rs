@@ -84,7 +84,7 @@ pub struct DeployerOptions {
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_COMMITTER_L1_ADDRESS",
         help_heading = "Deployer options",
-        help = "Address of the L1 committer account. This address will be used to initialize the OnChainProposer contract."
+        help = "Address of the L1 committer account. This is the address of the account that commits the batches in L1."
     )]
     pub committer_l1_address: Address,
     #[arg(
@@ -93,7 +93,7 @@ pub struct DeployerOptions {
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_PROOF_SENDER_L1_ADDRESS",
         help_heading = "Deployer options",
-        help = "Address of the L1 committer account. This address will be used to initialize the OnChainProposer contract."
+        help = "Address of the L1 proof sender account. This is the address of the account that sends the proofs to be verified in L1."
     )]
     pub proof_sender_l1_address: Address,
     #[arg(
