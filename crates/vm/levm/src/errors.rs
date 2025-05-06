@@ -106,19 +106,19 @@ pub enum TxValidationError {
     InsufficientMaxFeePerBlobGas,
     #[error("Type 3 transactions are not supported before the Cancun fork")]
     Type3TxPreFork,
-    #[error("Type3TxZeroBlobs")]
+    #[error("Type 3 transaction without blobs")]
     Type3TxZeroBlobs,
-    #[error("Type3TxInvalidBlobVersionedHash")]
+    #[error("Invalid blob versioned hash")]
     Type3TxInvalidBlobVersionedHash,
-    #[error("Type3TxBlobCountExceeded")]
+    #[error("Blob count exceeded")]
     Type3TxBlobCountExceeded,
-    #[error("Type3TxContractCreation")]
+    #[error("Contract creation in blob transaction")]
     Type3TxContractCreation,
     #[error("Type 4 transactions are not supported before the Prague fork")]
     Type4TxPreFork,
-    #[error("Type4TxAuthorizationListIsEmpty")]
+    #[error("Empty authorization list in type 4 transaction")]
     Type4TxAuthorizationListIsEmpty,
-    #[error("Type4TxContractCreation")]
+    #[error("Contract creation in type 4 transaction")]
     Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
