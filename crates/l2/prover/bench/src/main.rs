@@ -6,6 +6,7 @@ use ethrex_prover_bench::{
     rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
 use ethrex_prover_lib::execute;
+use machine_info::Machine;
 use serde_json::json;
 use zkvm_interface::io::ProgramInput;
 
@@ -108,8 +109,11 @@ async fn main() {
         gas_used
     );
 
-    // write benchmark file for github action
-    let rate = gas_used / 10e6 / elapsed as f64;
+    write_benchmark_file(gas_used, elapsed as f64);
+}
+
+fn write_benchmark_file(gas_used: f64, elapsed: f64) {
+    let rate = gas_used / 10e6 / elapsed;
 
     let backend = if cfg!(feature = "sp1") {
         "SP1"
@@ -120,10 +124,25 @@ async fn main() {
     } else {
         unreachable!();
     };
-    let processing_unit = if cfg!(feature = "gpu") { "GPU" } else { "CPU" };
+
+    let mut machine = Machine::new();
+    let processing_unit = if cfg!(feature = "gpu") {
+        // assumes single GPU
+        format!(
+            "GPU: {}",
+            machine
+                .system_info()
+                .graphics
+                .first()
+                .expect("could not write bench file: no gpu info found")
+                .name
+        )
+    } else {
+        format!("CPU: {}", machine.system_info().processor.brand)
+    };
 
     let benchmark_json = &json!([{
-        "name": format!("{backend} backend, {processing_unit}"),
+        "name": format!("{backend}, {processing_unit}"),
         "unit": "Mgas/s",
         "value": rate
     }]);
