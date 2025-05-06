@@ -62,7 +62,6 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
     for block in blocks {
-        let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config)?;
 
