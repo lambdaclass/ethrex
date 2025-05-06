@@ -2181,6 +2181,7 @@ mod serde_impl {
         pub chain_id: Option<u64>,
         // rename is needed here so we dont attempt to deserialize the `input` field rather than the remainder of the fields
         #[serde(
+            flatten,
             default,
             rename = "input_or_data",
             deserialize_with = "deserialize_input",
