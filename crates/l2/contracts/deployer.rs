@@ -285,10 +285,11 @@ fn download_contract_deps(contracts_path: &Path) -> Result<(), DeployError> {
     })?;
     Command::new("git")
         .arg("clone")
-        .arg("https://github.com/OpenZeppelin/openzeppelin-contracts.git")
+        .arg("--recurse-submodules")
+        .arg("https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git")
         .arg(
             contracts_path
-                .join("lib/openzeppelin-contracts")
+                .join("lib/openzeppelin-contracts-upgradeable")
                 .to_str()
                 .ok_or(DeployError::FailedToGetStringFromPath)?,
         )
