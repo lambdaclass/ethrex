@@ -2,8 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use ethrex_common::{types::AccountState, Bloom, H256, U256};
 
-use crate::AccountUpdate;
-
 use super::DiskLayer;
 
 // Snapshot layer methods.
@@ -16,7 +14,7 @@ pub trait SnapshotLayer: Send + Sync {
     /// Returned inner Option is None if deleted.
     fn get_account(&self, hash: H256) -> Option<Option<AccountState>>;
 
-    /// Get a storage value by its account and storage hash.
+    /// Get a storage by its account and storage hash.
     fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<U256>;
 
     // TODO: maybe move these to a private trait.
@@ -39,4 +37,11 @@ pub trait SnapshotLayer: Send + Sync {
 
     // skips bloom checks, used if a higher layer bloom filter is hit
     fn get_account_traverse(&self, hash: H256, depth: usize) -> Option<Option<AccountState>>;
+
+    fn get_storage_traverse(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+        depth: usize,
+    ) -> Option<U256>;
 }

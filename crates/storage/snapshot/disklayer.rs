@@ -9,10 +9,9 @@ use std::{
 use ethrex_common::{types::AccountState, Bloom, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::Trie;
+use tracing::debug;
 
-use crate::{
-    cache::Cache, hash_key, rlp::AccountStateRLP, store::hash_address_fixed, AccountUpdate, Store,
-};
+use crate::{cache::Cache, rlp::AccountStateRLP, Store};
 
 use super::{difflayer::DiffLayer, layer::SnapshotLayer};
 
@@ -99,7 +98,18 @@ impl SnapshotLayer for DiskLayer {
         None
     }
 
-    fn get_account_traverse(&self, hash: H256, _depth: usize) -> Option<Option<AccountState>> {
+    fn get_account_traverse(&self, hash: H256, depth: usize) -> Option<Option<AccountState>> {
+        debug!("Snapshot DiskLayer get_account_traverse called at depth {depth}");
         self.get_account(hash)
+    }
+
+    fn get_storage_traverse(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+        depth: usize,
+    ) -> Option<U256> {
+        debug!("Snapshot DiskLayer get_storage_traverse called at depth {depth}");
+        self.get_storage(account_hash, storage_hash)
     }
 }

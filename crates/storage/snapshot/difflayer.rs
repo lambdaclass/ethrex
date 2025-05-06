@@ -1,13 +1,13 @@
 use std::{
-    cell::OnceCell,
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, LazyLock, OnceLock,
+        Arc,
     },
 };
 
 use ethrex_common::{types::AccountState, Bloom, BloomInput, H256, U256};
+use tracing::debug;
 
 use super::{DiskLayer, SnapshotLayer};
 
@@ -23,25 +23,6 @@ pub struct DiffLayer {
     diffed: Bloom,
 }
 
-// TODO: make this random
-// range 0:24
-static BLOOM_ACCOUNT_HASHER_OFFSET: usize = 0;
-static BLOOM_STORAGE_HASHER_OFFSET: usize = 10;
-
-fn account_bloom(hash: H256) -> u64 {
-    let value: [u8; 8] = hash.0[BLOOM_ACCOUNT_HASHER_OFFSET..(BLOOM_ACCOUNT_HASHER_OFFSET + 8)]
-        .try_into()
-        .unwrap();
-    u64::from_le_bytes(value)
-}
-
-fn storage_bloom(hash: H256) -> u64 {
-    let value: [u8; 8] = hash.0[BLOOM_STORAGE_HASHER_OFFSET..(BLOOM_STORAGE_HASHER_OFFSET + 8)]
-        .try_into()
-        .unwrap();
-    u64::from_le_bytes(value)
-}
-
 impl DiffLayer {
     pub fn new(
         parent: Arc<dyn SnapshotLayer>,
@@ -49,7 +30,7 @@ impl DiffLayer {
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Self {
-        let layer = DiffLayer {
+        let mut layer = DiffLayer {
             origin: parent.origin(),
             parent,
             root,
@@ -58,6 +39,8 @@ impl DiffLayer {
             storage: Arc::new(storage),
             diffed: Bloom::zero(),
         };
+
+        layer.rebloom();
 
         layer
     }
@@ -105,12 +88,21 @@ impl SnapshotLayer for DiffLayer {
         self.get_account_traverse(hash, 0)
     }
 
-    fn get_storage(
-        &self,
-        account_hash: H256,
-        storage_hash: ethrex_common::H256,
-    ) -> Option<ethrex_common::U256> {
-        todo!()
+    fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<ethrex_common::U256> {
+        // todo: check stale
+
+        let bloom_hash = account_hash ^ storage_hash;
+        let hit = self
+            .diffed
+            .contains_input(BloomInput::Hash(bloom_hash.as_fixed_bytes()));
+
+        // If bloom misses we can skip diff layers
+        if !hit {
+            return self.origin.get_storage(account_hash, storage_hash);
+        }
+
+        // Start traversing layers.
+        self.get_storage_traverse(account_hash, storage_hash, 0)
     }
 
     fn stale(&self) -> bool {
@@ -127,7 +119,12 @@ impl SnapshotLayer for DiffLayer {
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Arc<dyn SnapshotLayer> {
-        todo!()
+        Arc::new(DiffLayer::new(
+            Arc::new(self.clone()),
+            block,
+            accounts,
+            storage,
+        ))
     }
 
     fn origin(&self) -> Arc<DiskLayer> {
@@ -140,10 +137,34 @@ impl SnapshotLayer for DiffLayer {
 
         // If it's in this layer, return it.
         if let Some(value) = self.accounts.get(&hash) {
+            debug!("Snapshot DiffLayer get_account_traverse hit at depth {depth}");
             return Some(value.clone());
         }
 
         // delegate to parent
         self.parent.get_account_traverse(hash, depth + 1)
+    }
+
+    fn get_storage_traverse(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+        depth: usize,
+    ) -> Option<U256> {
+        // todo: check if its stale
+
+        // If it's in this layer, return it.
+        if let Some(value) = self
+            .storage
+            .get(&account_hash)
+            .and_then(|x| x.get(&storage_hash))
+        {
+            debug!("Snapshot DiffLayer get_storage_traverse hit at depth {depth}");
+            return Some(*value);
+        }
+
+        // delegate to parent
+        self.parent
+            .get_storage_traverse(account_hash, storage_hash, depth + 1)
     }
 }
