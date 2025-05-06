@@ -57,7 +57,7 @@ pub struct EFTestRunnerOptions {
     #[arg(short, long, value_name = "TESTS", use_value_delimiter = true)]
     pub tests: Vec<String>,
     /// For running tests with a specific name
-    #[arg(value_name = "SPECIFIC_TESTS", use_value_delimiter = true)]
+    #[arg(long, value_name = "SPECIFIC_TESTS", use_value_delimiter = true)]
     pub specific_tests: Vec<String>,
     /// For running tests only with LEVM without the REVM re-run.
     #[arg(short, long, value_name = "SUMMARY", default_value = "false")]
