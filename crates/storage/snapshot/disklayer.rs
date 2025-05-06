@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use ethrex_common::{types::AccountState, H256, U256};
+use ethrex_common::{types::AccountState, Bloom, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::Trie;
 
@@ -90,5 +90,9 @@ impl SnapshotLayer for DiskLayer {
 
     fn origin(&self) -> Arc<DiskLayer> {
         Arc::new(self.clone())
+    }
+
+    fn diffed(&self) -> Option<Bloom> {
+        None
     }
 }

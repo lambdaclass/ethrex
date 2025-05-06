@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use ethrex_common::{types::AccountState, H256, U256};
+use ethrex_common::{types::AccountState, Bloom, H256, U256};
 
 use crate::rlp::AccountStateRLP;
 
@@ -32,4 +32,6 @@ pub trait SnapshotLayer: Send + Sync {
     ) -> Arc<dyn SnapshotLayer>;
 
     fn origin(&self) -> Arc<DiskLayer>;
+
+    fn diffed(&self) -> Option<Bloom>;
 }
