@@ -552,9 +552,7 @@ pub fn selfdestruct(
             .ok_or(OutOfGasError::GasCostOverflow)?;
     }
 
-    let (static_cost, dynamic_cost) = (SELFDESTRUCT_STATIC, dynamic_cost);
-
-    static_cost
+    SELFDESTRUCT_STATIC
         .checked_add(dynamic_cost)
         .ok_or(OutOfGasError::GasCostOverflow)
 }

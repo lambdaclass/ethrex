@@ -591,16 +591,7 @@ impl<'a> VM<'a> {
             self.increase_account_balance(target_address, balance_to_transfer)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
-            // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-            // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
-            if !self.accrued_substate.selfdestruct_set.contains(&to)
-            {
-                self.env.refunded_gas = self
-                    .env
-                    .refunded_gas
-                    .checked_add(SELFDESTRUCT_REFUND)
-                    .ok_or(VMError::GasRefundsOverflow)?;
-            }
+            
 
             self.accrued_substate.selfdestruct_set.insert(to);
         }
