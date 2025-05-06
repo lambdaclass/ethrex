@@ -197,12 +197,15 @@ impl<'a> VM<'a> {
             }
         }
 
-        let logs = match transaction_result {
-            TxResult::Success => std::mem::take(&mut self.current_call_frame_mut()?.logs),
-            TxResult::Revert(_) => {
-                vec![]
+        let logs;
+        match transaction_result {
+            TxResult::Success => {
+                logs = std::mem::take(&mut self.current_call_frame_mut()?.logs);
             }
-        };
+            TxResult::Revert(_) => {
+                logs = vec![];
+            }
+        }
         let refunded_gas = self.env.refunded_gas;
         let current_call_frame = self.current_call_frame_mut()?;
 
