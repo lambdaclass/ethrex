@@ -12,7 +12,10 @@ interface IAttestation {
 }
 
 contract Counter {
-    IAttestation constant quoteVerifier = IAttestation(0xe74B98ac3a47615b0Ff8478cB7dEcF332DA0f422);
+    IAttestation quoteVerifier;
+    constructor(address _dcap) {
+        IAttestation quoteVerifier = IAttestation(_dcap);
+    }
     address public authorizedSignature = address(0);
     uint64 public current = 100;
     bytes public RTMR0 = hex'4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643';

@@ -59,27 +59,13 @@ Runs `mkosi.build.chroot` to produce the output
 
 ## Chain verification
 
-
 ```
 # NOTE: initialize&update submodules on all repos
 (ethrex) make dev # start L1
-(ethrex crates/l2) make deploy-l1 # deploy create2 deployer
-(daimo-eth/p256-verifier) scripts/deploy.sh # deploy P256 verifier
-(automata-network/automata-on-chain-pccs) edit script/utils/P256Configuration.sol with daimo addr and chainid
-(automata-network/automata-on-chain-pccs) forge install && make deploy-all
-(automata-network/automata-on-chain-pccs) # look at deployment/CHAIN_ID.json
-(automata-network/automata-dcap-attestation evm/deployment/) add CHAINID/onchain_pccs.json
-(automata-network/automata-dcap-attestation evm/) edit script/utils/P256Configuration.sol with daimo addr and chainid
-(automata-network/automata-dcap-attestation evm/) forge install && make deploy-all
+(ethrex crates/l2/tee/verifier) make deploy
 (automata-network/automata-dcap-qpl automata-dcap-qpl-tool/) # edit and source env/automata_testnet
-Replay [1], [2] and [3] against AutomataPcsDao, with `rex send CONTRACT_AutomataPcsDao 0 PRIVATE_KEY --calldata CALLDATA`
-Run AutomataDcapAttestationFee.setQuoteVerifier(CONTRACT_V4QuoteVerifier)
 
 # To validate a quote
 (automata-network/automata-dcap-qpl automata-dcap-qpl-tool/) cargo run -- -p PRIVATE_KEY --chain_id=$CHAIN_ID --rpc_url=$RPC_URL --quote_hex QUOTE # Inserts missing pieces
 Now AutomataDcapAttestationFee.verifyAndAttestOnChain(QUOTE) can validate the quote.
 ```
-
-[1] CA ROOT https://explorer.ata.network/tx/0x3c44e3eb9c866052ff84f1b11d91440b36cfc28ea5aeed78264d17411089de3d
-[2] PLATFORM https://explorer.ata.network/tx/0x8b615efe4016176183145e34e1d659acb2788ff6763e6645c6ab1a77b1a3a828
-[3] ROOT CRL https://explorer.ata.network/tx/0xf6e5cffa806261b7fdff6c0623ed1361d6e12073f4af026200735d1d87b1dafe

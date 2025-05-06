@@ -4,7 +4,7 @@ out/
 
 # Ignores development broadcast logs
 !/broadcast
-/broadcast/*/31337/
+/broadcast/*/9/
 /broadcast/**/dry-run/
 
 # Docs
@@ -12,3 +12,6 @@ docs/
 
 # Dotenv file
 .env
+
+# Deploy dependencies
+deploydeps/

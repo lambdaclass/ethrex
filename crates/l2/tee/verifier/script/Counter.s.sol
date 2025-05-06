@@ -6,13 +6,14 @@ import {Counter} from "../src/Counter.sol";
 
 contract CounterScript is Script {
     Counter public counter;
+    address dcap = vm.envAddress("DCAP_ADDRESS");
 
     function setUp() public {}
 
     function run() public {
         vm.startBroadcast();
 
-        counter = new Counter();
+        counter = new Counter(dcap);
 
         vm.stopBroadcast();
     }
