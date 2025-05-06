@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746542102611,
+  "lastUpdate": 1746543550244,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5486,6 +5486,33 @@ window.BENCHMARK_DATA = {
             "value": 182626211524,
             "range": "± 1258129811",
             "unit": "ns/iter"
+          }
+        ]
+      }
+    ],
+    "L1 block proving benchmark": [
+      {
+        "commit": {
+          "author": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "committer": {
+            "name": "lambdaclass",
+            "username": "lambdaclass"
+          },
+          "id": "6cb177c58b31935236ce1570021ed095ba8480d0",
+          "message": "feat(l2): bench job",
+          "timestamp": "2025-05-06T13:56:32Z",
+          "url": "https://github.com/lambdaclass/ethrex/pull/2663/commits/6cb177c58b31935236ce1570021ed095ba8480d0"
+        },
+        "date": 1746543549179,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1 backend, GPU",
+            "value": 0.0007203333174224343,
+            "unit": "Mgas/s"
           }
         ]
       }
