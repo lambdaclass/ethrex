@@ -70,13 +70,13 @@ async fn setup() -> (ProgramInput, Block) {
         .unwrap();
 
     // This works because there are no withdrawals in the test data
-    let withdrawals_merkle_roots = vec![H256::zero()];
+    let withdrawals_merkle_root = vec![H256::zero()];
 
     let input = ProgramInput {
         blocks: vec![block_to_prove.clone()],
         parent_block_header,
         db,
-        withdrawals_merkle_roots,
+        withdrawals_merkle_root,
     };
     (input, block_to_prove.clone())
 }

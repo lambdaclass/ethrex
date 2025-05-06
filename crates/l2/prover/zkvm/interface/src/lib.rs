@@ -41,8 +41,8 @@ pub mod io {
         /// database containing only the data necessary to execute
         pub db: ExecutionDB,
         #[cfg(feature = "l2")]
-        /// Root of the merkle tree with all the L2 withdrawals
-        pub withdrawals_merkle_roots: Vec<H256>,
+        /// Root of the merkle tree with all the L2 withdrawals in the batch
+        pub withdrawals_merkle_root: H256,
     }
 
     /// Public output variables exposed by the zkVM execution program. Some of these are part of
@@ -279,20 +279,15 @@ pub mod withdrawals {
         WithdrawalHash,
     }
 
-    pub fn get_withdrawals_root(txs: &[Transaction], receipts: &[Receipt]) -> Result<H256, Error> {
-        let withdrawals: Vec<Transaction> = txs
-            .iter()
+    pub fn get_block_withdrawals(
+        txs: &[Transaction],
+        receipts: &[Receipt],
+    ) -> Result<Vec<H256>, Error> {
+        txs.iter()
             .zip(receipts.iter())
             .filter(|(tx, receipt)| is_withdrawal_l2(tx, receipt))
-            .map(|(tx, _)| tx.clone())
-            .collect();
-
-        let withdrawals_hashes = withdrawals
-            .iter()
-            .map(|withdrawal| get_withdrawal_hash(withdrawal).ok_or(Error::WithdrawalHash))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        get_withdrawals_merkle_root(withdrawals_hashes)
+            .map(|(withdrawal, _)| get_withdrawal_hash(withdrawal).ok_or(Error::WithdrawalHash))
+            .collect::<Result<Vec<_>, _>>()
     }
 
     fn is_withdrawal_l2(tx: &Transaction, receipt: &Receipt) -> bool {
@@ -311,7 +306,7 @@ pub mod withdrawals {
         }
     }
 
-    fn get_withdrawals_merkle_root(withdrawals_hashes: Vec<H256>) -> Result<H256, Error> {
+    pub fn get_withdrawals_merkle_root(withdrawals_hashes: Vec<H256>) -> Result<H256, Error> {
         if !withdrawals_hashes.is_empty() {
             merkelize(withdrawals_hashes)
         } else {

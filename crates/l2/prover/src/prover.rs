@@ -84,7 +84,7 @@ impl Prover {
                             blocks: input.blocks,
                             parent_block_header: input.parent_block_header,
                             db: input.db,
-                            withdrawals_merkle_roots: input.withdrawals_merkle_roots
+                            withdrawals_merkle_root: input.withdrawals_merkle_root
                         }
                     };
                     Ok(prover_data)

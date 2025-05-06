@@ -9,7 +9,7 @@ use tracing::warn;
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
-    withdrawals::get_withdrawals_root,
+    withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root},
 };
 
 pub struct ProveOutput(pub ProgramOutput);
@@ -44,7 +44,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_block_header,
         mut db,
         #[cfg(feature = "l2")]
-        withdrawals_merkle_roots,
+        withdrawals_merkle_root,
     } = input;
 
     // Tries used for validating initial and final state root
@@ -64,7 +64,10 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
-    for (i, block) in blocks.into_iter().enumerate() {
+    #[cfg(feature = "l2")]
+    let mut withdrawals = vec![];
+
+    for block in blocks {
         let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config)?;
@@ -75,16 +78,11 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         let receipts = result.receipts;
         let account_updates = vm.get_state_transitions(fork)?;
 
-        // Validate L2 withdrawals
+        // Get L2 withdrawals for this block
         #[cfg(feature = "l2")]
         {
-            if let Some(withdrawals_root) = withdrawals_merkle_roots.get(i) {
-                if *withdrawals_root != get_withdrawals_root(&block.body.transactions, &receipts)? {
-                    return Err("invalid withdrawals merkle root".to_string().into());
-                }
-            } else {
-                return Err("failed to get withdrawal root for block".to_string().into());
-            }
+            let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)?;
+            withdrawals.extend(block_withdrawals);
         }
 
         // Update db for the next block
@@ -102,6 +100,17 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
         validate_gas_used(&receipts, &block.header)?;
         parent_header = block.header;
+    }
+
+    #[cfg(feature = "l2")]
+    let Ok(batch_withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
+        return Err("Failed to calculate withdrawals merkle root"
+            .to_string()
+            .into());
+    };
+
+    if batch_withdrawals_merkle_root != withdrawals_merkle_root {
+        return Err("invalid withdrawals merkle root".to_string().into());
     }
 
     // Update state trie

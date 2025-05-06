@@ -94,7 +94,7 @@ pub async fn generate_program_input(
         blocks,
         parent_block_header,
         // TODO
-        withdrawals_merkle_roots: vec![H256::zero()],
+        withdrawals_merkle_root: H256::zero(),
     })
 }
 

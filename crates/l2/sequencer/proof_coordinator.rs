@@ -1,4 +1,5 @@
 use crate::sequencer::errors::ProverServerError;
+use crate::sequencer::l1_committer::get_withdrawals_merkle_root;
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
 };
@@ -34,7 +35,7 @@ pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
     pub db: ExecutionDB,
-    pub withdrawals_merkle_roots: Vec<H256>,
+    pub withdrawals_merkle_root: H256,
 }
 
 #[derive(Clone)]
@@ -337,11 +338,14 @@ impl ProofCoordinator {
             .get_block_header_by_hash(parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
-        let withdrawals_merkle_roots = self
+        let withdrawals_hashes = self
             .rollup_store
             .get_withdrawal_hashes_by_batch(batch_number)
             .await?
             .ok_or(ProverServerError::WithdrawalsError(batch_number))?;
+
+        let withdrawals_merkle_root = get_withdrawals_merkle_root(withdrawals_hashes)
+            .map_err(|_| ProverServerError::WithdrawalsMerkelizeError(batch_number))?;
 
         debug!("Created prover input for batch {batch_number}");
 
@@ -349,7 +353,7 @@ impl ProofCoordinator {
             db,
             blocks,
             parent_block_header,
-            withdrawals_merkle_roots,
+            withdrawals_merkle_root,
         })
     }
 
