@@ -109,6 +109,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
             .into());
     };
 
+    #[cfg(feature = "l2")]
     if batch_withdrawals_merkle_root != withdrawals_merkle_root {
         return Err("invalid withdrawals merkle root".to_string().into());
     }
