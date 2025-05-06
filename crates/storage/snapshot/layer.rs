@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethrex_common::{types::AccountState, H256};
+use ethrex_common::{types::AccountState, H256, U256};
 
 use crate::rlp::AccountStateRLP;
 
@@ -16,7 +16,7 @@ pub trait SnapshotLayer {
     fn get_account_rlp(&self, hash: H256) -> Option<AccountStateRLP>;
 
     /// Get a storage value by its account and storage hash.
-    fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<&Vec<u8>>;
+    fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<U256>;
 
     // TODO: maybe move these to a private trait.
 

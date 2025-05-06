@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ethrex_common::{types::AccountState, H256};
+use ethrex_common::{types::AccountState, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::{Trie, TrieDB};
 use libmdbx::orm::Encodable;
@@ -11,7 +11,7 @@ use super::layer::SnapshotLayer;
 
 pub struct DiskLayer {
     state_trie: Trie,
-    storage_trie: Trie,
+    store: Store,
     cache: Cache,
     root: H256,
     stale: bool,
@@ -49,25 +49,23 @@ impl SnapshotLayer for DiskLayer {
         value
     }
 
-    fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<Vec<u8>> {
+    fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<U256> {
         if let Some(value) = self.cache.storages.get(&(account_hash, storage_hash)) {
-            return Some((*value).clone());
+            return Some(value);
         }
 
-        let value = self
-            .storage_trie
-            .get(&hash)
-            .ok()
-            .flatten()
-            .map(|x| AccountStateRLP::from_bytes(x));
+        let account = self.get_account(account_hash)?;
 
-        if let Some(value) = &value {
-            self.cache
-                .accounts_rlp
-                .insert(hash, Arc::new(value.clone()));
-        }
+        let storage_trie = self
+            .store
+            .open_storage_trie(account_hash, account.storage_root);
+        let value: U256 = U256::decode(&storage_trie.get(storage_hash).ok().flatten()?).ok()?;
 
-        value
+        self.cache
+            .storages
+            .insert((account_hash, storage_hash), value);
+
+        Some(value)
     }
 
     fn parent(&self) -> Option<Box<dyn SnapshotLayer>> {

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use ethrex_common::{types::AccountState, H256};
+use ethrex_common::{types::AccountState, H256, U256};
 
 use crate::rlp::AccountStateRLP;
 
@@ -13,7 +13,7 @@ use crate::rlp::AccountStateRLP;
 pub struct Cache {
     pub accounts: moka::sync::Cache<H256, Arc<AccountState>>,
     pub accounts_rlp: moka::sync::Cache<H256, Arc<AccountStateRLP>>,
-    pub storages: moka::sync::Cache<(H256, H256), H256>,
+    pub storages: moka::sync::Cache<(H256, H256), U256>,
 }
 
 impl Cache {
