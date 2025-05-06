@@ -327,7 +327,7 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
 
     let peers_file = PathBuf::from(data_dir.to_owned() + "/config.json");
 
-    info!("Reading config from {:?}", peers_file);
+    info!("Reading known peer from config file {:?}", peers_file);
 
     match read_config_file(peers_file) {
         Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
