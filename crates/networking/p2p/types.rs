@@ -7,6 +7,7 @@ use ethrex_rlp::{
     structs::{self, Decoder, Encoder},
 };
 use k256::ecdsa::{SigningKey, VerifyingKey};
+use serde::ser::Serializer;
 use sha3::{Digest, Keccak256};
 use std::{
     fmt::Display,
@@ -88,6 +89,15 @@ impl<'de> serde::de::Deserialize<'de> for Node {
         D: serde::Deserializer<'de>,
     {
         Node::from_str(&<String>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+impl serde::Serialize for Node {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.enode_url())
     }
 }
 

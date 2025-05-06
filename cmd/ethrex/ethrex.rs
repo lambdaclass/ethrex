@@ -5,7 +5,7 @@ use ethrex::{
         get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_rpc_api,
         init_store, init_tracing,
     },
-    utils::{set_datadir, store_known_peers},
+    utils::{set_datadir, store_config_file, ConfigFile},
 };
 use ethrex_p2p::network::peer_table;
 use std::{path::PathBuf, time::Duration};
@@ -96,10 +96,11 @@ async fn main() -> eyre::Result<()> {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("Server shut down started...");
-            let peers_file = PathBuf::from(data_dir + "/peers.json");
-            info!("Storing known peers at {:?}...", peers_file);
+            let config_path = PathBuf::from(data_dir + "/config.json");
+            info!("Storing config at {:?}...", config_path);
             cancel_token.cancel();
-            store_known_peers(peer_table, peers_file).await;
+            let config = ConfigFile::new(peer_table, 0).await;
+            store_config_file(config, config_path).await;
             tokio::time::sleep(Duration::from_secs(1)).await;
             info!("Server shutting down!");
         }
