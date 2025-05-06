@@ -322,7 +322,7 @@ pub async fn ensure_post_state(
         None => {
             let mut db = load_initial_state_levm(test).await;
             db.cache = levm_cache;
-            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db)
+            let levm_account_updates = backends::levm::LEVM::get_state_transitions(&mut db, *fork)
                 .map_err(|_| {
                     InternalError::Custom("Error at LEVM::get_state_transitions()".to_owned())
                 })?;

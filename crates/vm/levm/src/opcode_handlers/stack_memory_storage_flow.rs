@@ -191,7 +191,8 @@ impl<'a> VM<'a> {
         // https://eips.ethereum.org/EIPS/eip-2929
         let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) = (4800, 19900, 2800);
 
-        if new_storage_slot_value != current_value {
+        if new_storage_slot_value != current_value
+        {
             if current_value == original_value {
                 if original_value != U256::zero() && new_storage_slot_value == U256::zero() {
                     gas_refunds = gas_refunds

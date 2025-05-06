@@ -67,8 +67,8 @@ use crate::{
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1ADD_COST, BLS12_381_G1_K_DISCOUNT,
         BLS12_381_G2ADD_COST, BLS12_381_G2_K_DISCOUNT, BLS12_381_MAP_FP2_TO_G2_COST,
-        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST,
-        G2_MUL_COST, MODEXP_STATIC_COST, POINT_EVALUATION_COST,
+        BLS12_381_MAP_FP_TO_G1_COST, ECADD_COST, ECMUL_COST, ECRECOVER_COST, G1_MUL_COST, G2_MUL_COST, MODEXP_STATIC_COST,
+        POINT_EVALUATION_COST,
     },
 };
 
@@ -228,7 +228,9 @@ pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
     PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }
 
-pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, VMError> {
+pub fn execute_precompile(
+    current_call_frame: &mut CallFrame,
+) -> Result<Bytes, VMError> {
     let callee_address = current_call_frame.code_address;
     let gas_for_call = current_call_frame
         .gas_limit
@@ -249,18 +251,26 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
         address if address == RIPEMD_160_ADDRESS => {
             ripemd_160(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
-        address if address == MODEXP_ADDRESS => {
-            modexp(&current_call_frame.calldata, gas_for_call, consumed_gas)?
-        }
-        address if address == ECADD_ADDRESS => {
-            ecadd(&current_call_frame.calldata, gas_for_call, consumed_gas)?
-        }
-        address if address == ECMUL_ADDRESS => {
-            ecmul(&current_call_frame.calldata, gas_for_call, consumed_gas)?
-        }
-        address if address == ECPAIRING_ADDRESS => {
-            ecpairing(&current_call_frame.calldata, gas_for_call, consumed_gas)?
-        }
+        address if address == MODEXP_ADDRESS => modexp(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+        )?,
+        address if address == ECADD_ADDRESS => ecadd(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+        )?,
+        address if address == ECMUL_ADDRESS => ecmul(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+        )?,
+        address if address == ECPAIRING_ADDRESS => ecpairing(
+            &current_call_frame.calldata,
+            gas_for_call,
+            consumed_gas,
+        )?,
         address if address == BLAKE2F_ADDRESS => {
             blake2f(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
@@ -458,7 +468,7 @@ pub fn modexp(
     if base_size == U256::zero() && modulus_size == U256::zero() {
         // On Berlin or newer there is a floor cost for the modexp precompile
         increase_precompile_consumed_gas(gas_for_call, MODEXP_STATIC_COST, consumed_gas)?;
-
+        
         return Ok(Bytes::new());
     }
 

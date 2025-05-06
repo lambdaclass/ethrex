@@ -567,7 +567,7 @@ impl<'a> VM<'a> {
         let (current_account, _current_account_is_cold) =
             self.db.access_account(&mut self.accrued_substate, to)?;
         let balance_to_transfer = current_account.info.balance;
-
+        
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
@@ -593,7 +593,8 @@ impl<'a> VM<'a> {
 
             // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
             // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
-            if !self.accrued_substate.selfdestruct_set.contains(&to) {
+            if !self.accrued_substate.selfdestruct_set.contains(&to)
+            {
                 self.env.refunded_gas = self
                     .env
                     .refunded_gas
@@ -707,7 +708,7 @@ impl<'a> VM<'a> {
 
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
         let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
-
+        
         self.insert_account(new_address, new_account)?;
 
         // 2. Increment sender's nonce.

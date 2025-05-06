@@ -483,8 +483,9 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame()?.calldata)
-            .map_err(VMError::OutOfGas)?;
+        let calldata_cost =
+            gas_cost::tx_calldata(&self.current_call_frame()?.calldata)
+                .map_err(VMError::OutOfGas)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)
@@ -501,6 +502,7 @@ impl<'a> VM<'a> {
             intrinsic_gas = intrinsic_gas
                 .checked_add(CREATE_BASE_COST)
                 .ok_or(OutOfGasError::ConsumedGasOverflow)?;
+            
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {

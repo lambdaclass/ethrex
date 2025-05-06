@@ -312,10 +312,9 @@ impl<'a> VM<'a> {
     }
 
     pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
-        if is_precompile(
-            &self.current_call_frame()?.code_address,
-            self.env.config.fork,
-        ) {
+        let fork = self.env.config.fork;
+
+        if is_precompile(&self.current_call_frame()?.code_address, fork) {
             let mut current_call_frame = self
                 .call_frames
                 .pop()
