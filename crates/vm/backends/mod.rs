@@ -194,7 +194,7 @@ impl Evm {
     /// They may have the same name, but they serve for different purposes.
     pub fn get_state_transitions(&mut self, fork: Fork) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
-            Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
+            Evm::REVM { state } => Ok(REVM::get_state_transitions(state, fork)),
             Evm::LEVM { db } => LEVM::get_state_transitions(db, fork),
         }
     }
