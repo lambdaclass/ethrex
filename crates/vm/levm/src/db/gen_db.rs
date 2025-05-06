@@ -248,7 +248,7 @@ impl<'a> VM<'a> {
         Ok((storage_slot, storage_slot_was_cold))
     }
 
-    /// Gets storage value of an account, inserting it in cache if it's not alreadt there.
+    /// Gets storage value of an account, inserting it in cache if it's not already there.
     pub fn get_storage_value(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
         // Try to get value from cache
         if let Some(account) = cache::get_account(&self.db.cache, &address) {
