@@ -834,12 +834,9 @@ pub(super) mod tests {
         // wait some time for the enr request-response finishes
         sleep(Duration::from_millis(2500)).await;
 
-        let expected_record = NodeRecord::from_node(
-            &server_b.ctx.local_node,
-            current_unix_time(),
-            &server_b.ctx.signer,
-        )
-        .expect("Node record is created from node");
+        let expected_record =
+            NodeRecord::from_node(&server_b.ctx.local_node, 0, &server_b.ctx.signer)
+                .expect("Node record is created from node");
 
         let server_a_peer_b = server_a
             .ctx
@@ -852,6 +849,7 @@ pub(super) mod tests {
 
         // we only match the pairs, as the signature and seq will change
         // because they are calculated with the current time
+        eprintln!("{:?}", server_a_peer_b.record.decode_pairs());
         assert!(server_a_peer_b.record.decode_pairs() == expected_record.decode_pairs());
 
         // Modify server_a's record of server_b with an incorrect TCP port.
@@ -868,7 +866,7 @@ pub(super) mod tests {
 
         // update the enr_seq of server_b so that server_a notices it is outdated
         // and sends a request to update it
-        server_b.ctx.local_node_record.lock().await.seq += 1;
+        server_b.ctx.local_node_record.lock().await.seq = 1;
 
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated
