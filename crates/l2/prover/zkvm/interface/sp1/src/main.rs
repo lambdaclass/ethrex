@@ -19,7 +19,7 @@ pub fn main() {
         parent_block_header,
         mut db,
         #[cfg(feature = "l2")]
-        withdrawals_merkle_roots,
+        withdrawals_merkle_root,
     } = sp1_zkvm::io::read::<ProgramInput>();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -42,7 +42,10 @@ pub fn main() {
 
     let mut cumulative_gas_used = 0;
 
-    for (i, block) in blocks.into_iter().enumerate() {
+    #[cfg(feature = "l2")]
+    let mut withdrawals = vec![];
+
+    for block in blocks {
         let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
@@ -55,19 +58,12 @@ pub fn main() {
             .get_state_transitions(fork)
             .expect("failed to get state transitions");
 
-        // Validate L2 withdrawals
+        // Get L2 withdrawals for this block
         #[cfg(feature = "l2")]
         {
-            if let Some(withdrawals_root) = withdrawals_merkle_roots.get(i) {
-                if *withdrawals_root
-                    != get_withdrawals_root(&block.body.transactions, &receipts)
-                        .expect("failed to get calculate withdrawal root")
-                {
-                    panic!("invalid withdrawals merkle root");
-                }
-            } else {
-                panic!("failed to get withdrawal root for block");
-            }
+            let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)
+                .expect("failed to get block withdrawals");
+            withdrawals.extend(block_withdrawals);
         }
 
         cumulative_gas_used += receipts
@@ -90,6 +86,17 @@ pub fn main() {
 
         validate_gas_used(&receipts, &block.header).expect("invalid gas used");
         parent_header = block.header;
+    }
+
+    // Calculate L2 withdrawals root
+    #[cfg(feature = "l2")]
+    let Ok(batch_withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
+        panic!("Failed to calculate withdrawals merkle root");
+    };
+    // Check witdrawals root
+    #[cfg(feature = "l2")]
+    if batch_withdrawals_merkle_root != withdrawals_merkle_root {
+        panic!("invalid withdrawals merkle root");
     }
 
     // Update state trie
