@@ -3,7 +3,7 @@ use crate::{
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
-    gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
+    gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     precompiles::is_precompile,
     utils::{address_to_word, word_to_address, *},
