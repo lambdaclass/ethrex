@@ -31,15 +31,12 @@ impl GeneralizedDatabase {
     // ================== Account related functions =====================
     /// Gets account, first checking the cache and then the database
     /// (caching in the second case)
-    pub fn get_account(&mut self, address: Address) -> Result<Account, DatabaseError> {
-        match cache::get_account(&self.cache, &address) {
-            Some(acc) => Ok(acc.clone()),
-            None => {
-                let account = self.store.get_account(address)?;
-                cache::insert_account(&mut self.cache, address, account.clone());
-                Ok(account)
-            }
+    pub fn get_account(&mut self, address: Address) -> Result<&Account, DatabaseError> {
+        if !cache::account_is_cached(&self.cache, &address) {
+            let account = self.store.get_account(address)?.clone();
+            cache::insert_account(&mut self.cache, address, account);
         }
+        Ok(cache::get_account(&mut self.cache, &address).unwrap())
     }
 
     /// **Accesses to an account's information.**
@@ -50,7 +47,7 @@ impl GeneralizedDatabase {
         &mut self,
         accrued_substate: &mut Substate,
         address: Address,
-    ) -> Result<(Account, bool), DatabaseError> {
+    ) -> Result<(&Account, bool), DatabaseError> {
         let address_was_cold = accrued_substate.touched_accounts.insert(address);
         let account = self.get_account(address)?;
 
@@ -62,14 +59,7 @@ impl<'a> VM<'a> {
     // ================== Account related functions =====================
 
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
-        let backup_account = match cache::get_account(&self.db.cache, &address) {
-            Some(acc) => acc.clone(),
-            None => {
-                let acc = self.db.store.get_account(address)?;
-                cache::insert_account(&mut self.db.cache, address, acc.clone());
-                acc
-            }
-        };
+        let backup_account = self.db.get_account(address)?.clone();
 
         if let Ok(frame) = self.current_call_frame_mut() {
             frame

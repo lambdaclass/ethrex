@@ -71,9 +71,14 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (account, address_was_cold) =
-            self.db.access_account(&mut self.accrued_substate, callee)?;
-
+        let account_is_empty;
+        let address_was_cold;
+        {
+            let (account, was_cold) =
+                self.db.access_account(&mut self.accrued_substate, callee)?;
+            account_is_empty = account.is_empty();
+            address_was_cold = was_cold;
+        }
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.accrued_substate, callee)?;
 
@@ -89,7 +94,7 @@ impl<'a> VM<'a> {
             new_memory_size,
             current_memory_size,
             address_was_cold,
-            account.is_empty(),
+            account_is_empty,
             value_to_transfer,
             gas,
             gas_left,
@@ -580,10 +585,15 @@ impl<'a> VM<'a> {
         };
         let fork = self.env.config.fork;
 
-        let (target_account, target_account_is_cold) = self
-            .db
-            .access_account(&mut self.accrued_substate, target_address)?;
-
+        let target_account_is_empty;
+        let target_account_is_cold;
+        {
+            let (target_account, is_cold) = self
+                .db
+                .access_account(&mut self.accrued_substate, target_address)?;
+            target_account_is_empty = target_account.is_empty();
+            target_account_is_cold = is_cold;
+        }
         let (current_account, _current_account_is_cold) =
             self.db.access_account(&mut self.accrued_substate, to)?;
         let balance_to_transfer = current_account.info.balance;
@@ -591,7 +601,7 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
-                target_account.is_empty(),
+                target_account_is_empty,
                 balance_to_transfer,
                 fork,
             )?)?;
@@ -661,12 +671,16 @@ impl<'a> VM<'a> {
             let deployer_address = current_call_frame.to;
             (deployer_address, max_message_call_gas)
         };
-
-        let deployer_account = self
-            .db
-            .access_account(&mut self.accrued_substate, deployer_address)?
-            .0;
-
+        let deployer_balance;
+        let deployer_nonce;
+        {
+            let deployer_account = self
+                .db
+                .access_account(&mut self.accrued_substate, deployer_address)?
+                .0;
+            deployer_balance = deployer_account.info.balance;
+            deployer_nonce = deployer_account.info.nonce;
+        }
         let code = Bytes::from(
             memory::load_range(
                 &mut self.current_call_frame_mut()?.memory,
@@ -678,7 +692,7 @@ impl<'a> VM<'a> {
 
         let new_address = match salt {
             Some(salt) => calculate_create2_address(deployer_address, &code, salt)?,
-            None => calculate_create_address(deployer_address, deployer_account.info.nonce)?,
+            None => calculate_create_address(deployer_address, deployer_nonce)?,
         };
 
         // touch account
@@ -694,9 +708,9 @@ impl<'a> VM<'a> {
             // 1. Sender doesn't have enough balance to send value.
             // 2. Depth limit has been reached
             // 3. Sender nonce is max.
-            if deployer_account.info.balance < value_in_wei_to_send
+            if deployer_balance < value_in_wei_to_send
                 || new_depth > 1024
-                || deployer_account.info.nonce == u64::MAX
+                || deployer_nonce == u64::MAX
             {
                 // Return reserved gas
                 current_call_frame.gas_used = current_call_frame
@@ -799,11 +813,14 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation: bool,
     ) -> Result<OpcodeResult, VMError> {
-        let sender_account = self
-            .db
-            .access_account(&mut self.accrued_substate, msg_sender)?
-            .0;
-
+        let sender_balance;
+        {
+            let sender_account = self
+                .db
+                .access_account(&mut self.accrued_substate, msg_sender)?
+                .0;
+            sender_balance = sender_account.info.balance;
+        }
         let calldata = {
             let current_call_frame = self.current_call_frame_mut()?;
             // Clear callframe subreturn data
@@ -814,7 +831,7 @@ impl<'a> VM<'a> {
                     .to_vec();
 
             // 1. Validate sender has enough value
-            if should_transfer_value && sender_account.info.balance < value {
+            if should_transfer_value && sender_balance < value {
                 current_call_frame.gas_used = current_call_frame
                     .gas_used
                     .checked_sub(gas_limit)
@@ -951,11 +968,11 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
-                for (address, account_opt) in call_frame.cache_backup.clone() {
+                for (address, account_opt) in &call_frame.cache_backup {
                     self.current_call_frame_mut()?
                         .cache_backup
-                        .entry(address)
-                        .or_insert(account_opt);
+                        .entry(*address)
+                        .or_insert(account_opt.clone());
                 }
             }
             TxResult::Revert(_) => {

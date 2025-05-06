@@ -30,7 +30,13 @@ impl Hook for DefaultHook {
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&self, vm: &mut VM<'_>) -> Result<(), VMError> {
         let sender_address = vm.env.origin;
-        let sender_account = vm.db.get_account(sender_address)?;
+        let sender_balance;
+        let sender_nonce;
+        {
+            let sender_account = vm.db.get_account(sender_address)?;
+            sender_balance = sender_account.info.balance;
+            sender_nonce = sender_account.info.nonce;
+        }
 
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
@@ -45,7 +51,7 @@ impl Hook for DefaultHook {
                 TxValidationError::GasLimitPriceProductOverflow,
             ))?;
 
-        validate_sender_balance(vm, &sender_account)?;
+        validate_sender_balance(vm, sender_balance)?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
         if let Some(tx_max_fee_per_blob_gas) = vm.env.tx_max_fee_per_blob_gas {
@@ -71,7 +77,7 @@ impl Hook for DefaultHook {
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
-        if sender_account.info.nonce != vm.env.tx_nonce {
+        if sender_nonce != vm.env.tx_nonce {
             return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
         }
 
@@ -88,7 +94,10 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        validate_sender(&sender_account)?;
+        {
+            let sender_account = vm.db.get_account(sender_address)?;
+            validate_sender(&sender_account)?;
+        }
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -412,7 +421,7 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
-pub fn validate_sender_balance(vm: &mut VM<'_>, sender_account: &Account) -> Result<(), VMError> {
+pub fn validate_sender_balance(vm: &mut VM<'_>, sender_balance: U256) -> Result<(), VMError> {
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame()?.msg_value;
 
@@ -442,7 +451,7 @@ pub fn validate_sender_balance(vm: &mut VM<'_>, sender_account: &Account) -> Res
             TxValidationError::InsufficientAccountFunds,
         ))?;
 
-    if sender_account.info.balance < balance_for_valid_tx {
+    if sender_balance < balance_for_valid_tx {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientAccountFunds,
         ));

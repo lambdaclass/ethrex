@@ -248,14 +248,15 @@ impl LEVM {
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
             // We check if it was in block_cache, if not, we get it from DB.
-            let mut account = db.cache.get(&address).cloned().unwrap_or({
-                db.store
+            if let Some(account) = db.cache.get_mut(&address) {
+                account.info.balance += increment.into();
+            } else {
+                let mut account = db.store
                     .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-            });
-
-            account.info.balance += increment.into();
-            db.cache.insert(address, account);
+                    .map_err(|e| StoreError::Custom(e.to_string()))?.clone();
+                account.info.balance += increment.into();
+                db.cache.insert(address, account);
+            }
         }
         Ok(())
     }
