@@ -207,7 +207,7 @@ integration-test: rm-db-l2 rm-db-l1
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover
+	killall ethrex_prover -s SIGINT
 
 integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
@@ -216,7 +216,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover
+	killall ethrex_prover -s SIGINT
 
 # State reconstruction tests
 state-diff-test:
