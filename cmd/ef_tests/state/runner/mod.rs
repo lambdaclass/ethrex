@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    parser::SPECIFIC_IGNORED_TESTS,
     report::{self, format_duration_as_mm_ss, EFTestReport, TestReRunReport},
     types::EFTest,
 };
@@ -61,8 +62,8 @@ pub struct EFTestRunnerOptions {
     #[arg(short, long, value_name = "TESTS", use_value_delimiter = true)]
     pub tests: Vec<String>,
     /// For running tests with a specific name
-    #[arg(value_name = "SPECIFIC_TESTS", use_value_delimiter = true)]
-    pub specific_tests: Option<Vec<String>>,
+    #[arg(long, value_name = "SPECIFIC_TESTS", use_value_delimiter = true)]
+    pub specific_tests: Vec<String>,
     /// For running tests only with LEVM without the REVM re-run.
     #[arg(short, long, value_name = "SUMMARY", default_value = "false")]
     pub summary: bool,
@@ -106,9 +107,17 @@ async fn run_with_levm(
     println!("{}", report::progress(reports, levm_run_time.elapsed()));
 
     for test in ef_tests.iter() {
-        if opts.specific_tests.is_some()
-            && !opts.specific_tests.clone().unwrap().contains(&test.name)
-        {
+        let is_not_specific = !opts.specific_tests.is_empty()
+            && !opts
+                .specific_tests
+                .iter()
+                .any(|name| test.name.contains(name));
+        let is_ignored = SPECIFIC_IGNORED_TESTS
+            .iter()
+            .any(|skip| test.name.contains(skip));
+
+        // Skip tests that are not specific (if specific tests were indicated) and ignored ones.
+        if is_not_specific || is_ignored {
             continue;
         }
         if opts.verbose {
