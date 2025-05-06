@@ -1506,8 +1506,8 @@ mod canonic_encoding {
 // This is used for RPC messaging and passing data into a RISC-V zkVM
 
 mod serde_impl {
-    use serde::de::Error;
     use serde::Deserialize;
+    use serde::{de::Error, Deserializer};
     use serde_json::Value;
     use std::{collections::HashMap, str::FromStr};
 
@@ -2162,8 +2162,6 @@ mod serde_impl {
         pub gas: Option<u64>,
         #[serde(default)]
         pub value: U256,
-        #[serde(default, with = "crate::serde_utils::bytes", alias = "data")]
-        pub input: Bytes,
         #[serde(default, with = "crate::serde_utils::u64::hex_str")]
         pub gas_price: u64,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -2181,6 +2179,43 @@ mod serde_impl {
         pub blobs: Vec<Bytes>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
         pub chain_id: Option<u64>,
+        // rename is needed here so we dont attempt to deserialize the `input` field rather than the remainder of the fields
+        #[serde(
+            default,
+            rename = "input_or_data",
+            deserialize_with = "deserialize_input",
+            serialize_with = "crates::serde_utils::bytes::serialize"
+        )]
+        pub input: Bytes,
+    }
+    /// Custom deserialization function to parse either `data` or `input` fields, or both as long as they have the same value
+    pub fn deserialize_input<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // The input field can be named either input or data
+        // In case we have both fields both should be named the same
+        let variables = HashMap::<String, Value>::deserialize(deserializer)?;
+        let data = variables.get("data");
+        let input = variables.get("input");
+        let value = match (data, input) {
+            (None, None) => return Err(D::Error::custom("Missing field data/input")),
+            (None, Some(val)) => val,
+            (Some(val), None) => val,
+            (Some(val_a), Some(val_b)) => {
+                if val_a == val_b {
+                    val_a
+                } else {
+                    return Err(D::Error::custom(
+                        "Transaction has both `data` & `input` with different values",
+                    ));
+                }
+            }
+        };
+        let value = String::deserialize(value).map_err(|err| D::Error::custom(err))?;
+        let bytes = hex::decode(value.trim_start_matches("0x"))
+            .map_err(|e| D::Error::custom(e.to_string()))?;
+        Ok(Bytes::from(bytes))
     }
 
     impl From<EIP1559Transaction> for GenericTransaction {
@@ -2584,6 +2619,59 @@ mod tests {
             "gas":"0x5208",
             "value":"0x01",
             "input":"0x",
+            "gasPrice":"0x07",
+            "accessList": [
+                {
+                    "address": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                    "storageKeys": [
+                        "0x000000000000000000000000000000000000000000000000000000000000000c",
+                        "0x000000000000000000000000000000000000000000000000000000000000200b"
+                    ]
+                }
+            ]
+        }"#;
+        let deserialized_generic_transaction = GenericTransaction {
+            r#type: TxType::EIP2930,
+            nonce: Some(2),
+            to: TxKind::Create,
+            from: Address::from_slice(
+                &hex::decode("6177843db3138ae69679A54b95cf345ED759450d").unwrap(),
+            ),
+            gas: Some(0x5208),
+            value: U256::from(1),
+            input: Bytes::new(),
+            gas_price: 7,
+            max_priority_fee_per_gas: Default::default(),
+            max_fee_per_gas: Default::default(),
+            max_fee_per_blob_gas: Default::default(),
+            access_list: vec![AccessListEntry {
+                address: Address::from_slice(
+                    &hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap(),
+                ),
+                storage_keys: vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
+            }],
+            blob_versioned_hashes: Default::default(),
+            blobs: Default::default(),
+            chain_id: Default::default(),
+            authorization_list: None,
+        };
+        assert_eq!(
+            deserialized_generic_transaction,
+            serde_json::from_str(generic_transaction).unwrap()
+        )
+    }
+
+    #[test]
+    fn deserialize_generic_transaction_with_data_and_input_fields() {
+        let generic_transaction = r#"{
+            "type":"0x01",
+            "nonce":"0x02",
+            "to":"",
+            "from":"0x6177843db3138ae69679A54b95cf345ED759450d",
+            "gas":"0x5208",
+            "value":"0x01",
+            "input":"0x",
+            "data":"0x",
             "gasPrice":"0x07",
             "accessList": [
                 {
