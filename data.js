@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746463640255,
+  "lastUpdate": 1746533461641,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5395,6 +5395,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179227682735,
             "range": "± 584334148",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6ed8a1fcbe483165e0ad70c18edd4dcb427c8e91",
+          "message": "docs(levm): add forks docs (#2644)\n\n**Description**\n- Add docs about forks explaining why we don't want to support pre-Merge\nforks.\n- Change EFTests so they run by default for the forks we are interested\nin.",
+          "timestamp": "2025-05-06T11:11:25Z",
+          "tree_id": "cddb636d0fa85bfd1b623c5d90809269519a5e5c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6ed8a1fcbe483165e0ad70c18edd4dcb427c8e91"
+        },
+        "date": 1746533459377,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177292028864,
+            "range": "± 493906369",
             "unit": "ns/iter"
           }
         ]
