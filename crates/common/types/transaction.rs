@@ -2207,12 +2207,12 @@ mod serde_impl {
                     val_a
                 } else {
                     return Err(D::Error::custom(
-                        "Transaction has both `data` & `input` with different values",
+                        "Transaction has both `data` and `input` fields with different values",
                     ));
                 }
             }
         };
-        let value = String::deserialize(value).map_err(|err| D::Error::custom(err))?;
+        let value = String::deserialize(value).map_err(D::Error::custom)?;
         let bytes = hex::decode(value.trim_start_matches("0x"))
             .map_err(|e| D::Error::custom(e.to_string()))?;
         Ok(Bytes::from(bytes))
