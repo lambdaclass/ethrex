@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746548981364,
+  "lastUpdate": 1746558336430,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5545,6 +5545,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178323401477,
             "range": "± 409654033",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c34b58cbe24874b69511ec1ab801ad58132f668a",
+          "message": "fix(l2): sigint to kill prover in integration test (#2680)\n\n**Motivation**\n\nSP1 deploys a container for GPU proving. If the prover is killed with\n`SIGTERM`, the program does not remove the container and a next run may\nget stuck. If the prover is killed with `SIGINT`, then the container\ngets deleted.",
+          "timestamp": "2025-05-06T18:04:37Z",
+          "tree_id": "8cfc042a7a54fcc7462dae1e2f2ee38655a0605a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/c34b58cbe24874b69511ec1ab801ad58132f668a"
+        },
+        "date": 1746558334165,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180480458002,
+            "range": "± 1085212936",
             "unit": "ns/iter"
           }
         ]
