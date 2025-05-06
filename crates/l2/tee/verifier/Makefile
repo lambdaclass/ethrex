@@ -54,14 +54,16 @@ set-verifier-v4: deploy-dcap
 		--rpc-url $(RPC_URL) \
 		--private-key $(PRIVATE_KEY)
 
-deploy: deploy-dcap set-verifier-v4 setup-pccs-ca
+deploy:
 	DCAP_ADDRESS=$(shell cat ${DCAP_FILE} | jq --raw-output .AutomataDcapAttestationFee) \
 	forge script script/Counter.s.sol:CounterScript \
 		--rpc-url $(RPC_URL) \
 		--private-key $(PRIVATE_KEY) \
 		--broadcast
 
+deploy-all: deploy-dcap set-verifier-v4 setup-pccs-ca
+
 clean:
 	rm -rf deploydeps cache out deployment/*
 
-.PHONY: deploy deploy-pccs deploy-dcap set-verifier-v4 clean
+.PHONY: deploy-all deploy deploy-pccs deploy-dcap set-verifier-v4 clean

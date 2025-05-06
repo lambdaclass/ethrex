@@ -62,7 +62,7 @@ Runs `mkosi.build.chroot` to produce the output
 ```
 # NOTE: initialize&update submodules on all repos
 (ethrex) make dev # start L1
-(ethrex crates/l2/tee/verifier) make deploy
+(ethrex crates/l2/tee/verifier) make deploy-all
 (automata-network/automata-dcap-qpl automata-dcap-qpl-tool/) # edit and source env/automata_testnet
 
 # To validate a quote
