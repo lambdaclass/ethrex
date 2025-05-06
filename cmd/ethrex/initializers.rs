@@ -2,8 +2,8 @@ use crate::{
     cli::Options,
     networks,
     utils::{
-        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
-        read_known_peers,
+        get_client_version, parse_socket_addr, read_config_file, read_genesis_file,
+        read_jwtsecret_file,
     },
 };
 use ethrex_blockchain::Blockchain;
@@ -325,12 +325,12 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
 
-    let peers_file = PathBuf::from(data_dir.to_owned() + "/peers.json");
+    let peers_file = PathBuf::from(data_dir.to_owned() + "/config.json");
 
-    info!("Reading known peers from {:?}", peers_file);
+    info!("Reading config from {:?}", peers_file);
 
-    match read_known_peers(peers_file.clone()) {
-        Ok(ref mut known_peers) => bootnodes.append(known_peers),
+    match read_config_file(peers_file.clone()) {
+        Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
         Err(e) => error!("Could not read from peers file: {e}"),
     };
 

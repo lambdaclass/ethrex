@@ -21,8 +21,8 @@ use tracing::{error, info};
 
 #[derive(Serialize, Deserialize)]
 pub struct ConfigFile {
-    known_peers: Vec<Node>,
-    enr_seq: u64,
+    pub known_peers: Vec<Node>,
+    pub enr_seq: u64,
 }
 
 impl ConfigFile {
@@ -137,60 +137,6 @@ pub fn read_config_file(file_path: PathBuf) -> Result<ConfigFile, serde_json::Er
             known_peers: vec![],
             enr_seq: 0,
         });
-    };
-
-    serde_json::from_reader(file)
-}
-
-pub async fn store_known_peers(table: Arc<Mutex<KademliaTable>>, file_path: PathBuf) {
-    let mut connected_peers = vec![];
-
-    for peer in table.lock().await.iter_peers() {
-        if peer.is_connected {
-            connected_peers.push(peer.node.enode_url());
-        }
-    }
-
-    let json = match serde_json::to_string(&connected_peers) {
-        Ok(json) => json,
-        Err(e) => {
-            error!("Could not store peers in file: {:?}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = std::fs::write(file_path, json) {
-        error!("Could not store peers in file: {:?}", e);
-    };
-}
-
-pub async fn store_enr_sequence(seq: u64, file_path: PathBuf) {
-    let json = match serde_json::to_string(&seq) {
-        Ok(json) => json,
-        Err(e) => {
-            error!("Could not store peers in file: {:?}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = std::fs::write(file_path, json) {
-        error!("Could not store peers in file: {:?}", e);
-    };
-}
-
-#[allow(dead_code)]
-pub fn read_known_peers(file_path: PathBuf) -> Result<Vec<Node>, serde_json::Error> {
-    let Ok(file) = std::fs::File::open(file_path) else {
-        return Ok(vec![]);
-    };
-
-    serde_json::from_reader(file)
-}
-
-#[allow(dead_code)]
-pub fn read_enr_sequence(file_path: PathBuf) -> Result<u64, serde_json::Error> {
-    let Ok(file) = std::fs::File::open(file_path) else {
-        return Ok(0);
     };
 
     serde_json::from_reader(file)
