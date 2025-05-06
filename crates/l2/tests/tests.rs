@@ -2,6 +2,7 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
+use ethrex_common::types::BlockNumber;
 use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{
@@ -33,13 +34,14 @@ const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
 ///
 /// 1. Check balances on L1 and L2
 /// 2. Deposit from L1 to L2
-/// 3. Check balances on L1 and L2
-/// 4. Transfer funds on L2
-/// 5. Check balances on L2
-/// 6. Withdraw funds from L2 to L1
-/// 7. Check balances on L1 and L2
-/// 8. Claim funds on L1
-/// 9. Check balances on L1 and L2
+/// 3. Check deposit receipt in L2
+/// 4. Check balances on L1 and L2
+/// 5. Transfer funds on L2
+/// 6. Check balances on L2
+/// 7. Withdraw funds from L2 to L1
+/// 8. Check balances on L1 and L2
+/// 9. Claim funds on L1
+/// 10. Check balances on L1 and L2
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
@@ -100,7 +102,16 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         recoverable_fees_vault_balance
     );
 
-    // 3. Check balances on L1 and L2
+    // 3. Check deposit receipt on L2
+
+    wait_for_l2_deposit_receipt(
+        deposit_tx_receipt.block_info.block_number,
+        &eth_client,
+        &proposer_client,
+    )
+    .await?;
+
+    // 4. Check balances on L1 and L2
 
     println!("Checking balances on L1 and L2 after deposit");
 
@@ -159,7 +170,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "Recoverable Fees Balance: {}, This amount is given because of the L2 Privileged Transaction, a deposit shouldn't give a tip to the coinbase address if the gas sent as tip doesn't come from the L1.",
         first_deposit_recoverable_fees_vault_balance
     );
-    // 4. Transfer funds on L2
+    // 5. Transfer funds on L2
 
     println!("Transferring funds on L2");
 
@@ -188,7 +199,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         recoverable_fees_vault_balance
     );
 
-    // 5. Check balances on L2
+    // 6. Check balances on L2
 
     println!("Checking balances on L2 after transfer");
 
@@ -214,7 +225,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "Random account balance should increase with transfer value"
     );
 
-    // 6. Withdraw funds from L2 to L1
+    // 7. Withdraw funds from L2 to L1
 
     println!("Withdrawing funds from L2 to L1");
     let withdraw_value = U256::from(100000000000000000000u128);
@@ -230,7 +241,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .expect("Withdraw tx receipt not found");
 
-    // 7. Check balances on L1 and L2
+    // 8. Check balances on L1 and L2
 
     println!("Checking balances on L1 and L2 after withdrawal");
 
@@ -254,7 +265,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         "L2 balance should decrease with withdraw value + gas costs"
     );
 
-    // 8. Claim funds on L1
+    // 9. Claim funds on L1
 
     println!("Claiming funds on L1");
 
@@ -301,7 +312,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let claim_tx_receipt =
         ethrex_l2_sdk::wait_for_transaction_receipt(claim_tx, &eth_client, 15).await?;
 
-    // 9. Check balances on L1 and L2
+    // 10. Check balances on L1 and L2
 
     println!("Checking balances on L1 and L2 after claim");
 
@@ -512,11 +523,27 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
         )
         .await?;
 
+    // Gets the current block_number to search logs later.
+    let first_block = proposer_client.get_block_number().await?;
+
     let deposit_tx_hash = eth_client
         .send_eip1559_transaction(&deposit_tx, &l1_rich_wallet_private_key())
         .await?;
 
     println!("Deposit tx hash: {deposit_tx_hash:?}");
+
+    println!("Waiting for deposit transaction receipt");
+
+    let deposit_tx_receipt =
+        ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, &eth_client, 5).await?;
+
+    // Check deposit receipt on L2
+    wait_for_l2_deposit_receipt(
+        deposit_tx_receipt.block_info.block_number,
+        &eth_client,
+        &proposer_client,
+    )
+    .await?;
 
     // Check balances on L2 after deposit
     let mut l2_after_deposit_balance = proposer_client
@@ -535,10 +562,10 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
         .await?;
 
     // Wait for the event to be emitted
-    let mut blk_number = U256::zero();
+    let mut blk_number = first_block;
     let topic = keccak(b"NumberSet(uint256)");
     while proposer_client
-        .get_logs(U256::from(0), blk_number, contract_address, topic)
+        .get_logs(first_block, blk_number, contract_address, topic)
         .await
         .is_ok_and(|logs| logs.is_empty())
     {
@@ -548,7 +575,7 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     }
 
     let logs = proposer_client
-        .get_logs(U256::from(0), blk_number, contract_address, topic)
+        .get_logs(first_block, blk_number, contract_address, topic)
         .await?;
     println!("Logs: {logs:?}");
 
@@ -710,6 +737,14 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
         ethrex_l2_sdk::wait_for_transaction_receipt(deposit_tx_hash, &eth_client, 30).await?;
     println!("Deposit tx receipt: {deposit_tx_receipt:?}");
 
+    // Check deposit receipt on L2
+    wait_for_l2_deposit_receipt(
+        deposit_tx_receipt.block_info.block_number,
+        &eth_client,
+        &proposer_client,
+    )
+    .await?;
+
     let l2_contract_balance = proposer_client
         .get_balance(contract_address, BlockByNumber::Latest)
         .await?;
@@ -846,4 +881,30 @@ fn random_account() -> (Address, SecretKey) {
     let (sk, pk) = secp256k1::generate_keypair(&mut rand::thread_rng());
     let address = Address::from(keccak_hash::keccak(&pk.serialize_uncompressed()[1..]));
     (address, sk)
+}
+
+async fn wait_for_l2_deposit_receipt(
+    l1_receipt_block_number: BlockNumber,
+    eth_client: &EthClient,
+    proposer_client: &EthClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let topic =
+        keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
+    let logs = eth_client
+        .get_logs(
+            U256::from(l1_receipt_block_number),
+            U256::from(l1_receipt_block_number),
+            common_bridge_address(),
+            topic,
+        )
+        .await?;
+
+    let l2_deposit_tx_hash =
+        H256::from_slice(logs.first().unwrap().log.data.get(128..160).unwrap());
+
+    println!("Waiting for deposit transaction receipt on L2");
+
+    let _ = ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, proposer_client, 1000)
+        .await?;
+    Ok(())
 }
