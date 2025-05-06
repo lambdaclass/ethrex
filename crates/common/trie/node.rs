@@ -2,8 +2,6 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::array;
-
 pub use branch::BranchNode;
 use ethrex_rlp::{decode::decode_bytes, error::RLPDecodeError, structs::Decoder};
 pub use extension::ExtensionNode;
@@ -111,7 +109,7 @@ impl Node {
     }
 
     /// Decodes the node
-    pub fn decode_raw(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
+    pub fn decode_raw(rlp: &[u8], state: &mut TrieState) -> Result<Self, TrieError> {
         let mut rlp_items = vec![];
         let mut decoder = Decoder::new(rlp)?;
         let mut item;
@@ -142,14 +140,17 @@ impl Node {
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
-                        child: decode_child(&rlp_items[1]),
+                        child: decode_child(&rlp_items[1], state)?,
                     }
                     .into()
                 }
             }
             // Branch Node
             17 => {
-                let choices = array::from_fn(|i| decode_child(&rlp_items[i]));
+                let mut choices = [CacheKey::INVALID; 16];
+                for i in 0..16 {
+                    choices[i] = decode_child(&rlp_items[i], state)?;
+                }
                 let (value, _) = decode_bytes(&rlp_items[16])?;
                 BranchNode {
                     choices,
@@ -160,7 +161,8 @@ impl Node {
             n => {
                 return Err(RLPDecodeError::Custom(format!(
                     "Invalid arg count for Node, expected 2 or 17, got {n}"
-                )))
+                ))
+                .into())
             }
         })
     }
@@ -175,20 +177,13 @@ impl Node {
     }
 }
 
-fn decode_child(rlp: &[u8], state: &mut TrieState) -> CacheKey {
-    match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => {
-            // NodeHash::from_slice(hash)
-            state.get_node(hash);
-            todo!()
-        }
-        Ok((&[], &[])) => {
-            // NodeHash::default()
-            todo!()
-        }
+fn decode_child(rlp: &[u8], state: &mut TrieState) -> Result<CacheKey, TrieError> {
+    Ok(match decode_bytes(rlp) {
+        Ok((hash, &[])) if hash.len() == 32 => state.get_node_key(NodeHash::from_slice(hash))?,
+        Ok((&[], &[])) => CacheKey::INVALID,
         _ => {
             // NodeHash::from_slice(rlp)
             todo!()
         }
-    }
+    })
 }

@@ -7,12 +7,18 @@ pub struct TrieIterator {
 }
 
 impl TrieIterator {
-    pub(crate) fn new(trie: Trie) -> Self {
-        let stack = if let Some(root) = &trie.root {
-            vec![(Nibbles::default(), *root)]
+    pub(crate) fn new(mut trie: Trie) -> Self {
+        let stack = if let Some(key) = trie.root.1 {
+            vec![(Nibbles::default(), key)]
+        } else if let Some(hash) = trie.root.0 {
+            vec![(
+                Nibbles::default(),
+                trie.state.cache.insert(PathRLP::default(), hash).0,
+            )]
         } else {
-            vec![]
+            Vec::new()
         };
+
         Self { trie, stack }
     }
 }
