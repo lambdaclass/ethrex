@@ -248,7 +248,7 @@ impl<'a> VM<'a> {
         Ok((storage_slot, storage_slot_was_cold))
     }
 
-    /// Gets storage value of an account, caching it if not already cached.
+    /// Gets storage value of an account, inserting it in cache if it's not alreadt there.
     pub fn get_storage_value(&mut self, address: Address, key: H256) -> Result<U256, VMError> {
         // Try to get value from cache
         if let Some(account) = cache::get_account(&self.db.cache, &address) {
@@ -256,6 +256,7 @@ impl<'a> VM<'a> {
                 return Ok(*value);
             }
         } else {
+            // When requesting storage of an account we should've previously requested and cached the account
             return Err(VMError::Internal(
                 InternalError::AccountShouldHaveBeenCached,
             ));
