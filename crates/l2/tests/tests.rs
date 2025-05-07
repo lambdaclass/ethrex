@@ -6,6 +6,7 @@ use ethrex_common::types::BlockNumber;
 use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_l2_sdk::l1_to_l2_tx_data::L1ToL2TransactionData;
+use ethrex_l2_sdk::wait_for_transaction_receipt;
 use ethrex_rpc::clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient};
 use ethrex_rpc::types::receipt::RpcReceipt;
 use keccak_hash::{keccak, H256};
@@ -219,9 +220,9 @@ async fn test_deposit(
         .get_balance(bridge_address, BlockByNumber::Latest)
         .await?;
 
-    // let fee_vault_balance_before_deposit = proposer_client
-    //     .get_balance(fees_vault(), BlockByNumber::Latest)
-    //     .await?;
+    let fee_vault_balance_before_deposit = proposer_client
+        .get_balance(fees_vault(), BlockByNumber::Latest)
+        .await?;
 
     println!("Depositing funds from L1 to L2");
 
@@ -265,7 +266,7 @@ async fn test_deposit(
 
     println!("Waiting for L2 deposit tx receipt");
 
-    wait_for_l2_deposit_receipt(
+    let deposit_tx_receipt = wait_for_l2_deposit_receipt(
         deposit_tx_receipt.block_info.block_number,
         eth_client,
         proposer_client,
@@ -282,14 +283,17 @@ async fn test_deposit(
         "Deposit recipient L2 balance didn't increase as expected after deposit"
     );
 
-    // let fee_vault_balance_after_deposit = proposer_client
-    //     .get_balance(fees_vault(), BlockByNumber::Latest)
-    //     .await?;
+    let deposit_fees = get_fees_details_l2(deposit_tx_receipt, proposer_client).await;
 
-    // assert_eq!(
-    //     fee_vault_balance_after_deposit, fee_vault_balance_before_deposit,
-    //     "Fee vault balance should not change after deposit"
-    // );
+    let fee_vault_balance_after_deposit = proposer_client
+        .get_balance(fees_vault(), BlockByNumber::Latest)
+        .await?;
+
+    assert_eq!(
+        fee_vault_balance_after_deposit,
+        fee_vault_balance_before_deposit + deposit_fees.recoverable_fees,
+        "Fee vault balance should not change after deposit"
+    );
 
     Ok(())
 }
@@ -511,7 +515,7 @@ async fn test_withdraw(
     .await?;
 
     let withdraw_claim_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_claim_tx, eth_client, 15).await?;
+        wait_for_transaction_receipt(withdraw_claim_tx, eth_client, 5).await?;
 
     println!("Checking balances on L1 and L2 after claim");
 
@@ -627,7 +631,7 @@ async fn test_call_to_contract_with_deposit(
 
     println!("Checking balances before call");
 
-    let caller_l1_balance_before_call = proposer_client
+    let caller_l1_balance_before_call = eth_client
         .get_balance(caller_address, BlockByNumber::Latest)
         .await?;
 
@@ -668,12 +672,11 @@ async fn test_call_to_contract_with_deposit(
 
     println!("Waiting for L1 to L2 transaction receipt on L1");
 
-    let l1_to_l2_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(l1_to_l2_tx_hash, eth_client, 5).await?;
+    let l1_to_l2_tx_receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, eth_client, 5).await?;
 
     println!("Waiting for L1 to L2 transaction receipt on L2");
 
-    wait_for_l2_deposit_receipt(
+    let call_receipt = wait_for_l2_deposit_receipt(
         l1_to_l2_tx_receipt.block_info.block_number,
         eth_client,
         proposer_client,
@@ -709,7 +712,7 @@ async fn test_call_to_contract_with_deposit(
         .get_balance(fees_vault(), BlockByNumber::Latest)
         .await?;
 
-    let call_fees = get_fees_details_l2(l1_to_l2_tx_receipt, proposer_client).await;
+    let call_fees = get_fees_details_l2(call_receipt, proposer_client).await;
 
     assert_eq!(
         fee_vault_balance_after_call,
@@ -794,7 +797,7 @@ async fn wait_for_l2_deposit_receipt(
     l1_receipt_block_number: BlockNumber,
     eth_client: &EthClient,
     proposer_client: &EthClient,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<RpcReceipt, Box<dyn std::error::Error>> {
     let topic =
         keccak(b"DepositInitiated(uint256,address,uint256,address,address,uint256,bytes,bytes32)");
     let logs = eth_client
@@ -811,7 +814,8 @@ async fn wait_for_l2_deposit_receipt(
 
     println!("Waiting for deposit transaction receipt on L2");
 
-    let _ = ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, proposer_client, 1000)
-        .await?;
-    Ok(())
+    Ok(
+        ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, proposer_client, 1000)
+            .await?,
+    )
 }
