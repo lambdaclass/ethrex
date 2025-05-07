@@ -59,6 +59,7 @@ impl TrieState {
         let mut to_commit = vec![];
         self.commit_node_tail_recursive(node_hash, &mut to_commit)?;
 
+        to_commit.sort_unstable();
         self.db.put_batch(to_commit)?;
 
         Ok(())

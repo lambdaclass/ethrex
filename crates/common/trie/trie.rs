@@ -11,6 +11,8 @@ mod trie_iter;
 mod verify_range;
 use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
+use ethrex_rlp::encode::RLPEncode;
+use node_hash::NodeHash;
 use sha3::{Digest, Keccak256};
 use std::collections::HashSet;
 
@@ -216,6 +218,424 @@ impl Trie {
         }
 
         Ok(trie)
+    }
+
+    // TODO:
+    // - Move to ArrayVec
+    // - Fix extension case, when does it matter?
+    //   I think there can be at most one, connecting to the last branch
+    //   There is one from 129 to 255: prefix path being 818x and extension
+    //   the middle 18
+    //   Then 256 through to 512 will have one path 82001x and extension
+    //   prefix 001 (2 will be a branch, shared with 0 and 1)
+    //   I think it can be handled in the finalize!
+    //   There will be at most one segment made of branches with exactly
+    //   one populated child (or zero before doing the bubble up)
+    pub fn compute_hash_from_compact_iter<T>(
+        items: &[T],
+        encode: fn(&T, &mut dyn bytes::BufMut),
+    ) -> H256 {
+        use smallvec::SmallVec;
+
+        if items.is_empty() {
+            return *EMPTY_TRIE_HASH;
+        }
+
+        // At the moment this fails for over 0x80 that end in 0x0
+        if items.len() > 0x80 && (items.len() - 1) & 0xf == 0x0 {
+            let iter = items.into_iter().enumerate().map(|(idx, val)| {
+                let mut buffer = vec![];
+                encode(val, &mut buffer);
+                (idx.encode_to_vec(), buffer)
+            });
+            return Self::compute_hash_from_unsorted_iter(iter);
+        }
+
+        fn h(buffer: &[u8]) -> SmallVec<[u8; 32]> {
+            let mut result = SmallVec::new();
+            if buffer.len() >= 32 {
+                let hash = Keccak256::digest(buffer);
+                result.extend_from_slice(&hash);
+            } else {
+                result.extend_from_slice(buffer);
+            }
+            result
+        }
+
+        #[derive(Default)]
+        struct TrieStack {
+            root: SmallVec<[u8; 32]>,
+            nodes: [[SmallVec<[u8; 32]>; 16]; 10],
+            buffer: Vec<u8>,
+            last_key: SmallVec<[u8; 10]>,
+            max_idx: u32,
+        }
+
+        impl TrieStack {
+            pub fn new(max: usize) -> Self {
+                TrieStack {
+                    max_idx: max as u32,
+                    buffer: Vec::with_capacity(1024),
+                    ..Default::default()
+                }
+            }
+            pub fn push_leaf(&mut self, idx: u32, path: &[u8], value: &[u8]) {
+                let current_key = key(idx);
+                let leaf = if self.max_idx == idx && idx > 128 && idx.trailing_zeros() >= 4 {
+                    let diff_start = current_key
+                        .iter()
+                        .zip(self.last_key.iter())
+                        .position(|(m, l)| m != l)
+                        .unwrap();
+                    let raw_path = &current_key[diff_start..];
+                    let mut path = SmallVec::<[u8; 32]>::new();
+                    match raw_path.len() % 2 {
+                        0 => {
+                            path.push(0x20);
+                            for b in raw_path.chunks(2) {
+                                let (n0, n1) = (b[0], b[1]);
+                                path.push(n0 << 4 | n1);
+                            }
+                        }
+                        1 => {
+                            path.push(0x30 | raw_path[0]);
+                            for b in raw_path[1..].chunks(2) {
+                                let (n0, n1) = (b[0], b[1]);
+                                path.push(n0 << 4 | n1);
+                            }
+                        }
+                        _ => (),
+                    }
+                    // eprintln!(
+                    //     "RAW: {} COMPACT: {}",
+                    //     hex::encode(&raw_path),
+                    //     hex::encode(&path)
+                    // );
+                    hash_leaf(&path, value, &mut self.buffer)
+                } else {
+                    hash_leaf(path, value, &mut self.buffer)
+                };
+                self.last_key = current_key;
+                // if matches!(idx, 0..140) {
+                // eprintln!(
+                //     "PUSH LEAF IDX: {idx} PATH: {} VALUE: {} KEY: {} LEAF: {}",
+                //     hex::encode(path),
+                //     hex::encode(value),
+                //     hex::encode(&self.last_key),
+                //     hex::encode(&leaf)
+                // );
+                // }
+                let mut lvl = self.last_key.len() - 1;
+                let mut k = self.last_key[lvl] as usize;
+                self.nodes[lvl][k] = leaf;
+                // 7f => 80
+                // 8180 => 9001
+                // 8181 => 9002
+                while idx != self.max_idx && k == 0xf {
+                    let branch_hash = hash_branch(&self.nodes[lvl], &mut self.buffer);
+                    self.nodes[lvl] = Default::default();
+                    self.last_key.truncate(lvl);
+                    //eprintln!("LAST_KEY: {}", hex::encode(&self.last_key));
+                    lvl -= 1;
+                    k = self.last_key[lvl] as usize;
+                    //eprintln!("L: {} K: {}", lvl, k);
+                    // eprintln!(
+                    //     "COMPACT LEVEL: {} TO KEY: {} HASH: {}",
+                    //     lvl + 1,
+                    //     k,
+                    //     hex::encode(&branch_hash)
+                    // );
+                    self.nodes[lvl][k] = branch_hash;
+                    // FIXME: missing extension logic for this case:
+                    // when there would be an extension and the last leaf
+                    // falls here, the finalize might get confused and think
+                    // it was only a leaf due to its count becoming 1
+                    // maybe just checking if this is the last index and
+                    // skipping helps
+                }
+            }
+            pub fn finalize_current(&mut self) {
+                if self.last_key.is_empty() {
+                    return;
+                }
+                let max_key = key(self.max_idx);
+                if self.max_idx > 128 && self.last_key == max_key {
+                    let mut i = self.last_key.len() - 1;
+                    let mut counts: [_; 10] = std::array::from_fn(|i| {
+                        self.nodes[i].iter().filter(|b| !b.is_empty()).count()
+                    });
+                    while i >= 1 {
+                        // eprintln!("I: {i} COUNTS: {:?}", &counts);
+                        let k = self.last_key[i - 1] as usize;
+                        // eprintln!("K: {k}");
+
+                        let mut j = i - 1;
+                        while j > 0 && counts[j] == 0 {
+                            j -= 1;
+                        }
+                        if counts[i] == 1 {
+                            // eprintln!("MOVING LEAF");
+                            // Leaf
+                            let leaf = self.nodes[i][k].clone();
+                            let k = max_key[j] as usize;
+                            self.nodes[j][k] = leaf;
+                            counts[j] += 1;
+                            i = j;
+                            continue;
+                        }
+                        let mut child = hash_branch(&self.nodes[i], &mut self.buffer);
+                        if j < i - 1 {
+                            // Extension
+                            let extension_start = j + 1;
+                            let extension_len = i - extension_start;
+                            // eprintln!("EXTENSION LEN: {extension_len}");
+                            let mut prefix = SmallVec::<[u8; 12]>::new();
+                            match extension_len % 2 {
+                                0 => {
+                                    prefix.push(0);
+                                    for b in max_key[extension_start..i].chunks(2) {
+                                        let (n0, n1) = (b[0], b[1]);
+                                        prefix.push(n0 << 4 | n1);
+                                    }
+                                }
+                                1 => {
+                                    prefix.push(0x10 | max_key[extension_start]);
+                                    for b in max_key[extension_start + 1..i].chunks(2) {
+                                        let (n0, n1) = (b[0], b[1]);
+                                        prefix.push(n0 << 4 | n1);
+                                    }
+                                }
+                                _ => (),
+                            };
+                            child = hash_extension(&prefix, &child, &mut self.buffer);
+                        }
+                        // Regular branch
+                        // eprintln!("COMPUTING BRANCH");
+                        let k = max_key[j] as usize;
+                        self.nodes[j][k] = child;
+                        counts[j] += 1;
+                        i = j;
+                    }
+                    return;
+                }
+                for i in (1..self.last_key.len()).rev() {
+                    let k = self.last_key[i - 1] as usize;
+                    // eprintln!("K: {k}");
+
+                    self.nodes[i - 1][k] = hash_branch(&self.nodes[i], &mut self.buffer);
+                    self.nodes[i] = Default::default();
+                    // eprintln!(
+                    //     "COMPACT LEVEL: {} TO KEY: {} HASH: {}",
+                    //     i,
+                    //     k,
+                    //     hex::encode(&self.nodes[i - 1][k])
+                    // );
+                }
+            }
+            pub fn finalize(&mut self) -> H256 {
+                if self.last_key.is_empty() {
+                    return *EMPTY_TRIE_HASH;
+                }
+                // if key(self.max_idx) == self.last_key {
+                //     eprintln!("FINALIZING FOR {}", self.max_idx);
+                // }
+                self.finalize_current();
+                self.root = hash_branch(&self.nodes[0], &mut self.buffer);
+                // eprintln!("FINISHING ROOT: {}", hex::encode(&self.root));
+                if self.root.len() < 32 {
+                    let mut root = SmallVec::new();
+                    root.extend_from_slice(&Keccak256::digest(&self.root));
+                    self.root = root;
+                }
+                // eprintln!("FINISHED ROOT: {}", hex::encode(&self.root));
+                H256::from_slice(&self.root)
+            }
+        }
+
+        fn key(idx: u32) -> SmallVec<[u8; 10]> {
+            let mut res = SmallVec::new();
+            match idx {
+                0 => res.extend_from_slice(&[8, 0]),
+                i @ 1..128 => {
+                    let (h, l) = ((i >> 4) as u8, (i & 0xf) as u8);
+                    res.extend_from_slice(&[h, l]);
+                }
+                i => {
+                    res.extend_from_slice(&[8, 0]);
+                    let bytes = i.to_be_bytes();
+                    let iter = bytes
+                        .into_iter()
+                        .skip_while(|b| *b == 0)
+                        .flat_map(|b| [b >> 4, b & 0xf]);
+                    res.extend(iter);
+                    res[1] = (res.len() / 2 - 1) as u8;
+                }
+            }
+            res
+        }
+        fn hash_extension(prefix: &[u8], child: &[u8], buffer: &mut Vec<u8>) -> SmallVec<[u8; 32]> {
+            // TODO: prefix needs that ugly compact encoding too
+            // eprintln!(
+            //     "EXTENSION: PREFIX: {} CHILD: {}",
+            //     hex::encode(prefix),
+            //     hex::encode(child),
+            // );
+            let inner_len =
+                <[u8] as RLPEncode>::length(prefix) + <[u8] as RLPEncode>::length(child);
+            ethrex_rlp::encode::encode_length(inner_len, buffer);
+            <[u8] as RLPEncode>::encode(prefix, buffer);
+            match child.len() {
+                32 => <[u8] as RLPEncode>::encode(child, buffer),
+                _ => buffer.extend_from_slice(child),
+            }
+            let hash = h(&*buffer);
+            buffer.clear();
+            hash
+        }
+        fn hash_branch(
+            values: &[SmallVec<[u8; 32]>; 16],
+            buffer: &mut Vec<u8>,
+        ) -> SmallVec<[u8; 32]> {
+            let mut count = 0;
+            let mut first = 16;
+            for j in 0..16 {
+                if !values[j].is_empty() {
+                    count += 1;
+                    first = j.min(first);
+                }
+            }
+            // eprintln!("COUNT: {count} FIRST: {first}");
+            match count {
+                0 => return SmallVec::new(),
+                1 => return values[first].clone(),
+                _ => (),
+            }
+            let inner_len = 1 + values
+                .iter()
+                .map(|v| match v.len() {
+                    0 => 1,
+                    32 => 33,
+                    _ => v.len(),
+                })
+                .sum::<usize>();
+            // for (i, v) in values.iter().enumerate() {
+            //     if v.len() != 0 {
+            //         eprintln!("B{}: {}", i, hex::encode(v));
+            //     }
+            // }
+            ethrex_rlp::encode::encode_length(inner_len, buffer);
+            for v in values.iter() {
+                match v.len() {
+                    0 => <[u8] as RLPEncode>::encode(&[], buffer),
+                    32 => <[u8] as RLPEncode>::encode(v, buffer),
+                    _ => buffer.extend_from_slice(v),
+                }
+            }
+            [].encode(buffer);
+            let hash = h(&buffer);
+            //eprintln!("BRANCH: {}", hex::encode(&*buffer));
+            //eprintln!("HASH: {}", hex::encode(&hash));
+            buffer.clear();
+            hash
+        }
+        fn hash_leaf(path: &[u8], value: &[u8], buffer: &mut Vec<u8>) -> SmallVec<[u8; 32]> {
+            let path_len = <[u8] as RLPEncode>::length(path);
+            let value_len = <[u8] as RLPEncode>::length(value);
+            let inner_len = path_len + value_len;
+            ethrex_rlp::encode::encode_length(inner_len, buffer);
+            <[u8] as RLPEncode>::encode(path, buffer);
+            <[u8] as RLPEncode>::encode(value, buffer);
+            //eprintln!("LEAF ENCODED: {}", hex::encode(&*buffer));
+            let hash = h(buffer);
+            buffer.clear();
+            hash
+        }
+        // fn path_from_keys(old: &[u8], new: &[u8]) -> SmallVec<[u8; 12]> {
+        //     let prefix_len = old
+        //         .iter()
+        //         .zip(new.iter())
+        //         .position(|(o, n)| o != n)
+        //         .unwrap_or_default();
+        //     let slice = match new.len() - prefix_len {
+        //         0 => &[][..],
+        //         1 => &[0x20],
+        //         2 => &[0x30 + new[prefix_len]],
+        //         3 => &[0x20, new[prefix_len], new[prefix_len + 1]],
+        //         4 => &[],
+        //         5 => &[],
+        //         6 => &[],
+        //         7 => &[],
+        //         8 => &[],
+        //         9 => &[],
+        //         10 => &[],
+        //         11 => &[],
+        //         12 => &[],
+        //         _ => &[],
+        //     };
+        //     SmallVec::from_slice(slice)
+        // }
+        fn path(idx: usize, len: usize) -> &'static [u8] {
+            if idx >= len {
+                return &[];
+            }
+            if idx == 0 {
+                return match len {
+                    1 => &[0x20, 0x80],
+                    l if l <= 128 => &[0x30],
+                    _ => &[0x20],
+                };
+            }
+            if idx == 1 {
+                return match len {
+                    2 => &[0x31],
+                    _ => &[0x20],
+                };
+            }
+            if idx != len - 1 {
+                return &[0x20];
+            }
+            if matches!(idx, 0x80..=0xff) {
+                return match idx as u8 {
+                    0x80 => &[0x20, 0x80],
+                    0x90 => &[0x20, 0x90],
+                    0xa0 => &[0x20, 0xa0],
+                    0xb0 => &[0x20, 0xb0],
+                    0xc0 => &[0x20, 0xc0],
+                    0xd0 => &[0x20, 0xd0],
+                    0xe0 => &[0x20, 0xe0],
+                    0xf0 => &[0x20, 0xf0],
+                    _ => &[0x20],
+                };
+            }
+            // FIXME:
+            // 1. Prefix will need to depend on the last non-zero nibble
+            // 2. 0x8y branches start with the first index being 1, as 0 bytes are skipped in RLP
+            //    In that regard they behave like the first branch
+            let trailing_zero_nibbles = idx.trailing_zeros() as usize / 4;
+            &[
+                [0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                [0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            ][trailing_zero_nibbles % 2][..1 + trailing_zero_nibbles / 2]
+        }
+
+        let len = items.len();
+        let mut buffer = Vec::with_capacity(4096);
+        let mut stack = TrieStack::new(len - 1);
+        for i in 1..len.min(128) {
+            encode(&items[i], &mut buffer);
+            stack.push_leaf(i as u32, path(i, len), &buffer);
+            buffer.clear();
+        }
+        stack.finalize_current();
+        encode(&items[0], &mut buffer);
+        stack.push_leaf(0, path(0, len), &buffer);
+        buffer.clear();
+        for i in 128..len {
+            encode(&items[i], &mut buffer);
+            stack.push_leaf(i as u32, path(i, len), &buffer);
+            buffer.clear();
+        }
+        stack.finalize()
     }
 
     /// Builds an in-memory trie from the given elements and returns its hash
@@ -666,6 +1086,111 @@ mod test {
             trie.hash().unwrap().0.as_slice(),
             hex!("7a320748f780ad9ad5b0837302075ce0eeba6c26e3d8562c67ccc0f1b273298a").as_slice(),
         );
+    }
+
+    fn print_trie(t: Trie) {
+        t.into_iter().for_each(|(path, node)| match node {
+            Node::Leaf(leaf) => {
+                eprintln!(
+                    "PATH: {} => LEAF: PARTIAL: {} VALUE: {}",
+                    hex::encode(path.encode_compact()),
+                    hex::encode(leaf.partial.encode_compact()),
+                    hex::encode(leaf.value)
+                )
+            }
+            Node::Extension(ext) => {
+                eprintln!(
+                    "PATH: {} => EXTENSION: PREFIX: {} CHILD: {}",
+                    hex::encode(path.encode_compact()),
+                    hex::encode(ext.prefix.encode_compact()),
+                    hex::encode(ext.child)
+                )
+            }
+            Node::Branch(branch) => {
+                let encoded_choices: Vec<_> = branch
+                    .choices
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| format!("BR{i}: {}", hex::encode(c)))
+                    .collect();
+                eprintln!(
+                    "PATH: {} => BRANCH: CHILDREN: [{}] VALUE: {}",
+                    hex::encode(path.encode_compact()),
+                    encoded_choices.join(", "),
+                    hex::encode(branch.value)
+                )
+            }
+        })
+    }
+
+    #[test]
+    fn compute_hash_from_compact_iter_matches_tree_for_small_values() {
+        use ethrex_rlp::encode::RLPEncode;
+        let mut trie = Trie::stateless();
+        let leaves: Vec<_> = (0u32..4096).map(|_| [0xffu8]).collect();
+        assert_eq!(
+            *EMPTY_TRIE_HASH,
+            Trie::compute_hash_from_compact_iter(&leaves[..0], |v, b| v.encode(b))
+        );
+        for i in 1..4096 {
+            trie.insert((i - 1).encode_to_vec(), leaves[i - 1].encode_to_vec())
+                .unwrap();
+            if i == 130 {
+                assert_eq!(
+                    trie.root.clone().map(|r| r.finalize()).unwrap(),
+                    Trie::compute_hash_from_compact_iter(&leaves[..i], |v, b| v.encode(b)),
+                    "assertion failed for length {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compute_hash_from_compact_iter_matches_tree_for_large_values() {
+        use ethrex_rlp::encode::RLPEncode;
+        let mut trie = Trie::stateless();
+        let leaves: Vec<_> = (0u32..(1 << 12)).map(|_| vec![0xffffu32; 32]).collect();
+        assert_eq!(
+            *EMPTY_TRIE_HASH,
+            Trie::compute_hash_from_compact_iter(&leaves[..0], |v, b| v.encode(b))
+        );
+        /*
+        for i in 1..4096 {
+            eprintln!("START TRIE FOR LEN: {i}");
+            let mut trie_iter = Trie::stateless();
+            for j in 1..=i {
+                trie_iter
+                    .insert((j - 1).encode_to_vec(), leaves[j - 1].encode_to_vec())
+                    .unwrap();
+            }
+            print_trie(trie_iter);
+            eprintln!("FINISHED TRIE FOR LEN: {i}");
+        }
+        assert!(false);
+        */
+        let mut res = Vec::with_capacity(1 << 12);
+        for i in 1..(1 << 12) {
+            trie.insert((i - 1).encode_to_vec(), leaves[i - 1].encode_to_vec())
+                .unwrap();
+            // assert_eq!(
+            //     trie.root.clone().map(|r| r.finalize()).unwrap(),
+            //     Trie::compute_hash_from_compact_iter(&leaves[..i], |v, b| v.encode(b)),
+            //     "assertion failed for length {i}"
+            // );
+            res.push(
+                trie.root.clone().map(|r| r.finalize()).unwrap()
+                    == Trie::compute_hash_from_compact_iter(&leaves[..i], |v, b| v.encode(b)),
+            );
+        }
+        for i in 1..(1 << 12) {
+            eprintln!(
+                "LEN: {i} MAX: {:x} MAXKEY: {} MATCH: {}",
+                i - 1,
+                hex::encode((i - 1).encode_to_vec()),
+                res[i - 1]
+            );
+        }
+        assert!(false);
     }
 
     // Proptests

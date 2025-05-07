@@ -213,15 +213,23 @@ impl BranchNode {
     pub fn encode_raw(&self) -> Vec<u8> {
         let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf);
+        let mut count = 16;
         for child in self.choices.iter() {
             match child {
                 NodeHash::Hashed(hash) => encoder = encoder.encode_bytes(&hash.0),
                 NodeHash::Inline(raw) if raw.1 != 0 => encoder = encoder.encode_raw(child.as_ref()),
                 _ => encoder = encoder.encode_bytes(&[]),
             }
+            match child {
+                NodeHash::Inline(raw) if raw.is_empty() => count -= 1,
+                _ => (),
+            }
         }
         encoder = encoder.encode_bytes(&self.value);
         encoder.finish();
+        if matches!(count, 20) {
+            eprintln!("BRANCH: {} COUNT: {count}", hex::encode(&buf));
+        }
         buf
     }
 

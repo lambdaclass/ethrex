@@ -61,6 +61,9 @@ impl Store {
         &self,
         key_values: Vec<(T::Key, T::Value)>,
     ) -> Result<(), StoreError> {
+        if key_values.is_empty() {
+            return Ok(());
+        }
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
             let txn = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
@@ -170,33 +173,64 @@ impl StoreEngine for Store {
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
+            let mut tx_locations: Vec<_> = blocks
+                .iter()
+                .flat_map(|b| {
+                    let number = b.header.number;
+                    let hash = b.hash();
+                    b.body
+                        .transactions
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, tx)| {
+                            let tx_hash = tx.compute_hash();
+                            (tx_hash, number, hash.clone(), idx)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            tx_locations.sort_unstable();
+            let mut headers: Vec<_> = blocks
+                .iter()
+                .map(|b| (b.hash(), b.header.encode_to_vec()))
+                .collect();
+            headers.sort_unstable();
+            let mut bodies: Vec<_> = blocks
+                .iter()
+                .map(|b| (b.hash(), b.body.encode_to_vec()))
+                .collect();
+            bodies.sort_unstable();
+            let mut block_numbers: Vec<_> =
+                blocks.iter().map(|b| (b.hash(), b.header.number)).collect();
+            block_numbers.sort_unstable();
             let tx = db.begin_readwrite().map_err(StoreError::LibmdbxError)?;
 
-            for block in blocks {
-                let number = block.header.number;
-                let hash = block.hash();
-
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.upsert::<TransactionLocations>(
-                        transaction.compute_hash().into(),
-                        (number, hash, index as u64).into(),
-                    )
+            let mut cursor = tx
+                .cursor::<TransactionLocations>()
+                .map_err(StoreError::LibmdbxError)?;
+            for (tx_hash, number, hash, index) in tx_locations {
+                cursor
+                    .upsert(tx_hash.into(), (number, hash, index as u64).into())
                     .map_err(StoreError::LibmdbxError)?;
-                }
-
-                tx.upsert::<Bodies>(
-                    hash.into(),
-                    BlockBodyRLP::from_bytes(block.body.encode_to_vec()),
-                )
+            }
+            let mut cursor = tx.cursor::<Bodies>().map_err(StoreError::LibmdbxError)?;
+            for (hash, body) in bodies {
+                cursor
+                    .upsert(hash.into(), BlockBodyRLP::from_bytes(body))
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+            let mut cursor = tx.cursor::<Headers>().map_err(StoreError::LibmdbxError)?;
+            for (hash, header) in headers {
+                cursor
+                    .upsert(hash.into(), BlockHeaderRLP::from_bytes(header))
+                    .map_err(StoreError::LibmdbxError)?;
+            }
+            let mut cursor = tx
+                .cursor::<BlockNumbers>()
                 .map_err(StoreError::LibmdbxError)?;
-
-                tx.upsert::<Headers>(
-                    hash.into(),
-                    BlockHeaderRLP::from_bytes(block.header.encode_to_vec()),
-                )
-                .map_err(StoreError::LibmdbxError)?;
-
-                tx.upsert::<BlockNumbers>(hash.into(), number)
+            for (hash, number) in block_numbers {
+                cursor
+                    .upsert(hash.into(), number)
                     .map_err(StoreError::LibmdbxError)?;
             }
 

@@ -87,6 +87,122 @@ fn insert_worse_case_benchmark(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unit_arg)]
+fn hash_from_range_benchmark(c: &mut Criterion) {
+    use ethrex_rlp::encode::RLPEncode;
+
+    let (_, values_10k) = random_data(10000);
+    let keys_10k: Vec<_> = (0u32..10000).map(|i| i.encode_to_vec()).collect();
+
+    let mut group = c.benchmark_group("Trie");
+
+    group.bench_function("ethrex-trie iter_unsorted 1k", |b| {
+        b.iter_batched(
+            || {
+                keys_10k
+                    .iter()
+                    .cloned()
+                    .zip(values_10k.iter().cloned())
+                    .take(1000)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+            },
+            |iter| ethrex_trie::Trie::compute_hash_from_unsorted_iter(iter),
+            criterion::BatchSize::LargeInput,
+        );
+    });
+
+    group.bench_function("ethrex-trie iter_compact 1k", |b| {
+        b.iter(|| {
+            ethrex_trie::Trie::compute_hash_from_compact_iter(&values_10k[..1000], |v, b| {
+                b.put_slice(v)
+            })
+        });
+    });
+
+    group.bench_function("ethrex-trie insert 1k", |b| {
+        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
+
+        b.iter(|| {
+            for i in 0..1000 {
+                black_box(
+                    trie.insert(keys_10k[i].clone(), values_10k[i].clone())
+                        .unwrap(),
+                )
+            }
+            black_box(trie.commit().unwrap());
+        });
+    });
+
+    group.bench_function("cita-trie insert 1k", |b| {
+        let mut trie = PatriciaTrie::new(
+            Arc::new(MemoryDB::new(false)),
+            Arc::new(HasherKeccak::new()),
+        );
+
+        b.iter(|| {
+            for i in 0..1000 {
+                black_box(
+                    trie.insert(keys_10k[i].clone(), values_10k[i].clone())
+                        .unwrap(),
+                )
+            }
+            trie.root().unwrap()
+        });
+    });
+    group.bench_function("ethrex-trie iter_unsorted 10k", |b| {
+        b.iter_batched(
+            || {
+                keys_10k
+                    .iter()
+                    .cloned()
+                    .zip(values_10k.iter().cloned())
+                    .collect::<Vec<_>>()
+                    .into_iter()
+            },
+            |iter| ethrex_trie::Trie::compute_hash_from_unsorted_iter(iter),
+            criterion::BatchSize::LargeInput,
+        );
+    });
+
+    group.bench_function("ethrex-trie iter_compact 10k", |b| {
+        b.iter(|| {
+            ethrex_trie::Trie::compute_hash_from_compact_iter(&values_10k, |v, b| b.put_slice(v))
+        });
+    });
+
+    group.bench_function("ethrex-trie insert 10k", |b| {
+        let mut trie = EthrexTrie::new(Box::new(EthrexMemDB::new_empty()));
+
+        b.iter(|| {
+            for i in 0..keys_10k.len() {
+                black_box(
+                    trie.insert(keys_10k[i].clone(), values_10k[i].clone())
+                        .unwrap(),
+                )
+            }
+            black_box(trie.commit().unwrap());
+        });
+    });
+
+    group.bench_function("cita-trie insert 10k", |b| {
+        let mut trie = PatriciaTrie::new(
+            Arc::new(MemoryDB::new(false)),
+            Arc::new(HasherKeccak::new()),
+        );
+
+        b.iter(|| {
+            for i in 0..keys_10k.len() {
+                black_box(
+                    trie.insert(keys_10k[i].clone(), values_10k[i].clone())
+                        .unwrap(),
+                )
+            }
+            trie.root().unwrap()
+        });
+    });
+}
+
 fn random_data(n: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     let mut keys = Vec::with_capacity(n);
     let mut values = Vec::with_capacity(n);
@@ -100,5 +216,9 @@ fn random_data(n: usize) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     (keys, values)
 }
 
-criterion_group!(benches, insert_worse_case_benchmark);
+criterion_group!(
+    benches,
+    insert_worse_case_benchmark,
+    hash_from_range_benchmark
+);
 criterion_main!(benches);

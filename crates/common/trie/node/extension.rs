@@ -149,6 +149,16 @@ impl ExtensionNode {
 
     /// Encodes the node
     pub fn encode_raw(&self) -> Vec<u8> {
+        /*
+        eprintln!(
+            "EXTENSION: [P:{:02X?}, {}]",
+            self.prefix.encode_compact(),
+            match &self.child {
+                NodeHash::Hashed(hash) => format!("H:{:02X?}", hash.0),
+                NodeHash::Inline(value) => format!("V:{:02X?}", value),
+            }
+        );
+        */
         let mut buf = vec![];
         let mut encoder = Encoder::new(&mut buf).encode_bytes(&self.prefix.encode_compact());
         encoder = self.child.encode(encoder);

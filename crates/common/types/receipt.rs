@@ -49,21 +49,25 @@ impl Receipt {
     /// A) Legacy receipts: rlp(receipt)
     /// B) Non legacy receipts: tx_type | rlp(receipt).
     pub fn encode_inner(&self) -> Vec<u8> {
-        let mut encode_buff = match self.tx_type {
-            TxType::Legacy => {
-                vec![]
-            }
-            _ => {
-                vec![self.tx_type as u8]
-            }
-        };
-        Encoder::new(&mut encode_buff)
+        let mut encode_buff = vec![];
+        self.encode_inner_bufmut(&mut encode_buff);
+        encode_buff
+    }
+
+    /// Encodes Receipts in the following formats:
+    /// A) Legacy receipts: rlp(receipt)
+    /// B) Non legacy receipts: tx_type | rlp(receipt).
+    pub fn encode_inner_bufmut(&self, encode_buff: &mut dyn bytes::BufMut) {
+        match self.tx_type {
+            TxType::Legacy => (),
+            _ => encode_buff.put_u8(self.tx_type as u8),
+        }
+        Encoder::new(encode_buff)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)
             .encode_field(&self.bloom)
             .encode_field(&self.logs)
             .finish();
-        encode_buff
     }
 
     /// Decodes Receipts in the following formats:

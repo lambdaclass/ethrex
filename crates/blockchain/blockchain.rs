@@ -135,10 +135,14 @@ impl Blockchain {
             .add_block(block.clone())
             .await
             .map_err(ChainError::StoreError)?;
-        self.storage
-            .add_receipts(block.hash(), execution_result.receipts)
-            .await
-            .map_err(ChainError::StoreError)
+        // TODO: actually move the empty check to the DB, make it shared
+        if !execution_result.receipts.is_empty() {
+            self.storage
+                .add_receipts(block.hash(), execution_result.receipts)
+                .await
+                .map_err(ChainError::StoreError)?;
+        }
+        Ok(())
     }
 
     pub async fn add_block(&self, block: &Block) -> Result<(), ChainError> {
@@ -309,6 +313,61 @@ impl Blockchain {
         );
 
         Ok(())
+    }
+
+    //TODO: Forkchoice Update shouldn't be part of this function
+    pub async fn import_blocks(&self, blocks: &[Block]) {
+        let size = blocks.len();
+        for block in blocks {
+            let hash = block.hash();
+            info!(
+                "Adding block {} with hash {:#x}.",
+                block.header.number, hash
+            );
+            if let Err(error) = self.add_block(block).await {
+                warn!(
+                    "Failed to add block {} with hash {:#x}: {}.",
+                    block.header.number, hash, error
+                );
+            }
+        }
+        if let Some(last_block) = blocks.last() {
+            if self
+                .storage
+                .update_latest_block_number(last_block.header.number)
+                .await
+                .is_err()
+            {
+                error!("Fatal: added block {} but could not update the block number -- aborting block import", last_block.header.number);
+                return;
+            };
+            // TODO: really should set all the canonical blocks, do it on batch
+            if self
+                .storage
+                .set_canonical_block(last_block.header.number, last_block.hash())
+                .await
+                .is_err()
+            {
+                error!(
+                    "Fatal: added block {} but could not set it as canonical -- aborting block import",
+                    last_block.header.number
+                );
+                return;
+            };
+            let hash = last_block.hash();
+            match self.evm_engine {
+                EvmEngine::LEVM => {
+                    // We are allowing this not to unwrap so that tests can run even if block execution results in the wrong root hash with LEVM.
+                    let _ = apply_fork_choice(&self.storage, hash, hash, hash).await;
+                }
+                EvmEngine::REVM => {
+                    apply_fork_choice(&self.storage, hash, hash, hash)
+                        .await
+                        .unwrap();
+                }
+            }
+        }
+        info!("Added {size} blocks to blockchain");
     }
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid

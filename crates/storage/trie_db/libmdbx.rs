@@ -38,8 +38,9 @@ where
 
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.begin_readwrite().map_err(TrieError::DbError)?;
+        let mut cursor = txn.cursor::<T>().map_err(TrieError::DbError)?;
         for (key, value) in key_values {
-            txn.upsert::<T>(key, value).map_err(TrieError::DbError)?;
+            cursor.upsert(key, value).map_err(TrieError::DbError)?;
         }
         txn.commit().map_err(TrieError::DbError)
     }
