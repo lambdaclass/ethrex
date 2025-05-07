@@ -118,7 +118,6 @@ async fn do_transition(
     contract_addr: Address,
     state: u64,
 ) -> Result<u64, PusherError> {
-    let map: HashMap<String, String> = HashMap::new();
     let resp = web_client
         .get(format!("{prover_url}/transition"))
         .query(&[("state", state)])
@@ -131,10 +130,10 @@ async fn do_transition(
         .map_err(|_| PusherError::ParseError("Couldn't parse transition response".to_string()))?;
 
     let new_state = json
-        .get("address")
+        .get("new_state")
         .ok_or(PusherError::ResponseMissingKey("address".to_string()))?;
     let signature = json
-        .get("quote")
+        .get("signature")
         .ok_or(PusherError::ResponseMissingKey("quote".to_string()))?;
 
     let new_state = new_state.as_u64()
