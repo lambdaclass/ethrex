@@ -12,7 +12,7 @@ use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::{handle_peer_as_initiator, P2PContext},
     rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
-    types::{Endpoint, Node, NodeRecord},
+    types::{Endpoint, Node},
 };
 use ethrex_common::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
@@ -676,6 +676,7 @@ pub(super) mod tests {
     use crate::{
         network::{node_id_from_signing_key, serve_p2p_requests, MAX_MESSAGES_TO_BROADCAST},
         rlpx::message::Message as RLPxMessage,
+        types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
     use ethrex_storage::{EngineType, Store};
@@ -901,7 +902,13 @@ pub(super) mod tests {
 
         // update the enr_seq of server_b so that server_a notices it is outdated
         // and sends a request to update it
-        server_b.ctx.local_node_record.lock().await.seq += 1;
+        server_b
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .update_seq(&server_b.ctx.signer)
+            .unwrap();
 
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated

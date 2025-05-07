@@ -313,12 +313,18 @@ impl NodeRecord {
         Ok(record)
     }
 
-    pub fn set_fork_id(&mut self, fork_id: ForkId) {
+    pub fn update_seq(&mut self, signer: &SigningKey) -> Result<(), String> {
+        self.seq += 1;
+        self.signature = self.sign_record(signer)?;
+        Ok(())
+    }
+
+    pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SigningKey) -> Result<(), String> {
         self.pairs
             // a vec! is needed in order to have a single element list
             .push(("eth".into(), vec![fork_id].encode_to_vec().into()));
-
-        self.seq += 1;
+        self.update_seq(signer)?;
+        Ok(())
     }
 
     fn sign_record(&mut self, signer: &SigningKey) -> Result<H512, String> {
