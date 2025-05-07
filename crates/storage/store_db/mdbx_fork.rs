@@ -150,7 +150,6 @@ where
 impl TrieDB for MDBXTrieDB<StateTrieNodes> {
     fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let tx = self.db.tx().unwrap();
-        tracing::info!("STATE TRIE NODES GET: {:?}", key);
         let node_hash_bytes = key.as_ref().to_vec();
         Ok(tx.get::<StateTrieNodes>(node_hash_bytes).unwrap())
     }
@@ -166,7 +165,6 @@ impl TrieDB for MDBXTrieDB<StateTrieNodes> {
     fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let txn = self.db.tx_mut().unwrap();
         for (k, v) in key_values {
-            tracing::info!("STATE TRIE NODES PUT: {:?}", k);
             let node_hash_bytes = k.as_ref().to_vec();
             txn.put::<StateTrieNodes>(node_hash_bytes, v).unwrap();
         }
@@ -229,7 +227,6 @@ impl TrieDB for MDBXTrieDupsort<StorageTriesNodes> {
         let tx = self.db.tx_mut().unwrap();
 
         for (subkey, value) in key_values {
-            tracing::info!("STORAGE TRIES NODES PUT: {:?}", subkey);
             tx.put::<StorageTriesNodes>(key.clone(), (subkey, value).encode_to_vec())
                 .unwrap();
         }
@@ -332,8 +329,9 @@ impl StoreEngine for MDBXFork {
             let number = block.header.number;
             let hash = block.hash();
             for (index, transaction) in block.body.transactions.iter().enumerate() {
+                tracing::info!("{}", transaction.compute_hash());
                 tx.put::<TransactionLocations>(
-                    transaction.compute_hash().0.into(),
+                    transaction.compute_hash().0.encode_to_vec(),
                     (number, hash, index as u64).encode_to_vec(),
                 )
                 .unwrap();
