@@ -35,6 +35,7 @@ redb = ["dep:redb", "dep:tokio"]
 hex.workspace = true
 hex-literal.workspace = true
 tempdir = "0.3.7"
+tokio = { version = "1.41.1", default-features = false, features = ["rt", "macros", "test-util", "rt-multi-thread"] }
 
 [lib]
 path = "./lib.rs"
