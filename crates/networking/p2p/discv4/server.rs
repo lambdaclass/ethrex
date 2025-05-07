@@ -332,7 +332,15 @@ impl Discv4Server {
                 if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
-                let node_record = self.ctx.local_node_record.lock().await.clone();
+                let mut node_record = self.ctx.local_node_record.lock().await.clone();
+                let pairs = node_record.decode_pairs();
+
+                // if no eth pair is set, create a new fork_id
+                if pairs.eth.is_none() {
+                    self.ctx.set_fork_id().await;
+                    node_record = self.ctx.local_node_record.lock().await.clone();
+                }
+
                 let msg =
                     Message::ENRResponse(ENRResponseMessage::new(packet.get_hash(), node_record));
                 let mut buf = vec![];
@@ -437,19 +445,16 @@ impl Discv4Server {
                                 "Could not get last block number".into(),
                             ));
                         };
-
                         let Ok(chain_config) = self.ctx.storage.get_chain_config() else {
                             return Err(DiscoveryError::StorageAccessError(
                                 "Could not getchaing config".into(),
                             ));
                         };
-
                         let Ok(Some(genesis_header)) = self.ctx.storage.get_block_header(0) else {
                             return Err(DiscoveryError::StorageAccessError(
                                 "Could not get genesis block number".into(),
                             ));
                         };
-
                         if !fork_id.is_valid(
                             eth,
                             block_number,
@@ -685,6 +690,7 @@ pub(super) mod tests {
         types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
+    use ethrex_common::types::ForkId;
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
@@ -738,12 +744,10 @@ pub(super) mod tests {
             MAX_MESSAGES_TO_BROADCAST,
         );
         let tracker = tokio_util::task::TaskTracker::new();
-
         let local_node_record = Arc::new(Mutex::new(
             NodeRecord::from_node(&local_node, 1, &signer)
                 .expect("Node record could not be created from local node"),
         ));
-
         let ctx = P2PContext {
             local_node,
             local_node_record,
