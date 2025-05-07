@@ -55,12 +55,12 @@ impl L1ToL2TransactionData {
 
     /// Encodes the `L1ToL2TransactionData` into a calldata.
     pub fn to_calldata(&self) -> Result<Vec<u8>, CalldataEncodeError> {
-        let values = vec![
+        let values = vec![Value::Tuple(vec![
             Value::Address(self.to),
             Value::Address(self.recipient),
             Value::Uint(U256::from(self.gas_limit)),
             Value::Bytes(self.calldata.clone()),
-        ];
+        ])];
         calldata::encode_calldata("deposit((address,address,uint256,bytes))", &values)
     }
 }
