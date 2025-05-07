@@ -11,7 +11,7 @@ use tracing::debug;
 
 use super::{DiskLayer, SnapshotLayer};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DiffLayer {
     origin: Arc<DiskLayer>,
     parent: Arc<dyn SnapshotLayer>,

@@ -13,5 +13,6 @@ pub mod error;
 pub use account_update::AccountUpdate;
 pub use snapshot::{DiskLayer, SnapshotLayer};
 pub use store::{
-    hash_address, hash_key, EngineType, Store, MAX_SNAPSHOT_READS, STATE_TRIE_SEGMENTS,
+    hash_address, hash_address_fixed, hash_key, EngineType, Store, MAX_SNAPSHOT_READS,
+    STATE_TRIE_SEGMENTS,
 };

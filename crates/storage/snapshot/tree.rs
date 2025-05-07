@@ -4,7 +4,7 @@ use std::{
 };
 
 use ethrex_common::{types::AccountState, H256, U256};
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::api::StoreEngine;
 
@@ -20,27 +20,22 @@ use super::{DiskLayer, SnapshotLayer};
 /// The goal of a state snapshot is twofold: to allow direct access to account and
 /// storage data to avoid expensive multi-level trie lookups; and to allow sorted,
 /// cheap iteration of the account/storage tries for sync aid.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SnapshotTree {
     db: Arc<dyn StoreEngine>,
     layers: Arc<RwLock<HashMap<H256, Arc<dyn SnapshotLayer>>>>,
 }
 
 impl SnapshotTree {
-    pub fn new(db: Arc<dyn StoreEngine>, root: H256) -> Self {
-        let mut snap = SnapshotTree {
+    pub fn new(db: Arc<dyn StoreEngine>) -> Self {
+        SnapshotTree {
             db,
             layers: Default::default(),
-        };
-
-        // TODO: load previously persisted snapshot
-
-        snap.rebuild(root);
-
-        snap
+        }
     }
 
-    pub fn rebuild(&mut self, root: H256) {
+    /// Rebuilds the tree, marking all current layers stale, creating a new base disk layer from the given root.
+    pub fn rebuild(&self, root: H256) {
         // TODO: mark all layers stale
 
         let mut layers = self.layers.write().unwrap();
@@ -65,6 +60,7 @@ impl SnapshotTree {
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) {
+        debug!("Creating new diff snapshot");
         if block_root == parent_root {
             // TODO: return err here
             error!("Tried to create a snaptshot cycle");
@@ -77,12 +73,19 @@ impl SnapshotTree {
             parent
         } else {
             // TODO: return err here
-            error!("Parent snaptshot not found");
+            error!(
+                "Parent snaptshot not found, parent = {}, block = {}",
+                parent_root, block_root
+            );
             return;
         };
 
         let snap = parent.update(block_root, accounts, storage);
 
         self.layers.write().unwrap().insert(block_root, snap);
+    }
+
+    pub fn len(&self) -> usize {
+        self.layers.read().unwrap().len()
     }
 }

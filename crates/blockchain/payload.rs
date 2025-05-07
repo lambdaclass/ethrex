@@ -11,8 +11,8 @@ use ethrex_common::{
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
         compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
         requests::{compute_requests_hash, EncodedRequests},
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber, ChainConfig,
-        MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
+        AccountState, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, Withdrawal, DEFAULT_OMMERS_HASH,
         DEFAULT_REQUESTS_HASH,
     },
     Address, Bloom, Bytes, H256, U256,
@@ -22,8 +22,8 @@ use ethrex_vm::{
     EvmError, {Evm, EvmEngine},
 };
 
-use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, AccountUpdate, Store};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::{error::StoreError, hash_address_fixed, hash_key, AccountUpdate, Store};
 
 use sha3::{Digest, Keccak256};
 
@@ -39,7 +39,7 @@ use crate::{
     Blockchain,
 };
 
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
@@ -545,7 +545,56 @@ impl Blockchain {
         context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
         context.payload.header.requests_hash = context.requests_hash;
         context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
-        context.account_updates = account_updates;
+        context.account_updates = account_updates.clone();
+
+        // Create snapshot diff.
+        let hash = context.payload.hash();
+        let parent_hash = context.parent_hash();
+        let state_root = context.payload.header.state_root;
+        let store = context.store.clone();
+        tokio::spawn(async move {
+            info!("Creating snapshot");
+
+            if store.snapshots.len() == 0 {
+                // There are no snapshots yet, use this block as root
+                store.snapshots.rebuild(hash);
+                info!(
+                    "Snapshot (disk layer) created for {} with parent {}",
+                    hash, parent_hash
+                );
+            } else {
+                let mut accounts = HashMap::new();
+                let state_trie = store.open_state_trie(state_root);
+
+                let mut storage: HashMap<H256, HashMap<H256, U256>> = HashMap::new();
+
+                for update in account_updates.iter() {
+                    let hashed_address = hash_address_fixed(&update.address);
+
+                    if update.removed {
+                        accounts.insert(hashed_address, None);
+                    } else {
+                        let account_state = match state_trie.get(hashed_address).unwrap() {
+                            Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
+                            None => AccountState::default(),
+                        };
+                        accounts.insert(hashed_address, Some(account_state.clone()));
+
+                        for (storage_key, storage_value) in &update.added_storage {
+                            let slots = storage.entry(hashed_address).or_default();
+                            slots.insert(*storage_key, *storage_value);
+                        }
+                    }
+                }
+
+                store.snapshots.update(hash, parent_hash, accounts, storage);
+                info!(
+                    "Snapshot (diff layer) created for {} with parent {}",
+                    hash, parent_hash
+                );
+            }
+        });
+
         Ok(())
     }
 }

@@ -1,11 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use ethrex_common::{types::AccountState, Bloom, H256, U256};
 
 use super::DiskLayer;
 
 // Snapshot layer methods.
-pub trait SnapshotLayer: Send + Sync {
+pub trait SnapshotLayer: Send + Sync + Debug {
     /// Root hash for this snapshot.
     fn root(&self) -> H256;
 

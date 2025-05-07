@@ -1,5 +1,6 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+use crate::snapshot::SnapshotTree;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
@@ -32,6 +33,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+    pub snapshots: SnapshotTree,
 }
 
 #[allow(dead_code)]
@@ -47,19 +49,20 @@ pub enum EngineType {
 impl Store {
     pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
-        let store = match engine_type {
+
+        let engine: Arc<dyn StoreEngine> = match engine_type {
             #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
-            },
-            EngineType::InMemory => Self {
-                engine: Arc::new(InMemoryStore::new()),
-            },
+            EngineType::Libmdbx => Arc::new(LibmdbxStore::new(path)?),
+            EngineType::InMemory => Arc::new(InMemoryStore::new()),
             #[cfg(feature = "redb")]
-            EngineType::RedB => Self {
-                engine: Arc::new(RedBStore::new()?),
-            },
+            EngineType::RedB => Arc::new(RedBStore::new()?),
         };
+
+        let store = Self {
+            engine: engine.clone(),
+            snapshots: SnapshotTree::new(engine),
+        };
+
         info!("Started store engine");
         Ok(store)
     }
@@ -76,6 +79,11 @@ impl Store {
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
+
+        // TODO: put it behind a task?
+        store
+            .snapshots
+            .rebuild(store.get_latest_canonical_block_hash().await?.unwrap());
         Ok(store)
     }
 

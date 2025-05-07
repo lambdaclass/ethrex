@@ -1,3 +1,4 @@
+use core::fmt;
 use std::{
     collections::HashMap,
     sync::{
@@ -22,6 +23,17 @@ pub struct DiskLayer {
     cache: Cache,
     root: H256,
     stale: Arc<AtomicBool>,
+}
+
+impl fmt::Debug for DiskLayer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiskLayer")
+            .field("db", &self.db)
+            .field("cache", &self.cache)
+            .field("root", &self.root)
+            .field("stale", &self.stale)
+            .finish_non_exhaustive()
+    }
 }
 
 impl DiskLayer {
