@@ -3322,7 +3322,6 @@ dependencies = [
  "clap 4.5.36",
  "derive_more 1.0.0",
  "ethrex-common",
- "ethrex-l2",
  "ethrex-levm",
  "ethrex-prover",
  "ethrex-rlp",
