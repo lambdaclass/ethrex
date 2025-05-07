@@ -23,6 +23,7 @@ use ethrex_common::{
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fmt::Debug,
+    hash::Hash,
     sync::Arc,
 };
 pub type Storage = HashMap<U256, H256>;
@@ -480,14 +481,10 @@ impl<'a> VM<'a> {
     /// Restores the cache state to the state before changes made during a callframe.
     fn restore_cache_state(&mut self, call_frame_backup: CallFrameBackup) -> Result<(), VMError> {
         for (address, account) in call_frame_backup.original_accounts_info {
-            cache::insert_account(&mut self.db.cache, address, account);
-            // if let Some(account) = account_opt {
-            //     // restore the account to the state before the call
-            //     cache::insert_account(&mut self.db.cache, address, account.clone());
-            // } else {
-            //     // remove from cache if it wasn't there before
-            //     cache::remove_account(&mut self.db.cache, &address);
-            // }
+            if let Some(current_account) = cache::get_account_mut(&mut self.db.cache, &address) {
+                current_account.info = account.info;
+                current_account.code = account.code;
+            }
         }
 
         for (address, storage) in call_frame_backup.original_account_storage_slots {
@@ -505,26 +502,34 @@ impl<'a> VM<'a> {
     //         For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
     //         For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
     //         Do the same for every individual storage slot.
-
     pub fn merge_call_frame_backup_with_parent(
         &mut self,
         child_call_frame_backup: &CallFrameBackup,
     ) -> Result<(), VMError> {
+        let parent_backup_accounts = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_accounts_info;
         for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
-            if cache::get_account(&self.db.cache, &address).is_none() {
-                cache::insert_account(&mut self.db.cache, *address, account.clone());
+            if parent_backup_accounts.get(address).is_none() {
+                parent_backup_accounts.insert(*address, account.clone());
             }
         }
 
+        let parent_backup_storage = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_account_storage_slots;
         for (address, storage) in child_call_frame_backup
             .original_account_storage_slots
             .iter()
         {
-            let account = cache::get_account_mut(&mut self.db.cache, &address).unwrap();
-
+            let parent_storage = parent_backup_storage
+                .entry(*address)
+                .or_insert(HashMap::new());
             for (key, value) in storage {
-                if account.storage.get(&key).is_none() {
-                    account.storage.insert(*key, *value);
+                if parent_storage.get(key).is_none() {
+                    parent_storage.insert(*key, *value);
                 }
             }
         }
