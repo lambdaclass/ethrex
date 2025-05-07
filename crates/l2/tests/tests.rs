@@ -3,7 +3,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
 use ethrex_common::types::BlockNumber;
-use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::{
     eth_sender::Overrides, from_hex_string_to_u256, BlockByNumber, EthClient,
@@ -12,6 +11,9 @@ use ethrex_rpc::clients::EthClientError;
 use ethrex_rpc::types::receipt::RpcReceipt;
 use keccak_hash::{keccak, H256};
 use secp256k1::SecretKey;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::{ops::Mul, str::FromStr, time::Duration};
 
 const DEFAULT_ETH_URL: &str = "http://localhost:8545";
@@ -25,6 +27,16 @@ const DEFAULT_L1_RICH_WALLET_ADDRESS: Address = H160([
 const DEFAULT_L1_RICH_WALLET_PRIVATE_KEY: H256 = H256([
     0xbc, 0xdf, 0x20, 0x24, 0x9a, 0xbf, 0x0e, 0xd6, 0xd9, 0x44, 0xc0, 0x28, 0x8f, 0xad, 0x48, 0x9e,
     0x33, 0xf6, 0x6b, 0x39, 0x60, 0xd9, 0xe6, 0x22, 0x9c, 0x1c, 0xd2, 0x14, 0xed, 0x3b, 0xbe, 0x31,
+]);
+// 0xf31d5383c0dfb1c8e3e64654b31d22d08762f6de
+const DEFAULT_BRIDGE_ADDRESS: Address = H160([
+    0xf3, 0x1d, 0x53, 0x83, 0xc0, 0xdf, 0xb1, 0xc8, 0xe3, 0xe6, 0x46, 0x54, 0xb3, 0x1d, 0x22, 0xd0,
+    0x87, 0x62, 0xf6, 0xde,
+]);
+// 0x0007a881CD95B1484fca47615B64803dad620C8d
+const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
+    0x00, 0x07, 0xa8, 0x81, 0xcd, 0x95, 0xb1, 0x48, 0x4f, 0xca, 0x47, 0x61, 0x5b, 0x64, 0x80, 0x3d,
+    0xad, 0x62, 0x0c, 0x8d,
 ]);
 
 const L2_GAS_COST_MAX_DELTA: U256 = U256([100_000_000_000_000, 0, 0, 0]);
@@ -47,7 +59,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let eth_client = eth_client();
     let proposer_client = proposer_client();
 
-    read_env_file_by_config(ConfigMode::Sequencer)?;
+    read_env_file_by_config();
 
     // 1. Check balances on L1 and L2
 
@@ -280,8 +292,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         eth_client
             .call(
                 Address::from_str(
-                    &std::env::var("COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
-                        .expect("ON_CHAIN_PROPOSER env var not set"),
+                    &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
+                        .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
                 )
                 .unwrap(),
                 calldata::encode_calldata("lastVerifiedBatch()", &[])?.into(),
@@ -404,7 +416,7 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
     let eth_client = eth_client();
     let proposer_client = proposer_client();
 
-    read_env_file_by_config(ConfigMode::Sequencer)?;
+    read_env_file_by_config();
 
     // Check balances on L1 and L2
     println!("Checking initial balances on L1 and L2");
@@ -603,7 +615,7 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
     let eth_client = eth_client();
     let proposer_client = proposer_client();
 
-    read_env_file_by_config(ConfigMode::Sequencer)?;
+    read_env_file_by_config();
 
     // Check balances on L1 and L2
     println!("Checking initial balances on L1 and L2");
@@ -811,38 +823,35 @@ async fn get_fees_details_l2(tx_receipt: RpcReceipt, l2_client: &EthClient) -> F
 }
 
 fn eth_client() -> EthClient {
-    EthClient::new(&std::env::var("ETH_URL").unwrap_or(DEFAULT_ETH_URL.to_owned()))
+    EthClient::new(DEFAULT_ETH_URL)
 }
 
 fn proposer_client() -> EthClient {
-    EthClient::new(&std::env::var("PROPOSER_URL").unwrap_or(DEFAULT_PROPOSER_URL.to_owned()))
+    EthClient::new(DEFAULT_PROPOSER_URL)
 }
 
 fn l1_rich_wallet_address() -> Address {
-    std::env::var("L1_RICH_WALLET_ADDRESS")
-        .unwrap_or(format!("{DEFAULT_L1_RICH_WALLET_ADDRESS:#x}"))
-        .parse()
-        .unwrap()
+    DEFAULT_L1_RICH_WALLET_ADDRESS
 }
 
 fn common_bridge_address() -> Address {
-    std::env::var("L1_WATCHER_BRIDGE_ADDRESS")
-        .expect("L1_WATCHER_BRIDGE_ADDRESS env var not set")
+    std::env::var("ETHREX_WATCHER_BRIDGE_ADDRESS")
+        .expect("ETHREX_WATCHER_BRIDGE_ADDRESS env var not set")
         .parse()
-        .unwrap()
+        .unwrap_or_else(|_| {
+            println!(
+                "ETHREX_WATCHER_BRIDGE_ADDRESS env var not set, using default: {DEFAULT_BRIDGE_ADDRESS}"
+            );
+            DEFAULT_BRIDGE_ADDRESS
+        })
 }
 
 fn fees_vault() -> Address {
-    std::env::var("PROPOSER_COINBASE_ADDRESS")
-        .expect("PROPOSER_COINBASE_ADDRESS env var not set")
-        .parse()
-        .unwrap()
+    DEFAULT_PROPOSER_COINBASE_ADDRESS
 }
 
 fn l1_rich_wallet_private_key() -> SecretKey {
-    std::env::var("L1_RICH_WALLET_PRIVATE_KEY")
-        .map(|s| SecretKey::from_slice(H256::from_str(&s).unwrap().as_bytes()).unwrap())
-        .unwrap_or(SecretKey::from_slice(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY.as_bytes()).unwrap())
+    SecretKey::from_slice(DEFAULT_L1_RICH_WALLET_PRIVATE_KEY.as_bytes()).unwrap()
 }
 
 fn random_account() -> (Address, SecretKey) {
@@ -875,4 +884,26 @@ async fn wait_for_l2_deposit_receipt(
     let _ = ethrex_l2_sdk::wait_for_transaction_receipt(l2_deposit_tx_hash, proposer_client, 1000)
         .await?;
     Ok(())
+}
+
+pub fn read_env_file_by_config() {
+    let env_file_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".env");
+    let reader = BufReader::new(File::open(env_file_path).expect("Failed to open .env file"));
+
+    for line in reader.lines() {
+        let line = line.expect("Failed to read line");
+        if line.starts_with("#") {
+            // Skip comments
+            continue;
+        };
+        match line.split_once('=') {
+            Some((key, value)) => {
+                if std::env::vars().any(|(k, _)| k == key) {
+                    continue;
+                }
+                std::env::set_var(key, value)
+            }
+            None => continue,
+        };
+    }
 }

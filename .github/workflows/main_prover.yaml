@@ -67,7 +67,6 @@ jobs:
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          cp configs/sequencer_config_example.toml configs/sequencer_config.toml
 
           ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
           ETHREX_PROPOSER_BLOCK_TIME_MS=12000 \
