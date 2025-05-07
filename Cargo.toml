@@ -26,6 +26,9 @@ members = [
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison",
 ]
+exclude = [
+  "crates/l2/tee/quote-pusher/automata-dcap-qpl/*"
+]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]

@@ -1,7 +1,7 @@
 automata-dcap-qpl:
 	git clone https://github.com/automata-network/automata-dcap-qpl
 
-build:
+build: automata-dcap-qpl
 	cargo build --release
 	cd automata-dcap-qpl/automata-dcap-qpl-tool; cargo build --release
 

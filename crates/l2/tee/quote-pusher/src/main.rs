@@ -61,7 +61,7 @@ async fn setup_key(
 
     let chain_id = eth_client.get_chain_id().await.map_err(PusherError::EthClientError)?;
 
-    Command::new("./").args([
+    Command::new("./automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool").args([
         "--chain_id",
         &chain_id.to_string(),
         "--rpc_url",
