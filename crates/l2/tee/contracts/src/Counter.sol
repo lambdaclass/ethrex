@@ -24,6 +24,11 @@ contract Counter {
         quoteVerifier = IAttestation(_dcap);
     }
 
+    function reset() public {
+        current = 100;
+        authorizedSignature = address(0);
+    }
+
     function update(uint256 _to, bytes memory signature) public {
         uint64 to = uint64(_to);
         require(authorizedSignature != address(0), "authorized signer not set");
