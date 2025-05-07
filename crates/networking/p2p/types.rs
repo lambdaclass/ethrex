@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethrex_common::types::{Fork, ForkId};
+use ethrex_common::types::ForkId;
 use ethrex_common::{H264, H512};
 use ethrex_rlp::{
     decode::RLPDecode,

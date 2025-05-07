@@ -299,6 +299,10 @@ impl StoreEngine for Store {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, StoreError> {
+        // match self.inner().chain_data.chain_config {
+        //     Some(cc) => Ok(cc),
+        //     None => Err(StoreError::DecodeError),
+        // }
         Ok(self.inner().chain_data.chain_config.unwrap())
     }
 

@@ -81,6 +81,13 @@ impl P2PContext {
             client_version,
         }
     }
+
+    pub async fn set_fork_id(&self) {
+        match self.storage.get_fork_id().await {
+            Ok(fork_id) => self.local_node_record.lock().await.set_fork_id(fork_id),
+            Err(_) => {}
+        }
+    }
 }
 
 pub async fn start_network(context: P2PContext, bootnodes: Vec<Node>) -> Result<(), NetworkError> {

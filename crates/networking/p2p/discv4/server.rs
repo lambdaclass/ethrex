@@ -14,7 +14,6 @@ use crate::{
     rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
     types::{Endpoint, Node, NodeRecord},
 };
-use ethrex_common::types::ForkId;
 use ethrex_common::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
 use std::{
@@ -82,12 +81,7 @@ impl Discv4Server {
 
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
-            // the fork id is passed as a param in order to avoid accesing to the db when handling msgs
-            let fork_id = match self_clone.ctx.storage.get_fork_id().await {
-                Ok(fi) => Some(fi),
-                Err(_) => None,
-            };
-            async move { self_clone.receive(fork_id).await }
+            async move { self_clone.receive().await }
         });
         self.ctx.tracker.spawn({
             let self_clone = self.clone();
@@ -107,7 +101,7 @@ impl Discv4Server {
         }
     }
 
-    pub async fn receive(&self, fork_id: Option<ForkId>) {
+    pub async fn receive(&self) {
         let mut buf = vec![0; MAX_DISC_PACKET_SIZE];
 
         loop {
@@ -126,7 +120,7 @@ impl Discv4Server {
                     let msg = packet.get_message();
                     let msg_name = msg.to_string();
                     debug!("Message: {:?} from {}", msg, packet.get_node_id());
-                    if let Err(e) = self.handle_message(packet, from, fork_id.clone()).await {
+                    if let Err(e) = self.handle_message(packet, from).await {
                         debug!("Error while processing {} message: {:?}", msg_name, e);
                     };
                 }
@@ -134,12 +128,7 @@ impl Discv4Server {
         }
     }
 
-    async fn handle_message(
-        &self,
-        packet: Packet,
-        from: SocketAddr,
-        fork_id: Option<ForkId>,
-    ) -> Result<(), DiscoveryError> {
+    async fn handle_message(&self, packet: Packet, from: SocketAddr) -> Result<(), DiscoveryError> {
         match packet.get_message() {
             Message::Ping(msg) => {
                 if is_msg_expired(msg.expiration) {
@@ -343,15 +332,7 @@ impl Discv4Server {
                 if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
-                let Ok(node_record) = NodeRecord::from_node(
-                    &self.ctx.local_node,
-                    self.ctx.local_node_record.lock().await.seq,
-                    &self.ctx.signer,
-                ) else {
-                    return Err(DiscoveryError::InvalidMessage(
-                        "could not build local node record".into(),
-                    ));
-                };
+                let node_record = self.ctx.local_node_record.lock().await.clone();
                 let msg =
                     Message::ENRResponse(ENRResponseMessage::new(packet.get_hash(), node_record));
                 let mut buf = vec![];
@@ -393,59 +374,12 @@ impl Discv4Server {
                         "msg node record is lower than the one we have".into(),
                     ));
                 }
-
                 let record = msg.node_record.decode_pairs();
                 let Some(id) = record.id else {
                     return Err(DiscoveryError::InvalidMessage(
                         "msg node record does not have required `id` field".into(),
                     ));
                 };
-
-                //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
-                if let Some(eth) = record.eth {
-                    let Ok(fork_id) = self.ctx.storage.get_fork_id().await else {
-                        return Err(DiscoveryError::StorageAccessError(
-                            "Could not get fork id from storage".into(),
-                        ));
-                    };
-
-                    let Ok(block_number) = self.ctx.storage.get_latest_block_number().await else {
-                        return Err(DiscoveryError::StorageAccessError(
-                            "Could not get last block number".into(),
-                        ));
-                    };
-                    let Ok(Some(block_header)) = self.ctx.storage.get_block_header(block_number)
-                    else {
-                        return Err(DiscoveryError::StorageAccessError(
-                            "Could not get last block number".into(),
-                        ));
-                    };
-
-                    let Ok(chain_config) = self.ctx.storage.get_chain_config() else {
-                        return Err(DiscoveryError::StorageAccessError(
-                            "Could not getchaing config".into(),
-                        ));
-                    };
-
-                    let Ok(Some(genesis_header)) = self.ctx.storage.get_block_header(0) else {
-                        return Err(DiscoveryError::StorageAccessError(
-                            "Could not get genesis block number".into(),
-                        ));
-                    };
-
-                    if !fork_id.is_valid(
-                        eth,
-                        block_number,
-                        block_header.timestamp,
-                        chain_config,
-                        genesis_header,
-                    ) {
-                        return Err(DiscoveryError::InvalidMessage(
-                            "Could not validate fork id from new node".into(),
-                        ));
-                    }
-                    debug!("ENR eth pair validated");
-                }
 
                 // https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
                 let signature_valid = match id.as_str() {
@@ -477,6 +411,52 @@ impl Discv4Server {
                     return Err(DiscoveryError::InvalidMessage(
                         "Signature verification invalid".into(),
                     ));
+                }
+
+                //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
+                if let Some(eth) = record.eth {
+                    let pairs = self.ctx.local_node_record.lock().await.decode_pairs();
+
+                    if let Some(fork_id) = pairs.eth {
+                        let Ok(block_number) = self.ctx.storage.get_latest_block_number().await
+                        else {
+                            return Err(DiscoveryError::StorageAccessError(
+                                "Could not get last block number".into(),
+                            ));
+                        };
+                        let Ok(Some(block_header)) =
+                            self.ctx.storage.get_block_header(block_number)
+                        else {
+                            return Err(DiscoveryError::StorageAccessError(
+                                "Could not get last block number".into(),
+                            ));
+                        };
+
+                        let Ok(chain_config) = self.ctx.storage.get_chain_config() else {
+                            return Err(DiscoveryError::StorageAccessError(
+                                "Could not getchaing config".into(),
+                            ));
+                        };
+
+                        let Ok(Some(genesis_header)) = self.ctx.storage.get_block_header(0) else {
+                            return Err(DiscoveryError::StorageAccessError(
+                                "Could not get genesis block number".into(),
+                            ));
+                        };
+
+                        if !fork_id.is_valid(
+                            eth,
+                            block_number,
+                            block_header.timestamp,
+                            chain_config,
+                            genesis_header,
+                        ) {
+                            return Err(DiscoveryError::InvalidMessage(
+                                "Could not validate fork id from new node".into(),
+                            ));
+                        }
+                        debug!("ENR eth pair validated");
+                    }
                 }
 
                 if let Some(ip) = record.ip {
@@ -768,6 +748,7 @@ pub(super) mod tests {
             broadcast,
             client_version: "ethrex/test".to_string(),
         };
+        ctx.set_fork_id().await;
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;
 
@@ -775,7 +756,7 @@ pub(super) mod tests {
             tracker.spawn({
                 let discv4 = discv4.clone();
                 async move {
-                    discv4.receive(None).await;
+                    discv4.receive().await;
                 }
             });
             // we need to spawn the p2p service, as the nodes will try to connect each other via tcp once bonded
@@ -920,7 +901,7 @@ pub(super) mod tests {
 
         // update the enr_seq of server_b so that server_a notices it is outdated
         // and sends a request to update it
-        server_b.ctx.local_node_record.lock().await.seq = 2;
+        server_b.ctx.local_node_record.lock().await.seq += 1;
 
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated
