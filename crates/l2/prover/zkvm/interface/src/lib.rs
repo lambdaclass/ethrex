@@ -53,6 +53,9 @@ pub mod io {
         pub initial_state_hash: H256,
         /// final state trie root hash
         pub final_state_hash: H256,
+        #[cfg(feature = "l2")]
+        /// merkle root of all withdrawals in a batch
+        pub withdrawals_merkle_root: H256,
     }
 
     impl ProgramOutput {
@@ -60,6 +63,8 @@ pub mod io {
             [
                 self.initial_state_hash.to_fixed_bytes(),
                 self.final_state_hash.to_fixed_bytes(),
+                #[cfg(feature = "l2")]
+                self.withdrawals_merkle_root.to_fixed_bytes(),
             ]
             .concat()
         }

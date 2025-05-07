@@ -114,5 +114,6 @@ fn main() {
     env::commit(&ProgramOutput {
         initial_state_hash,
         final_state_hash,
+        withdrawals_merkle_root: batch_withdrawals_merkle_root,
     });
 }

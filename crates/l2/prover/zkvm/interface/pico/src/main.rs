@@ -107,5 +107,7 @@ pub fn main() {
     commit(&ProgramOutput {
         initial_state_hash,
         final_state_hash,
+        #[cfg(feature = "l2")]
+        withdrawals_merkle_root: batch_withdrawals_merkle_root,
     });
 }
