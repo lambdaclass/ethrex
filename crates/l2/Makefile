@@ -213,7 +213,7 @@ integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
 	cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover
+	killall ethrex_prover -s SIGINT
 
 integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
@@ -230,7 +230,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
 	cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover
+	killall ethrex_prover -s SIGINT
 
 # State reconstruction tests
 state-diff-test:
