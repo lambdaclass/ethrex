@@ -1,7 +1,6 @@
 use std::{fs::File, io::Write};
 
 use clap::Parser;
-use ethrex_l2::utils::prover::proving_systems::ProverType;
 use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
@@ -85,7 +84,7 @@ async fn main() {
     if prove {
         println!("proving");
         ethrex_prover_lib::prove(ProgramInput {
-            block,
+            blocks: vec![block],
             parent_block_header,
             db,
         })
@@ -93,7 +92,7 @@ async fn main() {
     } else {
         println!("executing");
         execute(ProgramInput {
-            block,
+            blocks: vec![block],
             parent_block_header,
             db,
         })

@@ -60,7 +60,7 @@ ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
 
-ethrex_L2_DEV_LIBMDBX=dev_ethrex_l2
+ethrex_L2_DEV_LIBMDBX?=dev_ethrex_l2
 ethrex_L1_DEV_LIBMDBX=dev_ethrex_l1
 L1_PORT=8545
 L2_PORT=1729
@@ -137,7 +137,7 @@ init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
-		FEATURES="l2,metrics"; \
+		FEATURES="l2,rollup_storage_libmdbx,metrics"; \
 		echo "Running ethrex L2 vanilla"; \
 	else \
 		FEATURES="metrics,based"; \
@@ -207,7 +207,7 @@ integration-test: rm-db-l2 rm-db-l1
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover
+	killall ethrex_prover -s SIGINT
 
 integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
@@ -216,7 +216,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover
+	killall ethrex_prover -s SIGINT
 
 # State reconstruction tests
 state-diff-test:
