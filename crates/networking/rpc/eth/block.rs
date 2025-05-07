@@ -69,14 +69,20 @@ impl RpcHandler for GetBlockByNumberRequest {
         info!("Requested block with number: {}", self.block);
         let block_number = match self.block.resolve_block_number(storage).await? {
             Some(block_number) => block_number,
-            _ => {info!("Block not found");return Ok(Value::Null)},
+            _ => {
+                info!("Block not found");
+                return Ok(Value::Null);
+            }
         };
         let header = storage.get_block_header(block_number)?;
         let body = storage.get_block_body(block_number).await?;
         let (header, body) = match (header, body) {
             (Some(header), Some(body)) => (header, body),
             // Block not found
-            _ => {info!("Block not found");return Ok(Value::Null)},
+            _ => {
+                info!("Block not found");
+                return Ok(Value::Null);
+            }
         };
         let hash = header.compute_block_hash();
         let block = RpcBlock::build(header, body, hash, self.hydrated);
