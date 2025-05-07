@@ -56,7 +56,7 @@ pub async fn start_l1_committer(
     store: Store,
     rollup_store: StoreRollup,
     execution_cache: Arc<ExecutionCache>,
-    cfg: Arc<SequencerConfig>,
+    cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
     let mut committer = Committer::new_from_config(
         &cfg.l1_committer,

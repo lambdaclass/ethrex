@@ -34,8 +34,6 @@ pub async fn start_l2(
 
     let execution_cache = Arc::new(ExecutionCache::default());
 
-    let cfg = Arc::new(cfg);
-
     let mut task_set = JoinSet::new();
     task_set.spawn(l1_watcher::start_l1_watcher(
         store.clone(),
@@ -61,7 +59,7 @@ pub async fn start_l2(
         cfg.clone(),
     ));
     #[cfg(feature = "metrics")]
-    task_set.spawn(metrics::start_metrics_gatherer(cfg.clone()));
+    task_set.spawn(metrics::start_metrics_gatherer(cfg));
 
     while let Some(res) = task_set.join_next().await {
         match res {

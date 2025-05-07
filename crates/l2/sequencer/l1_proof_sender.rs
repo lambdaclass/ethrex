@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+use std::{collections::HashMap, str::FromStr};
 
 use ethrex_common::{Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
@@ -28,7 +28,7 @@ const DEV_MODE_ADDRESS: H160 = H160([
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
-pub async fn start_l1_proof_sender(cfg: Arc<SequencerConfig>) -> Result<(), SequencerError> {
+pub async fn start_l1_proof_sender(cfg: SequencerConfig) -> Result<(), SequencerError> {
     let proof_sender =
         L1ProofSender::new(&cfg.proof_coordinator, &cfg.l1_committer, &cfg.eth).await?;
     proof_sender.run().await;

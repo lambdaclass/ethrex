@@ -33,7 +33,7 @@ pub async fn start_block_producer(
     store: Store,
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
-    cfg: Arc<SequencerConfig>,
+    cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
     let proposer = BlockProducer::new_from_config(&cfg.block_producer);
     proposer

@@ -20,7 +20,7 @@ use super::utils::sleep_random;
 pub async fn start_l1_watcher(
     store: Store,
     blockchain: Arc<Blockchain>,
-    cfg: Arc<SequencerConfig>,
+    cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
     let mut l1_watcher = L1Watcher::new_from_config(&cfg.l1_watcher, &cfg.eth).await?;
     l1_watcher.run(&store, &blockchain).await;

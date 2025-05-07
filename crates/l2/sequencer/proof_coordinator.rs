@@ -13,7 +13,6 @@ use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError, ExecutionDB};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::{fmt::Debug, net::IpAddr};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -110,7 +109,7 @@ impl ProofData {
 pub async fn start_proof_coordinator(
     store: Store,
     rollup_store: StoreRollup,
-    cfg: Arc<SequencerConfig>,
+    cfg: SequencerConfig,
 ) -> Result<(), SequencerError> {
     let proof_coordinator = ProofCoordinator::new_from_config(
         &cfg.proof_coordinator,
