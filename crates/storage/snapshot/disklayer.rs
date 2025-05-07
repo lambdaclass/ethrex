@@ -24,6 +24,20 @@ pub struct DiskLayer {
     stale: Arc<AtomicBool>,
 }
 
+impl DiskLayer {
+    pub fn new(store: Store, root: H256) -> Self {
+        let trie = Arc::new(store.open_state_trie(root));
+
+        Self {
+            state_trie: trie,
+            store,
+            root,
+            cache: Cache::new(10000, 10000),
+            stale: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
 impl SnapshotLayer for DiskLayer {
     fn root(&self) -> H256 {
         self.root
@@ -87,7 +101,11 @@ impl SnapshotLayer for DiskLayer {
     }
 
     fn stale(&self) -> bool {
-        self.stale.load(Ordering::Acquire)
+        self.stale.load(Ordering::SeqCst)
+    }
+
+    fn mark_stale(&self) {
+        self.stale.store(true, Ordering::SeqCst);
     }
 
     fn origin(&self) -> Arc<DiskLayer> {

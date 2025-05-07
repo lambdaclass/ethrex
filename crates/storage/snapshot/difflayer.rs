@@ -109,6 +109,10 @@ impl SnapshotLayer for DiffLayer {
         self.stale.load(Ordering::Acquire)
     }
 
+    fn mark_stale(&self) {
+        self.stale.store(true, Ordering::SeqCst);
+    }
+
     fn parent(&self) -> Option<Arc<dyn SnapshotLayer>> {
         Some(self.parent.clone())
     }

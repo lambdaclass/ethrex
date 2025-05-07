@@ -21,6 +21,8 @@ pub trait SnapshotLayer: Send + Sync {
 
     fn stale(&self) -> bool;
 
+    fn mark_stale(&self);
+
     fn parent(&self) -> Option<Arc<dyn SnapshotLayer>>;
 
     /// Creates a new layer on top of the existing diff tree.
