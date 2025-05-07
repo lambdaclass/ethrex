@@ -126,9 +126,9 @@ async fn do_transition(
         .await
         .map_err(PusherError::RequestError)?;
     let json = resp
-        .json::<HashMap<String, String>>()
+        .json::<HashMap<String, serde_json::Value>>()
         .await
-        .map_err(|_| PusherError::ParseError("Couldn't parse getkey response".to_string()))?;
+        .map_err(|_| PusherError::ParseError("Couldn't parse transition response".to_string()))?;
 
     let new_state = json
         .get("address")
@@ -137,10 +137,12 @@ async fn do_transition(
         .get("quote")
         .ok_or(PusherError::ResponseMissingKey("quote".to_string()))?;
 
-    let new_state = u64::from_str(&new_state)
-        .map_err(|_| PusherError::ResponseInvalidValue("Invalid new_state".to_string()))?;
-    let signature = hex::decode(&signature)
-        .map_err(|_| PusherError::ResponseInvalidValue("Invalid signature".to_string()))?;
+    let new_state = new_state.as_u64()
+        .ok_or(PusherError::ResponseInvalidValue("Invalid new_state".to_string()))?;
+    let signature = signature.as_str()
+        .and_then(|sig| sig.strip_prefix("0x"))
+        .and_then(|sig| hex::decode(sig).ok())
+        .ok_or(PusherError::ResponseInvalidValue("signature quote".to_string()))?;
 
     let my_address = get_address_from_secret_key(&private_key)
         .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
