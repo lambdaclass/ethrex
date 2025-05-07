@@ -343,12 +343,9 @@ impl Discv4Server {
                 if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
-                let Ok(node_record) = NodeRecord::from_node(
-                    self.ctx.local_node,
-                    self.ctx.enr_seq,
-                    &self.ctx.signer,
-                    fork_id,
-                ) else {
+                let Ok(node_record) =
+                    NodeRecord::from_node(self.ctx.local_node, self.ctx.enr_seq, &self.ctx.signer)
+                else {
                     return Err(DiscoveryError::InvalidMessage(
                         "could not build local node record".into(),
                     ));
@@ -889,7 +886,6 @@ pub(super) mod tests {
             server_b.ctx.local_node,
             current_unix_time(),
             &server_b.ctx.signer,
-            None,
         )
         .expect("Node record is created from node");
 
