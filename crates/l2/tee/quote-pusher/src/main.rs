@@ -8,6 +8,8 @@ use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_rpc::clients::eth::EthClient;
 use secp256k1::SecretKey;
+use std::process::Command;
+
 
 #[derive(Debug, thiserror::Error)]
 pub enum PusherError {
@@ -25,12 +27,16 @@ pub enum PusherError {
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Deployer EthClient error: {0}")]
     EthClientError(#[from] EthClientError),
+    #[error("Command execution error: {0}")]
+    CommandError(std::io::Error),
 }
 
 const UPDATE_KEY_SIGNATURE: &str = "updateKey(address,bytes)";
 
 async fn setup_key(
     eth_client: &EthClient,
+    rpc_url: &str,
+    private_key_str: &str,
     web_client: &reqwest::Client,
     private_key: &SecretKey,
     prover_url: &str,
@@ -52,6 +58,19 @@ async fn setup_key(
     let quote = json
         .get("quote")
         .ok_or(PusherError::ResponseMissingKey("quote".to_string()))?;
+
+    let chain_id = eth_client.get_chain_id().await.map_err(PusherError::EthClientError)?;
+
+    Command::new("./").args([
+        "--chain_id",
+        &chain_id.to_string(),
+        "--rpc_url",
+        rpc_url,
+        "-p",
+        private_key_str,
+        "--quote_hex",
+        &quote
+    ]).output().map_err(PusherError::CommandError)?;
 
     let sig_addr = H160::from_str(&sig_addr)
         .map_err(|_| PusherError::ResponseInvalidValue("Invalid address".to_string()))?;
@@ -164,12 +183,12 @@ fn read_env_var(name: &str) -> Result<String, PusherError> {
 #[tokio::main]
 async fn main() -> Result<(), PusherError> {
     let rpc_url = read_env_var("RPC_URL")?;
-    let private_key = read_env_var("PRIVATE_KEY")?;
+    let private_key_str = read_env_var("PRIVATE_KEY")?;
     let contract_addr = read_env_var("CONTRACT_ADDRESS")?;
     let prover_url = env::var("PROVER_URL").unwrap_or("http://localhost:3001".to_string());
 
     let private_key = SecretKey::from_slice(
-        H256::from_str(&private_key)
+        H256::from_str(&private_key_str)
             .map_err(|_| PusherError::ParseError("Invalid PRIVATE_KEY".to_string()))?
             .as_bytes(),
     )
@@ -183,6 +202,8 @@ async fn main() -> Result<(), PusherError> {
     let mut state = 100;
     setup_key(
         &eth_client,
+        &rpc_url,
+        &private_key_str,
         &web_client,
         &private_key,
         &prover_url,
