@@ -1,10 +1,10 @@
 use crate::{
     cli::{self as ethrex_cli, Options},
     initializers::{
-        get_local_p2p_node, get_network, get_signer, init_blockchain, init_metrics, init_network,
-        init_rollup_store, init_rpc_api, init_store,
+        get_local_node_record, get_local_p2p_node, get_network, get_signer, init_blockchain,
+        init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
-    utils::{self, set_datadir, store_known_peers},
+    utils::{self, set_datadir, store_config_file, ConfigFile},
     DEFAULT_L2_DATADIR,
 };
 use clap::{Parser, Subcommand};
@@ -134,6 +134,8 @@ impl Command {
 
                 let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
+                let local_node_record = get_local_node_record(&data_dir, &local_p2p_node, &signer);
+
                 let peer_table = peer_table(signer.clone());
 
                 // TODO: Check every module starts properly.
@@ -144,9 +146,9 @@ impl Command {
                 init_rpc_api(
                     &opts.node_opts,
                     &opts,
-                    &signer,
                     peer_table.clone(),
                     local_p2p_node,
+                    local_node_record.clone(),
                     store.clone(),
                     blockchain.clone(),
                     cancel_token.clone(),
@@ -166,6 +168,7 @@ impl Command {
                         &network,
                         &data_dir,
                         local_p2p_node,
+                        local_node_record.clone(),
                         signer,
                         peer_table.clone(),
                         store.clone(),
@@ -185,10 +188,11 @@ impl Command {
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
                         info!("Server shut down started...");
-                        let peers_file = PathBuf::from(data_dir + "/peers.json");
-                        info!("Storing known peers at {:?}...", peers_file);
+                        let config_path = PathBuf::from(data_dir + "/config.json");
+                        info!("Storing config at {:?}...", config_path);
                         cancel_token.cancel();
-                        store_known_peers(peer_table, peers_file).await;
+                        let config = ConfigFile::new(peer_table, local_node_record.lock().await.seq).await;
+                        store_config_file(config, config_path).await;
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         info!("Server shutting down!");
                     }

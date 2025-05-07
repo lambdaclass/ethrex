@@ -64,7 +64,7 @@ mod tests {
             blockchain,
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
+            local_node_record: Arc::new(tokio::sync::Mutex::new(example_local_node_record())),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
             client_version: "ethrex/test".to_string(),
