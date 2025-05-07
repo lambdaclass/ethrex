@@ -1,13 +1,13 @@
-use std::env;
 use std::collections::HashMap;
+use std::env;
 use std::str::FromStr;
 
-use ethrex_rpc::clients::eth::EthClient;
-use ethrex_rpc::clients::eth::errors::{EthClientError, CalldataEncodeError};
+use ethereum_types::{Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
+use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
+use ethrex_rpc::clients::eth::EthClient;
 use secp256k1::SecretKey;
-use ethereum_types::{Address, H160, H256, U256};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PusherError {
@@ -30,23 +30,27 @@ pub enum PusherError {
 const UPDATE_KEY_SIGNATURE: &str = "updateKey(address,bytes)";
 
 async fn setup_key(
-        eth_client: &EthClient,
-        web_client: &reqwest::Client,
-        private_key: &SecretKey,
-        prover_url: &str,
-        contract_addr: Address
-    ) -> Result<(), PusherError> {
+    eth_client: &EthClient,
+    web_client: &reqwest::Client,
+    private_key: &SecretKey,
+    prover_url: &str,
+    contract_addr: Address,
+) -> Result<(), PusherError> {
     let resp = web_client
         .get(format!("{prover_url}/getkey"))
         .send()
         .await
         .map_err(PusherError::RequestError)?;
-    let json = resp.json::<HashMap<String, String>>()
-        .await.map_err(|_| PusherError::ParseError("Couldn't parse getkey response".to_string()))?;
+    let json = resp
+        .json::<HashMap<String, String>>()
+        .await
+        .map_err(|_| PusherError::ParseError("Couldn't parse getkey response".to_string()))?;
 
-    let sig_addr = json.get("address")
+    let sig_addr = json
+        .get("address")
         .ok_or(PusherError::ResponseMissingKey("address".to_string()))?;
-    let quote = json.get("quote")
+    let quote = json
+        .get("quote")
         .ok_or(PusherError::ResponseMissingKey("quote".to_string()))?;
 
     let sig_addr = H160::from_str(&sig_addr)
@@ -57,25 +61,30 @@ async fn setup_key(
     let my_address = get_address_from_secret_key(&private_key)
         .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
 
-    let calldata = encode_calldata(UPDATE_KEY_SIGNATURE, &[
-        Value::Address(sig_addr),
-        Value::Bytes(quote.into())
-    ])
-        .map_err(PusherError::CalldataEncodeError)?;
+    let calldata = encode_calldata(
+        UPDATE_KEY_SIGNATURE,
+        &[Value::Address(sig_addr), Value::Bytes(quote.into())],
+    )
+    .map_err(PusherError::CalldataEncodeError)?;
 
-    let tx = eth_client.build_eip1559_transaction(
-        contract_addr,
-        my_address,
-        calldata.into(),
-        Default::default()
-    ).await.map_err(PusherError::EthClientError)?;
+    let tx = eth_client
+        .build_eip1559_transaction(
+            contract_addr,
+            my_address,
+            calldata.into(),
+            Default::default(),
+        )
+        .await
+        .map_err(PusherError::EthClientError)?;
     let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(tx);
     eth_client
         .set_gas_for_wrapped_tx(&mut wrapped_tx, my_address)
-        .await.map_err(PusherError::EthClientError)?;
+        .await
+        .map_err(PusherError::EthClientError)?;
     let initialize_tx_hash = eth_client
         .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &private_key)
-        .await.map_err(PusherError::EthClientError)?;
+        .await
+        .map_err(PusherError::EthClientError)?;
     println!("Signing key set. TX: {initialize_tx_hash}");
     Ok(())
 }
@@ -83,13 +92,13 @@ async fn setup_key(
 const UPDATE_SIGNATURE: &str = "update(address,bytes)";
 
 async fn do_transition(
-        eth_client: &EthClient,
-        web_client: &reqwest::Client,
-        private_key: &SecretKey,
-        prover_url: &str,
-        contract_addr: Address,
-        state: u64
-    ) -> Result<u64, PusherError> {
+    eth_client: &EthClient,
+    web_client: &reqwest::Client,
+    private_key: &SecretKey,
+    prover_url: &str,
+    contract_addr: Address,
+    state: u64,
+) -> Result<u64, PusherError> {
     let map: HashMap<String, String> = HashMap::new();
     let resp = web_client
         .get(format!("{prover_url}/transition"))
@@ -97,12 +106,16 @@ async fn do_transition(
         .send()
         .await
         .map_err(PusherError::RequestError)?;
-    let json = resp.json::<HashMap<String, String>>()
-        .await.map_err(|_| PusherError::ParseError("Couldn't parse getkey response".to_string()))?;
+    let json = resp
+        .json::<HashMap<String, String>>()
+        .await
+        .map_err(|_| PusherError::ParseError("Couldn't parse getkey response".to_string()))?;
 
-    let new_state = json.get("address")
+    let new_state = json
+        .get("address")
         .ok_or(PusherError::ResponseMissingKey("address".to_string()))?;
-    let signature = json.get("quote")
+    let signature = json
+        .get("quote")
         .ok_or(PusherError::ResponseMissingKey("quote".to_string()))?;
 
     let new_state = u64::from_str(&new_state)
@@ -113,25 +126,33 @@ async fn do_transition(
     let my_address = get_address_from_secret_key(&private_key)
         .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
 
-    let calldata = encode_calldata(UPDATE_SIGNATURE, &[
-        Value::Uint(U256([0, 0, 0, new_state])),
-        Value::Bytes(signature.into())
-    ])
-        .map_err(PusherError::CalldataEncodeError)?;
+    let calldata = encode_calldata(
+        UPDATE_SIGNATURE,
+        &[
+            Value::Uint(U256([0, 0, 0, new_state])),
+            Value::Bytes(signature.into()),
+        ],
+    )
+    .map_err(PusherError::CalldataEncodeError)?;
 
-    let tx = eth_client.build_eip1559_transaction(
-        contract_addr,
-        my_address,
-        calldata.into(),
-        Default::default()
-    ).await.map_err(PusherError::EthClientError)?;
+    let tx = eth_client
+        .build_eip1559_transaction(
+            contract_addr,
+            my_address,
+            calldata.into(),
+            Default::default(),
+        )
+        .await
+        .map_err(PusherError::EthClientError)?;
     let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(tx);
     eth_client
         .set_gas_for_wrapped_tx(&mut wrapped_tx, my_address)
-        .await.map_err(PusherError::EthClientError)?;
+        .await
+        .map_err(PusherError::EthClientError)?;
     let initialize_tx_hash = eth_client
         .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &private_key)
-        .await.map_err(PusherError::EthClientError)?;
+        .await
+        .map_err(PusherError::EthClientError)?;
     println!("Updated state. TX: {initialize_tx_hash}");
     Ok(new_state)
 }
@@ -150,8 +171,9 @@ async fn main() -> Result<(), PusherError> {
     let private_key = SecretKey::from_slice(
         H256::from_str(&private_key)
             .map_err(|_| PusherError::ParseError("Invalid PRIVATE_KEY".to_string()))?
-            .as_bytes()
-    ).map_err(|_| PusherError::ParseError("Invalid PRIVATE_KEY".to_string()))?;
+            .as_bytes(),
+    )
+    .map_err(|_| PusherError::ParseError("Invalid PRIVATE_KEY".to_string()))?;
     let contract_addr: Address = H160::from_str(&contract_addr)
         .map_err(|_| PusherError::ParseError("Invalid CONTRACT_ADDRESS".to_string()))?;
 
@@ -159,9 +181,24 @@ async fn main() -> Result<(), PusherError> {
     let web_client = reqwest::Client::new();
 
     let mut state = 100;
-    setup_key(&eth_client, &web_client, &private_key, &prover_url, contract_addr).await?;
+    setup_key(
+        &eth_client,
+        &web_client,
+        &private_key,
+        &prover_url,
+        contract_addr,
+    )
+    .await?;
     loop {
-        state = do_transition(&eth_client, &web_client, &private_key, &prover_url, contract_addr, state).await?;
+        state = do_transition(
+            &eth_client,
+            &web_client,
+            &private_key,
+            &prover_url,
+            contract_addr,
+            state,
+        )
+        .await?;
         println!("New state: {state}");
     }
 }
