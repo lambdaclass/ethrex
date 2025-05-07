@@ -702,7 +702,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
 async fn try_execute_payload(
     block: &Block,
     context: &RpcApiContext,
-    latest_valid_hash: H256
+    latest_valid_hash: H256,
 ) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
     let storage = &context.storage;
