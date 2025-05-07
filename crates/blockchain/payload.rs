@@ -555,14 +555,17 @@ impl Blockchain {
         tokio::spawn(async move {
             info!("Creating snapshot");
 
+            // TODO: len acquires briefly a lock, maybe we can track emptiness in another way.
             if store.snapshots.len() == 0 {
                 // There are no snapshots yet, use this block as root
+                // TODO: find if there is a better place to create the initial "disk layer".
                 store.snapshots.rebuild(hash);
                 info!(
                     "Snapshot (disk layer) created for {} with parent {}",
                     hash, parent_hash
                 );
             } else {
+                // Create the accounts and storage maps for the diff layer.
                 let mut accounts = HashMap::new();
                 let state_trie = store.open_state_trie(state_root);
 
