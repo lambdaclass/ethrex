@@ -622,13 +622,16 @@ async fn handle_new_payload_v1_v2(
         return Ok(status);
     }
 
+    // We have validated ancestors, the parent is correct
+    let latest_valid_hash = block.header.parent_hash;
+
     if context.syncer.sync_mode() == SyncMode::Snap {
         warn!("Snap sync in progress, skipping new payload validation");
         return Ok(PayloadStatus::syncing());
     }
 
     // All checks passed, execute payload
-    let payload_status = try_execute_payload(&block, &context).await?;
+    let payload_status = try_execute_payload(&block, &context, latest_valid_hash).await?;
     Ok(payload_status)
 }
 
@@ -699,6 +702,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
 async fn try_execute_payload(
     block: &Block,
     context: &RpcApiContext,
+    latest_valid_hash: H256
 ) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
     let storage = &context.storage;
@@ -709,16 +713,6 @@ async fn try_execute_payload(
 
     // Execute and store the block
     info!("Executing payload with block hash: {block_hash:#x}");
-
-    // TODO: this is not correct, the block being validated it no necesarily a descendant
-    // of the latest canonical block
-    let latest_valid_hash = context
-        .storage
-        .get_latest_canonical_block_hash()
-        .await?
-        .ok_or(RpcErr::Internal(
-            "Missing latest canonical block".to_owned(),
-        ))?;
 
     match context.blockchain.add_block(block).await {
         Err(ChainError::ParentNotFound) => {
