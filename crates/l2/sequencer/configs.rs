@@ -3,7 +3,6 @@ use secp256k1::SecretKey;
 use std::net::IpAddr;
 
 pub struct SequencerConfig {
-    // pub proposer: ProposerConfig,
     pub block_producer: BlockProducerConfig,
     pub l1_committer: CommitterConfig,
     pub eth: EthConfig,
