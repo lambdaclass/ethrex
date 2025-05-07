@@ -19,15 +19,13 @@ members = [
   "crates/l2/sdk",
   "crates/l2/storage",
   "crates/l2/tee/quote-pusher",
+  "crates/l2/tee/quote-pusher/automata-dcap-qpl/automata-dcap-qpl-tool",
   "crates/networking/p2p",
   "crates/networking/rpc",
   "crates/storage",
   "crates/vm",
   "crates/vm/levm",
   "crates/vm/levm/bench/revm_comparison",
-]
-exclude = [
-  "crates/l2/tee/quote-pusher/automata-dcap-qpl/automata-dcap-qpl-tool"
 ]
 resolver = "2"
 
