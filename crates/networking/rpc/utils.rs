@@ -379,7 +379,7 @@ pub mod test_utils {
         };
         let signer = SigningKey::random(&mut rand::rngs::OsRng);
 
-        NodeRecord::from_node(&node, 0, &signer).unwrap()
+        NodeRecord::from_node(&node, 1, &signer).unwrap()
     }
 
     // Util to start an api for testing on ports 8500 and 8501,
@@ -444,12 +444,13 @@ pub mod test_utils {
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+        let local_node_record = Arc::new(tokio::sync::Mutex::new(example_local_node_record()));
         RpcApiContext {
             storage,
             blockchain,
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
-            local_node_record: Arc::new(tokio::sync::Mutex::new(example_local_node_record())),
+            local_node_record,
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
             client_version: "ethrex/test".to_string(),

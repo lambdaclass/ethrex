@@ -293,7 +293,7 @@ pub async fn handle_authrpc_request(
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
-        Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
+        Ok(RpcNamespace::Admin) => map_admin_requests(req, context).await,
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
@@ -443,12 +443,12 @@ pub async fn map_engine_requests(
     }
 }
 
-pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(
             context.storage,
             context.local_p2p_node,
-            context.local_node_record.blocking_lock().clone(),
+            context.local_node_record.lock().await.clone(),
             context.client_version,
         ),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
@@ -545,7 +545,7 @@ mod tests {
         let context = default_context_with_storage(storage).await;
         let local_p2p_node = context.local_p2p_node;
 
-        let enr_url = context.local_node_record.blocking_lock().enr_url().unwrap();
+        let enr_url = context.local_node_record.lock().await.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
         let blob_schedule = serde_json::json!({

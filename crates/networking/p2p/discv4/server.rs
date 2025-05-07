@@ -554,10 +554,9 @@ impl Discv4Server {
             tcp_port: node.tcp_port,
         };
 
-        let ping = Message::Ping(
-            PingMessage::new(from, to, expiration)
-                .with_enr_seq(self.ctx.local_node_record.lock().await.seq),
-        );
+        let enr_seq = self.ctx.local_node_record.lock().await.seq;
+        let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
+
         ping.encode_with_header(&mut buf, &self.ctx.signer);
         let bytes_sent = self
             .udp_socket
@@ -588,10 +587,8 @@ impl Discv4Server {
             tcp_port: node.tcp_port,
         };
 
-        let pong = Message::Pong(
-            PongMessage::new(to, ping_hash, expiration)
-                .with_enr_seq(self.ctx.local_node_record.lock().await.seq),
-        );
+        let enr_seq = self.ctx.local_node_record.lock().await.seq;
+        let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
         pong.encode_with_header(&mut buf, &self.ctx.signer);
 
         let bytes_sent = self
@@ -698,7 +695,7 @@ pub(super) mod tests {
         let tracker = tokio_util::task::TaskTracker::new();
 
         let local_node_record = Arc::new(Mutex::new(
-            NodeRecord::from_node(&local_node, 0, &signer)
+            NodeRecord::from_node(&local_node, 1, &signer)
                 .expect("Node record could not be created from local node"),
         ));
 
@@ -849,7 +846,6 @@ pub(super) mod tests {
 
         // we only match the pairs, as the signature and seq will change
         // because they are calculated with the current time
-        eprintln!("{:?}", server_a_peer_b.record.decode_pairs());
         assert!(server_a_peer_b.record.decode_pairs() == expected_record.decode_pairs());
 
         // Modify server_a's record of server_b with an incorrect TCP port.
@@ -866,7 +862,7 @@ pub(super) mod tests {
 
         // update the enr_seq of server_b so that server_a notices it is outdated
         // and sends a request to update it
-        server_b.ctx.local_node_record.lock().await.seq = 1;
+        server_b.ctx.local_node_record.lock().await.seq = 2;
 
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated
