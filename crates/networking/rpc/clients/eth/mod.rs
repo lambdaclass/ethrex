@@ -56,10 +56,10 @@ pub enum WrappedTransaction {
 }
 
 impl WrappedTransaction {
-    pub fn encode_payload_to_vec(&self) -> Result<Bytes, EthClientError> {
+    pub fn encode_payload_to_vec(&self) -> Result<Vec<u8>, EthClientError> {
         match self {
-            Self::EIP1559(tx) => Ok(tx.encode_payload_to_vec().into()),
-            Self::EIP4844(tx_wrapper) => Ok(tx_wrapper.tx.encode_payload_to_vec().into()),
+            Self::EIP1559(tx) => Ok(tx.encode_payload_to_vec()),
+            Self::EIP4844(tx_wrapper) => Ok(tx_wrapper.tx.encode_payload_to_vec()),
             Self::L2(_) => {
                 return Err(EthClientError::InternalError(
                     "L2 Privileged transaction not supported".to_string(),

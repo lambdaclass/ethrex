@@ -4,6 +4,7 @@ use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::ProverType;
 use ethereum_types::FromStrRadixErr;
 use ethrex_blockchain::error::{ChainError, InvalidForkChoice};
+use ethrex_common::types::signer::SignerError;
 use ethrex_common::types::{BlobsBundleError, FakeExponentialError};
 use ethrex_l2_sdk::merkle_tree::MerkleError;
 use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
@@ -149,6 +150,8 @@ pub enum CommitterError {
     InternalError(String),
     #[error("Failed to get withdrawals: {0}")]
     FailedToGetWithdrawals(#[from] UtilsError),
+    #[error("Failed to sign error: {0}")]
+    FailedToSignError(#[from] SignerError),
 }
 
 #[derive(Debug, thiserror::Error)]
