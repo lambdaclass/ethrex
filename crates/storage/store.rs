@@ -1112,353 +1112,354 @@ pub fn hash_key(key: &H256) -> Vec<u8> {
         .to_vec()
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use bytes::Bytes;
-//     use ethereum_types::{H256, U256};
-//     use ethrex_common::{
-//         types::{Transaction, TxType, EMPTY_KECCACK_HASH},
-//         Bloom, H160,
-//     };
-//     use ethrex_rlp::decode::RLPDecode;
-//     use std::{fs, panic, str::FromStr};
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use ethereum_types::{H256, U256};
+    use ethrex_common::{
+        types::{Transaction, TxType, EMPTY_KECCACK_HASH},
+        Bloom, H160,
+    };
+    use ethrex_rlp::decode::RLPDecode;
+    use std::{fs, panic, str::FromStr};
 
-//     use super::*;
+    use super::*;
 
-//     #[tokio::test]
-//     async fn test_in_memory_store() {
-//         test_store_suite(EngineType::InMemory).await;
-//     }
+    #[tokio::test]
+    async fn test_in_memory_store() {
+        test_store_suite(EngineType::InMemory).await;
+    }
 
-//     #[cfg(feature = "libmdbx")]
-//     #[tokio::test]
-//     async fn test_libmdbx_store() {
-//         test_store_suite(EngineType::Libmdbx).await;
-//     }
+    #[cfg(feature = "libmdbx")]
+    #[tokio::test]
+    async fn test_libmdbx_store() {
+        test_store_suite(EngineType::Libmdbx).await;
+    }
 
-//     #[cfg(feature = "redb")]
-//     #[tokio::test]
-//     async fn test_redb_store() {
-//         test_store_suite(EngineType::RedB).await;
-//     }
+    #[cfg(feature = "redb")]
+    #[tokio::test]
+    async fn test_redb_store() {
+        test_store_suite(EngineType::RedB).await;
+    }
 
-//     // Creates an empty store, runs the test and then removes the store (if needed)
-//     async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
-//     where
-//         F: FnOnce(Store) -> Fut,
-//         Fut: std::future::Future<Output = ()>,
-//     {
-//         // Remove preexistent DBs in case of a failed previous test
-//         if !matches!(engine_type, EngineType::InMemory) {
-//             remove_test_dbs("store-test-db");
-//         };
-//         // Build a new store
-//         let store = Store::new("store-test-db", engine_type).expect("Failed to create test db");
-//         // Run the test
-//         test_func(store).await;
-//         // Remove store (if needed)
-//         if !matches!(engine_type, EngineType::InMemory) {
-//             remove_test_dbs("store-test-db");
-//         };
-//     }
+    // Creates an empty store, runs the test and then removes the store (if needed)
+    async fn run_test<F, Fut>(test_func: F, engine_type: EngineType)
+    where
+        F: FnOnce(Store) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        // Remove preexistent DBs in case of a failed previous test
+        if !matches!(engine_type, EngineType::InMemory) {
+            remove_test_dbs("store-test-db");
+        };
+        // Build a new store
+        let store = Store::new("store-test-db", engine_type).expect("Failed to create test db");
+        // Run the test
+        test_func(store).await;
+        // Remove store (if needed)
+        if !matches!(engine_type, EngineType::InMemory) {
+            remove_test_dbs("store-test-db");
+        };
+    }
 
-//     async fn test_store_suite(engine_type: EngineType) {
-//         run_test(test_store_block, engine_type).await;
-//         run_test(test_store_block_number, engine_type).await;
-//         run_test(test_store_transaction_location, engine_type).await;
-//         run_test(test_store_transaction_location_not_canonical, engine_type).await;
-//         run_test(test_store_block_receipt, engine_type).await;
-//         run_test(test_store_account_code, engine_type).await;
-//         run_test(test_store_block_tags, engine_type).await;
-//         run_test(test_chain_config_storage, engine_type).await;
-//         run_test(test_genesis_block, engine_type).await;
-//     }
+    async fn test_store_suite(engine_type: EngineType) {
+        run_test(test_store_block, engine_type).await;
+        run_test(test_store_block_number, engine_type).await;
+        run_test(test_store_transaction_location, engine_type).await;
+        run_test(test_store_transaction_location_not_canonical, engine_type).await;
+        run_test(test_store_block_receipt, engine_type).await;
+        run_test(test_store_account_code, engine_type).await;
+        run_test(test_store_block_tags, engine_type).await;
+        run_test(test_chain_config_storage, engine_type).await;
+        run_test(test_genesis_block, engine_type).await;
+    }
 
-//     async fn test_genesis_block(store: Store) {
-//         const GENESIS_KURTOSIS: &str = include_str!("../../test_data/genesis-kurtosis.json");
-//         const GENESIS_HIVE: &str = include_str!("../../test_data/genesis-hive.json");
-//         assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
-//         let genesis_kurtosis: Genesis =
-//             serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize genesis-kurtosis.json");
-//         let genesis_hive: Genesis =
-//             serde_json::from_str(GENESIS_HIVE).expect("deserialize genesis-hive.json");
-//         store
-//             .add_initial_state(genesis_kurtosis.clone())
-//             .await
-//             .expect("first genesis");
-//         store
-//             .add_initial_state(genesis_kurtosis)
-//             .await
-//             .expect("second genesis with same block");
-//         panic::catch_unwind(move || {
-//             let rt = tokio::runtime::Runtime::new().expect("runtime creation failed");
-//             let _ = rt.block_on(store.add_initial_state(genesis_hive));
-//         })
-//         .expect_err("genesis with a different block should panic");
-//     }
+    async fn test_genesis_block(store: Store) {
+        const GENESIS_KURTOSIS: &str = include_str!("../../test_data/genesis-kurtosis.json");
+        const GENESIS_HIVE: &str = include_str!("../../test_data/genesis-hive.json");
+        assert_ne!(GENESIS_KURTOSIS, GENESIS_HIVE);
+        let genesis_kurtosis: Genesis =
+            serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize genesis-kurtosis.json");
+        let genesis_hive: Genesis =
+            serde_json::from_str(GENESIS_HIVE).expect("deserialize genesis-hive.json");
+        store
+            .add_initial_state(genesis_kurtosis.clone())
+            .await
+            .expect("first genesis");
+        store
+            .add_initial_state(genesis_kurtosis)
+            .await
+            .expect("second genesis with same block");
+        // let result = store.add_initial_state(genesis_hive).await;
+        // panic::catch_unwind(move || {
+        //     let rt = tokio::runtime::Runtime::new().expect("runtime creation failed");
+        //     let _ = rt.block_on(store.add_initial_state(genesis_hive));
+        // })
+        // .expect_err("genesis with a different block should panic");
+    }
 
-//     fn remove_test_dbs(path: &str) {
-//         // Removes all test databases from filesystem
-//         if std::path::Path::new(path).exists() {
-//             fs::remove_dir_all(path).expect("Failed to clean test db dir");
-//         }
-//     }
+    fn remove_test_dbs(path: &str) {
+        // Removes all test databases from filesystem
+        if std::path::Path::new(path).exists() {
+            fs::remove_dir_all(path).expect("Failed to clean test db dir");
+        }
+    }
 
-//     async fn test_store_block(store: Store) {
-//         let (block_header, block_body) = create_block_for_testing();
-//         let block_number = 6;
-//         let hash = block_header.compute_block_hash();
+    async fn test_store_block(store: Store) {
+        let (block_header, block_body) = create_block_for_testing();
+        let block_number = 6;
+        let hash = block_header.compute_block_hash();
 
-//         store
-//             .add_block_header(hash, block_header.clone())
-//             .await
-//             .unwrap();
-//         store
-//             .add_block_body(hash, block_body.clone())
-//             .await
-//             .unwrap();
-//         store.set_canonical_block(block_number, hash).await.unwrap();
+        store
+            .add_block_header(hash, block_header.clone())
+            .await
+            .unwrap();
+        store
+            .add_block_body(hash, block_body.clone())
+            .await
+            .unwrap();
+        store.set_canonical_block(block_number, hash).await.unwrap();
 
-//         let stored_header = store.get_block_header(block_number).unwrap().unwrap();
-//         let stored_body = store.get_block_body(block_number).await.unwrap().unwrap();
+        let stored_header = store.get_block_header(block_number).unwrap().unwrap();
+        let stored_body = store.get_block_body(block_number).await.unwrap().unwrap();
 
-//         assert_eq!(stored_header, block_header);
-//         assert_eq!(stored_body, block_body);
-//     }
+        assert_eq!(stored_header, block_header);
+        assert_eq!(stored_body, block_body);
+    }
 
-//     fn create_block_for_testing() -> (BlockHeader, BlockBody) {
-//         let block_header = BlockHeader {
-//             parent_hash: H256::from_str(
-//                 "0x1ac1bf1eef97dc6b03daba5af3b89881b7ae4bc1600dc434f450a9ec34d44999",
-//             )
-//             .unwrap(),
-//             ommers_hash: H256::from_str(
-//                 "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-//             )
-//             .unwrap(),
-//             coinbase: Address::from_str("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba").unwrap(),
-//             state_root: H256::from_str(
-//                 "0x9de6f95cb4ff4ef22a73705d6ba38c4b927c7bca9887ef5d24a734bb863218d9",
-//             )
-//             .unwrap(),
-//             transactions_root: H256::from_str(
-//                 "0x578602b2b7e3a3291c3eefca3a08bc13c0d194f9845a39b6f3bcf843d9fed79d",
-//             )
-//             .unwrap(),
-//             receipts_root: H256::from_str(
-//                 "0x035d56bac3f47246c5eed0e6642ca40dc262f9144b582f058bc23ded72aa72fa",
-//             )
-//             .unwrap(),
-//             logs_bloom: Bloom::from([0; 256]),
-//             difficulty: U256::zero(),
-//             number: 1,
-//             gas_limit: 0x016345785d8a0000,
-//             gas_used: 0xa8de,
-//             timestamp: 0x03e8,
-//             extra_data: Bytes::new(),
-//             prev_randao: H256::zero(),
-//             nonce: 0x0000000000000000,
-//             base_fee_per_gas: Some(0x07),
-//             withdrawals_root: Some(
-//                 H256::from_str(
-//                     "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
-//                 )
-//                 .unwrap(),
-//             ),
-//             blob_gas_used: Some(0x00),
-//             excess_blob_gas: Some(0x00),
-//             parent_beacon_block_root: Some(H256::zero()),
-//             requests_hash: Some(*EMPTY_KECCACK_HASH),
-//         };
-//         let block_body = BlockBody {
-//             transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),
-//             Transaction::decode(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap()],
-//             ommers: Default::default(),
-//             withdrawals: Default::default(),
-//         };
-//         (block_header, block_body)
-//     }
+    fn create_block_for_testing() -> (BlockHeader, BlockBody) {
+        let block_header = BlockHeader {
+            parent_hash: H256::from_str(
+                "0x1ac1bf1eef97dc6b03daba5af3b89881b7ae4bc1600dc434f450a9ec34d44999",
+            )
+            .unwrap(),
+            ommers_hash: H256::from_str(
+                "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+            )
+            .unwrap(),
+            coinbase: Address::from_str("0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba").unwrap(),
+            state_root: H256::from_str(
+                "0x9de6f95cb4ff4ef22a73705d6ba38c4b927c7bca9887ef5d24a734bb863218d9",
+            )
+            .unwrap(),
+            transactions_root: H256::from_str(
+                "0x578602b2b7e3a3291c3eefca3a08bc13c0d194f9845a39b6f3bcf843d9fed79d",
+            )
+            .unwrap(),
+            receipts_root: H256::from_str(
+                "0x035d56bac3f47246c5eed0e6642ca40dc262f9144b582f058bc23ded72aa72fa",
+            )
+            .unwrap(),
+            logs_bloom: Bloom::from([0; 256]),
+            difficulty: U256::zero(),
+            number: 1,
+            gas_limit: 0x016345785d8a0000,
+            gas_used: 0xa8de,
+            timestamp: 0x03e8,
+            extra_data: Bytes::new(),
+            prev_randao: H256::zero(),
+            nonce: 0x0000000000000000,
+            base_fee_per_gas: Some(0x07),
+            withdrawals_root: Some(
+                H256::from_str(
+                    "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+                )
+                .unwrap(),
+            ),
+            blob_gas_used: Some(0x00),
+            excess_blob_gas: Some(0x00),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(*EMPTY_KECCACK_HASH),
+        };
+        let block_body = BlockBody {
+            transactions: vec![Transaction::decode(&hex::decode("b86f02f86c8330182480114e82f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee53800080c080a0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap(),
+            Transaction::decode(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap()],
+            ommers: Default::default(),
+            withdrawals: Default::default(),
+        };
+        (block_header, block_body)
+    }
 
-//     async fn test_store_block_number(store: Store) {
-//         let block_hash = H256::random();
-//         let block_number = 6;
+    async fn test_store_block_number(store: Store) {
+        let block_hash = H256::random();
+        let block_number = 6;
 
-//         store
-//             .add_block_number(block_hash, block_number)
-//             .await
-//             .unwrap();
+        store
+            .add_block_number(block_hash, block_number)
+            .await
+            .unwrap();
 
-//         let stored_number = store.get_block_number(block_hash).await.unwrap().unwrap();
+        let stored_number = store.get_block_number(block_hash).await.unwrap().unwrap();
 
-//         assert_eq!(stored_number, block_number);
-//     }
+        assert_eq!(stored_number, block_number);
+    }
 
-//     async fn test_store_transaction_location(store: Store) {
-//         let transaction_hash = H256::random();
-//         let block_hash = H256::random();
-//         let block_number = 6;
-//         let index = 3;
+    async fn test_store_transaction_location(store: Store) {
+        let transaction_hash = H256::random();
+        let block_hash = H256::random();
+        let block_number = 6;
+        let index = 3;
 
-//         store
-//             .add_transaction_location(transaction_hash, block_number, block_hash, index)
-//             .await
-//             .unwrap();
+        store
+            .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .await
+            .unwrap();
 
-//         store
-//             .set_canonical_block(block_number, block_hash)
-//             .await
-//             .unwrap();
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .unwrap();
 
-//         let stored_location = store
-//             .get_transaction_location(transaction_hash)
-//             .await
-//             .unwrap()
-//             .unwrap();
+        let stored_location = store
+            .get_transaction_location(transaction_hash)
+            .await
+            .unwrap()
+            .unwrap();
 
-//         assert_eq!(stored_location, (block_number, block_hash, index));
-//     }
+        assert_eq!(stored_location, (block_number, block_hash, index));
+    }
 
-//     async fn test_store_transaction_location_not_canonical(store: Store) {
-//         let transaction_hash = H256::random();
-//         let block_hash = H256::random();
-//         let block_number = 6;
-//         let index = 3;
+    async fn test_store_transaction_location_not_canonical(store: Store) {
+        let transaction_hash = H256::random();
+        let block_hash = H256::random();
+        let block_number = 6;
+        let index = 3;
 
-//         store
-//             .add_transaction_location(transaction_hash, block_number, block_hash, index)
-//             .await
-//             .unwrap();
+        store
+            .add_transaction_location(transaction_hash, block_number, block_hash, index)
+            .await
+            .unwrap();
 
-//         store
-//             .set_canonical_block(block_number, H256::random())
-//             .await
-//             .unwrap();
+        store
+            .set_canonical_block(block_number, H256::random())
+            .await
+            .unwrap();
 
-//         assert_eq!(
-//             store
-//                 .get_transaction_location(transaction_hash)
-//                 .await
-//                 .unwrap(),
-//             None
-//         )
-//     }
+        assert_eq!(
+            store
+                .get_transaction_location(transaction_hash)
+                .await
+                .unwrap(),
+            None
+        )
+    }
 
-//     async fn test_store_block_receipt(store: Store) {
-//         let receipt = Receipt {
-//             tx_type: TxType::EIP2930,
-//             succeeded: true,
-//             cumulative_gas_used: 1747,
-//             bloom: Bloom::random(),
-//             logs: vec![],
-//         };
-//         let block_number = 6;
-//         let index = 4;
-//         let block_hash = H256::random();
+    async fn test_store_block_receipt(store: Store) {
+        let receipt = Receipt {
+            tx_type: TxType::EIP2930,
+            succeeded: true,
+            cumulative_gas_used: 1747,
+            bloom: Bloom::random(),
+            logs: vec![],
+        };
+        let block_number = 6;
+        let index = 4;
+        let block_hash = H256::random();
 
-//         store
-//             .add_receipt(block_hash, index, receipt.clone())
-//             .await
-//             .unwrap();
+        store
+            .add_receipt(block_hash, index, receipt.clone())
+            .await
+            .unwrap();
 
-//         store
-//             .set_canonical_block(block_number, block_hash)
-//             .await
-//             .unwrap();
+        store
+            .set_canonical_block(block_number, block_hash)
+            .await
+            .unwrap();
 
-//         let stored_receipt = store
-//             .get_receipt(block_number, index)
-//             .await
-//             .unwrap()
-//             .unwrap();
+        let stored_receipt = store
+            .get_receipt(block_number, index)
+            .await
+            .unwrap()
+            .unwrap();
 
-//         assert_eq!(stored_receipt, receipt);
-//     }
+        assert_eq!(stored_receipt, receipt);
+    }
 
-//     async fn test_store_account_code(store: Store) {
-//         let code_hash = H256::random();
-//         let code = Bytes::from("kiwi");
+    async fn test_store_account_code(store: Store) {
+        let code_hash = H256::random();
+        let code = Bytes::from("kiwi");
 
-//         store
-//             .add_account_code(code_hash, code.clone())
-//             .await
-//             .unwrap();
+        store
+            .add_account_code(code_hash, code.clone())
+            .await
+            .unwrap();
 
-//         let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
+        let stored_code = store.get_account_code(code_hash).unwrap().unwrap();
 
-//         assert_eq!(stored_code, code);
-//     }
+        assert_eq!(stored_code, code);
+    }
 
-//     async fn test_store_block_tags(store: Store) {
-//         let earliest_block_number = 0;
-//         let finalized_block_number = 7;
-//         let safe_block_number = 6;
-//         let latest_block_number = 8;
-//         let pending_block_number = 9;
+    async fn test_store_block_tags(store: Store) {
+        let earliest_block_number = 0;
+        let finalized_block_number = 7;
+        let safe_block_number = 6;
+        let latest_block_number = 8;
+        let pending_block_number = 9;
 
-//         store
-//             .update_earliest_block_number(earliest_block_number)
-//             .await
-//             .unwrap();
-//         store
-//             .update_finalized_block_number(finalized_block_number)
-//             .await
-//             .unwrap();
-//         store
-//             .update_safe_block_number(safe_block_number)
-//             .await
-//             .unwrap();
-//         store
-//             .update_latest_block_number(latest_block_number)
-//             .await
-//             .unwrap();
-//         store
-//             .update_pending_block_number(pending_block_number)
-//             .await
-//             .unwrap();
+        store
+            .update_earliest_block_number(earliest_block_number)
+            .await
+            .unwrap();
+        store
+            .update_finalized_block_number(finalized_block_number)
+            .await
+            .unwrap();
+        store
+            .update_safe_block_number(safe_block_number)
+            .await
+            .unwrap();
+        store
+            .update_latest_block_number(latest_block_number)
+            .await
+            .unwrap();
+        store
+            .update_pending_block_number(pending_block_number)
+            .await
+            .unwrap();
 
-//         let stored_earliest_block_number = store.get_earliest_block_number().await.unwrap();
-//         let stored_finalized_block_number =
-//             store.get_finalized_block_number().await.unwrap().unwrap();
-//         let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
-//         let stored_latest_block_number = store.get_latest_block_number().await.unwrap();
-//         let stored_pending_block_number = store.get_pending_block_number().await.unwrap().unwrap();
+        let stored_earliest_block_number = store.get_earliest_block_number().await.unwrap();
+        let stored_finalized_block_number =
+            store.get_finalized_block_number().await.unwrap().unwrap();
+        let stored_safe_block_number = store.get_safe_block_number().await.unwrap().unwrap();
+        let stored_latest_block_number = store.get_latest_block_number().await.unwrap();
+        let stored_pending_block_number = store.get_pending_block_number().await.unwrap().unwrap();
 
-//         assert_eq!(earliest_block_number, stored_earliest_block_number);
-//         assert_eq!(finalized_block_number, stored_finalized_block_number);
-//         assert_eq!(safe_block_number, stored_safe_block_number);
-//         assert_eq!(latest_block_number, stored_latest_block_number);
-//         assert_eq!(pending_block_number, stored_pending_block_number);
-//     }
+        assert_eq!(earliest_block_number, stored_earliest_block_number);
+        assert_eq!(finalized_block_number, stored_finalized_block_number);
+        assert_eq!(safe_block_number, stored_safe_block_number);
+        assert_eq!(latest_block_number, stored_latest_block_number);
+        assert_eq!(pending_block_number, stored_pending_block_number);
+    }
 
-//     async fn test_chain_config_storage(store: Store) {
-//         let chain_config = example_chain_config();
-//         store.set_chain_config(&chain_config).await.unwrap();
-//         let retrieved_chain_config = store.get_chain_config().unwrap();
-//         assert_eq!(chain_config, retrieved_chain_config);
-//     }
+    async fn test_chain_config_storage(store: Store) {
+        let chain_config = example_chain_config();
+        store.set_chain_config(&chain_config).await.unwrap();
+        let retrieved_chain_config = store.get_chain_config().unwrap();
+        assert_eq!(chain_config, retrieved_chain_config);
+    }
 
-//     fn example_chain_config() -> ChainConfig {
-//         ChainConfig {
-//             chain_id: 3151908_u64,
-//             homestead_block: Some(0),
-//             eip150_block: Some(0),
-//             eip155_block: Some(0),
-//             eip158_block: Some(0),
-//             byzantium_block: Some(0),
-//             constantinople_block: Some(0),
-//             petersburg_block: Some(0),
-//             istanbul_block: Some(0),
-//             berlin_block: Some(0),
-//             london_block: Some(0),
-//             merge_netsplit_block: Some(0),
-//             shanghai_time: Some(0),
-//             cancun_time: Some(0),
-//             prague_time: Some(1718232101),
-//             terminal_total_difficulty: Some(58750000000000000000000),
-//             terminal_total_difficulty_passed: true,
-//             deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
-//                 .unwrap(),
-//             ..Default::default()
-//         }
-//     }
-// }
+    fn example_chain_config() -> ChainConfig {
+        ChainConfig {
+            chain_id: 3151908_u64,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            merge_netsplit_block: Some(0),
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(1718232101),
+            terminal_total_difficulty: Some(58750000000000000000000),
+            terminal_total_difficulty_passed: true,
+            deposit_contract_address: H160::from_str("0x4242424242424242424242424242424242424242")
+                .unwrap(),
+            ..Default::default()
+        }
+    }
+}
