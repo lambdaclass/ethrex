@@ -11,27 +11,27 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::Trie;
 use tracing::debug;
 
-use crate::{cache::Cache, rlp::AccountStateRLP, Store};
+use crate::{api::StoreEngine, cache::Cache, rlp::AccountStateRLP};
 
 use super::{difflayer::DiffLayer, layer::SnapshotLayer};
 
 #[derive(Clone)]
 pub struct DiskLayer {
     state_trie: Arc<Trie>,
-    store: Store,
+    db: Arc<dyn StoreEngine>,
     cache: Cache,
     root: H256,
     stale: Arc<AtomicBool>,
 }
 
 impl DiskLayer {
-    pub fn new(store: Store, root: H256) -> Self {
-        let trie = Arc::new(store.open_state_trie(root));
+    pub fn new(db: Arc<dyn StoreEngine>, root: H256) -> Self {
+        let trie = Arc::new(db.open_state_trie(root));
 
         Self {
             state_trie: trie,
-            store,
             root,
+            db,
             cache: Cache::new(10000, 10000),
             stale: Arc::new(AtomicBool::new(false)),
         }
@@ -70,7 +70,7 @@ impl SnapshotLayer for DiskLayer {
         let account = self.get_account(account_hash)??;
 
         let storage_trie = self
-            .store
+            .db
             .open_storage_trie(account_hash, account.storage_root);
 
         let value: U256 = U256::decode(&storage_trie.get(storage_hash).ok().flatten()?).ok()?;

@@ -6,7 +6,7 @@ use std::{
 use ethrex_common::{types::AccountState, H256, U256};
 use tracing::error;
 
-use crate::Store;
+use crate::api::StoreEngine;
 
 use super::{DiskLayer, SnapshotLayer};
 
@@ -22,14 +22,14 @@ use super::{DiskLayer, SnapshotLayer};
 /// cheap iteration of the account/storage tries for sync aid.
 #[derive(Clone)]
 pub struct SnapshotTree {
-    store: Store,
+    db: Arc<dyn StoreEngine>,
     layers: Arc<RwLock<HashMap<H256, Arc<dyn SnapshotLayer>>>>,
 }
 
 impl SnapshotTree {
-    pub fn new(store: Store, root: H256) -> Self {
+    pub fn new(db: Arc<dyn StoreEngine>, root: H256) -> Self {
         let mut snap = SnapshotTree {
-            store,
+            db,
             layers: Default::default(),
         };
 
@@ -50,7 +50,7 @@ impl SnapshotTree {
         }
 
         layers.clear();
-        layers.insert(root, Arc::new(DiskLayer::new(self.store.clone(), root)));
+        layers.insert(root, Arc::new(DiskLayer::new(self.db.clone(), root)));
     }
 
     pub fn snapshot(&self, block_root: H256) -> Option<Arc<dyn SnapshotLayer>> {
