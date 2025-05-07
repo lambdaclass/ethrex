@@ -238,6 +238,10 @@ impl Discv4Server {
                 let Some(node) = node else {
                     return Err(DiscoveryError::InvalidMessage("not a known node".into()));
                 };
+                // Check that the received IP address matches the one we have stored to prevent aplification attacks
+                if from.ip() != node.node.ip {
+                    return Err(DiscoveryError::InvalidMessage("not a known node".into()));
+                }
                 if !node.is_proven {
                     return Err(DiscoveryError::InvalidMessage("node isn't proven".into()));
                 }
