@@ -60,15 +60,15 @@ lib/openzeppelin-contracts:
 
 solc_out/Counter.bin: src/Counter.sol lib/openzeppelin-contracts
 	mkdir -p solc_out
-	solc src/Counter.sol --bin --allow-paths lib/ -o solc_out/
+	solc src/Counter.sol --bin --allow-paths lib/ -o solc_out/ --overwrite
 
 deploy: solc_out/Counter.bin
 	$(eval CONTRACT_BIN := $(shell cat solc_out/Counter.bin))
-	$(eval DCAP_ADDRESS := $(shell cat ${DCAP_FILE} | jq --raw-output .AutomataDcapAttestationFee))
+	$(eval DCAP_ADDRESS := $(shell cat ${DCAP_FILE} | jq --raw-output .AutomataDcapAttestationFee | cut -c 3-))
 	cast send  \
 		--rpc-url $(RPC_URL) \
 		--private-key $(PRIVATE_KEY) \
-		--create $(CONTRACT_BIN) "constructor(address)" $(DCAP_ADDRESS)
+		--create $(CONTRACT_BIN)000000000000000000000000$(DCAP_ADDRESS)
 
 deploy-deps: deploy-dcap set-verifier-v4 setup-pccs-ca
 

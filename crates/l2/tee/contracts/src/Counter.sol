@@ -12,10 +12,7 @@ interface IAttestation {
 }
 
 contract Counter {
-    IAttestation quoteVerifier = IAttestation(address(0));
-    constructor(address _dcap) {
-        quoteVerifier = IAttestation(_dcap);
-    }
+    IAttestation public quoteVerifier = IAttestation(address(0));
     address public authorizedSignature = address(0);
     uint64 public current = 100;
     bytes public RTMR0 = hex'4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643';
@@ -23,8 +20,12 @@ contract Counter {
     bytes public RTMR2 = hex'f85ab445249999ee2c5e71919b1f42cc746ba07a4bd2464fa2b4e61ff06232e51bb8976db6c3cb040e7e033931332fa7';
     bytes public MRTD = hex'91eb2b44d141d4ece09f0c75c2c53d247a3c68edd7fafe8a3520c942a604a407de03ae6dc5f87f27428b2538873118b7';
 
-    function update(uint256 to, bytes memory signature) public {
-        uint64 to = uint64(to);
+    constructor(address _dcap) {
+        quoteVerifier = IAttestation(_dcap);
+    }
+
+    function update(uint256 _to, bytes memory signature) public {
+        uint64 to = uint64(_to);
         require(authorizedSignature != address(0), "authorized signer not set");
         bytes32 signedHash = MessageHashUtils.toEthSignedMessageHash(abi.encodePacked(current, to));
         require(ECDSA.recover(signedHash, signature) == authorizedSignature, "invalid signature");
