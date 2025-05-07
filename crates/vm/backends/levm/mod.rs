@@ -314,7 +314,7 @@ impl LEVM {
         // has any code after being deployed. If not, the whole block becomes invalid.
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
         let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
-        if account.info.code_hash == EMPTY_CODE_HASH {
+        if !account.has_code() {
             return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
         }
 
