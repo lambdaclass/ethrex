@@ -135,7 +135,7 @@ pub fn read_config_file(file_path: PathBuf) -> Result<ConfigFile, serde_json::Er
     let Ok(file) = std::fs::File::open(file_path) else {
         return Ok(ConfigFile {
             known_peers: vec![],
-            enr_seq: 0,
+            enr_seq: 1,
         });
     };
 

@@ -832,7 +832,7 @@ pub(super) mod tests {
         sleep(Duration::from_millis(2500)).await;
 
         let expected_record =
-            NodeRecord::from_node(&server_b.ctx.local_node, 0, &server_b.ctx.signer)
+            NodeRecord::from_node(&server_b.ctx.local_node, 1, &server_b.ctx.signer)
                 .expect("Node record is created from node");
 
         let server_a_peer_b = server_a
