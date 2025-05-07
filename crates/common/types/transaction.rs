@@ -2182,7 +2182,6 @@ mod serde_impl {
         // rename is needed here so we dont attempt to deserialize the `input` field rather than the remainder of the fields
         #[serde(
             flatten,
-            default,
             rename = "input_or_data",
             deserialize_with = "deserialize_input",
             serialize_with = "crates::serde_utils::bytes::serialize"
@@ -2200,7 +2199,8 @@ mod serde_impl {
         let data = variables.get("data");
         let input = variables.get("input");
         let value = match (data, input) {
-            (None, None) => return Err(D::Error::custom("Missing field data/input")),
+            // This replaces `default` attribute for this custom implementation
+            (None, None) => return Ok(Bytes::new()),
             (None, Some(val)) => val,
             (Some(val), None) => val,
             (Some(val_a), Some(val_b)) => {
