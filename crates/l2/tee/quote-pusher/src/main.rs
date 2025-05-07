@@ -108,7 +108,7 @@ async fn setup_key(
     Ok(())
 }
 
-const UPDATE_SIGNATURE: &str = "update(address,bytes)";
+const UPDATE_SIGNATURE: &str = "update(uint256,bytes)";
 
 async fn do_transition(
     eth_client: &EthClient,
