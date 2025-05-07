@@ -34,6 +34,7 @@ interface IOnChainProposer {
         address r0verifier,
         address sp1verifier,
         address picoverifier,
+        bytes32 sp1vkey,
         address[] calldata sequencerAddress
     ) external;
 

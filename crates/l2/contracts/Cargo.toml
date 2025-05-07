@@ -27,6 +27,8 @@ ethrex-sdk = { path = "../../l2/sdk" }
 ethrex-common = { path = "../../common" }
 ethrex-rpc = { path = "../../networking/rpc" }
 
+zkvm_interface = { path = "../prover/zkvm/interface/" }
+
 [[bin]]
 name = "ethrex_l2_l1_deployer"
 path = "bin/deployer/main.rs"
