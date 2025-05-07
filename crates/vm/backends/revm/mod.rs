@@ -192,19 +192,11 @@ impl REVM {
     ) -> Result<revm_primitives::AccountInfo, EvmError> {
         let revm_addr = RevmAddress::from_slice(addr.as_bytes());
         let account_info = match state {
-            EvmState::Store(db) => {
-                let mut evm = Evm::builder().with_db(db).build();
-                let evm_db = evm.db_mut();
-                evm_db.basic(revm_addr)?
-            }
-            EvmState::Execution(cache_db) => {
-                let mut evm = Evm::builder().with_db(cache_db).build();
-                let evm_cache_db = evm.db_mut();
-                evm_cache_db.basic(revm_addr)?
-            }
+            EvmState::Store(db) => db.basic(revm_addr)?,
+            EvmState::Execution(cache_db) => cache_db.basic(revm_addr)?,
         }
         .ok_or(EvmError::DB(StoreError::Custom(
-            "WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS was not found after deployment".to_string(),
+            "System contract address was not found after deployment".to_string(),
         )))?;
         Ok(account_info)
     }
