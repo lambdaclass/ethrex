@@ -17,7 +17,6 @@ use ethrex_common::{
     },
     Address, H256, U256,
 };
-use ethrex_levm::constants::EMPTY_CODE_HASH;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
@@ -321,7 +320,10 @@ impl LEVM {
         match report.result {
             TxResult::Success => Ok(report),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
-            TxResult::Revert(vm_error) => Err(EvmError::from(vm_error)),
+            TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
+                "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.", 
+                vm_error
+            ))),
         }
     }
     pub(crate) fn dequeue_consolidation_requests(
@@ -347,7 +349,10 @@ impl LEVM {
         match report.result {
             TxResult::Success => Ok(report),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
-            TxResult::Revert(vm_error) => Err(EvmError::from(vm_error)),
+            TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
+                "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.", 
+                vm_error
+            ))),
         }
     }
 
