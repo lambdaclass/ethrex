@@ -41,7 +41,8 @@ async fn setup_key(
         .send()
         .await
         .map_err(PusherError::RequestError)?;
-    let json = resp.json::<HashMap<String, String>>().await?;
+    let json = resp.json::<HashMap<String, String>>()
+        .await.map_err(|_| PusherError::ParseError("Couldn't parse getkey response".to_string()))?;
 
     let sig_addr = json.get("address")
         .ok_or(PusherError::ResponseMissingKey("address".to_string()))?;
@@ -96,7 +97,8 @@ async fn do_transition(
         .send()
         .await
         .map_err(PusherError::RequestError)?;
-    let json = resp.json::<HashMap<String, String>>().await?;
+    let json = resp.json::<HashMap<String, String>>()
+        .await.map_err(|_| PusherError::ParseError("Couldn't parse getkey response".to_string()))?;
 
     let new_state = json.get("address")
         .ok_or(PusherError::ResponseMissingKey("address".to_string()))?;
