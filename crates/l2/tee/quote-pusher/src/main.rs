@@ -36,17 +36,16 @@ async fn setup_key(
         prover_url: &str,
         contract_addr: Address
     ) -> Result<(), PusherError> {
-    let map: HashMap<String, String> = HashMap::new();
-    web_client
+    let resp = web_client
         .get(format!("{prover_url}/getkey"))
-        .json(&map)
         .send()
         .await
         .map_err(PusherError::RequestError)?;
+    let json = resp.json::<HashMap<String, String>>().await?;
 
-    let sig_addr = map.get("address")
+    let sig_addr = json.get("address")
         .ok_or(PusherError::ResponseMissingKey("address".to_string()))?;
-    let quote = map.get("quote")
+    let quote = json.get("quote")
         .ok_or(PusherError::ResponseMissingKey("quote".to_string()))?;
 
     let sig_addr = H160::from_str(&sig_addr)
@@ -91,17 +90,17 @@ async fn do_transition(
         state: u64
     ) -> Result<u64, PusherError> {
     let map: HashMap<String, String> = HashMap::new();
-    web_client
+    let resp = web_client
         .get(format!("{prover_url}/transition"))
         .query(&[("state", state)])
-        .json(&map)
         .send()
         .await
         .map_err(PusherError::RequestError)?;
+    let json = resp.json::<HashMap<String, String>>().await?;
 
-    let new_state = map.get("address")
+    let new_state = json.get("address")
         .ok_or(PusherError::ResponseMissingKey("address".to_string()))?;
-    let signature = map.get("quote")
+    let signature = json.get("quote")
         .ok_or(PusherError::ResponseMissingKey("quote".to_string()))?;
 
     let new_state = u64::from_str(&new_state)
@@ -144,7 +143,7 @@ async fn main() -> Result<(), PusherError> {
     let rpc_url = read_env_var("RPC_URL")?;
     let private_key = read_env_var("PRIVATE_KEY")?;
     let contract_addr = read_env_var("CONTRACT_ADDRESS")?;
-    let prover_url = env::var("PROVER_URL").unwrap_or("localhost:3001".to_string());
+    let prover_url = env::var("PROVER_URL").unwrap_or("http://localhost:3001".to_string());
 
     let private_key = SecretKey::from_slice(
         H256::from_str(&private_key)
