@@ -139,6 +139,7 @@ jobs:
     needs: [docker_build, setup-hive]
     if: ${{ github.event_name != 'merge_group' }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: "Rpc Compat tests"
