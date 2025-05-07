@@ -28,11 +28,20 @@ impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
     pub fn from_encoded_raw(encoded: &[u8]) -> NodeHash {
         if encoded.len() >= 32 {
-            let hash = Keccak256::new_with_prefix(encoded).finalize();
-            NodeHash::Hashed(H256::from_slice(hash.as_slice()))
+            let hash = Keccak256::digest(encoded);
+            NodeHash::Hashed(H256(hash.into()))
         } else {
             NodeHash::from_slice(encoded)
         }
+        /*
+        eprintln!(
+            "L:{elen} {}",
+            match &res {
+                NodeHash::Hashed(hash) => format!("H:{:02X?}", hash.0),
+                NodeHash::Inline(value) => format!("V:{:02X?}", value),
+            }
+        );
+        */
     }
 
     /// Converts a slice of an already hashed data (in case it's not inlineable) to a NodeHash.

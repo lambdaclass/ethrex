@@ -124,6 +124,7 @@ impl LeafNode {
             .encode_bytes(&self.partial.encode_compact())
             .encode_bytes(&self.value)
             .finish();
+        //eprintln!("LEAF: ENCODED: {}", hex::encode(&buf));
         buf
     }
 

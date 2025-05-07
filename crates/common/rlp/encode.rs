@@ -1,7 +1,6 @@
 use bytes::{BufMut, Bytes};
 use ethereum_types::U256;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use tinyvec::ArrayVec;
 
 use super::constants::RLP_NULL;
 
@@ -48,38 +47,31 @@ impl RLPEncode for bool {
 // integer types impls
 
 fn impl_encode<const N: usize>(value_be: [u8; N], buf: &mut dyn BufMut) {
-    let mut is_multi_byte_case = false;
-
-    for n in value_be.iter().take(N - 1) {
-        // If we encounter a non 0 byte pattern before the last byte, we are
-        // at the multi byte case
-        if *n != 0 {
-            is_multi_byte_case = true;
-            break;
-        }
-    }
-
-    match value_be[N - 1] {
+    let Some(start) = value_be.iter().position(|&x| x != 0) else {
         // 0, also known as null or the empty string is 0x80
-        0 if !is_multi_byte_case => buf.put_u8(RLP_NULL),
+        buf.put_u8(RLP_NULL);
+        return;
+    };
+    if start == N - 1 && value_be[N - 1] <= 0x7f {
         // for a single byte whose value is in the [0x00, 0x7f] range, that byte is its own RLP encoding.
-        n @ 1..=0x7f if !is_multi_byte_case => buf.put_u8(n),
-        // if a string is 0-55 bytes long, the RLP encoding consists of a
-        // single byte with value RLP_NULL (0x80) plus the length of the string followed by the string.
-        _ => {
-            let mut bytes = ArrayVec::<[u8; 8]>::new();
-            bytes.extend_from_slice(&value_be);
-            let start = bytes.iter().position(|&x| x != 0).unwrap();
-            let len = bytes.len() - start;
-            buf.put_u8(RLP_NULL + len as u8);
-            buf.put_slice(&bytes[start..]);
-        }
+        buf.put_u8(value_be[N - 1]);
+        return;
     }
+    // if a string is 0-55 bytes long, the RLP encoding consists of a single byte with value RLP_NULL (0x80)
+    // plus the length of the string followed by the string.
+    // As this implementation is meant for integers <= u128::MAX, the string is at most 16 bytes long.
+    let len = value_be.len() - start;
+    buf.put_u8(RLP_NULL + len as u8);
+    buf.put_slice(&value_be[start..]);
 }
 
 impl RLPEncode for u8 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
+    }
+
+    fn length(&self) -> usize {
+        1 + (*self >= 0x80) as usize
     }
 }
 
@@ -87,11 +79,19 @@ impl RLPEncode for u16 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
     }
+
+    fn length(&self) -> usize {
+        (*self as u64).length()
+    }
 }
 
 impl RLPEncode for u32 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
+    }
+
+    fn length(&self) -> usize {
+        (*self as u64).length()
     }
 }
 
@@ -99,11 +99,25 @@ impl RLPEncode for u64 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
     }
+
+    fn length(&self) -> usize {
+        let len = if *self < 0x80 {
+            1
+        } else {
+            9 - (self.leading_zeros() as usize) / 8
+        };
+        debug_assert_eq!(self.encode_to_vec().len(), len);
+        len
+    }
 }
 
 impl RLPEncode for usize {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
+    }
+
+    fn length(&self) -> usize {
+        (*self as u64).length()
     }
 }
 
@@ -111,11 +125,25 @@ impl RLPEncode for u128 {
     fn encode(&self, buf: &mut dyn BufMut) {
         impl_encode(self.to_be_bytes(), buf);
     }
+
+    fn length(&self) -> usize {
+        let len = if *self < 0x80 {
+            1
+        } else {
+            17 - (self.leading_zeros() as usize) / 8
+        };
+        debug_assert_eq!(self.encode_to_vec().len(), len);
+        len
+    }
 }
 
 impl RLPEncode for () {
     fn encode(&self, buf: &mut dyn BufMut) {
         buf.put_u8(RLP_NULL);
+    }
+
+    fn length(&self) -> usize {
+        1
     }
 }
 
@@ -129,8 +157,7 @@ impl RLPEncode for [u8] {
             if len < 56 {
                 buf.put_u8(RLP_NULL + len as u8);
             } else {
-                let mut bytes = ArrayVec::<[u8; 8]>::new();
-                bytes.extend_from_slice(&len.to_be_bytes());
+                let bytes = len.to_be_bytes();
                 let start = bytes.iter().position(|&x| x != 0).unwrap();
                 let len = bytes.len() - start;
                 buf.put_u8(0xb7 + len as u8);
@@ -139,11 +166,33 @@ impl RLPEncode for [u8] {
             buf.put_slice(self);
         }
     }
+
+    fn length(&self) -> usize {
+        let inner_len = self.len();
+        let len = inner_len
+            + match inner_len {
+                1 if self[0] < RLP_NULL => 0,
+                il if il < 56 => 1,
+                il => {
+                    let bytes = il.to_be_bytes();
+                    let start = bytes.iter().position(|&x| x != 0).unwrap();
+                    1 + bytes.len() - start
+                }
+            };
+        debug_assert_eq!(len, self.encode_to_vec().len());
+        len
+    }
 }
 
 impl<const N: usize> RLPEncode for [u8; N] {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_ref().encode(buf)
+    }
+
+    fn length(&self) -> usize {
+        let len = self.as_ref().length();
+        debug_assert_eq!(self.encode_to_vec().len(), len);
+        len
     }
 }
 
@@ -151,17 +200,35 @@ impl RLPEncode for str {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
+
+    fn length(&self) -> usize {
+        let len = self.as_bytes().length();
+        debug_assert_eq!(self.encode_to_vec().len(), len);
+        len
+    }
 }
 
 impl RLPEncode for &str {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
     }
+
+    fn length(&self) -> usize {
+        let len = self.as_bytes().length();
+        debug_assert_eq!(self.encode_to_vec().len(), len);
+        len
+    }
 }
 
 impl RLPEncode for String {
     fn encode(&self, buf: &mut dyn BufMut) {
         self.as_bytes().encode(buf)
+    }
+
+    fn length(&self) -> usize {
+        let len = self.as_bytes().length();
+        debug_assert_eq!(self.encode_to_vec().len(), len);
+        len
     }
 }
 
@@ -171,6 +238,16 @@ impl RLPEncode for U256 {
         let bytes = self.to_big_endian();
         bytes[leading_zeros_in_bytes..].encode(buf)
     }
+
+    fn length(&self) -> usize {
+        let len = if *self < U256::from(0x80) {
+            1
+        } else {
+            33 - (self.leading_zeros() as usize) / 8
+        };
+        debug_assert_eq!(self.encode_to_vec().len(), len);
+        len
+    }
 }
 
 impl<T: RLPEncode> RLPEncode for Vec<T> {
@@ -178,13 +255,28 @@ impl<T: RLPEncode> RLPEncode for Vec<T> {
         if self.is_empty() {
             buf.put_u8(0xc0);
         } else {
-            let mut tmp_buf = vec![];
+            let inner_len = self.iter().map(|v| v.length()).sum();
+            encode_length(inner_len, buf);
             for item in self {
-                item.encode(&mut tmp_buf);
+                item.encode(buf);
             }
-            encode_length(tmp_buf.len(), buf);
-            buf.put_slice(&tmp_buf);
         }
+    }
+
+    fn length(&self) -> usize {
+        let inner_len: usize = self.iter().map(|v| v.length()).sum();
+        let len = inner_len
+            + match inner_len {
+                0 => 1,
+                il if il < 56 => 1,
+                il => {
+                    let bytes = il.to_be_bytes();
+                    let start = bytes.iter().position(|b| *b != 0).unwrap();
+                    1 + bytes.len() - start
+                }
+            };
+        debug_assert_eq!(len, self.encode_to_vec().len());
+        len
     }
 }
 
@@ -192,8 +284,9 @@ pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
     if total_len < 56 {
         buf.put_u8(0xc0 + total_len as u8);
     } else {
-        let mut bytes = ArrayVec::<[u8; 8]>::new();
-        bytes.extend_from_slice(&total_len.to_be_bytes());
+        let bytes = total_len.to_be_bytes();
+        // This is safe because  if `total_len` = 0 then it's < 56
+        // and goes to the `true` arm of the `if`
         let start = bytes.iter().position(|&x| x != 0).unwrap();
         let len = bytes.len() - start;
         buf.put_u8(0xf7 + len as u8);
@@ -203,10 +296,11 @@ pub fn encode_length(total_len: usize, buf: &mut dyn BufMut) {
 
 impl<S: RLPEncode, T: RLPEncode> RLPEncode for (S, T) {
     fn encode(&self, buf: &mut dyn BufMut) {
-        let total_len = self.0.length() + self.1.length();
-        encode_length(total_len, buf);
-        self.0.encode(buf);
-        self.1.encode(buf);
+        let mut tmp_buf = vec![];
+        self.0.encode(&mut tmp_buf);
+        self.1.encode(&mut tmp_buf);
+        encode_length(tmp_buf.len(), buf);
+        buf.put_slice(&tmp_buf);
     }
 }
 
@@ -348,6 +442,38 @@ mod tests {
     use crate::constants::{RLP_EMPTY_LIST, RLP_NULL};
 
     use super::RLPEncode;
+
+    #[track_caller]
+    fn length_method_matches_encoded_length<T: RLPEncode + ?Sized>(v: &T) {
+        assert_eq!(
+            v.length(),
+            v.encode_to_vec().len(),
+            "mismatch for value: {}",
+            hex::encode(v.encode_to_vec()),
+        )
+    }
+
+    #[test]
+    fn length_method_matches_encoded_length_for_all_types() {
+        for i in 0..u8::MAX {
+            length_method_matches_encoded_length(&i);
+        }
+        for i in 0..u16::MAX {
+            length_method_matches_encoded_length(&i);
+            length_method_matches_encoded_length(&(i as u32));
+            length_method_matches_encoded_length(&(i as u64));
+            length_method_matches_encoded_length(&(i as u128));
+            length_method_matches_encoded_length(&U256::from(i));
+        }
+        let u8s: Vec<_> = (0..u8::MAX).collect();
+        length_method_matches_encoded_length(&u8s);
+        length_method_matches_encoded_length(&u8s[..]);
+        //length_method_matches_encoded_length(u8s);
+        let u16s: Vec<_> = (0..u16::MAX).collect();
+        length_method_matches_encoded_length(&u16s);
+        //length_method_matches_encoded_length(&u16s[..]);
+        //length_method_matches_encoded_length(u16s);
+    }
 
     #[test]
     fn can_encode_booleans() {
