@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import "../lib/openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
+import "../lib/openzeppelin-contracts/contracts/utils/cryptography/MessageHashUtils.sol";
 
 interface IAttestation {
     function verifyAndAttestOnChain(bytes calldata rawQuote)
@@ -12,10 +12,8 @@ interface IAttestation {
 }
 
 contract Counter {
-    IAttestation quoteVerifier;
-    constructor(address _dcap) {
-        IAttestation quoteVerifier = IAttestation(_dcap);
-    }
+    IAttestation quoteVerifier = IAttestation(address(0));
+
     address public authorizedSignature = address(0);
     uint64 public current = 100;
     bytes public RTMR0 = hex'4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643';

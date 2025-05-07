@@ -35,7 +35,7 @@ deploydeps/root_ca.hex:
 	# SGX and TDX roots are the same
 	curl $(ROOT_CA_URI) | xxd -ps -c0 > deploydeps/root_ca.hex
 
-setup-pccs-ca: deploydeps/root_ca.hex deploydeps/root_crl.hex
+setup-pccs-ca: deploy-pccs deploydeps/root_ca.hex deploydeps/root_crl.hex
 	$(eval PCSDAO_ADDRESS := $(shell cat ${PCCS_FILE} | jq --raw-output .AutomataPcsDao))
 	cast send $(PCSDAO_ADDRESS) "upsertPcsCertificates(uint8,bytes)" 0 $(shell cat deploydeps/root_ca.hex) \
 		--rpc-url $(RPC_URL) \
@@ -54,14 +54,23 @@ set-verifier-v4: deploy-dcap
 		--rpc-url $(RPC_URL) \
 		--private-key $(PRIVATE_KEY)
 
-deploy:
-	DCAP_ADDRESS=$(shell cat ${DCAP_FILE} | jq --raw-output .AutomataDcapAttestationFee) \
-	forge script script/Counter.s.sol:CounterScript \
+lib/openzeppelin-contracts:
+	mkdir -p lib
+	cd lib; git clone https://github.com/OpenZeppelin/openzeppelin-contracts
+
+solc_out/Counter.bin: src/Counter.sol lib/openzeppelin-contracts
+	mkdir -p solc_out
+	solc src/Counter.sol --bin --allow-paths lib/ -o solc_out/
+
+deploy: solc_out/Counter.bin
+	$(eval CONTRACT_BIN := $(shell cat solc_out/Counter.bin))
+	$(eval DCAP_ADDRESS := $(shell cat ${DCAP_FILE} | jq --raw-output .AutomataDcapAttestationFee))
+	cast send  \
 		--rpc-url $(RPC_URL) \
 		--private-key $(PRIVATE_KEY) \
-		--broadcast
+		--create $(CONTRACT_BIN) "constructor(address)" $(DCAP_ADDRESS)
 
-deploy-all: deploy-dcap set-verifier-v4 setup-pccs-ca
+deploy-deps: deploy-dcap set-verifier-v4 setup-pccs-ca
 
 clean:
 	rm -rf deploydeps cache out deployment/*

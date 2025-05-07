@@ -1,0 +1,8 @@
+# Libraries
+lib/
+
+# Dotenv file
+.env
+
+# Deploy dependencies
+deploydeps/
