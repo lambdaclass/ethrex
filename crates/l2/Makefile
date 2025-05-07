@@ -205,7 +205,7 @@ integration-test: rm-db-l2 rm-db-l1
 	# does not exist, the container fails to write to it.
 	touch .env
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --build
 	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover -s SIGINT
 
