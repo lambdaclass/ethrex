@@ -214,22 +214,21 @@ impl Store {
     }
 
     pub async fn get_fork_id(&self) -> Result<ForkId, StoreError> {
-        // let chain_config = self.get_chain_config()?;
-        // let genesis_header = self
-        //     .get_block_header(0)?
-        //     .ok_or(StoreError::MissingEarliestBlockNumber)?;
-        // let block_number = self.get_latest_block_number().await?;
-        // let block_header = self
-        //     .get_block_header(block_number)?
-        //     .ok_or(StoreError::MissingLatestBlockNumber)?;
+        let chain_config = self.get_chain_config()?;
+        let genesis_header = self
+            .get_block_header(0)?
+            .ok_or(StoreError::MissingEarliestBlockNumber)?;
+        let block_number = self.get_latest_block_number().await?;
+        let block_header = self
+            .get_block_header(block_number)?
+            .ok_or(StoreError::MissingLatestBlockNumber)?;
 
-        // Ok(ForkId::new(
-        //     chain_config,
-        //     genesis_header,
-        //     block_header.timestamp,
-        //     block_number,
-        // ))
-        Err(StoreError::DecodeError)
+        Ok(ForkId::new(
+            chain_config,
+            genesis_header,
+            block_header.timestamp,
+            block_number,
+        ))
     }
 
     pub async fn add_transaction_location(

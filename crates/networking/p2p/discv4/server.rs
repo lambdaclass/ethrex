@@ -415,7 +415,13 @@ impl Discv4Server {
 
                 //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
                 if let Some(eth) = record.eth {
-                    let pairs = self.ctx.local_node_record.lock().await.decode_pairs();
+                    let mut pairs = self.ctx.local_node_record.lock().await.decode_pairs();
+
+                    // if no eth pair is set, create a new fork_id
+                    if pairs.eth.is_none() {
+                        self.ctx.set_fork_id().await;
+                        pairs = self.ctx.local_node_record.lock().await.decode_pairs();
+                    }
 
                     if let Some(fork_id) = pairs.eth {
                         let Ok(block_number) = self.ctx.storage.get_latest_block_number().await
@@ -749,7 +755,6 @@ pub(super) mod tests {
             broadcast,
             client_version: "ethrex/test".to_string(),
         };
-        ctx.set_fork_id().await;
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;
 
