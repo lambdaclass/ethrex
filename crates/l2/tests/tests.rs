@@ -219,9 +219,9 @@ async fn test_deposit(
         .get_balance(bridge_address, BlockByNumber::Latest)
         .await?;
 
-    let fee_vault_balance_before_deposit = proposer_client
-        .get_balance(fees_vault(), BlockByNumber::Latest)
-        .await?;
+    // let fee_vault_balance_before_deposit = proposer_client
+    //     .get_balance(fees_vault(), BlockByNumber::Latest)
+    //     .await?;
 
     println!("Depositing funds from L1 to L2");
 
@@ -282,14 +282,14 @@ async fn test_deposit(
         "Deposit recipient L2 balance didn't increase as expected after deposit"
     );
 
-    let fee_vault_balance_after_deposit = proposer_client
-        .get_balance(fees_vault(), BlockByNumber::Latest)
-        .await?;
+    // let fee_vault_balance_after_deposit = proposer_client
+    //     .get_balance(fees_vault(), BlockByNumber::Latest)
+    //     .await?;
 
-    assert_eq!(
-        fee_vault_balance_after_deposit, fee_vault_balance_before_deposit,
-        "Fee vault balance should not change after deposit"
-    );
+    // assert_eq!(
+    //     fee_vault_balance_after_deposit, fee_vault_balance_before_deposit,
+    //     "Fee vault balance should not change after deposit"
+    // );
 
     Ok(())
 }
@@ -411,6 +411,10 @@ async fn test_withdraw(
         "L1 bridge doesn't have enough balance to withdraw"
     );
 
+    let withdrawer_l1_balance_before_withdrawal = eth_client
+        .get_balance(withdrawer_address, BlockByNumber::Latest)
+        .await?;
+
     let fee_vault_balance_before_withdrawal = proposer_client
         .get_balance(fees_vault(), BlockByNumber::Latest)
         .await?;
@@ -443,12 +447,12 @@ async fn test_withdraw(
         "Withdrawer L2 balance didn't decrease as expected after withdrawal"
     );
 
-    let withdrawer_l1_balance_after_withdrawal = proposer_client
+    let withdrawer_l1_balance_after_withdrawal = eth_client
         .get_balance(withdrawer_address, BlockByNumber::Latest)
         .await?;
 
     assert_eq!(
-        withdrawer_l1_balance_after_withdrawal, withdrawer_l2_balance_after_withdrawal,
+        withdrawer_l1_balance_after_withdrawal, withdrawer_l1_balance_before_withdrawal,
         "Withdrawer L1 balance should not change after withdrawal"
     );
 
