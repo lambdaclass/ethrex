@@ -2,7 +2,6 @@
 After=network-online.target
 
 [Service]
-Type=oneshot
 ExecStart=/payload
 StandardOutput=journal+console
 
