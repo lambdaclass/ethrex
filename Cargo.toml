@@ -27,7 +27,7 @@ members = [
   "crates/vm/levm/bench/revm_comparison",
 ]
 exclude = [
-  "crates/l2/tee/quote-pusher/automata-dcap-qpl/*"
+  "crates/l2/tee/quote-pusher/automata-dcap-qpl/automata-dcap-qpl-tool"
 ]
 resolver = "2"
 
