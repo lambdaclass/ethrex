@@ -2162,8 +2162,10 @@ mod serde_impl {
         pub gas: Option<u64>,
         #[serde(default)]
         pub value: U256,
-        #[serde(default, with = "crate::serde_utils::bytes", alias = "data")]
+        #[serde(default, with = "crate::serde_utils::bytes")]
         pub input: Bytes,
+        #[serde(default, with = "crate::serde_utils::bytes")]
+        pub data: Bytes,
         #[serde(default, with = "crate::serde_utils::u64::hex_str")]
         pub gas_price: u64,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -2191,7 +2193,8 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
+                data: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2218,7 +2221,8 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
+                data: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2245,7 +2249,8 @@ mod serde_impl {
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
+                data: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2278,7 +2283,8 @@ mod serde_impl {
                 to: value.to,
                 gas: Some(value.gas_limit),
                 value: value.value,
-                input: value.data,
+                input: value.data.clone(),
+                data: value.data,
                 gas_price: value.max_fee_per_gas,
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
@@ -2605,6 +2611,7 @@ mod tests {
             gas: Some(0x5208),
             value: U256::from(1),
             input: Bytes::new(),
+            data: Bytes::new(),
             gas_price: 7,
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
