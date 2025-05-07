@@ -149,7 +149,7 @@ async fn do_transition(
     let calldata = encode_calldata(
         UPDATE_SIGNATURE,
         &[
-            Value::Uint(U256([0, 0, 0, new_state])),
+            Value::Uint(U256::from(new_state)),
             Value::Bytes(signature.into()),
         ],
     )
