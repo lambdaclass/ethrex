@@ -1,0 +1,14 @@
+[package]
+name = "quote-pusher"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio.workspace = true
+ethrex-rpc = { path = "../../../networking/rpc" }
+ethrex-sdk = { path = "../../../l2/sdk" }
+secp256k1.workspace = true
+ethereum-types = { workspace = true, features = ["serialize"] }
+thiserror.workspace = true
+reqwest.workspace = true
+hex.workspace = true

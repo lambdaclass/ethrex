@@ -86,7 +86,7 @@ async fn main() -> GenericError {
 
     let app = Router::new()
         .route("/getkey", get(handle_getkey))
-        .route("/transition", post(handle_transition))
+        .route("/transition", get(handle_transition))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await?;
