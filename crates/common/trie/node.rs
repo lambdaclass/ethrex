@@ -5,13 +5,17 @@ mod leaf;
 use std::array;
 
 pub use branch::BranchNode;
-use ethrex_rlp::{decode::decode_bytes, error::RLPDecodeError, structs::Decoder};
+use ethrex_rlp::{
+    decode::{decode_bytes, RLPDecode},
+    error::RLPDecodeError,
+    structs::Decoder,
+};
 pub use extension::ExtensionNode;
 pub use leaf::LeafNode;
 
-use crate::{error::TrieError, nibbles::Nibbles};
+use crate::{error::TrieError, nibbles::Nibbles, TrieDB};
 
-use super::{node_hash::NodeHash, state::TrieState, ValueRLP};
+use super::{node_hash::NodeHash, ValueRLP};
 
 /// A reference to a node.
 #[derive(Clone, Debug, PartialEq)]
@@ -27,10 +31,13 @@ impl NodeRef {
         Self::Hash(NodeHash::const_default())
     }
 
-    pub fn get_node(&self, state: &TrieState) -> Result<Option<Node>, TrieError> {
-        match self {
-            NodeRef::Node(node) => Ok(Some(node.as_ref().clone())),
-            NodeRef::Hash(hash) => state.get_node(*hash),
+    pub fn get_node(&self, db: &dyn TrieDB) -> Result<Option<Node>, TrieError> {
+        match *self {
+            NodeRef::Node(ref node) => Ok(Some(node.as_ref().clone())),
+            NodeRef::Hash(hash) => db
+                .get(hash)?
+                .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
+                .transpose(),
         }
     }
 
@@ -38,6 +45,29 @@ impl NodeRef {
         match self {
             NodeRef::Node(_) => true,
             NodeRef::Hash(hash) => hash.is_valid(),
+        }
+    }
+
+    pub fn commit(&mut self, acc: &mut Vec<(NodeHash, Vec<u8>)>) -> NodeHash {
+        match *self {
+            NodeRef::Node(ref mut node) => {
+                match node.as_mut() {
+                    Node::Branch(node) => {
+                        for node in &mut node.choices {
+                            node.commit(acc);
+                        }
+                    }
+                    Node::Extension(node) => {
+                        node.child.commit(acc);
+                    }
+                    Node::Leaf(_) => {}
+                }
+
+                let hash = node.compute_hash();
+                *self = hash.into();
+                hash
+            }
+            NodeRef::Hash(hash) => hash,
         }
     }
 
@@ -95,10 +125,10 @@ impl From<LeafNode> for Node {
 
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, state: &TrieState, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    pub fn get(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
         match self {
-            Node::Branch(n) => n.get(state, path),
-            Node::Extension(n) => n.get(state, path),
+            Node::Branch(n) => n.get(db, path),
+            Node::Extension(n) => n.get(db, path),
             Node::Leaf(n) => n.get(path),
         }
     }
@@ -106,14 +136,14 @@ impl Node {
     /// Inserts a value into the subtrie originating from this node and returns the new root of the subtrie
     pub fn insert(
         self,
-        state: &mut TrieState,
+        db: &dyn TrieDB,
         path: Nibbles,
         value: ValueRLP,
     ) -> Result<Node, TrieError> {
         match self {
-            Node::Branch(n) => n.insert(state, path, value),
-            Node::Extension(n) => n.insert(state, path, value),
-            Node::Leaf(n) => n.insert(state, path, value),
+            Node::Branch(n) => n.insert(db, path, value),
+            Node::Extension(n) => n.insert(db, path, value),
+            Node::Leaf(n) => n.insert(path, value),
         }
     }
 
@@ -121,12 +151,12 @@ impl Node {
     /// Returns the new root of the subtrie (if any) and the removed value if it existed in the subtrie
     pub fn remove(
         self,
-        state: &mut TrieState,
+        db: &dyn TrieDB,
         path: Nibbles,
     ) -> Result<(Option<Node>, Option<ValueRLP>), TrieError> {
         match self {
-            Node::Branch(n) => n.remove(state, path),
-            Node::Extension(n) => n.remove(state, path),
+            Node::Branch(n) => n.remove(db, path),
+            Node::Extension(n) => n.remove(db, path),
             Node::Leaf(n) => n.remove(path),
         }
     }
@@ -136,22 +166,14 @@ impl Node {
     /// Only nodes with encoded len over or equal to 32 bytes are included
     pub fn get_path(
         &self,
-        state: &TrieState,
+        db: &dyn TrieDB,
         path: Nibbles,
         node_path: &mut Vec<Vec<u8>>,
     ) -> Result<(), TrieError> {
         match self {
-            Node::Branch(n) => n.get_path(state, path, node_path),
-            Node::Extension(n) => n.get_path(state, path, node_path),
+            Node::Branch(n) => n.get_path(db, path, node_path),
+            Node::Extension(n) => n.get_path(db, path, node_path),
             Node::Leaf(n) => n.get_path(node_path),
-        }
-    }
-
-    pub fn insert_self(self, state: &mut TrieState) -> Result<NodeHash, TrieError> {
-        match self {
-            Node::Branch(n) => n.insert_self(state),
-            Node::Extension(n) => n.insert_self(state),
-            Node::Leaf(n) => n.insert_self(state),
         }
     }
 

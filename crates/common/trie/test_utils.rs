@@ -16,7 +16,7 @@ macro_rules! pmt_node {
                     $child_type { $( $child_tokens )* }
                     offset offset
                 }.into();
-                choices[$choice as usize] = child_node.insert_self(&mut $trie.state).unwrap().into();
+                choices[$choice as usize] = child_node.into();
             )*
             choices
         })
@@ -36,7 +36,7 @@ macro_rules! pmt_node {
                     pmt_node! { @($trie)
                         $child_type { $( $child_tokens )* }
                         offset offset
-                    }).insert_self(&mut $trie.state).unwrap().into();
+                    }).into();
             )*
             choices
         }, $value)
@@ -56,7 +56,7 @@ macro_rules! pmt_node {
                 let child_node = $crate::node::Node::from(pmt_node! { @($trie)
                     $child_type { $( $child_tokens )* }
                 });
-                child_node.insert_self(&mut $trie.state).unwrap().into()
+                child_node.into()
             }
         )
     }};
