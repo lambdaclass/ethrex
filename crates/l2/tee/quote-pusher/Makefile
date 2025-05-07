@@ -1,6 +1,6 @@
 automata-dcap-qpl:
 	git clone https://github.com/automata-network/automata-dcap-qpl
-	cd automata-dcap-qpl; git submodule update --init
+	cd automata-dcap-qpl/automata-dcap-qpl-tool; git clone https://github.com/automata-network/pccs-reader-rs
 	echo "" >> automata-dcap-qpl/automata-dcap-qpl-tool/Cargo.toml
 	echo "[workspace]" >> automata-dcap-qpl/automata-dcap-qpl-tool/Cargo.toml
 
