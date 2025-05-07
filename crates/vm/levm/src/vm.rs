@@ -22,9 +22,7 @@ use ethrex_common::{
     Address, H256, U256,
 };
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
-    fmt::Debug,
-    sync::Arc,
+    collections::{BTreeSet, HashMap, HashSet}, fmt::Debug, sync::Arc
 };
 
 #[cfg(not(feature = "l2"))]
@@ -34,6 +32,12 @@ use crate::hooks::L2Hook;
 
 pub type Storage = HashMap<U256, H256>;
 
+/// Current substate of the transaction. Consists of the state elements to be modified.
+/// Consists of:
+///     - Accounts to delete due to self-destruct calls
+///     - Touched accounts (accounts which were interacted with via a transactions)
+///     - Accessed or modified storage slots (touched slots)
+///     - Created accounts
 #[derive(Debug, Clone, Default)]
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
@@ -241,6 +245,7 @@ impl<'a> VM<'a> {
             vec![Arc::new(L2Hook { recipient })]
         };
 
+        // Initialize substate
         let mut substate = Substate {
             selfdestruct_set: HashSet::new(),
             touched_accounts: default_touched_accounts,
@@ -311,14 +316,16 @@ impl<'a> VM<'a> {
         })
     }
 
-    pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
+    pub fn vm_main_loop(&mut self) -> Result<ExecutionReport, VMError> {
         let fork = self.env.config.fork;
 
         if is_precompile(&self.current_call_frame()?.code_address, fork) {
+            // Get the current execution context
             let mut current_call_frame = self
                 .call_frames
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+            // Get the result of the execution
             let precompile_result = execute_precompile(&mut current_call_frame, fork);
             let backup = self
                 .backups
@@ -326,7 +333,12 @@ impl<'a> VM<'a> {
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
             let report =
                 self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
-            self.handle_return(&current_call_frame, &report)?;
+            // If call frame is root, put the call frame back in the stack. Else handle return from current context
+            if current_call_frame.depth == 0 {
+                self.call_frames.push(current_call_frame.clone());
+            } else {
+                self.handle_return(&current_call_frame, &report)?;
+            }
             self.current_call_frame_mut()?.increment_pc_by(1)?;
             return Ok(report);
         }
@@ -341,26 +353,38 @@ impl<'a> VM<'a> {
                     .current_call_frame_mut()?
                     .increment_pc_by(pc_increment)?,
                 Ok(OpcodeResult::Halt) => {
+                    // Get the current execution context
                     let mut current_call_frame = self
                         .call_frames
                         .pop()
                         .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+                    // Get the output and other details of the successfully executed transaction
                     let report = self.handle_opcode_result(&mut current_call_frame)?;
-                    if self.handle_return(&current_call_frame, &report)? {
+                    // If current call frame is root, push the call frame back into the stack and return. 
+                    // Else, handle return to prior context and increment the PC
+                    if current_call_frame.depth != 0 {
+                        self.handle_return(&current_call_frame, &report)?;
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
+                        self.call_frames.push(current_call_frame.clone());
                         return Ok(report);
                     }
                 }
                 Err(error) => {
+                    // Get the current execution context
                     let mut current_call_frame = self
                         .call_frames
                         .pop()
                         .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+                    // Get the details of why the transaction reverted
                     let report = self.handle_opcode_error(error, &mut current_call_frame)?;
-                    if self.handle_return(&current_call_frame, &report)? {
+                     // If current call frame is root, push the call frame back into the stack and return. 
+                    // Else, handle return to prior context and increment the PC
+                    if current_call_frame.depth != 0 {
+                        self.handle_return(&current_call_frame, &report)?;
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
+                        self.call_frames.push(current_call_frame.clone());
                         return Ok(report);
                     }
                 }
@@ -368,6 +392,7 @@ impl<'a> VM<'a> {
         }
     }
 
+    /// Restore state to that of the backups passed as parameter
     pub fn restore_state(
         &mut self,
         backup: StateBackup,
@@ -437,7 +462,7 @@ impl<'a> VM<'a> {
 
         self.backups.push(backup);
 
-        let mut report = self.run_execution()?;
+        let mut report = self.vm_main_loop()?;
 
         self.finalize_execution(&mut report)?;
         Ok(report)

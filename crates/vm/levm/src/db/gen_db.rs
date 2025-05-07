@@ -17,6 +17,8 @@ use super::error::DatabaseError;
 use super::CacheDB;
 use super::Database;
 
+/// Database of accounts
+/// Consists of a permanent store, and a more efficiently accessrd cache
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
