@@ -399,7 +399,7 @@ pub fn get_local_node_record(
     };
 
     Arc::new(Mutex::new(
-        NodeRecord::from_node(&local_p2p_node, enr_seq, signer)
+        NodeRecord::from_node(local_p2p_node, enr_seq, signer)
             .expect("Node record could not be created from local node"),
     ))
 }
