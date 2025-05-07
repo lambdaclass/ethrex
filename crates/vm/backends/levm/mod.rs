@@ -340,7 +340,7 @@ impl LEVM {
         // has any code after being deployed. If not, the whole block becomes invalid.
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
         let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
-        if acc.info.code_hash == EMPTY_CODE_HASH {
+        if !acc.has_code() {
             return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
         }
 
