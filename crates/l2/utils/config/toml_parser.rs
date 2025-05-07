@@ -1,7 +1,9 @@
+use super::super::parse::deserialize_url;
 use crate::utils::config::{
     errors::{ConfigError, TomlParserError},
     ConfigMode,
 };
+use reqwest::Url;
 use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -48,6 +50,8 @@ struct Eth {
     rpc_url: String,
     maximum_allowed_max_fee_per_gas: u64,
     maximum_allowed_max_fee_per_blob_gas: u64,
+    #[serde(deserialize_with = "deserialize_url")]
+    remote_signer_url: Url,
 }
 
 impl Eth {
@@ -58,10 +62,12 @@ impl Eth {
 {prefix}_RPC_URL={}
 {prefix}_MAXIMUM_ALLOWED_MAX_FEE_PER_GAS={}
 {prefix}_MAXIMUM_ALLOWED_MAX_FEE_PER_BLOB_GAS={}
+{prefix}_REMOTE_SIGNER_URL={}
 ",
             self.rpc_url,
             self.maximum_allowed_max_fee_per_gas,
-            self.maximum_allowed_max_fee_per_blob_gas
+            self.maximum_allowed_max_fee_per_blob_gas,
+            self.remote_signer_url
         )
     }
 }

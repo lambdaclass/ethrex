@@ -19,9 +19,9 @@ use ethrex_common::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
     },
-    Address, H160, H256, U256,
+    Address, Signature, H160, H256, U256,
 };
-use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::encode::{PayloadRLPEncode, RLPEncode};
 use keccak_hash::keccak;
 use reqwest::Client;
 use secp256k1::SecretKey;
@@ -53,6 +53,46 @@ pub enum WrappedTransaction {
     EIP4844(WrappedEIP4844Transaction),
     EIP1559(EIP1559Transaction),
     L2(PrivilegedL2Transaction),
+}
+
+impl WrappedTransaction {
+    pub fn encode_payload_to_vec(&self) -> Result<Bytes, EthClientError> {
+        match self {
+            Self::EIP1559(tx) => Ok(tx.encode_payload_to_vec().into()),
+            Self::EIP4844(tx_wrapper) => Ok(tx_wrapper.tx.encode_payload_to_vec().into()),
+            Self::L2(_) => {
+                return Err(EthClientError::InternalError(
+                    "L2 Privileged transaction not supported".to_string(),
+                ))
+            }
+        }
+    }
+
+    pub fn add_signature(&mut self, signature: Signature) -> Result<(), EthClientError> {
+        let r = U256::from_big_endian(&signature.0[..32]);
+        let s = U256::from_big_endian(&signature.0[32..64]);
+        let y_parity = signature.0[64] == 28;
+
+        match self {
+            Self::EIP1559(tx) => {
+                tx.signature_r = r;
+                tx.signature_s = s;
+                tx.signature_y_parity = y_parity;
+            }
+            Self::EIP4844(tx_wrapper) => {
+                tx_wrapper.tx.signature_r = r;
+                tx_wrapper.tx.signature_s = s;
+                tx_wrapper.tx.signature_y_parity = y_parity;
+            }
+            Self::L2(_) => {
+                return Err(EthClientError::InternalError(
+                    "L2 Privileged transaction not supported".to_string(),
+                ))
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]

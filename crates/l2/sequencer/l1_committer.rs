@@ -12,7 +12,7 @@ use crate::{
 use ethrex_common::{
     types::{
         blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
-        BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
+        BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind, TxType,
         BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
@@ -21,6 +21,7 @@ use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     merkle_tree::merkelize,
 };
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
@@ -29,6 +30,7 @@ use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::Evm;
 use keccak_hash::keccak;
+use reqwest::{Client, Url};
 use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
@@ -48,6 +50,7 @@ pub struct Committer {
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
     validium: bool,
+    remote_signer_url: Option<Url>,
 }
 
 pub async fn start_l1_committer(
@@ -92,6 +95,7 @@ impl Committer {
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
+            remote_signer_url: eth_config.remote_signer_url,
         }
     }
 
@@ -544,10 +548,54 @@ impl Committer {
             .set_gas_for_wrapped_tx(&mut tx, self.l1_address)
             .await?;
 
-        let commit_tx_hash = self
-            .eth_client
-            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
-            .await?;
+        let commit_tx_hash = if let Some(remote_signer_url) = &self.remote_signer_url {
+            let client = Client::new();
+            let pubkey = self
+                .l1_private_key
+                .public_key(secp256k1::SECP256K1)
+                .serialize_uncompressed();
+            let url = format!(
+                "{remote_signer_url}api/v1/eth1/sign/{}",
+                hex::encode(&pubkey[1..])
+            );
+            let body = format!(
+                "{{\"data\": \"0x03{}\"}}",
+                hex::encode(tx.encode_payload_to_vec().map_err(|_| {
+                    CommitterError::InternalError("Unexpected error".to_string())
+                })?)
+            );
+            let signature = client
+                .post(url)
+                .body(body)
+                .header("content-type", "application/json")
+                .send()
+                .await
+                .map_err(|e| CommitterError::InternalError(format!("{e}")))?
+                .text()
+                .await
+                .map_err(|e| CommitterError::InternalError(format!("{e}")))?
+                .parse()
+                .map_err(|e| CommitterError::InternalError(format!("{e}")))?;
+            tx.add_signature(signature)?;
+            let data = match tx {
+                WrappedTransaction::EIP1559(tx) => {
+                    [vec![TxType::EIP1559.into()], tx.encode_to_vec()].concat()
+                }
+                WrappedTransaction::EIP4844(tx_wrapper) => {
+                    [vec![TxType::EIP4844.into()], tx_wrapper.encode_to_vec()].concat()
+                }
+                WrappedTransaction::L2(_) => {
+                    return Err(CommitterError::InternalError(
+                        "Unsupported tx type".to_string(),
+                    ))
+                }
+            };
+            self.eth_client.send_raw_transaction(&data).await?
+        } else {
+            self.eth_client
+                .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
+                .await?
+        };
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 
