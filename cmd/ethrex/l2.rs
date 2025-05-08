@@ -134,7 +134,11 @@ impl Command {
 
                 let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
-                let local_node_record = get_local_node_record(&data_dir, &local_p2p_node, &signer);
+                let local_node_record = Arc::new(Mutex::new(get_local_node_record(
+                    &data_dir,
+                    &local_p2p_node,
+                    &signer,
+                )));
 
                 let peer_table = peer_table(signer.clone());
 
