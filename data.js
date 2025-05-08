@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746729088144,
+  "lastUpdate": 1746731937447,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5815,6 +5815,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179334957227,
             "range": "± 898033091",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "30327624+mechanix97@users.noreply.github.com",
+            "name": "Mechardo",
+            "username": "mechanix97"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "435107be79d0df4d2ece43b77a359b70ed26ba8f",
+          "message": "docs(p2p): Update network docs (#2613)\n\n**Motivation**\n\nThe network example was outdated and it was not working\n\n**Description**\n\nModified the commands to use diferents datadirs in order to generate\ndistincts node_id\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2608\n\n---------\n\nCo-authored-by: Tomás Paradelo <112426153+tomip01@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-05-08T18:20:11Z",
+          "tree_id": "aa63b51ed79f162cc772050e46a538257851fb12",
+          "url": "https://github.com/lambdaclass/ethrex/commit/435107be79d0df4d2ece43b77a359b70ed26ba8f"
+        },
+        "date": 1746731935721,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179470806469,
+            "range": "± 803373101",
             "unit": "ns/iter"
           }
         ]
