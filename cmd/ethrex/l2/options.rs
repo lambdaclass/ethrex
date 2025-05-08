@@ -127,7 +127,7 @@ pub struct WatcherOptions {
     )]
     pub bridge_address: Address,
     #[arg(
-        long,
+        long = "watcher.watch-interval-ms",
         default_value = "1000",
         value_name = "UINT64",
         env = "ETHREX_WATCHER_WATCH_INTERVAL_MS",
@@ -135,7 +135,7 @@ pub struct WatcherOptions {
     )]
     pub watch_interval_ms: u64,
     #[arg(
-        long,
+        long = "watcher.max-block-step",
         default_value = "5000",
         value_name = "UINT64",
         env = "ETHREX_WATCHER_MAX_BLOCK_STEP",
