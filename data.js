@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746734379237,
+  "lastUpdate": 1746737051595,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5905,6 +5905,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178199303457,
             "range": "± 442468797",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a5da369f9a220976eb97429dcce0356363025d87",
+          "message": "chore(levm, l1, l2): remove code specific to unsupported forks (#2670)\n\n**Motivation**\n\nKeep the codebase clean and as simple as possible by removing code we\ndon't really need.\n\n**Description**\n\nAll the code that was only relevant to forks prior to Paris was removed.\nThis includes constants, ifs, etc.\n\nResolves issue\n[#2659](https://github.com/lambdaclass/ethrex/issues/2659)\n\n---------\n\nCo-authored-by: JereSalo <jeresalo17@gmail.com>",
+          "timestamp": "2025-05-08T19:37:09Z",
+          "tree_id": "d64e0a4b1b685f34041dd134fe25f1a797ad715a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a5da369f9a220976eb97429dcce0356363025d87"
+        },
+        "date": 1746737049371,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178106134794,
+            "range": "± 500236814",
             "unit": "ns/iter"
           }
         ]
