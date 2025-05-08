@@ -10,7 +10,6 @@ use secp256k1::SecretKey;
 pub struct DeployerOptions {
     #[arg(
         long = "eth-rpc-url",
-        default_value = "http://localhost:8545",
         value_name = "RPC_URL",
         env = "ETHREX_ETH_RPC_URL",
         help_heading = "Eth options"
@@ -34,7 +33,6 @@ pub struct DeployerOptions {
     pub maximum_allowed_max_fee_per_blob_gas: u64,
     #[arg(
         long,
-        default_value = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
         value_name = "PRIVATE_KEY",
         value_parser = parse_private_key,
         env = "ETHREX_DEPLOYER_L1_PRIVATE_KEY",
@@ -68,7 +66,7 @@ pub struct DeployerOptions {
         help_heading = "Deployer options",
         help = "Path to the file containing the private keys of the rich accounts. The default is ../../test_data/private_keys_l1.txt"
     )]
-    pub private_keys_file_path: String,
+    pub private_keys_file_path: String, // TODO: use PathBuf
     #[arg(
         long,
         value_name = "PATH",
@@ -77,7 +75,7 @@ pub struct DeployerOptions {
         help_heading = "Deployer options",
         help = "Path to the genesis file. The default is ../../test_data/genesis-l1-dev.json"
     )]
-    pub genesis_l1_path: String,
+    pub genesis_l1_path: String, // TODO: use PathBuf
     #[arg(
         long = "committer.l1-address",
         default_value = "0x3d1e15a1a55578f7c920884a9943b3b35d0d885b",
@@ -106,7 +104,6 @@ pub struct DeployerOptions {
     pub contracts_path: PathBuf,
     #[arg(
         long = "pico.verifier-address",
-        default_value = "0x00000000000000000000000000000000000000AA",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER",
         help_heading = "Deployer options",
@@ -125,7 +122,6 @@ pub struct DeployerOptions {
     pub pico_deploy_verifier: bool,
     #[arg(
         long = "risc0.verifier-address",
-        default_value = "0x00000000000000000000000000000000000000AA",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
         help_heading = "Deployer options",
@@ -134,7 +130,6 @@ pub struct DeployerOptions {
     pub risc0_verifier_address: Address,
     #[arg(
         long = "sp1.verifier-address",
-        default_value = "0x00000000000000000000000000000000000000AA",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
         help_heading = "Deployer options",
