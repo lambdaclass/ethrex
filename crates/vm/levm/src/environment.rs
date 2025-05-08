@@ -9,13 +9,14 @@ pub type TransientStorage = HashMap<(Address, U256), U256>;
 #[derive(Debug, Default, Clone)]
 /// Environmental information that the execution agent must provide.
 pub struct Environment {
-    /// The sender address of the transaction that originated
-    /// this execution.
+    /// The sender address of the external transaction.
     pub origin: Address,
-    pub refunded_gas: u64,
+    pub refunded_gas: u64, //TODO: Move this to Substate
+    /// Gas limit of the Transaction
     pub gas_limit: u64,
     pub config: EVMConfig,
     pub block_number: U256,
+    /// Coinbase is the block's beneficiary - the address that receives the block rewards and fees.
     pub coinbase: Address,
     pub timestamp: U256,
     pub prev_randao: Option<H256>,

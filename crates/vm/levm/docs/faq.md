@@ -43,3 +43,9 @@ Some context: It is not important what this operand does. The only thing that ma
 
 
 This pattern is fairly common and is useful to keep in mind, especially when dealing with operands that deal with offsets and indexes.
+
+
+## External vs Internal Transactions
+
+- External transactions are initiated by EOAs (Externally Owned Accounts). These are user-triggered and are the only way to start activity on-chain (e.g., sending ETH, calling a contract).
+- Internal transactions are not real transactions in the blockchain data. They are contract-to-contract calls triggered during the execution of external transactions, using opcodes like CALL, DELEGATECALL, CREATE, etc. They’re not recorded in the transaction pool.
