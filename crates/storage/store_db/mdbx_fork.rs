@@ -521,21 +521,6 @@ impl StoreEngine for MDBXFork {
         Ok(code.map(|bytecode: Vec<u8>| -> Bytes { Bytes::from(bytecode) }))
     }
 
-    /// Stores a transaction receipt in the database, handling large receipts by chunking them if necessary
-    ///
-    /// This function takes a block hash, transaction index, and receipt, then stores the receipt
-    /// in the database using the block hash as the primary key.
-    ///
-    /// When a receipt exceeds the maximum database dupsort size:
-    /// 1. The encoded receipt is split into chunks that fit within the size limit
-    /// 2. Each chunk is stored with metadata in the format:
-    ///    - First 8 bytes: Transaction index (as BE u64)
-    ///    - Next 1 byte: Chunk index (as u8)
-    ///    - Remaining bytes: Chunk data
-    /// 3. All chunks share the same primary key (block hash) but different values
-    ///
-    /// For smaller receipts that fit within the size limit, they're stored as a single entry
-    /// with the chunk index set to 0.
     async fn add_receipt(
         &self,
         block_hash: BlockHash,
@@ -562,6 +547,7 @@ impl StoreEngine for MDBXFork {
         let decoded_hash: BlockHash = RLPDecode::decode(&key).unwrap();
         let key_for_receipt = (decoded_hash, receipt_index).encode_to_vec();
         let encoded_receipt = tx.get::<Receipts>(key_for_receipt).unwrap();
+        tracing::info!("{:?}", encoded_receipt);
         Ok(encoded_receipt.map(|r| RLPDecode::decode(&r).unwrap()))
     }
 
@@ -904,6 +890,7 @@ impl StoreEngine for MDBXFork {
         for (index, receipt) in receipts.into_iter().enumerate() {
             let receipt_bytes = receipt.encode_to_vec();
             let receipt_db_key = (block_hash, index).encode_to_vec();
+            tracing::info!("{:?}", receipt);
             tx.put::<Receipts>(receipt_db_key, receipt_bytes).unwrap();
         }
 

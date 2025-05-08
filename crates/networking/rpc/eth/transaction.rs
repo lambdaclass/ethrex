@@ -26,7 +26,7 @@ use ethrex_vm::{Evm, ExecutionResult};
 use serde::Serialize;
 
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::info;
 
 pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
 pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
@@ -284,30 +284,23 @@ impl RpcHandler for GetTransactionReceiptRequest {
             "Requested receipt for transaction {:#x}",
             self.transaction_hash,
         );
-        let (_block_number, block_hash, index) = match storage
+        let (block_number, block_hash, index) = match storage
             .get_transaction_location(self.transaction_hash)
             .await?
         {
             Some(location) => location,
             _ => return Ok(Value::Null),
         };
-        warn!("{:?}", &self.transaction_hash);
         let block = match storage.get_block_by_hash(block_hash).await? {
             Some(block) => block,
             None => return Ok(Value::Null),
         };
-        info!(
-            "AFTER FIRST RECEIPT"
-        );
-        match storage.get_receipt(block.header.number, index).await? {
-            Some(receipt) =>  {
-                serde_json::to_value(receipt)
-                    .map_err(|error| RpcErr::Internal(error.to_string()))
-            }
-            None => {
-                return Ok(Value::Null)
-            }
-        }
+        let receipts =
+            block::get_all_block_rpc_receipts(block_number, block.header, block.body, storage)
+                .await?;
+
+        serde_json::to_value(receipts.get(index as usize))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
