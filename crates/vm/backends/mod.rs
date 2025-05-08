@@ -84,9 +84,9 @@ impl Evm {
 
     pub async fn to_execution_db(
         store: &Store,
-        block: &Block,
+        blocks: &[Block],
     ) -> Result<ExecutionDB, ExecutionDBError> {
-        LEVM::to_execution_db(block, store).await
+        LEVM::to_execution_db(blocks, store).await
     }
 
     pub fn default(store: Store, parent_hash: H256) -> Self {
@@ -192,10 +192,10 @@ impl Evm {
     /// [LEVM::get_state_transitions] gathers the information from a [CacheDB].
     ///
     /// They may have the same name, but they serve for different purposes.
-    pub fn get_state_transitions(&mut self, fork: Fork) -> Result<Vec<AccountUpdate>, EvmError> {
+    pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
-            Evm::LEVM { db } => LEVM::get_state_transitions(db, fork),
+            Evm::LEVM { db } => LEVM::get_state_transitions(db),
         }
     }
 

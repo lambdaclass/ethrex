@@ -5,6 +5,7 @@ use crate::store_db::in_memory::Store as InMemoryStore;
 use crate::store_db::libmdbx::Store as LibmdbxStore;
 #[cfg(feature = "redb")]
 use crate::store_db::redb::RedBStore;
+use crate::AccountUpdate;
 use bytes::Bytes;
 
 use ethereum_types::{Address, H256, U256};
@@ -16,7 +17,6 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::{Nibbles, Trie};
-use serde::{Deserialize, Serialize};
 use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -42,36 +42,6 @@ pub enum EngineType {
     Libmdbx,
     #[cfg(feature = "redb")]
     RedB,
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AccountUpdate {
-    pub address: Address,
-    pub removed: bool,
-    pub info: Option<AccountInfo>,
-    pub code: Option<Bytes>,
-    pub added_storage: HashMap<H256, U256>,
-    // Matches TODO in code
-    // removed_storage_keys: Vec<H256>,
-}
-
-impl AccountUpdate {
-    /// Creates new empty update for the given account
-    pub fn new(address: Address) -> AccountUpdate {
-        AccountUpdate {
-            address,
-            ..Default::default()
-        }
-    }
-
-    /// Creates new update representing an account removal
-    pub fn removed(address: Address) -> AccountUpdate {
-        AccountUpdate {
-            address,
-            removed: true,
-            ..Default::default()
-        }
-    }
 }
 
 impl Store {
@@ -1104,6 +1074,8 @@ impl Store {
         self.engine.read_storage_snapshot(account_hash, start).await
     }
 
+    /// Fetches the latest valid ancestor for a block that was previously marked as invalid
+    /// Returns None if the block was never marked as invalid
     pub async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,
@@ -1111,6 +1083,7 @@ impl Store {
         self.engine.get_latest_valid_ancestor(block).await
     }
 
+    /// Marks a block as invalid and sets its latest valid ancestor
     pub async fn set_latest_valid_ancestor(
         &self,
         bad_block: BlockHash,
