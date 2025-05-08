@@ -62,16 +62,27 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
+      - name: Deploy L1 Contracts
+        run: |
+          cd crates/l2
+          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
+          touch .env
+          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach contract_deployer
+
+      - name: Start Sequencer
+        run: |
+          sleep 30
+          cd crates/l2
+          CI_ETHREX_WORKDIR=/usr/local/bin \
+          docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
+
       - name: Run test
         if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-
-          ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
-          ETHREX_PROPOSER_BLOCK_TIME_MS=12000 \
-          ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=true \
-          make integration-test-gpu
+          RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover &
+          PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
+          killall ethrex_prover -s SIGINT
 
       - name: Ensure admin permissions in _work
         if: always()
