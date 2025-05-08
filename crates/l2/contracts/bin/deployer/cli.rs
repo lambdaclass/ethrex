@@ -106,9 +106,10 @@ pub struct DeployerOptions {
     pub contracts_path: PathBuf,
     #[arg(
         long = "pico.verifier-address",
-        default_value = "0x00000000000000000000000000000000000000AA",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER",
+        conflicts_with = "pico.deploy-verifier",
+        required_if_eq("pico_deploy_verifier", "false"),
         help_heading = "Deployer options",
         help = "If set to 0xAA skip proof verification -> Only use in dev mode."
     )]
@@ -119,24 +120,27 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         env = "ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER",
         action = ArgAction::SetTrue,
+        conflicts_with = "pico_verifier_address",
+        required_unless_present("pico_verifier_address"),
         help_heading = "Deployer options",
         help = "If set to true, it will deploy the contract and override the address above with the deployed one."
     )]
     pub pico_deploy_verifier: bool,
     #[arg(
         long = "risc0.verifier-address",
-        default_value = "0x00000000000000000000000000000000000000AA",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER",
+        required_if_eq("pico_deploy_verifier", "false"),
         help_heading = "Deployer options",
         help = "If set to 0xAA skip proof verification -> Only use in dev mode."
     )]
     pub risc0_verifier_address: Address,
     #[arg(
         long = "sp1.verifier-address",
-        default_value = "0x00000000000000000000000000000000000000AA",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
+        conflicts_with = "sp1_deploy_verifier",
+        required_if_eq("sp1_deploy_verifier", "false"),
         help_heading = "Deployer options",
         help = "If set to 0xAA skip proof verification -> Only use in dev mode."
     )]
@@ -147,6 +151,8 @@ pub struct DeployerOptions {
         value_name = "BOOLEAN",
         action = ArgAction::SetTrue,
         env = "ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER",
+        conflicts_with = "sp1_verifier_address",
+        required_unless_present("sp1_verifier_address"),
         help_heading = "Deployer options",
         help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
     )]

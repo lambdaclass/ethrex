@@ -45,17 +45,18 @@ async fn main() -> Result<(), DeployerError> {
 
     compile_contracts(&opts)?;
 
-    let (on_chain_proposer_address, bridge_address, sp1_verifier_address, pico_verifier_address) =
-        deploy_contracts(&eth_client, &opts).await?;
-
-    let sp1_verifier_address = sp1_verifier_address.unwrap_or(opts.sp1_verifier_address);
-
-    let pico_verifier_address = pico_verifier_address.unwrap_or(opts.pico_verifier_address);
+    let (
+        on_chain_proposer_address,
+        bridge_address,
+        sp1_verifier_address,
+        pico_verifier_address,
+        risc0_verifier_address,
+    ) = deploy_contracts(&eth_client, &opts).await?;
 
     initialize_contracts(
         on_chain_proposer_address,
         bridge_address,
-        opts.risc0_verifier_address,
+        risc0_verifier_address,
         sp1_verifier_address,
         pico_verifier_address,
         &eth_client,
@@ -72,7 +73,7 @@ async fn main() -> Result<(), DeployerError> {
         bridge_address,
         sp1_verifier_address,
         pico_verifier_address,
-        opts.risc0_verifier_address,
+        risc0_verifier_address,
         opts.env_file_path,
     )
 }
@@ -156,7 +157,7 @@ lazy_static::lazy_static! {
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
-) -> Result<(Address, Address, Option<Address>, Option<Address>), DeployerError> {
+) -> Result<(Address, Address, Address, Address, Address), DeployerError> {
     let deploy_frames = spinner!(["📭❱❱", "❱📬❱", "❱❱📫"], 220);
 
     let mut spinner = Spinner::new(
@@ -227,9 +228,9 @@ async fn deploy_contracts(
             format!("{sp1_verifier_address:#x}").bright_green(),
             format!("{verifier_deployment_tx_hash:#x}").bright_cyan(),
         ));
-        Some(sp1_verifier_address)
+        sp1_verifier_address
     } else {
-        None
+        opts.sp1_verifier_address
     };
 
     let pico_verifier_address = if opts.pico_deploy_verifier {
@@ -249,16 +250,20 @@ async fn deploy_contracts(
             format!("{verifier_deployment_tx_hash:#x}").bright_cyan(),
         ));
 
-        Some(pico_verifier_address)
+        pico_verifier_address
     } else {
-        None
+        opts.pico_verifier_address
     };
+
+    // TODO: Add Risc0Verifier deployment
+    let risc0_verifier_address = opts.risc0_verifier_address;
 
     Ok((
         on_chain_proposer_address,
         bridge_address,
         sp1_verifier_address,
         pico_verifier_address,
+        risc0_verifier_address,
     ))
 }
 
