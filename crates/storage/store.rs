@@ -532,6 +532,11 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        if let Some(snapshot) = self.snapshots.snapshot(block_hash) {
+            let address = hash_address_fixed(&address);
+            return Ok(snapshot.get_storage(address, storage_key));
+        }
+
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
@@ -682,6 +687,14 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+
+        if let Some(snapshot) = self.snapshots.snapshot(block_hash) {
+            let address = hash_address_fixed(&address);
+            if let Some(acc) = snapshot.get_account(address) {
+                return Ok(acc);
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -696,6 +709,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
+        dbg!("called get_account_state_by_hash");
         self.get_account_state_from_trie(&state_trie, address)
     }
 
@@ -704,6 +718,7 @@ impl Store {
         state_trie: &Trie,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        dbg!("called get_account_state_from_trie");
         let hashed_address = hash_address(&address);
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
