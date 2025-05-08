@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746737051595,
+  "lastUpdate": 1746742291769,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5935,6 +5935,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178106134794,
             "range": "± 500236814",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6a13200d8af5a770cf3effe3a638eff2656fc27",
+          "message": "perf(levm): optimize how levm tracks storage modifications in case of reverts (#2699)\n\n**Motivation**\n\nThis PR replaces the way we track storage modifications to contracts\nwhen executing to handle reverts. Previously, when writing to an account\nwe were cloning its entire accumulated modified state, so in case we\nneeded to revert we could overwrite it back to its former values. These\nwere the lines of code:\n\n```\n        let previous_account = cache::insert_account(&mut self.db.cache, address, account);\n\n        if let Ok(frame) = self.current_call_frame_mut() {\n            frame\n                .cache_backup\n                .entry(address)\n                .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));\n        }\n```\n\nWith the changes here, we now track the individual storage slots that\nare modified when executing and avoid cloning the entire modified\nstorage. This was done by replacing the `CacheBackup` with a\n`CallFrameBackup` that keeps separate track of account infos and storage\nslots.\n\nThe performance benefits are noticeable mostly in very large load tests,\nwith block gas limits around 1 Gigagas and beyond. At that point the\nload test gets around 2x faster compared to main (80 seconds down from\n160s for the load test to finish, gigagas/s goes from ~0.11 to ~0.2).\n\nThis is also noticeable within flamegraphs of these load tests, as in\n`main` currently there's a huge portion of it devoted to `sstore` that\ndisappears.\n\nMain:\n\n<img width=\"1505\" alt=\"Screenshot 2025-05-08 at 11 20 53\"\nsrc=\"https://github.com/user-attachments/assets/5d7f6dbd-d4eb-42e3-bec3-b81632ec9409\"\n/>\n\nThis branch:\n\n<img width=\"1503\" alt=\"Screenshot 2025-05-08 at 11 22 03\"\nsrc=\"https://github.com/user-attachments/assets/b6e83203-f31c-46fc-8434-998e585cabbf\"\n/>\n\nWhile most instances of deployed ethrex will probably not feature such\nlarge gas limits on blocks, this change should improve syncing times, as\nthere we execute batches of 1024 blocks at a time, which is functionally\nequivalent to executing one very large block when it comes to the\nbehaviour of this code. Trying out the changes while syncing in Holesky,\nI noticed an improvement of around the magnitude above (~2x), though of\ncourse it is highly variable and dependent on which blocks get executed.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-05-08T21:11:24Z",
+          "tree_id": "7643b56642777111418fe72272a043a1306dd262",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b6a13200d8af5a770cf3effe3a638eff2656fc27"
+        },
+        "date": 1746742289654,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179287175011,
+            "range": "± 871818788",
             "unit": "ns/iter"
           }
         ]
