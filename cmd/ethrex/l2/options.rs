@@ -36,7 +36,7 @@ pub struct SequencerOptions {
     #[command(flatten)]
     pub watcher_opts: WatcherOptions,
     #[command(flatten)]
-    pub proposer_opts: ProposerOptions,
+    pub proposer_opts: BlockProducerOptions,
     #[command(flatten)]
     pub committer_opts: CommitterOptions,
     #[command(flatten)]
@@ -170,21 +170,21 @@ impl Default for WatcherOptions {
 }
 
 #[derive(Parser, Default)]
-pub struct ProposerOptions {
+pub struct BlockProducerOptions {
     #[arg(
-        long = "proposer-block-time-ms",
+        long = "block-producer.block-time-ms",
         default_value = "5000",
         value_name = "UINT64",
-        env = "ETHREX_PROPOSER_BLOCK_TIME_MS",
+        env = "ETHREX_BLOCK_PRODUCER_BLOCK_TIME_MS",
         help_heading = "L1 Watcher options"
     )]
     pub block_time_ms: u64,
     #[arg(
-        long,
+        long = "block-producer.coinbase-address",
         default_value = "0x0007a881CD95B1484fca47615B64803dad620C8d",
         value_name = "ADDRESS",
-        env = "ETHREX_PROPOSER_COINBASE_ADDRESS",
-        help_heading = "Proposer options"
+        env = "ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS",
+        help_heading = "Block producer options"
     )]
     pub coinbase_address: Address,
 }
