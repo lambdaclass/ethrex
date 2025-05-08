@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746727745503,
+  "lastUpdate": 1746729088144,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5785,6 +5785,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179316441520,
             "range": "± 927628046",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "af8f6ec944b4b09ed03a0b8369d4c756c1f68781",
+          "message": "refactor(l2): rewrite integration tests (#2681)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nL2 tests were broken since two tests were waiting for funds in L2\nwithout depositing.\n\n**Description**\n\n- Adds `test_deposit`, `test_transfer`, `test_withdraw`, `test_deploy`,\n`test_call_with_deposit` functions that are used by all the tests.\n- The deposits and transfers are now done from an L1 rich wallet to a\nrandom L2 wallet.\n- Adds `L1ToL2TransactionData` struct to the SDK. This struct contains\nthe current L2 data for privileged transactions.\n- Adds `send_l1_to_l2_transaction` function to the SDK.\n- Adds `deposit_through_contract_call` function to the SDK (wrapper over\nthe above).\n\n---------\n\nCo-authored-by: ilitteri <ilitteri@fi.uba.ar>",
+          "timestamp": "2025-05-08T17:11:42Z",
+          "tree_id": "7d29f719ad8c8db99ff4a265a5c19689db7081f7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/af8f6ec944b4b09ed03a0b8369d4c756c1f68781"
+        },
+        "date": 1746729086130,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179334957227,
+            "range": "± 898033091",
             "unit": "ns/iter"
           }
         ]
