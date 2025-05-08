@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746562672621,
+  "lastUpdate": 1746701023151,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5605,6 +5605,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182010271770,
             "range": "± 1370093449",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5cc86fbe70930ccec17e0e02caae7094936a3245",
+          "message": "fix(l1): prevent amplification attack on `FindNode` request (#2693)\n\n**Motivation**\nSome hive devp2p tests have been failing as of lately. Particularly the\n`discv4/Amplification/WrongIP` test. Upon further investigation it looks\nlike the test was previously passing but not for the right reasons. The\ntest consists of sending Ping and Pong messages to the node from a given\nIP and then sending a `FindNode` request from the same node id but a\ndifferent IP. The test fails if the node replies with a `Neighbours`\nmessage instead of noticing the IP mismatch that could represent an\namplification attack.\nOur test used to pass, but not due to the node catching the potential\nattack but due to a failure to deliver the neighbors message. On both\nfailing and non-failing attempts the node constructs the neighbors\nmessage and attempts to send it which is not the correct behaviour.\n\nThis PR fixes this problem by checking that the IP from which we\nreceived the `FindNode` request matches the ip we stored when validating\nthe node (via ping pong messages) as to prevent amplification attacks.\nIt also adds some doc about the potential attack (taken from geth\nimplementation)\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Check that the IP from which we receive a FindNode message matches the\nIP of the node\n* Add doc about potential amplification attacks on FindNode requests\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-08T09:59:02Z",
+          "tree_id": "dc2eb167f73cf784219a246280bfa1defb9298cb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5cc86fbe70930ccec17e0e02caae7094936a3245"
+        },
+        "date": 1746701020974,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180687207565,
+            "range": "± 818675359",
             "unit": "ns/iter"
           }
         ]
