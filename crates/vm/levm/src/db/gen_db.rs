@@ -252,13 +252,13 @@ impl<'a> VM<'a> {
             return Ok(());
         }
 
-        let maybe_account_info_backup = self
+        let is_not_backed_up = !self
             .current_call_frame_mut()?
             .call_frame_backup
             .original_accounts_info
-            .get_mut(&address);
+            .contains_key(&address);
 
-        if maybe_account_info_backup.is_none() {
+        if is_not_backed_up {
             let account = cache::get_account(&self.db.cache, &address).ok_or(VMError::Internal(
                 crate::errors::InternalError::AccountNotFound,
             ))?;
