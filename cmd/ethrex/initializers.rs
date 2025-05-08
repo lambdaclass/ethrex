@@ -395,7 +395,7 @@ pub fn get_local_node_record(
 
     let enr_seq = match read_config_file(config_file) {
         Ok(ref mut config) => config.enr_seq,
-        Err(_) => 0,
+        Err(_) => 1,
     };
 
     Arc::new(Mutex::new(
