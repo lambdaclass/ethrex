@@ -15,9 +15,6 @@ impl<'a> VM<'a> {
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PUSHN)?;
 
-        if n_bytes > 32 {
-            return Err(VMError::InvalidOpcode);
-        }
         let read_n_bytes = read_bytcode_slice(current_call_frame, n_bytes)?;
 
         current_call_frame
