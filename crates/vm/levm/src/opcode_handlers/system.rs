@@ -952,12 +952,6 @@ impl<'a> VM<'a> {
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
                 self.merge_call_frame_backup_with_parent(&call_frame.call_frame_backup)?;
-                // for (address, account_opt) in call_frame.call_frame_backup.clone() {
-                //     self.current_call_frame_mut()?
-                //         .call_frame_backup
-                //         .entry(address)
-                //         .or_insert(account_opt);
-                // }
             }
             TxResult::Revert(_) => {
                 // Revert value transfer
@@ -1000,12 +994,6 @@ impl<'a> VM<'a> {
                     .stack
                     .push(address_to_word(retdata.to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame.call_frame_backup)?;
-                // for (address, account_opt) in call_frame.call_frame_backup.clone() {
-                //     self.current_call_frame_mut()?
-                //         .call_frame_backup
-                //         .entry(address)
-                //         .or_insert(account_opt);
-                // }
             }
             TxResult::Revert(err) => {
                 // Return value to sender

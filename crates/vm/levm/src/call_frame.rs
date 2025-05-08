@@ -90,11 +90,9 @@ pub struct CallFrame {
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
-    // pub cache_backup: CacheBackup,
     pub call_frame_backup: CallFrameBackup,
 }
 
-// pub type CacheBackup = HashMap<Address, Option<Account>>;
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
     pub original_accounts_info: HashMap<Address, Account>,
