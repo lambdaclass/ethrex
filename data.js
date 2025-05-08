@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746715264323,
+  "lastUpdate": 1746716465979,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5725,6 +5725,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182168081852,
             "range": "± 774191331",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b0f348f19a3750b6ddb635a739aff2e89d78c0ae",
+          "message": "fix(l1): catch potential panic when decoding `NodeHash` (#2683)\n\n**Motivation**\nThe method `NodeHash::from_slice` can panic if the slice is over 32\nbytes. This could cause panics when decoding nodes as it is used without\nchecking the length beforehand. This PR adds a check and returns an\ninvalid length error before calling `from_slice`. It also mentions the\npotential panic on the method's documentation & removes a misleading\n`From<Vec<u8>>` implementation that would also panic under the same\ncondition.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Remove `From<Vec<u8>> for NodeHash` impl as it could cause panics\n* Mention potential panic on `NodeHash::from_slice` doc\n* Check rlp decoded data len to avoid panics when decoding `NodeHash`\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2649",
+          "timestamp": "2025-05-08T13:36:38Z",
+          "tree_id": "6d135aec2c67e53e040f38085d273cd0ab325b33",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b0f348f19a3750b6ddb635a739aff2e89d78c0ae"
+        },
+        "date": 1746716463526,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178510514975,
+            "range": "± 735084580",
             "unit": "ns/iter"
           }
         ]
