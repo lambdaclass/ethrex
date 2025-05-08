@@ -1,5 +1,5 @@
 use crate::{
-    call_frame::{CacheBackup, CallFrame},
+    call_frame::{CallFrame, CallFrameBackup},
     constants::*,
     db::{cache, gen_db::GeneralizedDatabase},
     environment::Environment,
@@ -371,7 +371,7 @@ impl<'a> VM<'a> {
     pub fn restore_state(
         &mut self,
         backup: StateBackup,
-        call_frame_backup: CacheBackup,
+        call_frame_backup: CallFrameBackup,
     ) -> Result<(), VMError> {
         self.restore_cache_state(call_frame_backup)?;
         self.accrued_substate = backup.substate;
@@ -397,7 +397,7 @@ impl<'a> VM<'a> {
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
-            self.restore_cache_state(self.current_call_frame()?.cache_backup.clone())?;
+            self.restore_cache_state(self.current_call_frame()?.call_frame_backup.clone())?;
             return Err(e);
         }
 
@@ -405,7 +405,10 @@ impl<'a> VM<'a> {
         // revert the changes it made.
         // Even if the transaction reverts we want to apply these kind of changes!
         // These are: Incrementing sender nonce, transferring value to a delegate account, decreasing sender account balance
-        self.current_call_frame_mut()?.cache_backup = HashMap::new();
+        self.current_call_frame_mut()?.call_frame_backup = CallFrameBackup {
+            original_accounts_info: HashMap::new(),
+            original_account_storage_slots: HashMap::new(),
+        };
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
@@ -489,16 +492,66 @@ impl<'a> VM<'a> {
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
-    fn restore_cache_state(&mut self, call_frame_backup: CacheBackup) -> Result<(), VMError> {
-        for (address, account_opt) in call_frame_backup {
-            if let Some(account) = account_opt {
-                // restore the account to the state before the call
-                cache::insert_account(&mut self.db.cache, address, account.clone());
-            } else {
-                // remove from cache if it wasn't there before
-                cache::remove_account(&mut self.db.cache, &address);
+    fn restore_cache_state(&mut self, call_frame_backup: CallFrameBackup) -> Result<(), VMError> {
+        for (address, account) in call_frame_backup.original_accounts_info {
+            if let Some(current_account) = cache::get_account_mut(&mut self.db.cache, &address) {
+                current_account.info = account.info;
+                current_account.code = account.code;
             }
         }
+
+        for (address, storage) in call_frame_backup.original_account_storage_slots {
+            // This call to `get_account_mut` should never return None, because we are looking up accounts
+            // that had their storage modified, which means they should be in the cache. That's why
+            // we return an internal error in case we haven't found it.
+            let account = cache::get_account_mut(&mut self.db.cache, &address).ok_or(
+                VMError::Internal(crate::errors::InternalError::AccountNotFound),
+            )?;
+
+            for (key, value) in storage {
+                account.storage.insert(key, value);
+            }
+        }
+
+        Ok(())
+    }
+
+    // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
+    //   - For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
+    //   - For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
+    //   - Do the same for every individual storage slot.
+    pub fn merge_call_frame_backup_with_parent(
+        &mut self,
+        child_call_frame_backup: &CallFrameBackup,
+    ) -> Result<(), VMError> {
+        let parent_backup_accounts = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_accounts_info;
+        for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
+            if parent_backup_accounts.get(address).is_none() {
+                parent_backup_accounts.insert(*address, account.clone());
+            }
+        }
+
+        let parent_backup_storage = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_account_storage_slots;
+        for (address, storage) in child_call_frame_backup
+            .original_account_storage_slots
+            .iter()
+        {
+            let parent_storage = parent_backup_storage
+                .entry(*address)
+                .or_insert(HashMap::new());
+            for (key, value) in storage {
+                if parent_storage.get(key).is_none() {
+                    parent_storage.insert(*key, *value);
+                }
+            }
+        }
+
         Ok(())
     }
 }
