@@ -10,6 +10,7 @@ use ethrex_common::{
     types::{Account, Log},
     Address, U256,
 };
+use keccak_hash::H256;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -89,10 +90,14 @@ pub struct CallFrame {
     /// This is set to true if the function that created this callframe is CREATE or CREATE2
     pub create_op_called: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
-    pub cache_backup: CacheBackup,
+    pub call_frame_backup: CallFrameBackup,
 }
 
-pub type CacheBackup = HashMap<Address, Option<Account>>;
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct CallFrameBackup {
+    pub original_accounts_info: HashMap<Address, Account>,
+    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+}
 
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]

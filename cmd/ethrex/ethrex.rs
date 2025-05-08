@@ -8,7 +8,8 @@ use ethrex::{
     utils::{set_datadir, store_config_file, ConfigFile},
 };
 use ethrex_p2p::network::peer_table;
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
@@ -39,7 +40,11 @@ async fn main() -> eyre::Result<()> {
 
     let local_p2p_node = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = get_local_node_record(&data_dir, &local_p2p_node, &signer);
+    let local_node_record = Arc::new(Mutex::new(get_local_node_record(
+        &data_dir,
+        &local_p2p_node,
+        &signer,
+    )));
 
     let peer_table = peer_table(signer.clone());
 

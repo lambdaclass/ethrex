@@ -18,7 +18,8 @@ use eyre::OptionExt;
 use keccak_hash::keccak;
 use reqwest::Url;
 use secp256k1::SecretKey;
-use std::{fs::create_dir_all, future::IntoFuture, path::PathBuf, time::Duration};
+use std::{fs::create_dir_all, future::IntoFuture, path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
@@ -134,7 +135,11 @@ impl Command {
 
                 let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
 
-                let local_node_record = get_local_node_record(&data_dir, &local_p2p_node, &signer);
+                let local_node_record = Arc::new(Mutex::new(get_local_node_record(
+                    &data_dir,
+                    &local_p2p_node,
+                    &signer,
+                )));
 
                 let peer_table = peer_table(signer.clone());
 
