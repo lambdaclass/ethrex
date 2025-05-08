@@ -270,7 +270,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         }
 
         if (SP1VERIFIER != DEV_MODE) {
-            bytes32 sp1WithdrawalsMerkleRoot = bytes32(sp1PublicValues[64:96]);
+            bytes32 sp1WithdrawalsMerkleRoot = bytes32(sp1PublicValues[80:112]);
             require(
                 batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
                     sp1WithdrawalsMerkleRoot,

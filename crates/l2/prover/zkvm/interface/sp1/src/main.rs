@@ -114,10 +114,13 @@ pub fn main() {
     // Output gas for measurement purposes
     sp1_zkvm::io::commit(&cumulative_gas_used);
 
-    sp1_zkvm::io::commit(&ProgramOutput {
-        initial_state_hash,
-        final_state_hash,
-        #[cfg(feature = "l2")]
-        withdrawals_merkle_root: batch_withdrawals_merkle_root,
-    });
+    sp1_zkvm::io::commit(
+        &ProgramOutput {
+            initial_state_hash,
+            final_state_hash,
+            #[cfg(feature = "l2")]
+            withdrawals_merkle_root: batch_withdrawals_merkle_root,
+        }
+        .encode(),
+    );
 }
