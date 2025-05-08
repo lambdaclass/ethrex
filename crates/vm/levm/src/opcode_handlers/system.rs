@@ -892,7 +892,7 @@ impl<'a> VM<'a> {
         self.backups.push(backup);
 
         if is_precompile(&code_address, self.env.config.fork) {
-            let _report = self.run_execution()?;
+            let _report = self.vm_main_loop()?;
         }
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
@@ -901,11 +901,7 @@ impl<'a> VM<'a> {
         &mut self,
         call_frame: &CallFrame,
         tx_report: &ExecutionReport,
-    ) -> Result<bool, VMError> {
-        if call_frame.depth == 0 {
-            self.call_frames.push(call_frame.clone());
-            return Ok(false);
-        }
+    ) -> Result<(), VMError> {
         let retdata = self
             .return_data
             .pop()
@@ -915,7 +911,7 @@ impl<'a> VM<'a> {
         } else {
             self.handle_return_call(call_frame, tx_report, retdata)?;
         }
-        Ok(true)
+        Ok(())
     }
     pub fn handle_return_call(
         &mut self,

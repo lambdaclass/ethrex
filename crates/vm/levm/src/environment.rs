@@ -31,5 +31,7 @@ pub struct Environment {
     pub tx_nonce: u64,
     pub block_gas_limit: u64,
     pub transient_storage: TransientStorage,
+    /// Used to indicate an L2 transaction is privileged.
+    /// Always false when transaction is L1
     pub is_privileged: bool,
 }

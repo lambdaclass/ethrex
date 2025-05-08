@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub type AccessList = Vec<AccessListItem>;
 pub type AccessListItem = (Address, Vec<H256>);
 
+/// Authorization list for EIP 7702.
 pub type AuthorizationList = Vec<AuthorizationTuple>;
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
