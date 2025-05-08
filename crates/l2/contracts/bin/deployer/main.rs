@@ -295,13 +295,19 @@ async fn initialize_contracts(
         Color::Cyan,
     );
 
+    let sp1_verification_key = hex::decode(read_to_string(&opts.sp1_vk_path)?)
+        .map_err(|_| {
+            DeployerError::DecodingError("while parsing SP1 verification key".to_string())
+        })?
+        .into();
+
     let initialize_tx_hash = {
         let calldata_values = vec![
             Value::Address(bridge_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
-            Value::FixedBytes(ZKVM_SP1_PROGRAM_VK.into()),
+            Value::FixedBytes(sp1_verification_key),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),

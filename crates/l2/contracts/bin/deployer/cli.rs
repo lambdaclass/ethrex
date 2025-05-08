@@ -173,6 +173,15 @@ pub struct DeployerOptions {
         help = "If set to true, initializes the committer in validium mode."
     )]
     pub validium: bool,
+    #[arg(
+        long,
+        default_value = "./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk",
+        value_name = "PATH",
+        env = "ETHREX_SP1_VERIFICATION_KEY_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the SP1 verification key. This is used for proof verification."
+    )]
+    pub sp1_vk_path: String,
 }
 
 impl Default for DeployerOptions {
@@ -222,6 +231,7 @@ impl Default for DeployerOptions {
             sp1_deploy_verifier: false,
             randomize_contract_deployment: false,
             validium: false,
+            sp1_vk_path: "./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf".to_string(),
         }
     }
 }

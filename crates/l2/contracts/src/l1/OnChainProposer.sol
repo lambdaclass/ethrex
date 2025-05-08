@@ -155,10 +155,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             SP1VKEY == bytes32(0),
             "OnChainProposer: contract already initialized"
         );
-        require(
-            sp1vkey != bytes32(0),
-            "OnChainProposer: sp1vkey is the zero address"
-        );
         SP1VKEY = sp1vkey;
 
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {

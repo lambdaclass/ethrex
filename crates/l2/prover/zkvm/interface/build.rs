@@ -58,12 +58,12 @@ fn build_sp1_program(features: &[String]) {
 
     // Get verification key
     // ref: https://github.com/succinctlabs/sp1/blob/dev/crates/cli/src/commands/vkey.rs
-    let elf = std::fs::read("./sp1/elf/riscv32im-succinct-zkvm-elf")
+    let elf = std::fs::read("./sp1/out/riscv32im-succinct-zkvm-elf")
         .expect("could not read SP1 elf file");
     let prover = ProverClient::from_env();
     let (_, vk) = prover.setup(&elf);
     let vk = vk.vk.bytes32();
     dbg!(&vk);
-    std::fs::write("./sp1/elf/riscv32im-succinct-zkvm-vk", &vk)
+    std::fs::write("./sp1/out/riscv32im-succinct-zkvm-vk", &vk)
         .expect("could not write SP1 vk to file");
 }
