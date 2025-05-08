@@ -262,6 +262,7 @@ async fn main() -> Result<(), PusherError> {
 
 #[cfg(test)]
 mod test {
+    use serial_test::serial;
     use std::{env, str::FromStr};
 
     use ethereum_types::{H256, H160, Address};
@@ -272,6 +273,7 @@ mod test {
     use crate::{read_env_var, send_transition, send_update_key, prepare_quote_prerequisites};
 
     #[tokio::test]
+    #[serial]
     async fn integration_happy() {
         let rpc_url = read_env_var("RPC_URL").unwrap();
         let private_key_str = read_env_var("PRIVATE_KEY").unwrap();
@@ -298,6 +300,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[serial]
     async fn bad_quote() {
         let rpc_url = read_env_var("RPC_URL").unwrap();
         let private_key_str = read_env_var("PRIVATE_KEY").unwrap();
@@ -323,6 +326,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[serial]
     async fn unloaded_key() {
         let rpc_url = read_env_var("RPC_URL").unwrap();
         let private_key_str = read_env_var("PRIVATE_KEY").unwrap();
@@ -345,6 +349,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[serial]
     async fn invalid_newstate() {
         let rpc_url = read_env_var("RPC_URL").unwrap();
         let private_key_str = read_env_var("PRIVATE_KEY").unwrap();

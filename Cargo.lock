@@ -7368,6 +7368,7 @@ dependencies = [
  "reqwest",
  "secp256k1",
  "serde_json",
+ "serial_test",
  "thiserror 2.0.12",
  "tokio",
 ]
