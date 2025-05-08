@@ -92,7 +92,7 @@ impl From<SequencerOptions> for SequencerConfig {
 #[derive(Parser, Default)]
 pub struct EthOptions {
     #[arg(
-        long = "eth-rpc-url",
+        long = "eth.rpc-url",
         default_value = "http://localhost:8545",
         value_name = "RPC_URL",
         env = "ETHREX_ETH_RPC_URL",
@@ -100,7 +100,7 @@ pub struct EthOptions {
     )]
     pub rpc_url: String,
     #[arg(
-        long = "eth-maximum-allowed-max-fee-per-gas",
+        long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
         value_name = "UINT64",
         env = "ETHREX_MAXIMUM_ALLOWED_MAX_FEE_PER_GAS",
@@ -108,7 +108,7 @@ pub struct EthOptions {
     )]
     pub maximum_allowed_max_fee_per_gas: u64,
     #[arg(
-        long = "eth-maximum-allowed-max-fee-per-blob-gas",
+        long = "eth.maximum-allowed-max-fee-per-blob-gas",
         default_value = "10000000000",
         value_name = "UINT64",
         env = "ETHREX_MAXIMUM_ALLOWED_MAX_FEE_PER_BLOB_GAS",
