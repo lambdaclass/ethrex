@@ -587,7 +587,10 @@ impl StoreEngine for MDBXFork {
         let key = transaction_hash.encode_to_vec();
         let tx = self.env.tx().unwrap();
         let mut cursor = tx.cursor_dup_read::<TransactionLocations>().unwrap();
-        let mut walker = cursor.walk(Some(key)).unwrap();
+        if cursor.seek_exact(key.clone()).unwrap().is_none() {
+            return Ok(None)
+        }
+        let walker = cursor.walk(Some(key)).unwrap();
         for elem in walker {
             let (_, encoded_tuple) = elem.unwrap();
             let (bn, bh, indx) = <(BlockNumber, BlockHash, Index)>::decode(&encoded_tuple).unwrap();
