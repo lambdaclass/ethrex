@@ -1075,6 +1075,8 @@ impl Store {
         self.engine.read_storage_snapshot(account_hash, start).await
     }
 
+    /// Fetches the latest valid ancestor for a block that was previously marked as invalid
+    /// Returns None if the block was never marked as invalid
     pub async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,
@@ -1082,6 +1084,7 @@ impl Store {
         self.engine.get_latest_valid_ancestor(block).await
     }
 
+    /// Marks a block as invalid and sets its latest valid ancestor
     pub async fn set_latest_valid_ancestor(
         &self,
         bad_block: BlockHash,
