@@ -13,8 +13,12 @@ use ethrex_rpc::types::receipt::RpcReceipt;
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 pub mod calldata;
+pub mod l1_to_l2_tx_data;
 pub mod merkle_tree;
+
+pub use l1_to_l2_tx_data::{send_l1_to_l2_tx, L1ToL2TransactionData};
 
 // 0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
 pub const DEFAULT_BRIDGE_ADDRESS: Address = H160([
@@ -73,7 +77,7 @@ pub async fn transfer(
     amount: U256,
     from: Address,
     to: Address,
-    private_key: SecretKey,
+    private_key: &SecretKey,
     client: &EthClient,
 ) -> Result<H256, EthClientError> {
     println!(
@@ -108,13 +112,13 @@ pub async fn transfer(
     tx_generic.from = from;
     let gas_limit = client.estimate_gas(tx_generic).await?;
     tx.gas_limit = gas_limit;
-    client.send_eip1559_transaction(&tx, &private_key).await
+    client.send_eip1559_transaction(&tx, private_key).await
 }
 
-pub async fn deposit(
+pub async fn deposit_through_transfer(
     amount: U256,
     from: Address,
-    from_pk: SecretKey,
+    from_pk: &SecretKey,
     eth_client: &EthClient,
 ) -> Result<H256, EthClientError> {
     println!("Depositing {amount} from {from:#x} to bridge");
@@ -123,6 +127,28 @@ pub async fn deposit(
         from,
         bridge_address().map_err(|err| EthClientError::Custom(err.to_string()))?,
         from_pk,
+        eth_client,
+    )
+    .await
+}
+
+pub async fn deposit_through_contract_call(
+    amount: impl Into<U256>,
+    to: Address,
+    l1_gas_limit: u64,
+    l2_gas_limit: u64,
+    depositor_private_key: &SecretKey,
+    bridge_address: Address,
+    eth_client: &EthClient,
+) -> Result<H256, EthClientError> {
+    let l1_from = get_address_from_secret_key(depositor_private_key)?;
+    send_l1_to_l2_tx(
+        l1_from,
+        Some(amount),
+        Some(l1_gas_limit),
+        L1ToL2TransactionData::new_deposit_data(to, l2_gas_limit),
+        depositor_private_key,
+        bridge_address,
         eth_client,
     )
     .await
