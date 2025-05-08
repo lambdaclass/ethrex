@@ -248,7 +248,7 @@ impl<'a> VM<'a> {
     }
 
     pub fn backup_account_info(&mut self, address: Address) -> Result<(), VMError> {
-        if self.call_frames.len() == 0 {
+        if self.call_frames.is_empty() {
             return Ok(());
         }
 
@@ -271,8 +271,8 @@ impl<'a> VM<'a> {
                 .insert(
                     address,
                     Account {
-                        info: info,
-                        code: code,
+                        info,
+                        code,
                         storage: HashMap::new(),
                     },
                 );

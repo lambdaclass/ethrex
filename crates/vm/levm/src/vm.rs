@@ -24,7 +24,6 @@ use ethrex_common::{
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fmt::Debug,
-    hash::Hash,
     sync::Arc,
 };
 
