@@ -514,10 +514,10 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    // - The StateBackup of the current callframe has to be merged with the backup of its parent, in the following way:
-    //         For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
-    //         For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
-    //         Do the same for every individual storage slot.
+    // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
+    //   - For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
+    //   - For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
+    //   - Do the same for every individual storage slot.
     pub fn merge_call_frame_backup_with_parent(
         &mut self,
         child_call_frame_backup: &CallFrameBackup,
