@@ -35,6 +35,7 @@ use crate::hooks::L2Hook;
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
+/// Information that changes during transaction execution
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
@@ -67,15 +68,14 @@ impl StateBackup {
 }
 
 #[derive(Debug, Clone, Copy)]
-/// This structs holds special configuration variables specific to the
+/// This struct holds special configuration variables specific to the
 /// EVM. In most cases, at least at the time of writing (February
 /// 2025), you want to use the default blob_schedule values for the
 /// specified Fork. The "intended" way to do this is by using the `EVMConfig::canonical_values(fork: Fork)` function.
 ///
 /// However, that function should NOT be used IF you want to use a
-/// custom ForkBlobSchedule, like it's described in
-/// [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840). For more
-/// information read the EIP
+/// custom `ForkBlobSchedule`, like it's described in [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840)
+/// Values are determined by [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification)
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
@@ -117,9 +117,6 @@ impl EVMConfig {
         }
     }
 
-    /// After EIP-7691 the maximum number of blob hashes changed. For more
-    /// information see
-    /// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
     const fn max_blobs_per_block(fork: Fork) -> u64 {
         match fork {
             Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
@@ -128,12 +125,6 @@ impl EVMConfig {
         }
     }
 
-    /// According to [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification):
-    ///
-    /// "These changes imply that get_base_fee_per_blob_gas and
-    /// calc_excess_blob_gas functions defined in EIP-4844 use the new
-    /// values for the first block of the fork (and for all subsequent
-    /// blocks)."
     const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
         match fork {
             Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
@@ -141,7 +132,6 @@ impl EVMConfig {
         }
     }
 
-    /// According to [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification):
     const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
         match fork {
             Fork::Prague | Fork::Osaka => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
@@ -164,8 +154,6 @@ impl Default for EVMConfig {
 pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
-    /// Information that is acted upon immediately following the
-    /// transaction.
     pub accrued_substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
     pub tx_kind: TxKind,
@@ -174,6 +162,7 @@ pub struct VM<'a> {
     pub hooks: Vec<Arc<dyn Hook>>,
     pub return_data: Vec<RetData>,
     pub backups: Vec<StateBackup>,
+    /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
 }
 

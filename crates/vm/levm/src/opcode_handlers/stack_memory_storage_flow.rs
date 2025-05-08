@@ -113,7 +113,7 @@ impl<'a> VM<'a> {
     // MSTORE8 operation
     pub fn op_mstore8(&mut self) -> Result<OpcodeResult, VMError> {
         let current_call_frame = self.current_call_frame_mut()?;
-        // TODO: modify expansion cost to accept U256
+
         let offset = current_call_frame.stack.pop()?;
 
         let new_memory_size = calculate_memory_size(offset, 1)?;

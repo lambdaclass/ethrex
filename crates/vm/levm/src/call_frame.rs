@@ -14,6 +14,7 @@ use keccak_hash::H256;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// The EVM uses a stack-based architecture and does not use registers like some other VMs.
 pub struct Stack {
     pub stack: Vec<U256>,
 }
@@ -55,6 +56,8 @@ impl Stack {
 #[derive(Debug, Clone, Default, PartialEq)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
+/// One context can trigger another with opcodes like CALL or CREATE.
+/// Call frames relationships can be thought of as a parent-child relation.
 pub struct CallFrame {
     /// Max gas a callframe can use
     pub gas_limit: u64,
@@ -80,7 +83,7 @@ pub struct CallFrame {
     pub output: Bytes,
     /// Return data of the SUB-CONTEXT (see docs for more details)
     pub sub_return_data: Bytes,
-    /// Indicates if current context is static (if it is, it can't change state)
+    /// Indicates if current context is static (if it is, it can't alter state)
     pub is_static: bool,
     pub logs: Vec<Log>,
     /// Call stack current depth
