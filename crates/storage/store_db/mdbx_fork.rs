@@ -547,7 +547,6 @@ impl StoreEngine for MDBXFork {
         let decoded_hash: BlockHash = RLPDecode::decode(&key).unwrap();
         let key_for_receipt = (decoded_hash, receipt_index).encode_to_vec();
         let encoded_receipt = tx.get::<Receipts>(key_for_receipt).unwrap();
-        tracing::info!("{:?}", encoded_receipt);
         Ok(encoded_receipt.map(|r| RLPDecode::decode(&r).unwrap()))
     }
 
@@ -890,7 +889,6 @@ impl StoreEngine for MDBXFork {
         for (index, receipt) in receipts.into_iter().enumerate() {
             let receipt_bytes = receipt.encode_to_vec();
             let receipt_db_key = (block_hash, index).encode_to_vec();
-            tracing::info!("{:?}", receipt);
             tx.put::<Receipts>(receipt_db_key, receipt_bytes).unwrap();
         }
 
