@@ -21,13 +21,32 @@ use revm::{
     db::State,
     inspectors::TracerEip3155 as RevmTracerEip3155,
     primitives::{
-        AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv,
-        EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization,
-        TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256,
+        alloy_primitives::U160, AccessListItem, Authorization, BlobExcessGasAndPrice, BlockEnv as RevmBlockEnv, EVMError as REVMError, ExecutionResult as RevmExecutionResult, SignedAuthorization, TxEnv as RevmTxEnv, TxKind as RevmTxKind, B256
     },
     Evm as Revm,
 };
 use std::collections::{HashMap, HashSet};
+
+fn convert_revm_address_to_levm(address: ethrex_common::Address) -> revm::primitives::Address{
+    let mut u160_address = 0;
+    for i in 19..0 {
+        u160_address += (address[i] as u32) * 10_u32.pow(i as u32);
+    }
+    revm::primitives::Address::from(U160::from(u160_address))
+}
+
+fn levm_and_revm_logs_match(levm_logs: &Vec<ethrex_common::types::Log>, revm_logs: &Vec<revm::primitives::Log>) -> bool {
+    if levm_logs.len() == revm_logs.len() {
+        for (levm_log, revm_log) in levm_logs.iter().zip(revm_logs.iter()) {
+            let addresses_match = convert_revm_address_to_levm(levm_log.address) == revm_log.address;
+            let data_matches = levm_log.data == *revm_log.data.data;
+            if !(addresses_match && data_matches) {
+                return false;
+            }
+        }
+        true
+    } else { false }
+}
 
 pub async fn re_run_failed_ef_test(
     test: &EFTest,
@@ -232,7 +251,7 @@ pub fn compare_levm_revm_execution_results(
                         reason: _,
                         gas_used: revm_gas_used,
                         gas_refunded: revm_gas_refunded,
-                        logs: _,
+                        logs: revm_logs,
                         output: _,
                     },
                 ) => {
@@ -251,6 +270,15 @@ pub fn compare_levm_revm_execution_results(
                             revm_gas_refunded,
                             *fork,
                         );
+                    }
+                    
+                    if !levm_and_revm_logs_match(&levm_tx_report.logs, &revm_logs) {
+                        re_run_report.register_logs_mismatch(
+                            *vector,
+                            levm_tx_report.logs.clone(),
+                            revm_logs.clone(),
+                            *fork,
+                        )
                     }
                 }
                 (

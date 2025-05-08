@@ -423,6 +423,14 @@ impl Display for EFTestsReport {
                                     levm_gas_refunded.abs_diff(*revm_gas_refunded)
                                 )?;
                             }
+                            if let Some((levm_logs, revm_logs)) =
+                                &execution_report.logs_mismatch
+                            {
+                                writeln!(
+                                    f,
+                                    "\t\t\tLogs mismatch: LEVM: {:?}, REVM: {:?})", levm_logs, revm_logs
+                                )?;
+                            }
                             if let Some((levm_result, revm_error)) =
                                 &execution_report.re_runner_error
                             {
@@ -798,6 +806,7 @@ pub struct TestReRunExecutionReport {
     pub execution_result_mismatch: Option<(TxResult, RevmExecutionResult)>,
     pub gas_used_mismatch: Option<(u64, u64)>,
     pub gas_refunded_mismatch: Option<(u64, u64)>,
+    pub logs_mismatch: Option<(Vec<ethrex_common::types::Log>, Vec<revm::primitives::Log>)>,
     pub re_runner_error: Option<(TxResult, String)>,
 }
 
@@ -865,6 +874,25 @@ impl TestReRunReport {
             })
             .or_insert(TestReRunExecutionReport {
                 gas_refunded_mismatch: value,
+                ..Default::default()
+            });
+    }
+
+    pub fn register_logs_mismatch(
+        &mut self,
+        vector: TestVector,
+        levm_logs: Vec<ethrex_common::types::Log>,
+        revm_logs: Vec<revm::primitives::Log>,
+        fork: Fork,
+    ) {
+        let value = Some((levm_logs, revm_logs));
+        self.execution_report
+            .entry((vector, fork))
+            .and_modify(|report| {
+                report.logs_mismatch = value.clone();
+            })
+            .or_insert(TestReRunExecutionReport {
+                logs_mismatch: value,
                 ..Default::default()
             });
     }
