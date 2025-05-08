@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746716465979,
+  "lastUpdate": 1746727745503,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5755,6 +5755,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178510514975,
             "range": "± 735084580",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "6f959f5d1457438815278c5f62e60cf25cd5097d",
+          "message": "chore(l1): fix contract deployment tests from EIP-7002 (#2630)\n\n**Motivation**\n\nOn #2586 new tests were added and some of them failed on LEVM and REVM.\n\n**Description**\n\n8 new tests are now working and dont need to be skipped in each of the\nVMs. The tests were failing because we were not checking if the bytecode\nof the system contracts that the EIPs\n([7002](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md#empty-code-failure)\nand\n[7251](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md))\ndefine were empty or not. And also because the we were not handling the\ncase were the system calls revert, leading to an invalidate block.\n\nCloses #2598\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-05-08T17:09:51Z",
+          "tree_id": "5c590710f96e22fecdf164f87a712b476cecc6dd",
+          "url": "https://github.com/lambdaclass/ethrex/commit/6f959f5d1457438815278c5f62e60cf25cd5097d"
+        },
+        "date": 1746727743600,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179316441520,
+            "range": "± 927628046",
             "unit": "ns/iter"
           }
         ]
