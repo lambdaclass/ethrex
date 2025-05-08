@@ -145,7 +145,7 @@ impl Evm {
                     execution_report.logs.clone(),
                 );
 
-                update_state_diff_size(acc_state_diff_size, tx, &receipt, db, block_header)?;
+                update_state_diff_size(acc_state_diff_size, tx, &receipt, db)?;
 
                 Ok((receipt, execution_report.gas_used))
             }
@@ -195,10 +195,10 @@ impl Evm {
     /// [LEVM::get_state_transitions] gathers the information from a [CacheDB].
     ///
     /// They may have the same name, but they serve for different purposes.
-    pub fn get_state_transitions(&mut self, fork: Fork) -> Result<Vec<AccountUpdate>, EvmError> {
+    pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
-            Evm::LEVM { db } => LEVM::get_state_transitions(db, fork),
+            Evm::LEVM { db } => LEVM::get_state_transitions(db),
         }
     }
 

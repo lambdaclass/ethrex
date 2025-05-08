@@ -81,7 +81,6 @@ pub fn update_state_diff_size(
     tx: &Transaction,
     receipt: &Receipt,
     db: &GeneralizedDatabase,
-    block_header: &BlockHeader,
 ) -> Result<(), EvmError> {
     if acc_state_diff_size.is_none() {
         return Ok(());
@@ -94,8 +93,7 @@ pub fn update_state_diff_size(
         actual_size += L2_DEPOSIT_SIZE;
     }
 
-    let fork = db.store.get_chain_config().fork(block_header.timestamp);
-    let account_updates = LEVM::get_state_transitions_no_drain(db, fork)?;
+    let account_updates = LEVM::get_state_transitions_no_drain(db)?;
 
     let modified_accounts_size = calc_modified_accounts_size(&account_updates, db)?;
 

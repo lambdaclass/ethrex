@@ -220,12 +220,11 @@ impl<'a> VM<'a> {
 
     // EXP operation
     pub fn op_exp(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
         let base = current_call_frame.stack.pop()?;
         let exponent = current_call_frame.stack.pop()?;
 
-        let gas_cost = gas_cost::exp(exponent, fork)?;
+        let gas_cost = gas_cost::exp(exponent)?;
 
         current_call_frame.increase_consumed_gas(gas_cost)?;
 
