@@ -192,7 +192,7 @@ pub struct BlockProducerOptions {
 #[derive(Parser)]
 pub struct CommitterOptions {
     #[arg(
-        long = "committer-l1-private-key",
+        long = "committer.l1-private-key",
         default_value = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
@@ -209,7 +209,7 @@ pub struct CommitterOptions {
     )]
     pub on_chain_proposer_address: Address,
     #[arg(
-        long,
+        long = "committer.commit-time-ms",
         default_value = "60000",
         value_name = "UINT64",
         env = "ETHREX_COMMITTER_COMMIT_TIME_MS",
@@ -218,7 +218,7 @@ pub struct CommitterOptions {
     )]
     pub commit_time_ms: u64,
     #[arg(
-        long,
+        long = "committer.arbitrary-base-blob-gas-price",
         default_value = "1000000000", // 1 Gwei
         value_name = "UINT64",
         env = "ETHREX_COMMITTER_ARBITRARY_BASE_BLOB_GAS_PRICE",
@@ -226,7 +226,7 @@ pub struct CommitterOptions {
     )]
     pub arbitrary_base_blob_gas_price: u64,
     #[arg(
-        long,
+        long = "committer.validium",
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_COMMITTER_VALIDIUM",
