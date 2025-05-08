@@ -4,9 +4,7 @@ PCCS_FILE := deploydeps/automata-dcap-attestation/evm/deployment/$(CHAIN_ID)/onc
 DCAP_FILE := deploydeps/automata-dcap-attestation/evm/deployment/$(CHAIN_ID)/dcap.json
 
 deploy-p256:
-	cast send $(DETERMINISTIC_DEPLOYER) $(shell cat assets/p256.hex) \
-		--rpc-url $(RPC_URL) \
-		--private-key $(PRIVATE_KEY)
+	rex send $(DETERMINISTIC_DEPLOYER) 0 $(PRIVATE_KEY) --calldata $(shell cat assets/p256.hex)
 
 deploydeps:
 	mkdir -p deploydeps
@@ -37,22 +35,14 @@ deploydeps/root_ca.hex:
 
 setup-pccs-ca: deploy-pccs deploydeps/root_ca.hex deploydeps/root_crl.hex
 	$(eval PCSDAO_ADDRESS := $(shell cat ${PCCS_FILE} | jq --raw-output .AutomataPcsDao))
-	cast send $(PCSDAO_ADDRESS) "upsertPcsCertificates(uint8,bytes)" 0 $(shell cat deploydeps/root_ca.hex) \
-		--rpc-url $(RPC_URL) \
-		--private-key $(PRIVATE_KEY)
-	cast send $(PCSDAO_ADDRESS) "upsertRootCACrl(bytes)" $(shell cat deploydeps/root_crl.hex) \
-		--rpc-url $(RPC_URL) \
-		--private-key $(PRIVATE_KEY)
-	cast send $(PCSDAO_ADDRESS) "upsertPcsCertificates(uint8,bytes)" 2 $(shell cat assets/platform_ca.hex) \
-		--rpc-url $(RPC_URL) \
-		--private-key $(PRIVATE_KEY)
+	rex send $(PCSDAO_ADDRESS) 0 $(PRIVATE_KEY) -- "upsertPcsCertificates(uint8,bytes)" 0 $(shell cat deploydeps/root_ca.hex)
+	rex send $(PCSDAO_ADDRESS) 0 $(PRIVATE_KEY) -- "upsertRootCACrl(bytes)" $(shell cat deploydeps/root_crl.hex)
+	rex send $(PCSDAO_ADDRESS) 0 $(PRIVATE_KEY) -- "upsertPcsCertificates(uint8,bytes)" 2 $(shell cat assets/platform_ca.hex)
 
 set-verifier-v4: deploy-dcap
 	$(eval DCAP_ADDRESS := $(shell cat ${DCAP_FILE} | jq --raw-output .AutomataDcapAttestationFee))
 	$(eval VERIFIER_V4_ADDR := $(shell cat ${DCAP_FILE} | jq --raw-output .V4QuoteVerifier))
-	cast send $(DCAP_ADDRESS) "setQuoteVerifier(address)" $(VERIFIER_V4_ADDR) \
-		--rpc-url $(RPC_URL) \
-		--private-key $(PRIVATE_KEY)
+	rex send $(DCAP_ADDRESS) 0 $(PRIVATE_KEY) -- "setQuoteVerifier(address)" $(VERIFIER_V4_ADDR) \
 
 lib/openzeppelin-contracts:
 	mkdir -p lib
@@ -65,10 +55,7 @@ solc_out/Counter.bin: src/Counter.sol lib/openzeppelin-contracts
 deploy: solc_out/Counter.bin
 	$(eval CONTRACT_BIN := $(shell cat solc_out/Counter.bin))
 	$(eval DCAP_ADDRESS := $(shell cat ${DCAP_FILE} | jq --raw-output .AutomataDcapAttestationFee | cut -c 3-))
-	cast send  \
-		--rpc-url $(RPC_URL) \
-		--private-key $(PRIVATE_KEY) \
-		--create $(CONTRACT_BIN)000000000000000000000000$(DCAP_ADDRESS)
+	rex deploy $(CONTRACT_BIN)000000000000000000000000$(DCAP_ADDRESS) 0 $(PRIVATE_KEY)
 
 deploy-deps: deploy-dcap set-verifier-v4 setup-pccs-ca
 
