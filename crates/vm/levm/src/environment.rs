@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub type TransientStorage = HashMap<(Address, U256), U256>;
 
 #[derive(Debug, Default, Clone)]
+/// Environmental information that the execution agent must provide.
 pub struct Environment {
     /// The sender address of the transaction that originated
     /// this execution.

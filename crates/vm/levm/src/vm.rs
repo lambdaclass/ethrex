@@ -35,6 +35,7 @@ use crate::hooks::L2Hook;
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
+/// Information that changes during transaction execution
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
@@ -153,8 +154,6 @@ impl Default for EVMConfig {
 pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
-    /// Information that is acted upon immediately following the
-    /// transaction.
     pub accrued_substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
     pub tx_kind: TxKind,
