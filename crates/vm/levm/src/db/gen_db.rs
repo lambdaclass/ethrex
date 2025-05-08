@@ -82,14 +82,17 @@ impl<'a> VM<'a> {
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
         if cache::is_account_cached(&self.db.cache, &address) {
-            // TODO: handle unwrap that can never happen
             self.backup_account_info(address)?;
-            Ok(cache::get_account_mut(&mut self.db.cache, &address).unwrap())
+            cache::get_account_mut(&mut self.db.cache, &address).ok_or(VMError::Internal(
+                crate::errors::InternalError::AccountNotFound,
+            ))
         } else {
             let acc = self.db.store.get_account(address)?;
             cache::insert_account(&mut self.db.cache, address, acc.clone());
             self.backup_account_info(address)?;
-            Ok(cache::get_account_mut(&mut self.db.cache, &address).unwrap())
+            cache::get_account_mut(&mut self.db.cache, &address).ok_or(VMError::Internal(
+                crate::errors::InternalError::AccountNotFound,
+            ))
         }
     }
 
@@ -230,12 +233,10 @@ impl<'a> VM<'a> {
     pub fn backup_storage_slot(&mut self, address: Address, key: H256) -> Result<(), VMError> {
         let value = self.get_storage_value(address, key)?;
 
-        // TODO: Remove unwrap
         let account_storage_backup = self
             .current_call_frame_mut()?
             .call_frame_backup
             .original_account_storage_slots
-            // .get_mut(&address);
             .entry(address)
             .or_insert(HashMap::new());
 
@@ -258,7 +259,9 @@ impl<'a> VM<'a> {
             .get_mut(&address);
 
         if maybe_account_info_backup.is_none() {
-            let account = cache::get_account(&self.db.cache, &address).unwrap();
+            let account = cache::get_account(&self.db.cache, &address).ok_or(VMError::Internal(
+                crate::errors::InternalError::AccountNotFound,
+            ))?;
             let info = account.info.clone();
             let code = account.code.clone();
 

@@ -504,7 +504,12 @@ impl<'a> VM<'a> {
         }
 
         for (address, storage) in call_frame_backup.original_account_storage_slots {
-            let account = cache::get_account_mut(&mut self.db.cache, &address).unwrap();
+            // This call to `get_account_mut` should never return None, because we are looking up accounts
+            // that had their storage modified, which means they should be in the cache. That's why
+            // we return an internal error in case we haven't found it.
+            let account = cache::get_account_mut(&mut self.db.cache, &address).ok_or(
+                VMError::Internal(crate::errors::InternalError::AccountNotFound),
+            )?;
 
             for (key, value) in storage {
                 account.storage.insert(key, value);
