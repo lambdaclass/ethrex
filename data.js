@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746701023151,
+  "lastUpdate": 1746710790018,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5635,6 +5635,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180687207565,
             "range": "± 818675359",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7da4c07f42320f4cf91adbf611044226fadf816e",
+          "message": "fix(l2): download solc fixed version in Dockerfile (#2700)\n\n**Motivation**\n\nA new version of solidity was released a few hours ago\n([`0.8.30`](https://github.com/ethereum/solidity/releases/latest)) and\nthe Dockerfile was written to always download the latest version while\nour contracts Solidity version is fixed to `0.8.29`.\n\n**Description**\n\nUpdates the L1 contract deployer Dockerfile to download a fixed version\nof solc.",
+          "timestamp": "2025-05-08T12:39:01Z",
+          "tree_id": "ae33dbed81d3a6661b8033bb15e5e6135b0e7349",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7da4c07f42320f4cf91adbf611044226fadf816e"
+        },
+        "date": 1746710788221,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178973456783,
+            "range": "± 700514412",
             "unit": "ns/iter"
           }
         ]
