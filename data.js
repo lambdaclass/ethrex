@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746731937447,
+  "lastUpdate": 1746733189247,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5845,6 +5845,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179470806469,
             "range": "± 803373101",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ef8fdb5a119835d72098cc934c337a627b728afa",
+          "message": "refactor(levm): improve error message in nonce mismatch (#2698)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- When running load tests I realized that when there's a nonce mismatch\nwe should give more detail so that the user takes that into account.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-08T18:29:19Z",
+          "tree_id": "316b19cedd367fe600943f37e77499299592eaef",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ef8fdb5a119835d72098cc934c337a627b728afa"
+        },
+        "date": 1746733187504,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180222750263,
+            "range": "± 848434366",
             "unit": "ns/iter"
           }
         ]
