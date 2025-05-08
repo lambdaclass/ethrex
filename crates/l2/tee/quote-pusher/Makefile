@@ -10,6 +10,18 @@ build: automata-dcap-qpl
 	cd automata-dcap-qpl/automata-dcap-qpl-tool; cargo build --release
 
 run: build
-	CHAIN_ID=$(shell cast chain-id --rpc-url $(RPC_URL)) cargo run --release
+	cargo run --release
 
-.PHONY: build run
+test: build
+	cargo test --release
+
+# Assumes dev L1 is running (see `make dev` on ethrex)
+integration-test:
+	export $(shell cat .env | xargs); \
+	cd ../contracts; \
+	make deploy-deps; \
+	make deploy; \
+	cd ../quote-pusher; \
+	make test
+
+.PHONY: build run test integration-test
