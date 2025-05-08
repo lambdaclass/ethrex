@@ -69,7 +69,7 @@ impl MDBXFork {
             .unwrap();
         tx.create_db(Some("StorageTriesNodes"), DatabaseFlags::DUP_SORT)
             .unwrap();
-        tx.create_db(Some("Receipts"), DatabaseFlags::DUP_SORT)
+        tx.create_db(Some("Receipts"), DatabaseFlags::default())
             .unwrap();
         tx.create_db(Some("Bytecodes"), DatabaseFlags::default())
             .unwrap();
@@ -243,7 +243,7 @@ use std::fmt::{self, Error, Formatter};
 tables! {
     table StorageTriesNodes<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
     table StateTrieNodes<Key = Vec<u8>, Value = Vec<u8>>;
-    table Receipts<Key = Vec<u8>, Value = Vec<u8>, SubKey = u64>;
+    table Receipts<Key = Vec<u8>, Value = Vec<u8>>;
     table TransactionLocations<Key = Vec<u8>, Value = Vec<u8>, SubKey = Vec<u8>>;
     table Bodies<Key = Vec<u8>, Value = Vec<u8>>;
     table Headers<Key = Vec<u8>, Value = Vec<u8>>;
@@ -543,36 +543,12 @@ impl StoreEngine for MDBXFork {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
+        tracing::warn!("ADDING RECEIPT");
         let encoded = receipt.encode_to_vec();
-        let main_key = block_hash.encode_to_vec();
+        let key = (block_hash, index).encode_to_vec();
+        tracing::warn!("{:?}", (block_hash, index));
         let tx = self.env.tx_mut().unwrap();
-        if encoded.len() > *DB_DUPSORT_MAX_SIZE.get_or_init(|| page_size::get().div(2)) {
-            let chunks: Vec<Vec<u8>> = encoded
-                .chunks(*DB_DUPSORT_MAX_SIZE.get().unwrap())
-                .map(|chunk| chunk.to_vec())
-                .collect();
-
-            for (chunk_index, chunk) in chunks.into_iter().enumerate() {
-                let mut chunked_value = vec![];
-
-                chunked_value.extend_from_slice(&(index as u64).to_be_bytes());
-
-                chunked_value.push(chunk_index as u8);
-
-                chunked_value.extend_from_slice(&chunk);
-
-                tx.put::<Receipts>(main_key.clone(), chunked_value).unwrap();
-            }
-        } else {
-            let mut value = Vec::with_capacity(8 + 1 + encoded.len());
-
-            value.extend_from_slice(&(index as u64).to_be_bytes());
-
-            value.push(0u8);
-
-            value.extend_from_slice(&encoded);
-            tx.put::<Receipts>(main_key, value).unwrap();
-        }
+        tx.put::<Receipts>(key, encoded).unwrap();
         tx.commit().unwrap();
         Ok(())
     }
@@ -583,42 +559,17 @@ impl StoreEngine for MDBXFork {
         receipt_index: u64,
     ) -> Result<Option<Receipt>, StoreError> {
         let tx = self.env.tx().unwrap();
+        tracing::warn!("CANONICAL BLOCK HASHES");
         let Some(key) = tx.get::<CanonicalBlockHashes>(block_number).unwrap() else {
             return Ok(None);
         };
-
-        let mut cursor = tx.cursor_dup_read::<Receipts>().unwrap();
-        let walker = cursor.walk(Some(key)).unwrap();
-
-        let mut chunks = Vec::new();
-
-        for elem in walker {
-            let (_k, v) = elem.unwrap();
-            let mut index_bytes = [0u8; 8];
-            index_bytes.copy_from_slice(&v[0..8]);
-            let stored_index = u64::from_be_bytes(index_bytes);
-
-            if stored_index == receipt_index {
-                let chunk_index = v[8] as usize;
-                let chunk_data = v[9..].to_vec();
-
-                chunks.push((chunk_index, chunk_data));
-            }
-        }
-
-        if chunks.is_empty() {
-            return Ok(None);
-        }
-
-        chunks.sort_by_key(|(idx, _)| *idx);
-
-        let mut complete_data = Vec::new();
-        for (_, chunk_data) in chunks {
-            complete_data.extend_from_slice(&chunk_data);
-        }
-
-        let receipt: Receipt = RLPDecode::decode(&complete_data).unwrap();
-        Ok(Some(receipt))
+        tracing::warn!("DECODED_HASH");
+        let decoded_hash: BlockHash = RLPDecode::decode(&key).unwrap();
+        let key_for_receipt = (decoded_hash, receipt_index).encode_to_vec();
+        tracing::warn!("ENCODED_RECEIPT");
+        let encoded_receipt = tx.get::<Receipts>(key_for_receipt).unwrap();
+        tracing::warn!("BEFORE RETURNING");
+        Ok(encoded_receipt.map(|r| RLPDecode::decode(&r).unwrap()))
     }
 
     async fn add_transaction_location(
@@ -952,44 +903,15 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
+        tracing::warn!("ADDING RECEIPTS");
         let tx = self.env.tx_mut().unwrap();
-
-        let main_key = block_hash.encode_to_vec();
 
         for (index, receipt) in receipts.into_iter().enumerate() {
             let receipt_bytes = receipt.encode_to_vec();
-
-            if receipt_bytes.len() > *DB_DUPSORT_MAX_SIZE.get_or_init(|| page_size::get().div(2)) {
-                let chunks: Vec<Vec<u8>> = receipt_bytes
-                    .chunks(*DB_DUPSORT_MAX_SIZE.get().unwrap())
-                    .map(|chunk| chunk.to_vec())
-                    .collect();
-
-                for (chunk_index, chunk) in chunks.into_iter().enumerate() {
-                    let mut chunked_value = vec![];
-
-                    chunked_value.extend_from_slice(&(index as u64).to_be_bytes());
-
-                    chunked_value.push(chunk_index as u8);
-
-                    chunked_value.extend_from_slice(&chunk);
-
-                    tx.put::<Receipts>(main_key.clone(), chunked_value).unwrap();
-                }
-            } else {
-                let mut value = Vec::with_capacity(8 + 1 + receipt_bytes.len());
-
-                value.extend_from_slice(&(index as u64).to_be_bytes());
-
-                value.push(0u8);
-
-                value.extend_from_slice(&receipt_bytes);
-
-                tx.put::<Receipts>(main_key.clone(), value).unwrap();
-            }
+            let receipt_db_key = (block_hash, index).encode_to_vec();
+            tx.put::<Receipts>(receipt_db_key, receipt_bytes).unwrap();
         }
 
-        // Commit the transaction
         tx.commit().unwrap();
         Ok(())
     }
