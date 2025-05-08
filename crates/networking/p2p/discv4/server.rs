@@ -684,9 +684,8 @@ pub(super) mod tests {
         types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
-    use ethrex_common::types::{BlockHeader, ChainConfig, ForkId};
     use ethrex_storage::EngineType;
-    use ethrex_storage::{error::StoreError, Store};
+    use ethrex_storage::Store;
 
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
@@ -718,38 +717,6 @@ pub(super) mod tests {
         }
     }
 
-    async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
-        let store = Store::new("test", EngineType::InMemory)?;
-        let block_number = header.number;
-        let block_hash = header.compute_block_hash();
-        store.add_block_header(block_hash, header).await?;
-        store.set_canonical_block(block_number, block_hash).await?;
-        store.update_latest_block_number(block_number).await?;
-        store.set_chain_config(&config).await?;
-        Ok(store)
-    }
-
-    fn build_basic_config_and_header(
-        istanbul_active: bool,
-        shanghai_active: bool,
-    ) -> (ChainConfig, BlockHeader) {
-        let config = ChainConfig {
-            shanghai_time: Some(if shanghai_active { 1 } else { 10 }),
-            istanbul_block: Some(if istanbul_active { 1 } else { 10 }),
-            ..Default::default()
-        };
-
-        let header = BlockHeader {
-            number: 5,
-            timestamp: 5,
-            gas_limit: 100_000_000,
-            gas_used: 0,
-            ..Default::default()
-        };
-
-        (config, header)
-    }
-
     pub async fn start_discovery_server(
         udp_port: u16,
         should_start_server: bool,
@@ -764,9 +731,6 @@ pub(super) mod tests {
             tcp_port: udp_port,
         };
 
-        let (config, header) = build_basic_config_and_header(false, false);
-
-        // let storage = setup_storage(config, header).await.expect("Storage setup");
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
@@ -790,11 +754,6 @@ pub(super) mod tests {
             broadcast,
             client_version: "ethrex/test".to_string(),
         };
-        // ctx.local_node_record
-        //     .lock()
-        //     .await
-        //     .set_fork_id(ForkId::default(), &signer)
-        //     .unwrap();
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;
 
