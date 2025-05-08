@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746713185769,
+  "lastUpdate": 1746715264323,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5695,6 +5695,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179086421038,
             "range": "± 465546481",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "352e5b619150a2ced54e9e37a6b487d5d41e97bc",
+          "message": "fix(l1): gate blob tests behind `c-kzg` feature (#2686)\n\n**Motivation**\nCurrently, attempting to run any test on the common crate fails unless\nwe explicitly add `--features c-kzg` due to the tests on the\nblobs_bundle module using code gated behind `c-kzg` feature. This PR\nsolves this issue by feature-gating tests that use these feature-gated\ncode.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Add `c-kzg` feature gate to tests on blobs_bundle module\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-08T13:35:59Z",
+          "tree_id": "249ffb820c5a9dd15a8a5031833084a64d17efab",
+          "url": "https://github.com/lambdaclass/ethrex/commit/352e5b619150a2ced54e9e37a6b487d5d41e97bc"
+        },
+        "date": 1746715262105,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182168081852,
+            "range": "± 774191331",
             "unit": "ns/iter"
           }
         ]
