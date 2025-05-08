@@ -47,7 +47,6 @@ pub struct Substate {
 ///   - Substate
 ///   - Gas Refunds
 ///   - Transient Storage
-//TODO: Move refunded_gas and transient_storage to substate and delete StateBackup struct.
 pub struct StateBackup {
     pub substate: Substate,
     pub refunded_gas: u64,
@@ -82,7 +81,6 @@ pub struct EVMConfig {
     pub blob_schedule: ForkBlobSchedule,
 }
 
-//TODO: Move this to environment.rs
 impl EVMConfig {
     pub fn new(fork: Fork, blob_schedule: ForkBlobSchedule) -> EVMConfig {
         EVMConfig {
@@ -168,7 +166,6 @@ pub struct VM<'a> {
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
 }
 
-// TODO: Move RetData inside of CallFrame and leave only ret_offset, ret_size and should_transfer_value. The rest is in CallFrame.
 pub struct RetData {
     pub is_create: bool,
     pub ret_offset: U256,
