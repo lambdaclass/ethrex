@@ -390,7 +390,7 @@ pub fn get_local_node_record(
     data_dir: &str,
     local_p2p_node: &Node,
     signer: &SigningKey,
-) -> Arc<Mutex<NodeRecord>> {
+) -> NodeRecord {
     let config_file = PathBuf::from(data_dir.to_owned() + "/config.json");
 
     let enr_seq = match read_config_file(config_file) {
@@ -398,10 +398,8 @@ pub fn get_local_node_record(
         Err(_) => 1,
     };
 
-    Arc::new(Mutex::new(
-        NodeRecord::from_node(local_p2p_node, enr_seq, signer)
-            .expect("Node record could not be created from local node"),
-    ))
+    NodeRecord::from_node(local_p2p_node, enr_seq, signer)
+        .expect("Node record could not be created from local node")
 }
 
 pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
