@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use bytes::Bytes;
 use clap::Parser;
@@ -19,8 +19,12 @@ fn main() -> Result<(), SystemContractsUpdaterError> {
     Ok(())
 }
 
-fn update_genesis_file(l2_genesis_path: &str) -> Result<(), SystemContractsUpdaterError> {
-    let mut genesis = read_genesis_file(l2_genesis_path);
+fn update_genesis_file(l2_genesis_path: &PathBuf) -> Result<(), SystemContractsUpdaterError> {
+    let mut genesis = read_genesis_file(l2_genesis_path.to_str().ok_or(
+        SystemContractsUpdaterError::InvalidPath(
+            "Failed to convert l2 genesis path to string".to_string(),
+        ),
+    )?);
 
     let runtime_code = std::fs::read("contracts/solc_out/CommonBridgeL2.bin-runtime")?;
 
