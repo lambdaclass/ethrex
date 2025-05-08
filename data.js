@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746710790018,
+  "lastUpdate": 1746713185769,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5665,6 +5665,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178973456783,
             "range": "± 700514412",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "83158ad356fb739f19a2d8b15864656d9f700462",
+          "message": "fix(l1): fixed proper parent when receiveing a NewPayloadRequest (#2690)\n\n**Motivation**\n\nThis pr aims to fix a bug with the parent assigned in NewPayloadRequest\nif the parent is valid. From the [Paris fork\ndocumentation](https://github.com/ethereum/execution-apis/blob/main/src/engine/paris.md)\n\"latestValidHash: DATA|null, 32 Bytes - the hash of the most recent\nvalid block in the branch defined by payload and its ancestors\"\n\n**Description**\n\nRemoved storage get for the canonical latest valid ancestor and replaced\nwith the parent hash (if it's valid).\n\nFixes 27 tests in #1285 in \"engine-cancun\"",
+          "timestamp": "2025-05-08T13:18:54Z",
+          "tree_id": "823afb0e12762ec7aa6b0cff9111711c90bf175a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/83158ad356fb739f19a2d8b15864656d9f700462"
+        },
+        "date": 1746713183749,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179086421038,
+            "range": "± 465546481",
             "unit": "ns/iter"
           }
         ]
