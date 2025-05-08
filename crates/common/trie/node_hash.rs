@@ -1,5 +1,5 @@
 use ethereum_types::H256;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, structs::Encoder};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError, structs::Encoder};
 #[cfg(feature = "libmdbx")]
 use libmdbx::orm::{Decodable, Encodable};
 use sha3::{Digest, Keccak256};
@@ -36,7 +36,7 @@ impl NodeHash {
     }
 
     /// Converts a slice of an already hashed data (in case it's not inlineable) to a NodeHash.
-    ///
+    /// Panics if the slice is over 32 bytes
     /// If you need to hash it in case its len >= 32 see `from_encoded_raw`
     pub(crate) fn from_slice(slice: &[u8]) -> NodeHash {
         match slice.len() {
@@ -87,11 +87,19 @@ impl NodeHash {
         }
         encoder
     }
-}
 
-impl From<Vec<u8>> for NodeHash {
-    fn from(value: Vec<u8>) -> Self {
-        NodeHash::from_slice(&value)
+    pub fn len(&self) -> usize {
+        match self {
+            NodeHash::Hashed(h256) => h256.as_bytes().len(),
+            NodeHash::Inline(value) => value.1 as usize,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            NodeHash::Hashed(h256) => h256.as_bytes().is_empty(),
+            NodeHash::Inline(value) => value.1 == 0,
+        }
     }
 }
 
@@ -146,7 +154,10 @@ impl RLPDecode for NodeHash {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
         let (hash, rest): (Vec<u8>, &[u8]);
         (hash, rest) = RLPDecode::decode_unfinished(rlp)?;
-        let hash = NodeHash::from(hash);
+        if hash.len() > 32 {
+            return Err(RLPDecodeError::InvalidLength);
+        }
+        let hash = NodeHash::from_slice(&hash);
         Ok((hash, rest))
     }
 }
