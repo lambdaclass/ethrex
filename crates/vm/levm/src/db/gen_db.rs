@@ -88,7 +88,7 @@ impl<'a> VM<'a> {
             ))
         } else {
             let acc = self.db.store.get_account(address)?;
-            cache::insert_account(&mut self.db.cache, address, acc.clone());
+            cache::insert_account(&mut self.db.cache, address, acc);
             self.backup_account_info(address)?;
             cache::get_account_mut(&mut self.db.cache, &address).ok_or(VMError::Internal(
                 crate::errors::InternalError::AccountNotFound,
