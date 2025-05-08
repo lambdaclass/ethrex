@@ -28,9 +28,10 @@ RUN cargo build --release --manifest-path crates/l2/contracts/Cargo.toml
 FROM --platform=${BUILDPLATFORM} ubuntu:24.04
 WORKDIR /usr/local/bin
 
-RUN apt-get update && apt-get -y install git gnupg software-properties-common
+RUN apt-get update && apt-get -y install git gnupg software-properties-common curl
 RUN add-apt-repository ppa:ethereum/ethereum
-RUN apt-get update && apt-get -y install solc
+RUN curl -L -o /usr/bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.29/solc-static-linux
+RUN chmod +x /usr/bin/solc
 
 COPY --from=builder ethrex/target/release/ethrex_l2_l1_deployer .
 
