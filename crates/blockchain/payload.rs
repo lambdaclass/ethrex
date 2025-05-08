@@ -199,7 +199,7 @@ impl PayloadBuildContext {
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
-            acc_state_diff_size: Some(0),
+            acc_state_diff_size: None,
         })
     }
 }
