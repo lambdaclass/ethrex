@@ -339,7 +339,11 @@ async fn make_deposits(
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
-    let genesis = read_genesis_file(&opts.genesis_l1_path);
+    let genesis = read_genesis_file(
+        opts.genesis_l1_path
+            .to_str()
+            .ok_or(DeployerError::FailedToGetStringFromPath)?,
+    );
     let pks = read_to_string(&opts.private_keys_file_path)
         .map_err(|_| DeployerError::FailedToGetStringFromPath)?;
     let private_keys: Vec<String> = pks
