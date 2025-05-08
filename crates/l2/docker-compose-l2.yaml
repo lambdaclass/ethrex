@@ -6,7 +6,12 @@ services:
     platform: linux/amd64
     container_name: contract_deployer
     image: ethrex_l2_contract_deployer
-    command: --deposit-rich
+    command: >
+      --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+      --pico.verifier-address 0x00000000000000000000000000000000000000AA
+      --risc0.verifier-address 0x00000000000000000000000000000000000000AA
+      --sp1.verifier-address 0x00000000000000000000000000000000000000AA
+      --deposit-rich
     build:
       context: ../../
       args:
