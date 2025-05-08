@@ -2,7 +2,7 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
-use serde::{ser::SerializeStruct, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha3::{Digest, Keccak256};
 use std::{
@@ -384,6 +384,7 @@ impl Genesis {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use std::str::FromStr;
     use std::{fs::File, io::BufReader};

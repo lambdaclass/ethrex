@@ -5,7 +5,6 @@ use std::path::Path;
 use bytes::Bytes;
 use ethrex_common::types::Genesis;
 use ethrex_common::types::GenesisAccount;
-use ethrex_common::H160;
 use ethrex_common::U256;
 use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::COMMON_BRIDGE_L2_ADDRESS;
@@ -47,7 +46,7 @@ fn main() -> Result<(), ContractCompilationError> {
     let runtime_code = std::fs::read("contracts/solc_out/CommonBridgeL2.bin-runtime")?;
 
     genesis.alloc.insert(
-        H160::random(),
+        COMMON_BRIDGE_L2_ADDRESS,
         GenesisAccount {
             code: Bytes::from(hex::decode(runtime_code).map_err(|_| {
                 ContractCompilationError::InternalError(
