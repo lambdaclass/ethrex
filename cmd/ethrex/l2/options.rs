@@ -9,7 +9,7 @@ use ethrex_rpc::clients::eth::get_address_from_secret_key;
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};
 
-#[derive(Parser, Default)]
+#[derive(Parser)]
 pub struct Options {
     #[command(flatten)]
     pub node_opts: NodeOptions,
@@ -22,11 +22,27 @@ pub struct Options {
         help_heading = "L2 options"
     )]
     pub sponsorable_addresses_file_path: Option<String>,
-    #[arg(long, value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
-    pub sponsor_private_key: Option<SecretKey>,
+    #[arg(long, default_value = "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192", value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
+    pub sponsor_private_key: SecretKey,
     #[cfg(feature = "based")]
     #[command(flatten)]
     pub based_opts: BasedOptions,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            node_opts: NodeOptions::default(),
+            sequencer_opts: SequencerOptions::default(),
+            sponsorable_addresses_file_path: None,
+            sponsor_private_key: utils::parse_private_key(
+                "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192",
+            )
+            .unwrap(),
+            #[cfg(feature = "based")]
+            based_opts: BasedOptions::default(),
+        }
+    }
 }
 
 #[derive(Parser, Default)]
@@ -72,7 +88,6 @@ impl From<SequencerOptions> for SequencerConfig {
                 bridge_address: opts.watcher_opts.bridge_address,
                 check_interval_ms: opts.watcher_opts.watch_interval_ms,
                 max_block_step: opts.watcher_opts.max_block_step.into(),
-                l2_proposer_private_key: opts.watcher_opts.l2_proposer_private_key,
             },
             proof_coordinator: ProofCoordinatorConfig {
                 l1_address: get_address_from_secret_key(
@@ -141,15 +156,6 @@ pub struct WatcherOptions {
         help_heading = "L1 Watcher options"
     )]
     pub max_block_step: u64,
-    #[arg(
-        long,
-        default_value = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
-        value_name = "PRIVATE_KEY",
-        value_parser = utils::parse_private_key,
-        env = "ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY",
-        help_heading = "L1 Watcher options",
-    )]
-    pub l2_proposer_private_key: SecretKey,
 }
 
 impl Default for WatcherOptions {
@@ -160,10 +166,6 @@ impl Default for WatcherOptions {
                 .unwrap(),
             watch_interval_ms: 1000,
             max_block_step: 5000,
-            l2_proposer_private_key: utils::parse_private_key(
-                "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
-            )
-            .unwrap(),
         }
     }
 }
