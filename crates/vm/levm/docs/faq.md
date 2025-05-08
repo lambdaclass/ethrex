@@ -49,3 +49,11 @@ This pattern is fairly common and is useful to keep in mind, especially when dea
 
 - External transactions are initiated by EOAs (Externally Owned Accounts). These are user-triggered and are the only way to start activity on-chain (e.g., sending ETH, calling a contract).
 - Internal transactions are not real transactions in the blockchain data. They are contract-to-contract calls triggered during the execution of external transactions, using opcodes like CALL, DELEGATECALL, CREATE, etc. They’re not recorded in the transaction pool.
+
+
+## CacheDB vs. Cold and Warm Addresses
+
+This topic often causes confusion. The presence of an address in the cache does not mean it is **warm** — these are two separate concepts. \
+The `CacheDB` is a structure that is persisted between transactions, but the **cold** and **warm** addresses aren't. \
+So if you want to access an account that's in the `CacheDB` it will be cheap for the EVM (because it won't look up in the `Database`) but if it was accessed in a new transaction that never touched that account it will be **cold** and therefore the gas cost will be higher than if it was **warm**.
+
