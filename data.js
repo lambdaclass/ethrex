@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746742291769,
+  "lastUpdate": 1746747582017,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5965,6 +5965,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179287175011,
             "range": "± 871818788",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a4da254c641aa58eeb36c9c6946239e48cb28389",
+          "message": "docs(levm): add some docs and delete unnecessary stuff (#2716)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Clean the VM and document it where necessary.\n\n**Description**\n\n- Add simple rustdocs comments where I consider appropriate adding and\nexplain some things that were left unexplained before.\n- Delete `operations.rs` because we weren't using it.\n- Left some TODOs in the comment, for which I created issues:\n  - https://github.com/lambdaclass/ethrex/issues/2717\n  - https://github.com/lambdaclass/ethrex/issues/2718\n  - https://github.com/lambdaclass/ethrex/issues/2720\n\n\n\nCloses #2546",
+          "timestamp": "2025-05-08T22:39:24Z",
+          "tree_id": "d9302debea63d07df8623841f7aeb491db693710",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a4da254c641aa58eeb36c9c6946239e48cb28389"
+        },
+        "date": 1746747580269,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179811306650,
+            "range": "± 634115932",
             "unit": "ns/iter"
           }
         ]
