@@ -185,7 +185,7 @@ prover_server_endpoint=<ip-address>:3900
    // Should be different from ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
    ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=<private_key>
    // Used to handle TCP communication with other servers from any network interface.
-   ETHREX_PROOF_COORDINATOR_LISTEN_IP=0.0.0.0
+   ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS=0.0.0.0
    // Set to true to randomize the salt.
    ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
    // Check if the contract is deployed in your preferred network or set to `true` to deploy it.

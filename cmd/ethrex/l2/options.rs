@@ -256,46 +256,46 @@ impl Default for CommitterOptions {
 #[derive(Parser)]
 pub struct ProofCoordinatorOptions {
     #[arg(
-        long = "proof-coordinator-l1-private-key",
+        long = "proof-coordinator.l1-private-key",
         default_value = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY",
-        help_heading = "L1 Prover Server options",
+        help_heading = "Proof coordinator options",
         long_help = "Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.",
     )]
     pub proof_coordinator_l1_private_key: SecretKey,
     #[arg(
-        long = "proof-coordinator-listen-ip",
+        long = "proof-coordinator.address",
         default_value = "127.0.0.1",
         value_name = "IP_ADDRESS",
-        env = "ETHREX_PROOF_COORDINATOR_LISTEN_IP",
-        help_heading = "L1 Prover Server options",
+        env = "ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS",
+        help_heading = "Proof coordinator options",
         help = "Set it to 0.0.0.0 to allow connections from other machines."
     )]
     pub listen_ip: IpAddr,
     #[arg(
-        long = "proof-coordinator-listen-port",
+        long = "proof-coordinator.port",
         default_value = "3900",
         value_name = "UINT16",
         env = "ETHREX_PROOF_COORDINATOR_LISTEN_PORT",
-        help_heading = "L1 Prover Server options"
+        help_heading = "Proof coordinator options"
     )]
     pub listen_port: u16,
     #[arg(
-        long,
+        long = "proof-coordinator.send-interval-ms",
         default_value = "5000",
         value_name = "UINT64",
         env = "ETHREX_PROOF_COORDINATOR_SEND_INTERVAL_MS",
-        help_heading = "L1 Prover Server options"
+        help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
     #[clap(
-        long = "proof-coordinator-dev-mode",
+        long = "proof-coordinator.dev-mode",
         default_value = "true",
         value_name = "BOOLEAN",
         env = "ETHREX_PROOF_COORDINATOR_DEV_MODE",
-        help_heading = "L1 Prover Server options"
+        help_heading = "Proof coordinator options"
     )]
     pub dev_mode: bool,
 }
