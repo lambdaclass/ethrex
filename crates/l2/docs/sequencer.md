@@ -8,7 +8,7 @@
     - [Block Producer](#block-producer)
     - [L1 Watcher](#l1-watcher)
     - [L1 Transaction Sender (a.k.a. L1 Committer)](#l1-transaction-sender-aka-l1-committer)
-    - [Prover Server](#prover-server)
+    - [Proof Coordinator](#proof-coordinator)
   - [Configuration](#configuration)
 
 ## Components
@@ -21,23 +21,32 @@ Creates Blocks with a connection to the `auth.rpc` port.
 
 ### L1 Watcher
 
-This component handles the L1->L2 messages. Without rest, it is always watching the L1 for new deposit events defined as `DepositInitiated()` that contain the deposit transaction to be executed on the L2. Once a new deposit event is detected, it will insert the deposit transaction into the L2.
-
-In the future, it will also be watching for other L1->L2 messages.
+This component monitors the L1 for new deposits made by users. For that, it queries the CommonBridge contract on L1 at regular intervals (defined by the config file) for new DepositInitiated() events. Once a new deposit event is detected, it creates the corresponding deposit transaction on the L2.
 
 ### L1 Transaction Sender (a.k.a. L1 Committer)
 
 As the name suggests, this component sends transactions to the L1. But not any transaction, only commit and verify transactions.
 
-Commit transactions are sent when the Proposer wants to commit to a new block. These transactions contain the block data to be committed in the L1.
+Commit transactions are sent when the Proposer wants to commit to a new batch of blocks. These transactions contain the batch data to be committed in the L1.
 
-Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contain the proof to be verified in the L1.
+Verify transactions are sent by the Proposer after the prover has successfully generated a proof of block execution to verify it. These transactions contains the new state root of the L2, the hash of the state diffs produced in the block, the root of the withdrawals logs merkle tree and the hash of the processed deposits.
 
-### Prover Server
+### Proof Coordinator
 
-The Prover Server is a simple TCP server that manages communication with a component called the `Prover Client`. The Prover Client acts as a simple TCP client, handling incoming requests to prove a block. It then "calls" a zkVM, generates the Groth16 proof, and sends it back to the Server. In this setup, the state is managed solely by the Prover Server, which, in theory, makes it less error-prone than the zkVMs.
+The Proof Coordinator is a simple TCP server that manages communication with a component called the Prover. The Prover acts as a simple TCP client that makes requests to prove a block to the Coordinator. It responds with the proof input data required to generate the proof. Then, the Prover executes a zkVM, generates the Groth16 proof, and sends it back to the Coordinator.
 
-For more information about the Prover Server, the Prover Client, and the proving process itself, see the [Prover Docs](./prover.md).
+The Proof Coordinator centralizes the responsibility of determining which block needs to be proven next and how to retrieve the necessary data for proving. This design simplifies the system by reducing the complexity of the Prover, it only makes requests and proves blocks.
+
+For more information about the Proof Coordinator, the Prover, and the proving process itself, see the [Prover Docs](./prover.md).
+
+### L1 Proof Sender
+
+The L1 Proof Sender is responsible for interacting with Ethereum L1 to manage proof verification. Its key functionalities include:
+
+- Connecting to Ethereum L1 to send proofs for verification.
+- Dynamically determine required proof types based on active verifier contracts (`PICOVERIFIER`, `R0VERIFIER`, `SP1VERIFIER`).
+- Ensure blocks are verified in the correct order by invoking the `verify(..)` function in the `OnChainProposer` contract. Upon successful verification, an event is emitted to confirm the block's verification status.
+- Operating on a configured interval defined by `proof_send_interval_ms`.
 
 ## Configuration
 
@@ -53,8 +62,8 @@ The following environment variables are available to configure the Proposer cons
 
 - Under the `[deployer]` section:
 
-  - `l1_address`: L1 account which will deploy the common bridge contracts in L1.
-  - `l1_private key`: Its private key.
+  - `l1_address`: L1 account which will deploy the common bridge contracts in L1 with funds available for deployments.
+  - `l1_private key`: Private key corresponding to the above address.
   - `pico_contract_verifier`: Address which will verify the `pico` proofs.
   - `pico_deploy_verifier`: Whether to deploy the `pico` verifier contract or not.
   - `risc0_contract_verifier`: Address which will verify the `risc0` proofs.
@@ -64,22 +73,23 @@ The following environment variables are available to configure the Proposer cons
 
 - Under the `[watcher]` section:
 
-  - `bridge_address`: Address of the bridge contract on L1.
-  - `check_interval_ms`: Interval in milliseconds to check for new events.
-  - `max_block_step`: Maximum number of blocks to look for when checking for new events.
-  - `l2_proposer_private_key`: Private key of the L2 proposer.
+  - `bridge_address`: Address of the bridge contract on L1. This address is used to retrieve logs emitted by deposit events.
+  - `check_interval_ms`: Interval in milliseconds to check for new events. If no new events or messages are detected, it does nothing.
+  - `max_block_step`: Defines the maximum range of blocks to scan for new events during each polling cycle. Specifically, events are queried from last_block_fetched up to last_block_fetched + max_block_step. If the chain hasn’t progressed that far yet, the scan will end at the current latest block instead. This ensures we only query blocks that actually exist.
+  - `l2_proposer_private_key`: Private key of the L2 proposer. 
 
 - Under the `[proposer]` section:
 
-  - `interval_ms`: Interval in milliseconds to produce new blocks for the proposer.
+  - `interval_ms`: Interval in milliseconds at which the proposer builds a new block out of the current transactions on the mempool.
   - `coinbase address`: Address which will receive the execution fees.
 
 - Under the `[committer]` section:
 
-  - `l1_address`: Address of the L1 committer.
+  - `l1_address`: Address of a funded account that will be used to send commit transactions to the L1.
   - `l1_private_key`: Its private key.
-  - `commit_time_ms`: Sleep time after sending the commit transaction.
+  - `commit_time_ms`: Sleep time after sending the commit transaction to the L1. If no new block has been built, the committer will simply wait another `commit_time_ms` and check again.
   - `on_chain_proposer_address`: Address of the on-chain committer.
+  - `arbitrary_base_blob_gas_price`: Sets the minimum price floor for blob transactions when posting L2 data to the L1. This parameter allows you to control the lower bound of what the sequencer is willing to pay for blob storage. Higher values ensure faster inclusion in L1 blocks but increase operating costs, while lower values reduce costs but may cause delays.
 
 - Under the `[prover_server]` section:
 
@@ -88,7 +98,14 @@ The following environment variables are available to configure the Proposer cons
   - `l1_private_key`: Its private key.
   - `listen_ip`: IP to listen for proof data requests.
   - `listen_port`: Port to listen for proof data requests.
-  - `dev_mode`: Whether `dev_mode` is activated or not.
+  - `proof_send_interval_ms`: Periodicity with which the proof sender looks for new proofs to send to the L1 for verification.
+  - `dev_mode`: Whether `dev_mode` is activated or not. If it is activated, the prover won't actually generate proofs, but just execute the blocks it is given, and the proof sender will send empty proofs to the L1. The L1, in turn, will ignore proofs.
+
+- Under the `[eth]` section:
+
+  - `rpc_url`: The URL for interacting with the RPC endpoint from the client.
+  - `maximum_allowed_max_fee_per_gas`: Sets a hard cap on the maximum fee per gas you are willing to pay for a single transaction.
+  - `maximum_allowed_max_fee_per_blob_gas`: Sets a hard cap on the maximum fee per blob gas you are willing to pay for a single transaction.
 
 If you want to use a different configuration file, you can set the:
 

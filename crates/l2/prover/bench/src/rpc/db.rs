@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::constants::{CANCUN_CONFIG, RPC_RATE_LIMIT};
@@ -9,8 +8,8 @@ use ethrex_common::{
     types::{AccountInfo, AccountState, Block, Fork, TxKind},
     Address, H256, U256,
 };
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::Database as LevmDatabase;
-use ethrex_levm::vm::GeneralizedDatabase;
 use ethrex_storage::{hash_address, hash_key};
 use ethrex_trie::{Node, PathRLP, Trie};
 use ethrex_vm::backends::levm::{CacheDB, LEVM};
@@ -445,10 +444,11 @@ impl LevmDatabase for RpcDB {
         Ok(None) // code is stored in account info
     }
 
-    fn get_account_info(
+    fn get_account(
         &self,
         address: Address,
-    ) -> std::result::Result<ethrex_levm::AccountInfo, ethrex_levm::db::error::DatabaseError> {
+    ) -> std::result::Result<ethrex_common::types::Account, ethrex_levm::db::error::DatabaseError>
+    {
         let cache = self.cache.lock().unwrap();
         let account = if let Some(account) = cache.get(&address).cloned() {
             account
@@ -466,17 +466,18 @@ impl LevmDatabase for RpcDB {
             ..
         } = account
         {
-            Ok(ethrex_levm::AccountInfo {
-                bytecode: code.clone().unwrap_or_default(),
-                balance: account_state.balance,
-                nonce: account_state.nonce,
-            })
+            Ok(ethrex_common::types::Account::new(
+                account_state.balance,
+                code.clone().unwrap_or_default(),
+                account_state.nonce,
+                HashMap::new(),
+            ))
         } else {
-            Ok(ethrex_levm::AccountInfo::default())
+            Ok(ethrex_common::types::Account::default())
         }
     }
 
-    fn get_storage_slot(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
+    fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
         let account = self
             .fetch_accounts_blocking(&[(address, vec![key])], false)
             .map_err(|e| DatabaseError::Custom(format!("Failed to fetch account info: {e}")))?
@@ -541,7 +542,10 @@ fn get_potential_child_nodes(proof: &[NodeRLP], key: &PathRLP) -> Option<Vec<Nod
                 let mut variants = Vec::with_capacity(node.partial.len());
                 while {
                     variants.push(Node::from(node.clone()));
-                    node.partial.next().is_some()
+                    node.partial.next();
+                    !node.partial.is_empty() // skip the last nibble, which is the leaf flag.
+                                             // if we encode a leaf with its flag missing, it’s going to be encoded as an
+                                             // extension.
                 } {}
                 Some(variants)
             }

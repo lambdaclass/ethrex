@@ -6,13 +6,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    types::{Fork, TxKind},
+    types::{Account, Fork, TxKind},
     Address, H256,
 };
-use ethrex_levm::{
-    errors::{ExecutionReport, TxResult},
-    Account, StorageSlot,
-};
+use ethrex_levm::errors::{ExecutionReport, TxResult};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use ethrex_vm::{
     self,
@@ -115,10 +112,10 @@ pub fn prepare_revm_for_tx<'state>(
     let blob_excess_gas_and_price = if test.env.current_excess_blob_gas.is_none() {
         None
     } else {
-        Some(BlobExcessGasAndPrice {
-            excess_blob_gas: test.env.current_excess_blob_gas.unwrap().as_u64(),
-            blob_gasprice: 0,
-        })
+        Some(BlobExcessGasAndPrice::new(
+            test.env.current_excess_blob_gas.unwrap().as_u64(),
+            *fork == Fork::Prague,
+        ))
     };
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
@@ -362,13 +359,7 @@ pub async fn compare_levm_revm_account_updates(
             let account_storage = pre_state_value
                 .storage
                 .iter()
-                .map(|(key, value)| {
-                    let storage_slot = StorageSlot {
-                        original_value: *value,
-                        current_value: *value,
-                    };
-                    (H256::from_slice(&key.to_big_endian()), storage_slot)
-                })
+                .map(|(key, value)| (H256::from_slice(&key.to_big_endian()), *value))
                 .collect();
             let account = Account::new(
                 pre_state_value.balance,

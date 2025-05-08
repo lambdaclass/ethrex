@@ -50,6 +50,8 @@ mod tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_p2p::sync_manager::SyncManager;
     #[cfg(feature = "l2")]
+    use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+    #[cfg(feature = "l2")]
     use secp256k1::{rand, SecretKey};
     use serde_json::{json, Value};
     use std::sync::Arc;
@@ -65,6 +67,7 @@ mod tests {
             local_node_record: example_local_node_record(),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
+            client_version: "ethrex/test".to_string(),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]
@@ -75,6 +78,9 @@ mod tests {
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]
             sponsor_pk: SecretKey::new(&mut rand::thread_rng()),
+            #[cfg(feature = "l2")]
+            rollup_store: StoreRollup::new("test-store", EngineTypeRollup::InMemory)
+                .expect("Fail to create in-memory db test"),
         }
     }
 
