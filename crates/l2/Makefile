@@ -227,8 +227,6 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 	
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
-	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
-	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
 	cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover -s SIGINT
 
