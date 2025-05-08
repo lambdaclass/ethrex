@@ -423,7 +423,7 @@ pub mod test_utils {
             blockchain,
             jwt_secret,
             local_p2p_node,
-            Arc::new(tokio::sync::Mutex::new(example_local_node_record())),
+            example_local_node_record(),
             SyncManager::dummy(),
             "ethrex/test".to_string(),
             #[cfg(feature = "based")]
@@ -444,13 +444,12 @@ pub mod test_utils {
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let local_node_record = Arc::new(tokio::sync::Mutex::new(example_local_node_record()));
         RpcApiContext {
             storage,
             blockchain,
             jwt_secret: Default::default(),
             local_p2p_node: example_p2p_node(),
-            local_node_record,
+            local_node_record: example_local_node_record(),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
             client_version: "ethrex/test".to_string(),

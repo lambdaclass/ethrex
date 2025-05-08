@@ -59,7 +59,7 @@ async fn main() -> eyre::Result<()> {
         &L2Options::default(),
         peer_table.clone(),
         local_p2p_node,
-        local_node_record.clone(),
+        local_node_record.lock().await.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),

@@ -127,7 +127,7 @@ pub async fn init_rpc_api(
     #[cfg(feature = "l2")] l2_opts: &L2Options,
     peer_table: Arc<Mutex<KademliaTable>>,
     local_p2p_node: Node,
-    local_node_record: Arc<Mutex<NodeRecord>>,
+    local_node_record: NodeRecord,
     store: Store,
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
