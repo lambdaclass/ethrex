@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::{encode_calldata, Value};
 use ethereum_types::{Address, H160, H256, U256};
+use ethrex_common::types::signer::LocalSigner;
 use ethrex_common::types::GenericTransaction;
 use ethrex_rpc::clients::eth::{
     errors::EthClientError, eth_sender::Overrides, EthClient, WithdrawalProof,
@@ -105,7 +106,8 @@ pub async fn transfer(
     tx_generic.from = from;
     let gas_limit = client.estimate_gas(tx_generic).await?;
     tx.gas_limit = gas_limit;
-    client.send_eip1559_transaction(&tx, &private_key).await
+    let signer = LocalSigner::new(private_key).into();
+    client.send_eip1559_transaction(&tx, &signer).await
 }
 
 pub async fn deposit(
@@ -152,8 +154,9 @@ pub async fn withdraw(
         )
         .await?;
 
+    let signer = LocalSigner::new(from_pk).into();
     proposer_client
-        .send_eip1559_transaction(&withdraw_transaction, &from_pk)
+        .send_eip1559_transaction(&withdraw_transaction, &signer)
         .await
 }
 
@@ -205,8 +208,9 @@ pub async fn claim_withdraw(
         )
         .await?;
 
+    let signer = LocalSigner::new(from_pk).into();
     eth_client
-        .send_eip1559_transaction(&claim_tx, &from_pk)
+        .send_eip1559_transaction(&claim_tx, &signer)
         .await
 }
 

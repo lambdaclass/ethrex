@@ -6,12 +6,11 @@ use crate::{
     utils::{RpcRequest, RpcRequestId},
 };
 use bytes::Bytes;
-use ethrex_common::types::{GenericTransaction, TxKind};
+use ethrex_common::types::{signer::Signer, GenericTransaction, TxKind};
 use ethrex_common::H256;
 use ethrex_common::{Address, U256};
 use ethrex_rlp::encode::RLPEncode;
 use keccak_hash::keccak;
-use secp256k1::SecretKey;
 use serde_json::json;
 
 use super::BlockByNumber;
@@ -86,23 +85,28 @@ impl EthClient {
 
     pub async fn deploy(
         &self,
-        deployer: Address,
-        deployer_private_key: SecretKey,
+        deployer: &Signer,
         init_code: Bytes,
         overrides: Overrides,
     ) -> Result<(H256, Address), EthClientError> {
         let mut deploy_overrides = overrides;
         deploy_overrides.to = Some(TxKind::Create);
-        let deploy_tx = self
-            .build_eip1559_transaction(Address::zero(), deployer, init_code, deploy_overrides)
-            .await?;
-        let deploy_tx_hash = self
-            .send_eip1559_transaction(&deploy_tx, &deployer_private_key)
-            .await?;
 
-        let nonce = self.get_nonce(deployer, BlockByNumber::Latest).await?;
+        let deploy_tx = self
+            .build_eip1559_transaction(
+                Address::zero(),
+                deployer.address(),
+                init_code,
+                deploy_overrides,
+            )
+            .await?;
+        let deploy_tx_hash = self.send_eip1559_transaction(&deploy_tx, deployer).await?;
+
+        let nonce = self
+            .get_nonce(deployer.address(), BlockByNumber::Latest)
+            .await?;
         let mut encode = vec![];
-        (deployer, nonce).encode(&mut encode);
+        (deployer.address(), nonce).encode(&mut encode);
 
         //Taking the last 20bytes so it matches an H160 == Address length
         let deployed_address =

@@ -16,7 +16,7 @@ use errors::{
 use eth_sender::Overrides;
 use ethrex_common::{
     types::{
-        BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
+        signer::Signer, BlobsBundle, EIP1559Transaction, EIP4844Transaction, GenericTransaction,
         PrivilegedL2Transaction, Signable, TxKind, TxType, WrappedEIP4844Transaction,
     },
     Address, Signature, H160, H256, U256,
@@ -60,11 +60,9 @@ impl WrappedTransaction {
         match self {
             Self::EIP1559(tx) => Ok(tx.encode_payload_to_vec()),
             Self::EIP4844(tx_wrapper) => Ok(tx_wrapper.tx.encode_payload_to_vec()),
-            Self::L2(_) => {
-                return Err(EthClientError::InternalError(
-                    "L2 Privileged transaction not supported".to_string(),
-                ))
-            }
+            Self::L2(_) => Err(EthClientError::InternalError(
+                "L2 Privileged transaction not supported".to_string(),
+            )),
         }
     }
 
@@ -197,9 +195,9 @@ impl EthClient {
     pub async fn send_eip1559_transaction(
         &self,
         tx: &EIP1559Transaction,
-        private_key: &SecretKey,
+        signer: &Signer,
     ) -> Result<H256, EthClientError> {
-        let signed_tx = tx.sign(private_key);
+        let signed_tx = tx.sign(signer).await?;
 
         let mut encoded_tx = signed_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP1559.into());
@@ -210,10 +208,10 @@ impl EthClient {
     pub async fn send_eip4844_transaction(
         &self,
         wrapped_tx: &WrappedEIP4844Transaction,
-        private_key: &SecretKey,
+        signer: &Signer,
     ) -> Result<H256, EthClientError> {
         let mut wrapped_tx = wrapped_tx.clone();
-        wrapped_tx.tx.sign_inplace(private_key);
+        wrapped_tx.tx.sign_inplace(signer).await?;
 
         let mut encoded_tx = wrapped_tx.encode_to_vec();
         encoded_tx.insert(0, TxType::EIP4844.into());
@@ -224,15 +222,15 @@ impl EthClient {
     pub async fn send_wrapped_transaction(
         &self,
         wrapped_tx: &WrappedTransaction,
-        private_key: &SecretKey,
+        signer: &Signer,
     ) -> Result<H256, EthClientError> {
         match wrapped_tx {
             WrappedTransaction::EIP4844(wrapped_eip4844_transaction) => {
-                self.send_eip4844_transaction(wrapped_eip4844_transaction, private_key)
+                self.send_eip4844_transaction(wrapped_eip4844_transaction, signer)
                     .await
             }
             WrappedTransaction::EIP1559(eip1559_transaction) => {
-                self.send_eip1559_transaction(eip1559_transaction, private_key)
+                self.send_eip1559_transaction(eip1559_transaction, signer)
                     .await
             }
             WrappedTransaction::L2(privileged_l2_transaction) => {
@@ -251,7 +249,7 @@ impl EthClient {
     pub async fn send_tx_bump_gas_exponential_backoff(
         &self,
         wrapped_tx: &mut WrappedTransaction,
-        private_key: &SecretKey,
+        signer: &Signer,
     ) -> Result<H256, EthClientError> {
         let mut number_of_retries = 0;
 
@@ -280,9 +278,7 @@ impl EthClient {
                     }
                 }
             }
-            let tx_hash = self
-                .send_wrapped_transaction(wrapped_tx, private_key)
-                .await?;
+            let tx_hash = self.send_wrapped_transaction(wrapped_tx, signer).await?;
 
             if number_of_retries > 0 {
                 warn!("Resending Transaction after bumping gas, attempts [{number_of_retries}/{MAX_NUMBER_OF_RETRIES}]\nTxHash: {tx_hash:#x}");

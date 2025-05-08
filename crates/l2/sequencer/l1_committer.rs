@@ -14,8 +14,7 @@ use ethrex_common::{
         blobs_bundle, fake_exponential_checked,
         signer::{LocalSigner, RemoteSigner, Signer},
         BlobsBundle, BlobsBundleError, Block, BlockHeader, BlockNumber, PrivilegedL2Transaction,
-        Receipt, Transaction, TxKind, TxType, BLOB_BASE_FEE_UPDATE_FRACTION,
-        MIN_BASE_FEE_PER_BLOB_GAS,
+        Receipt, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
@@ -23,7 +22,6 @@ use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     merkle_tree::merkelize,
 };
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::{
     clients::eth::{eth_sender::Overrides, BlockByNumber, EthClient, WrappedTransaction},
     utils::get_withdrawal_hash,
@@ -32,8 +30,6 @@ use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::Evm;
 use keccak_hash::keccak;
-use reqwest::{Client, Url};
-use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
@@ -558,35 +554,10 @@ impl Committer {
             .set_gas_for_wrapped_tx(&mut tx, self.signer.address())
             .await?;
 
-        let commit_tx_hash = match &self.signer {
-            Signer::Local(signer) => {
-                self.eth_client
-                    .send_tx_bump_gas_exponential_backoff(&mut tx, &signer.private_key)
-                    .await?
-            }
-            Signer::Remote(signer) => {
-                let signature = signer
-                    .sign([vec![TxType::EIP4844.into()], tx.encode_payload_to_vec().map_err(|_| {
-                        CommitterError::InternalError("Unexpected error".to_string())
-                    })?].concat().into())
-                    .await?;
-                tx.add_signature(signature)?;
-                let data = match tx {
-                    WrappedTransaction::EIP1559(tx) => {
-                        [vec![TxType::EIP1559.into()], tx.encode_to_vec()].concat()
-                    }
-                    WrappedTransaction::EIP4844(tx_wrapper) => {
-                        [vec![TxType::EIP4844.into()], tx_wrapper.encode_to_vec()].concat()
-                    }
-                    WrappedTransaction::L2(_) => {
-                        return Err(CommitterError::InternalError(
-                            "Unsupported tx type".to_string(),
-                        ))
-                    }
-                };
-                self.eth_client.send_raw_transaction(&data).await?
-            }
-        };
+        let commit_tx_hash = self
+            .eth_client
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.signer)
+            .await?;
 
         info!("Commitment sent: {commit_tx_hash:#x}");
 

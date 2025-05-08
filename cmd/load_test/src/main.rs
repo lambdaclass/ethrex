@@ -1,6 +1,7 @@
 use clap::{Parser, ValueEnum};
 use ethereum_types::{Address, H160, H256, U256};
 use ethrex_blockchain::constants::TX_GAS_COST;
+use ethrex_common::types::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::calldata::{self, Value};
 use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::clients::{EthClient, EthClientError, Overrides};
@@ -8,8 +9,7 @@ use ethrex_rpc::types::receipt::RpcReceipt;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hex::ToHex;
-use keccak_hash::keccak;
-use secp256k1::{PublicKey, SecretKey};
+use secp256k1::SecretKey;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -29,8 +29,6 @@ const FIBO_CODE: &str = "6080604052348015600e575f5ffd5b506103198061001c5f395ff3f
 // Contract with a function that touches 100 storage slots on every transaction.
 // See `test_data/IOHeavyContract.sol` for the code.
 const IO_HEAVY_CODE: &str = "6080604052348015600e575f5ffd5b505f5f90505b6064811015603e57805f8260648110602d57602c6043565b5b018190555080806001019150506014565b506070565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b6102728061007d5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c8063431aabc21461004357806358faa02f1461007357806362f8e72a1461007d575b5f5ffd5b61005d6004803603810190610058919061015c565b61009b565b60405161006a9190610196565b60405180910390f35b61007b6100b3565b005b61008561010a565b6040516100929190610196565b60405180910390f35b5f81606481106100a9575f80fd5b015f915090505481565b5f5f90505b60648110156101075760015f82606481106100d6576100d56101af565b5b01546100e29190610209565b5f82606481106100f5576100f46101af565b5b018190555080806001019150506100b8565b50565b5f5f5f6064811061011e5761011d6101af565b5b0154905090565b5f5ffd5b5f819050919050565b61013b81610129565b8114610145575f5ffd5b50565b5f8135905061015681610132565b92915050565b5f6020828403121561017157610170610125565b5b5f61017e84828501610148565b91505092915050565b61019081610129565b82525050565b5f6020820190506101a95f830184610187565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52603260045260245ffd5b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61021382610129565b915061021e83610129565b9250828201905080821115610236576102356101dc565b5b9291505056fea264697066735822122055f6d7149afdb56c745a203d432710eaa25a8ccdb030503fb970bf1c964ac03264736f6c634300081b0033";
-
-type Account = (PublicKey, SecretKey);
 
 #[derive(Parser)]
 #[command(name = "load_test")]
@@ -82,43 +80,29 @@ const ETH_TRANSFER_VALUE: u64 = 1000;
 // Private key for the rich account present in the gesesis_l2.json file.
 const RICH_ACCOUNT: &str = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924";
 
-// TODO: this should be in common utils.
-fn address_from_pub_key(public_key: PublicKey) -> H160 {
-    let bytes = public_key.serialize_uncompressed();
-    let hash = keccak(&bytes[1..]);
-    let address_bytes: [u8; 20] = hash.as_ref().get(12..32).unwrap().try_into().unwrap();
-
-    Address::from(address_bytes)
-}
-
 async fn deploy_contract(
     client: EthClient,
-    deployer: (PublicKey, SecretKey),
+    deployer: &Signer,
     contract: Vec<u8>,
 ) -> eyre::Result<Address> {
     let (_, contract_address) = client
-        .deploy(
-            address_from_pub_key(deployer.0),
-            deployer.1,
-            contract.into(),
-            Overrides::default(),
-        )
+        .deploy(deployer, contract.into(), Overrides::default())
         .await?;
 
     eyre::Ok(contract_address)
 }
 
-async fn erc20_deploy(client: EthClient, deployer: Account) -> eyre::Result<Address> {
+async fn erc20_deploy(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
     let erc20_bytecode = hex::decode(ERC20).expect("Failed to decode ERC20 bytecode");
     deploy_contract(client, deployer, erc20_bytecode).await
 }
 
-async fn deploy_fibo(client: EthClient, deployer: Account) -> eyre::Result<Address> {
+async fn deploy_fibo(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
     let fibo_bytecode = hex::decode(FIBO_CODE).expect("Failed to decode Fibo bytecode");
     deploy_contract(client, deployer, fibo_bytecode).await
 }
 
-async fn deploy_io_heavy(client: EthClient, deployer: Account) -> eyre::Result<Address> {
+async fn deploy_io_heavy(client: EthClient, deployer: &Signer) -> eyre::Result<Address> {
     let io_heavy_bytecode = hex::decode(IO_HEAVY_CODE).expect("Failed to decode IO Heavy bytecode");
     deploy_contract(client, deployer, io_heavy_bytecode).await
 }
@@ -127,29 +111,27 @@ async fn deploy_io_heavy(client: EthClient, deployer: Account) -> eyre::Result<A
 async fn claim_erc20_balances(
     contract_address: Address,
     client: EthClient,
-    accounts: &[Account],
+    accounts: Vec<Signer>,
 ) -> eyre::Result<()> {
     let mut tasks = JoinSet::new();
 
-    for (pk, sk) in accounts {
+    for account in accounts {
         let contract = contract_address;
         let client = client.clone();
-        let pk = *pk;
-        let sk = *sk;
 
         tasks.spawn(async move {
             let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
             let claim_tx = client
                 .build_eip1559_transaction(
                     contract,
-                    address_from_pub_key(pk),
+                    account.address(),
                     claim_balance_calldata.into(),
                     Default::default(),
                 )
                 .await
                 .unwrap();
             let tx_hash = client
-                .send_eip1559_transaction(&claim_tx, &sk)
+                .send_eip1559_transaction(&claim_tx, &account)
                 .await
                 .unwrap();
             client.wait_for_transaction_receipt(tx_hash, RETRIES).await
@@ -216,23 +198,21 @@ impl TxBuilder {
 
 async fn load_test(
     tx_amount: u64,
-    accounts: &[Account],
+    accounts: Vec<Signer>,
     client: EthClient,
     chain_id: u64,
     tx_builder: TxBuilder,
 ) -> eyre::Result<()> {
     let mut tasks = FuturesUnordered::new();
-    for (pk, sk) in accounts {
-        let pk = *pk;
-        let sk = *sk;
+    for account in accounts {
         let client = client.clone();
         let tx_builder = tx_builder.clone();
         tasks.push(async move {
             let nonce = client
-                .get_nonce(address_from_pub_key(pk), BlockByNumber::Latest)
+                .get_nonce(account.address(), BlockByNumber::Latest)
                 .await
                 .unwrap();
-            let src = address_from_pub_key(pk);
+            let src = account.address();
             let encoded_src: String = src.encode_hex();
 
             for i in 0..tx_amount {
@@ -255,7 +235,7 @@ async fn load_test(
                     .await?;
                 let client = client.clone();
                 sleep(Duration::from_micros(800)).await;
-                let _sent = client.send_eip1559_transaction(&tx, &sk).await?;
+                let _sent = client.send_eip1559_transaction(&tx, &account).await?;
                 println!(
                     "Tx number {} sent! From: {}. To: {}",
                     nonce + i + 1,
@@ -277,15 +257,14 @@ async fn load_test(
 async fn wait_until_all_included(
     client: EthClient,
     wait: Option<Duration>,
-    accounts: &[Account],
+    accounts: Vec<Signer>,
     tx_amount: u64,
 ) -> Result<(), String> {
     let start_time = tokio::time::Instant::now();
 
-    for (pk, _) in accounts {
-        let pk = *pk;
+    for account in accounts {
         let client = client.clone();
-        let src = address_from_pub_key(pk);
+        let src = account.address();
         let encoded_src: String = src.encode_hex();
         loop {
             let elapsed = start_time.elapsed();
@@ -316,24 +295,23 @@ async fn wait_until_all_included(
     Ok(())
 }
 
-fn parse_pk_file(path: &Path) -> eyre::Result<Vec<Account>> {
+fn parse_pk_file(path: &Path) -> eyre::Result<Vec<Signer>> {
     let pkeys_content = fs::read_to_string(path).expect("Unable to read private keys file");
-    let accounts: Vec<Account> = pkeys_content
+    let accounts: Vec<Signer> = pkeys_content
         .lines()
-        .map(parse_private_key_into_account)
+        .map(parse_private_key_into_local_signer)
         .collect();
 
     Ok(accounts)
 }
 
-fn parse_private_key_into_account(pkey: &str) -> Account {
+fn parse_private_key_into_local_signer(pkey: &str) -> Signer {
     let key = pkey
         .parse::<H256>()
         .unwrap_or_else(|_| panic!("Private key is not a valid hex representation {}", pkey));
     let secret_key = SecretKey::from_slice(key.as_bytes())
         .unwrap_or_else(|_| panic!("Invalid private key {}", pkey));
-    let public_key = secret_key.public_key(secp256k1::SECP256K1);
-    (public_key, secret_key)
+    LocalSigner::new(secret_key).into()
 }
 
 #[tokio::main]
@@ -351,16 +329,16 @@ async fn main() {
         .expect("Failed to get chain id")
         .as_u64();
 
-    let deployer = parse_private_key_into_account(RICH_ACCOUNT);
+    let deployer = parse_private_key_into_local_signer(RICH_ACCOUNT);
 
     let tx_builder = match cli.test_type {
         TestType::Erc20 => {
             println!("ERC20 Load test starting");
             println!("Deploying ERC20 contract...");
-            let contract_address = erc20_deploy(client.clone(), deployer)
+            let contract_address = erc20_deploy(client.clone(), &deployer)
                 .await
                 .expect("Failed to deploy ERC20 contract");
-            claim_erc20_balances(contract_address, client.clone(), &accounts)
+            claim_erc20_balances(contract_address, client.clone(), accounts.clone())
                 .await
                 .expect("Failed to claim ERC20 balances");
             TxBuilder::Erc20(contract_address)
@@ -372,7 +350,7 @@ async fn main() {
         TestType::Fibonacci => {
             println!("Fibonacci load test starting");
             println!("Deploying Fibonacci contract...");
-            let contract_address = deploy_fibo(client.clone(), deployer)
+            let contract_address = deploy_fibo(client.clone(), &deployer)
                 .await
                 .expect("Failed to deploy Fibonacci contract");
             TxBuilder::Fibonacci(contract_address)
@@ -380,7 +358,7 @@ async fn main() {
         TestType::IOHeavy => {
             println!("IO Heavy load test starting");
             println!("Deploying IO Heavy contract...");
-            let contract_address = deploy_io_heavy(client.clone(), deployer)
+            let contract_address = deploy_io_heavy(client.clone(), &deployer)
                 .await
                 .expect("Failed to deploy IO Heavy contract");
             TxBuilder::IOHeavy(contract_address)
@@ -395,7 +373,7 @@ async fn main() {
 
     load_test(
         cli.tx_amount,
-        &accounts,
+        accounts.clone(),
         client.clone(),
         chain_id,
         tx_builder,
@@ -410,7 +388,7 @@ async fn main() {
     };
 
     println!("Waiting for all transactions to be included in blocks...");
-    wait_until_all_included(client, wait_time, &accounts, cli.tx_amount)
+    wait_until_all_included(client, wait_time, accounts, cli.tx_amount)
         .await
         .unwrap();
 

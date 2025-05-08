@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use colored::Colorize;
 use ethereum_types::{Address, H160, H256};
+use ethrex_common::types::signer::{LocalSigner, Signer};
 use ethrex_common::U256;
 use ethrex_l2::utils::config::errors;
 use ethrex_l2::utils::config::eth::EthConfig;
@@ -10,7 +11,6 @@ use ethrex_l2::utils::config::{
 };
 use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::BlockByNumber;
 use ethrex_rpc::clients::eth::WrappedTransaction;
 use ethrex_rpc::clients::eth::{
@@ -32,8 +32,7 @@ mod utils;
 use utils::compile_contract;
 
 struct SetupResult {
-    deployer_address: Address,
-    deployer_private_key: SecretKey,
+    deployer: Signer,
     committer_address: Address,
     verifier_address: Address,
     risc0_contract_verifier_address: Address,
@@ -97,8 +96,7 @@ async fn main() -> Result<(), DeployError> {
 
     let (on_chain_proposer, bridge_address, sp1_verifier_address, pico_verifier_address) =
         deploy_contracts(
-            setup_result.deployer_address,
-            setup_result.deployer_private_key,
+            &setup_result.deployer,
             &setup_result.eth_client,
             &setup_result.contracts_path,
             setup_result.sp1_deploy_verifier_on_l1,
@@ -113,8 +111,7 @@ async fn main() -> Result<(), DeployError> {
         pico_verifier_address.unwrap_or(setup_result.pico_contract_verifier_address);
 
     initialize_contracts(
-        setup_result.deployer_address,
-        setup_result.deployer_private_key,
+        &setup_result.deployer,
         setup_result.committer_address,
         setup_result.verifier_address,
         on_chain_proposer,
@@ -194,6 +191,7 @@ fn setup() -> Result<SetupResult, DeployError> {
             "Malformed DEPLOYER_L1_PRIVATE_KEY (SecretKey::parse): {err}"
         ))
     })?;
+    let deployer = LocalSigner::new(deployer_private_key).into();
 
     let committer_address = parse_env_var("COMMITTER_L1_ADDRESS")?;
 
@@ -249,8 +247,7 @@ fn setup() -> Result<SetupResult, DeployError> {
     let pico_contract_verifier_address = parse_env_var("DEPLOYER_PICO_CONTRACT_VERIFIER")?;
 
     Ok(SetupResult {
-        deployer_address,
-        deployer_private_key,
+        deployer,
         committer_address,
         verifier_address,
         risc0_contract_verifier_address,
@@ -341,8 +338,7 @@ fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
 }
 
 async fn deploy_contracts(
-    deployer: Address,
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
     contracts_path: &Path,
     deploy_sp1_verifier: bool,
@@ -359,7 +355,6 @@ async fn deploy_contracts(
     let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) =
         deploy_on_chain_proposer(
             deployer,
-            deployer_private_key,
             eth_client,
             &contracts_path.join("solc_out/OnChainProposer.bin"),
         )
@@ -375,7 +370,6 @@ async fn deploy_contracts(
     let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying CommonBridge", Color::Cyan);
     let (bridge_deployment_tx_hash, bridge_address) = deploy_bridge(
         deployer,
-        deployer_private_key,
         eth_client,
         &contracts_path.join("solc_out/CommonBridge.bin"),
     )
@@ -392,7 +386,6 @@ async fn deploy_contracts(
         let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying SP1Verifier", Color::Cyan);
         let (verifier_deployment_tx_hash, sp1_verifier_address) = deploy_contract(
             deployer,
-            deployer_private_key,
             eth_client,
             &contracts_path.join("solc_out/SP1Verifier.bin"),
         )
@@ -413,7 +406,6 @@ async fn deploy_contracts(
         let mut spinner = Spinner::new(deploy_frames, "Deploying PicoVerifier", Color::Cyan);
         let (verifier_deployment_tx_hash, pico_verifier_address) = deploy_contract(
             deployer,
-            deployer_private_key,
             eth_client,
             &contracts_path.join("solc_out/PicoVerifier.bin"),
         )
@@ -439,8 +431,7 @@ async fn deploy_contracts(
 }
 
 async fn deploy_contract(
-    deployer: Address,
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
     contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
@@ -452,17 +443,15 @@ async fn deploy_contract(
     })?
     .into();
 
-    let (deploy_tx_hash, contract_address) =
-        create2_deploy(deployer, deployer_private_key, &init_code, eth_client)
-            .await
-            .map_err(DeployError::from)?;
+    let (deploy_tx_hash, contract_address) = create2_deploy(deployer, &init_code, eth_client)
+        .await
+        .map_err(DeployError::from)?;
 
     Ok((deploy_tx_hash, contract_address))
 }
 
 async fn deploy_on_chain_proposer(
-    deployer: Address,
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
     contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
@@ -486,21 +475,16 @@ async fn deploy_on_chain_proposer(
         .chain(std::iter::once(validium_value));
     init_code.extend(encoded_validium);
 
-    let (deploy_tx_hash, contract_address) = create2_deploy(
-        deployer,
-        deployer_private_key,
-        &init_code.into(),
-        eth_client,
-    )
-    .await
-    .map_err(DeployError::from)?;
+    let (deploy_tx_hash, contract_address) =
+        create2_deploy(deployer, &init_code.into(), eth_client)
+            .await
+            .map_err(DeployError::from)?;
 
     Ok((deploy_tx_hash, contract_address))
 }
 
 async fn deploy_bridge(
-    deployer: Address,
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
     contract_path: &Path,
 ) -> Result<(H256, Address), DeployError> {
@@ -513,28 +497,22 @@ async fn deploy_bridge(
         })?;
 
     let encoded_owner = {
-        let offset = 32 - deployer.as_bytes().len() % 32;
+        let offset = 32 - deployer.address().as_bytes().len() % 32;
         let mut encoded_owner = vec![0; offset];
-        encoded_owner.extend_from_slice(deployer.as_bytes());
+        encoded_owner.extend_from_slice(deployer.address().as_bytes());
         encoded_owner
     };
 
     bridge_init_code.extend_from_slice(&encoded_owner);
 
-    let (deploy_tx_hash, bridge_address) = create2_deploy(
-        deployer,
-        deployer_private_key,
-        &bridge_init_code.into(),
-        eth_client,
-    )
-    .await?;
+    let (deploy_tx_hash, bridge_address) =
+        create2_deploy(deployer, &bridge_init_code.into(), eth_client).await?;
 
     Ok((deploy_tx_hash, bridge_address))
 }
 
 async fn create2_deploy(
-    deployer: Address,
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     init_code: &Bytes,
     eth_client: &EthClient,
 ) -> Result<(H256, Address), DeployError> {
@@ -556,7 +534,7 @@ async fn create2_deploy(
     let deploy_tx = eth_client
         .build_eip1559_transaction(
             DETERMINISTIC_CREATE2_ADDRESS,
-            deployer,
+            deployer.address(),
             calldata.into(),
             Overrides {
                 max_fee_per_gas: Some(gas_price),
@@ -568,10 +546,10 @@ async fn create2_deploy(
 
     let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(deploy_tx);
     eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer.address())
         .await?;
     let deploy_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, deployer)
         .await?;
 
     wait_for_transaction_receipt(deploy_tx_hash, eth_client)
@@ -607,8 +585,7 @@ fn create2_address(init_code_hash: H256) -> Result<Address, DeployError> {
 
 #[allow(clippy::too_many_arguments)]
 async fn initialize_contracts(
-    deployer: Address,
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     committer: Address,
     verifier: Address,
     on_chain_proposer: Address,
@@ -633,7 +610,6 @@ async fn initialize_contracts(
         sp1_verifier_address,
         pico_verifier_address,
         deployer,
-        deployer_private_key,
         committer,
         verifier,
         eth_client,
@@ -651,15 +627,9 @@ async fn initialize_contracts(
         "Initializing CommonBridge",
         Color::Cyan,
     );
-    let initialize_tx_hash = initialize_bridge(
-        on_chain_proposer,
-        bridge,
-        deployer,
-        deployer_private_key,
-        eth_client,
-    )
-    .await
-    .map_err(DeployError::from)?;
+    let initialize_tx_hash = initialize_bridge(on_chain_proposer, bridge, deployer, eth_client)
+        .await
+        .map_err(DeployError::from)?;
     let msg = format!(
         "CommonBridge:\n\tInitialized with tx hash {}",
         format!("{initialize_tx_hash:#x}").bright_cyan()
@@ -675,8 +645,7 @@ async fn initialize_on_chain_proposer(
     risc0_verifier_address: Address,
     sp1_verifier_address: Address,
     pico_verifier_address: Address,
-    deployer: Address,
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     committer: Address,
     verifier: Address,
     eth_client: &EthClient,
@@ -703,7 +672,7 @@ async fn initialize_on_chain_proposer(
     let initialize_tx = eth_client
         .build_eip1559_transaction(
             on_chain_proposer,
-            deployer,
+            deployer.address(),
             on_chain_proposer_initialization_calldata.into(),
             Overrides {
                 max_fee_per_gas: Some(gas_price),
@@ -714,10 +683,10 @@ async fn initialize_on_chain_proposer(
         .await?;
     let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(initialize_tx);
     eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer.address())
         .await?;
     let initialize_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, deployer)
         .await?;
 
     Ok(initialize_tx_hash)
@@ -726,8 +695,7 @@ async fn initialize_on_chain_proposer(
 async fn initialize_bridge(
     on_chain_proposer: Address,
     bridge: Address,
-    deployer: Address,
-    deployer_private_key: SecretKey,
+    deployer: &Signer,
     eth_client: &EthClient,
 ) -> Result<H256, DeployError> {
     let calldata_values = vec![Value::Address(on_chain_proposer)];
@@ -745,7 +713,7 @@ async fn initialize_bridge(
     let initialize_tx = eth_client
         .build_eip1559_transaction(
             bridge,
-            deployer,
+            deployer.address(),
             bridge_initialization_calldata.into(),
             Overrides {
                 max_fee_per_gas: Some(gas_price),
@@ -757,10 +725,10 @@ async fn initialize_bridge(
         .map_err(DeployError::from)?;
     let mut wrapped_tx = WrappedTransaction::EIP1559(initialize_tx);
     eth_client
-        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
+        .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer.address())
         .await?;
     let initialize_tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &deployer_private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, deployer)
         .await?;
 
     Ok(initialize_tx_hash)
@@ -797,7 +765,8 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
             .map_err(|_| {
                 DeployError::DecodingError("Error while parsing private key".to_string())
             })?;
-        let address = get_address_from_secret_key(&secret_key)?;
+        let signer: Signer = LocalSigner::new(secret_key).into();
+        let address = signer.address();
         let values = vec![Value::Tuple(vec![
             Value::Address(address),
             Value::Address(address),
@@ -839,10 +808,7 @@ async fn make_deposits(bridge: Address, eth_client: &EthClient) -> Result<(), De
             .build_eip1559_transaction(bridge, address, Bytes::from(calldata), overrides)
             .await?;
 
-        match eth_client
-            .send_eip1559_transaction(&build, &secret_key)
-            .await
-        {
+        match eth_client.send_eip1559_transaction(&build, &signer).await {
             Ok(hash) => {
                 println!(
                     "Deposit transaction sent to L1 from {:?} with value {:?} and hash {:?}",

@@ -2,6 +2,7 @@
 #![allow(clippy::expect_used)]
 use bytes::Bytes;
 use ethereum_types::{Address, H160, U256};
+use ethrex_common::types::signer::LocalSigner;
 use ethrex_common::types::BlockNumber;
 use ethrex_l2::utils::config::{read_env_file_by_config, ConfigMode};
 use ethrex_l2_sdk::calldata::{self, Value};
@@ -449,13 +450,10 @@ async fn l2_deposit_with_contract_call() -> Result<(), Box<dyn std::error::Error
 
     let init_code = hex::decode("6080604052348015600e575f5ffd5b506101008061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063f15d140b14602a575b5f5ffd5b60406004803603810190603c919060a4565b6042565b005b807f9ec8254969d1974eac8c74afb0c03595b4ffe0a1d7ad8a7f82ed31b9c854259160405160405180910390a250565b5f5ffd5b5f819050919050565b6086816076565b8114608f575f5ffd5b50565b5f81359050609e81607f565b92915050565b5f6020828403121560b65760b56072565b5b5f60c1848285016092565b9150509291505056fea26469706673582212206f6d360696127c56e2d2a456f3db4a61e30eae0ea9b3af3c900c81ea062e8fe464736f6c634300081c0033")?;
 
+    let signer = LocalSigner::new(l1_rich_wallet_private_key()).into();
+
     let (_, contract_address) = proposer_client
-        .deploy(
-            l1_rich_wallet_address,
-            l1_rich_wallet_private_key(),
-            init_code.into(),
-            Overrides::default(),
-        )
+        .deploy(signer, init_code.into(), Overrides::default())
         .await?;
 
     println!("Contract deployed on L2: {contract_address:?}");
@@ -645,13 +643,10 @@ async fn l2_deposit_with_contract_call_revert() -> Result<(), Box<dyn std::error
     //     }
     // }
     let init_code = hex::decode("6080604052348015600e575f5ffd5b506101138061001c5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c806311ebce9114602a575b5f5ffd5b60306032565b005b6040517f08c379a000000000000000000000000000000000000000000000000000000000815260040160629060c1565b60405180910390fd5b5f82825260208201905092915050565b7f52657665727465640000000000000000000000000000000000000000000000005f82015250565b5f60ad600883606b565b915060b682607b565b602082019050919050565b5f6020820190508181035f83015260d68160a3565b905091905056fea2646970667358221220903f571921ce472f979989f9135b8637314b68e080fd70d0da6ede87ad8b5bd564736f6c634300081c0033")?;
+
+    let signer = LocalSigner::new(l1_rich_wallet_private_key()).into();
     let (_, contract_address) = proposer_client
-        .deploy(
-            l1_rich_wallet_address,
-            l1_rich_wallet_private_key(),
-            init_code.into(),
-            Overrides::default(),
-        )
+        .deploy(signer, init_code.into(), Overrides::default())
         .await?;
 
     println!("Contract deployed on L2: {contract_address:?}");
@@ -757,13 +752,10 @@ async fn l2_sdk_deploy() -> Result<(), Box<dyn std::error::Error>> {
     //}
     let init_code = hex::decode("6080604052348015600e575f5ffd5b5060ac80601a5f395ff3fe6080604052348015600e575f5ffd5b50600436106026575f3560e01c80638381f58a14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b602581565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea2646970667358221220a6516c1bfca94ad11d1315b32cd08f115c050e098a0631d58ee55923e70bc36364736f6c634300081c0033")?;
 
+    let signer = LocalSigner::new(l1_rich_wallet_private_key()).into();
+
     let (_, contract_address) = eth_client
-        .deploy(
-            l1_rich_wallet_address(),
-            l1_rich_wallet_private_key(),
-            init_code.into(),
-            Overrides::default(),
-        )
+        .deploy(signer, init_code.into(), Overrides::default())
         .await?;
 
     println!("Contract deployed on L1: {contract_address:?}");

@@ -12,7 +12,7 @@ where
     D: serde::Deserializer<'de>,
 {
     let url_str: String = serde::Deserialize::deserialize(deserializer)?;
-    Url::from_str(&url_str).map_err(|e| serde::de::Error::custom(e))
+    Url::from_str(&url_str).map_err(serde::de::Error::custom)
 }
 
 pub fn deserialize_optional_url<'de, D>(deserializer: D) -> Result<Option<Url>, D::Error>

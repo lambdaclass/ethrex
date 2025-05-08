@@ -1,6 +1,6 @@
 use std::{collections::HashMap, str::FromStr};
 
-use ethrex_common::{Address, H160, H256, U256};
+use ethrex_common::{types::signer::LocalSigner, Address, H160, H256, U256};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::{
     clients::{eth::WrappedTransaction, Overrides},
@@ -189,9 +189,10 @@ impl L1ProofSender {
 
         let mut tx = WrappedTransaction::EIP1559(verify_tx);
 
+        let signer = LocalSigner::new(self.l1_private_key).into();
         let verify_tx_hash = self
             .eth_client
-            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &signer)
             .await?;
 
         info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
