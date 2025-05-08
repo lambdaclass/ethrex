@@ -32,30 +32,6 @@ impl Hook for DefaultHook {
         let sender_account = vm.db.get_account(sender_address)?;
 
         if vm.env.config.fork >= Fork::Prague {
-            // check for gas limit is grater or equal than the minimum required
-            let calldata = vm.current_call_frame()?.calldata.clone();
-            let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
-
-            // calldata_cost = tokens_in_calldata * 4
-            let calldata_cost: u64 = gas_cost::tx_calldata(&calldata).map_err(VMError::OutOfGas)?;
-
-            // same as calculated in gas_used()
-            let tokens_in_calldata: u64 = calldata_cost
-                .checked_div(STANDARD_TOKEN_COST)
-                .ok_or(VMError::Internal(InternalError::DivisionError))?;
-
-            // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
-            let floor_cost_by_tokens = tokens_in_calldata
-                .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
-                .ok_or(VMError::Internal(InternalError::GasOverflow))?
-                .checked_add(TX_BASE_COST)
-                .ok_or(VMError::Internal(InternalError::GasOverflow))?;
-
-            let min_gas_limit = max(intrinsic_gas, floor_cost_by_tokens);
-            if vm.current_call_frame()?.gas_limit < min_gas_limit {
-                return Err(VMError::TxValidation(TxValidationError::IntrinsicGasTooLow));
-            }
-
             validate_min_gas_limit(vm)?;
         }
 
