@@ -240,9 +240,7 @@ impl<'a> VM<'a> {
             .entry(address)
             .or_insert(HashMap::new());
 
-        if account_storage_backup.get(&key).is_none() {
-            account_storage_backup.insert(key, value);
-        }
+        account_storage_backup.entry(key).or_insert(value);
 
         Ok(())
     }
