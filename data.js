@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746733189247,
+  "lastUpdate": 1746734379237,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5875,6 +5875,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180222750263,
             "range": "± 848434366",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9ace51f37360186a4d4ad31a7ab32865071e2fe7",
+          "message": "perf(levm): remove unnecessary double copying in op_push (#2702)\n\n**Motivation**\n\nRemoves a call to the `bytes_to_word` function (and the function\nitself), as it was unnecessary and implied copying the same slice twice.\n\nI noticed while syncing in Holesky that (somewhat expectedly) a lot of\ntime was spent on `op_push`, and while looking deeper realized that\nthere was unnecessary work being done.\n\nFlamegraph on `op_push` on main:\n<img width=\"1504\" alt=\"Screenshot 2025-05-08 at 11 32 37\"\nsrc=\"https://github.com/user-attachments/assets/e990fa05-9a7b-4ba5-8a5b-7b177eeb25d4\"\n/>\n\nFlamegraph on `op_push` on this branch:\n<img width=\"1502\" alt=\"Screenshot 2025-05-08 at 11 33 01\"\nsrc=\"https://github.com/user-attachments/assets/ed0fc3d8-8c6b-4a11-9ca2-16d8f7afd1e1\"\n/>\n\nMy impression is that there's still work to be done on `op_push`\nhowever.\n\nThe bench comparison against `revm` in the comments shows around a ~5-6%\nimprovement.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-08T18:30:25Z",
+          "tree_id": "b8c57586a329270b399308ca63bb8de643fb1758",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9ace51f37360186a4d4ad31a7ab32865071e2fe7"
+        },
+        "date": 1746734377217,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178199303457,
+            "range": "± 442468797",
             "unit": "ns/iter"
           }
         ]
