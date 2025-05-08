@@ -8,8 +8,6 @@ use crate::{
     vm::{StateBackup, VM},
 };
 
-use ethrex_common::types::Fork;
-
 use bytes::Bytes;
 
 impl<'a> VM<'a> {
@@ -180,19 +178,18 @@ impl<'a> VM<'a> {
             // If the first byte of code is 0xef
             // If the code_length > MAX_CODE_SIZE
             // If current_consumed_gas + code_deposit_cost > gas_limit
-            let validate_create =
-                if code_length > MAX_CODE_SIZE && self.env.config.fork >= Fork::SpuriousDragon {
-                    Err(VMError::ContractOutputTooBig)
-                } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
-                    Err(VMError::InvalidContractPrefix)
-                } else if current_call_frame
-                    .increase_consumed_gas(code_deposit_cost)
-                    .is_err()
-                {
-                    Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
-                } else {
-                    Ok(current_call_frame.to)
-                };
+            let validate_create = if code_length > MAX_CODE_SIZE {
+                Err(VMError::ContractOutputTooBig)
+            } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
+                Err(VMError::InvalidContractPrefix)
+            } else if current_call_frame
+                .increase_consumed_gas(code_deposit_cost)
+                .is_err()
+            {
+                Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
+            } else {
+                Ok(current_call_frame.to)
+            };
 
             match validate_create {
                 Ok(new_address) => {

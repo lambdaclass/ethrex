@@ -319,7 +319,7 @@ impl<'a> VM<'a> {
                 .call_frames
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let precompile_result = execute_precompile(&mut current_call_frame, fork);
+            let precompile_result = execute_precompile(&mut current_call_frame);
             let backup = self
                 .backups
                 .pop()
@@ -423,9 +423,7 @@ impl<'a> VM<'a> {
             )?;
 
             // https://eips.ethereum.org/EIPS/eip-161
-            if self.env.config.fork >= Fork::SpuriousDragon {
-                self.increment_account_nonce(new_contract_address)?;
-            };
+            self.increment_account_nonce(new_contract_address)?;
         }
 
         // Backup of Substate, Gas Refunds and Transient Storage if sub-context is reverted
