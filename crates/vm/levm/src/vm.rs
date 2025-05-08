@@ -162,6 +162,7 @@ pub struct VM<'a> {
     pub hooks: Vec<Arc<dyn Hook>>,
     pub return_data: Vec<RetData>,
     pub backups: Vec<StateBackup>,
+    /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
 }
 
