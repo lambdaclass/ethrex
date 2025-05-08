@@ -93,7 +93,6 @@ impl From<SequencerOptions> for SequencerConfig {
 pub struct EthOptions {
     #[arg(
         long = "eth.rpc-url",
-        default_value = "http://localhost:8545",
         value_name = "RPC_URL",
         env = "ETHREX_ETH_RPC_URL",
         help_heading = "Eth options"
@@ -181,7 +180,6 @@ pub struct BlockProducerOptions {
     pub block_time_ms: u64,
     #[arg(
         long = "block-producer.coinbase-address",
-        default_value = "0x0007a881CD95B1484fca47615B64803dad620C8d",
         value_name = "ADDRESS",
         env = "ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS",
         help_heading = "Block producer options"
@@ -193,7 +191,6 @@ pub struct BlockProducerOptions {
 pub struct CommitterOptions {
     #[arg(
         long = "committer.l1-private-key",
-        default_value = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_COMMITTER_L1_PRIVATE_KEY",
@@ -257,7 +254,6 @@ impl Default for CommitterOptions {
 pub struct ProofCoordinatorOptions {
     #[arg(
         long = "proof-coordinator.l1-private-key",
-        default_value = "0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY",
