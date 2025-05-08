@@ -21,9 +21,7 @@ impl Signer {
     pub fn address(&self) -> Address {
         match self {
             Self::Local(signer) => signer.address,
-            Self::Remote(signer) => {
-                Address::from(keccak(&signer.public_key.serialize_uncompressed()[1..]))
-            }
+            Self::Remote(signer) => signer.address,
         }
     }
 }
@@ -72,14 +70,17 @@ impl LocalSigner {
 pub struct RemoteSigner {
     pub url: Url,
     pub public_key: PublicKey,
+    pub address: Address,
     pub client: Client,
 }
 
 impl RemoteSigner {
     pub fn new(url: Url, public_key: PublicKey) -> Self {
+        let address = Address::from(keccak(&public_key.serialize_uncompressed()[1..]));
         Self {
             url,
             public_key,
+            address,
             client: Client::new(),
         }
     }
