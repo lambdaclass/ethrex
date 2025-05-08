@@ -143,7 +143,7 @@ jobs:
           cd crates/l2
           RUST_LOG=info,ethrex_prover_lib=debug make init-prover &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test l2 --release -- --nocapture --test-threads=1
-          killall ethrex_prover
+          killall ethrex_prover -s SIGINT
 
   state-diff-test:
     name: State Reconstruction Tests
