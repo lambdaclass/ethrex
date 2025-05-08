@@ -486,9 +486,8 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost =
-            gas_cost::tx_calldata(&self.current_call_frame()?.calldata, self.env.config.fork)
-                .map_err(VMError::OutOfGas)?;
+        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame()?.calldata)
+            .map_err(VMError::OutOfGas)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)
@@ -502,11 +501,9 @@ impl<'a> VM<'a> {
         // Create Cost
         if self.is_create() {
             // https://eips.ethereum.org/EIPS/eip-2#specification
-            if self.env.config.fork >= Fork::Homestead {
-                intrinsic_gas = intrinsic_gas
-                    .checked_add(CREATE_BASE_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            }
+            intrinsic_gas = intrinsic_gas
+                .checked_add(CREATE_BASE_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {
@@ -578,7 +575,7 @@ impl<'a> VM<'a> {
         // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
         // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
         // see it in https://eips.ethereum.org/EIPS/eip-7623
-        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
+        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)
             .map_err(VMError::OutOfGas)?
             .checked_div(STANDARD_TOKEN_COST)
             .ok_or(VMError::Internal(InternalError::DivisionError))?;
