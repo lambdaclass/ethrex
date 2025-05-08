@@ -329,7 +329,6 @@ impl StoreEngine for MDBXFork {
             let number = block.header.number;
             let hash = block.hash();
             for (index, transaction) in block.body.transactions.iter().enumerate() {
-                tracing::info!("{}", transaction.compute_hash());
                 tx.put::<TransactionLocations>(
                     transaction.compute_hash().0.encode_to_vec(),
                     (number, hash, index as u64).encode_to_vec(),
@@ -543,10 +542,8 @@ impl StoreEngine for MDBXFork {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        tracing::warn!("ADDING RECEIPT");
         let encoded = receipt.encode_to_vec();
         let key = (block_hash, index).encode_to_vec();
-        tracing::warn!("{:?}", (block_hash, index));
         let tx = self.env.tx_mut().unwrap();
         tx.put::<Receipts>(key, encoded).unwrap();
         tx.commit().unwrap();
@@ -559,16 +556,12 @@ impl StoreEngine for MDBXFork {
         receipt_index: u64,
     ) -> Result<Option<Receipt>, StoreError> {
         let tx = self.env.tx().unwrap();
-        tracing::warn!("CANONICAL BLOCK HASHES");
         let Some(key) = tx.get::<CanonicalBlockHashes>(block_number).unwrap() else {
             return Ok(None);
         };
-        tracing::warn!("DECODED_HASH");
         let decoded_hash: BlockHash = RLPDecode::decode(&key).unwrap();
         let key_for_receipt = (decoded_hash, receipt_index).encode_to_vec();
-        tracing::warn!("ENCODED_RECEIPT");
         let encoded_receipt = tx.get::<Receipts>(key_for_receipt).unwrap();
-        tracing::warn!("BEFORE RETURNING");
         Ok(encoded_receipt.map(|r| RLPDecode::decode(&r).unwrap()))
     }
 
@@ -903,7 +896,6 @@ impl StoreEngine for MDBXFork {
         block_hash: BlockHash,
         receipts: Vec<Receipt>,
     ) -> Result<(), StoreError> {
-        tracing::warn!("ADDING RECEIPTS");
         let tx = self.env.tx_mut().unwrap();
 
         for (index, receipt) in receipts.into_iter().enumerate() {
@@ -926,7 +918,23 @@ impl StoreEngine for MDBXFork {
     }
 
     fn get_receipts_for_block(&self, block_hash: &BlockHash) -> Result<Vec<Receipt>, StoreError> {
-        todo!()
+        let mut encoded_receipts: Vec<Vec<u8>> = vec![];
+        {
+            let mut receipt_index = 0_u64;
+            let tx = self.env.tx().unwrap();
+            let mut cursor = tx.cursor_read::<Receipts>().unwrap();
+            while let Some((_, encoded_receipt)) = cursor
+                .seek((*block_hash, receipt_index).encode_to_vec())
+                .unwrap()
+            {
+                encoded_receipts.push(encoded_receipt);
+                receipt_index += 1;
+            }
+        }
+        Ok(encoded_receipts
+            .into_iter()
+            .map(|r| RLPDecode::decode(&r).unwrap())
+            .collect())
     }
 
     async fn set_header_download_checkpoint(
