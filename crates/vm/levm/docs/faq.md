@@ -53,7 +53,15 @@ This pattern is fairly common and is useful to keep in mind, especially when dea
 
 ## CacheDB vs. Cold and Warm Addresses
 
-This topic often causes confusion. The presence of an address in the cache does not mean it is **warm** — these are two separate concepts. \
-The `CacheDB` is a structure that is persisted between transactions, but the **cold** and **warm** addresses aren't. \
-So if you want to access an account that's in the `CacheDB` it will be cheap for the EVM (because it won't look up in the `Database`) but if it was accessed in a new transaction that never touched that account it will be **cold** and therefore the gas cost will be higher than if it was **warm**.
+This topic often causes confusion. The presence of an address in the cache does not mean it is **warm** — these are two separate concepts.
+
+**Cold & Warm:**
+- An address is **cold** if it has not been accessed yet during the current transaction.
+- An address is **warm** if it has already been accessed in the current transaction, this could be through a call to that account, by being in the [access list](https://eips.ethereum.org/EIPS/eip-2930), etc.
+Accessing a **cold** address incurs higher gas costs than accessing a **warm** address.
+
+**CacheDB:**
+- The `CacheDB` is a structure that is persisted between transactions and keeps track of changes that are eventually going to be committed to the Database.
+
+So if you want to access an account that's in the `CacheDB` it will be cheap for the EVM (because it won't look up in the `Database`) but if it was accessed in a transaction that never touched that account the address will still be **cold** and therefore the gas cost will be higher than if it was **warm**.
 
