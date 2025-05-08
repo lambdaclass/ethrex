@@ -230,6 +230,8 @@ pub async fn init_network(
         get_client_version(),
     );
 
+    context.set_fork_id().await;
+
     ethrex_p2p::start_network(context, bootnodes)
         .await
         .expect("Network starts");
