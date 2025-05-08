@@ -2,9 +2,14 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
+use serde_json::Value;
 use sha3::{Digest, Keccak256};
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    io,
+    path::Path,
+};
 
 use super::{
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root, AccountState,
@@ -292,7 +297,7 @@ impl ChainConfig {
 }
 
 #[allow(unused)]
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GenesisAccount {
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub code: Bytes,
@@ -371,9 +376,14 @@ impl Genesis {
         });
         Trie::compute_hash_from_unsorted_iter(iter)
     }
+    pub fn write_as_json(&self, path: &Path) -> io::Result<()> {
+        let genesis_json = serde_json::to_string_pretty(&self)?;
+        let ordered_map: BTreeMap<String, Value> = serde_json::from_str(&genesis_json)?;
+        let ordered_json = serde_json::to_string_pretty(&ordered_map)?;
+        std::fs::write(path, ordered_json)
+    }
 }
 
-#[cfg(test)]
 mod tests {
     use std::str::FromStr;
     use std::{fs::File, io::BufReader};
