@@ -90,8 +90,8 @@ pub enum TxValidationError {
     InsufficientAccountFunds,
     #[error("Nonce is max (overflow)")]
     NonceIsMax,
-    #[error("Nonce mismatch")]
-    NonceMismatch,
+    #[error("Nonce mismatch: expected {expected}, got {actual}")]
+    NonceMismatch { expected: u64, actual: u64 },
     #[error("Initcode size exceeded")]
     InitcodeSizeExceeded,
     #[error("Priority fee greater than max fee per gas")]

@@ -51,7 +51,10 @@ impl Hook for L2Hook {
 
             // check for nonce mismatch
             if sender_account.info.nonce != vm.env.tx_nonce {
-                return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
+                return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
+                    expected: sender_account.info.nonce,
+                    actual: vm.env.tx_nonce,
+                }));
             }
 
             // (9) SENDER_NOT_EOA

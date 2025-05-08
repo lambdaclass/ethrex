@@ -72,7 +72,10 @@ impl Hook for DefaultHook {
 
         // check for nonce mismatch
         if sender_account.info.nonce != vm.env.tx_nonce {
-            return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
+            return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
+                expected: sender_account.info.nonce,
+                actual: vm.env.tx_nonce,
+            }));
         }
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
