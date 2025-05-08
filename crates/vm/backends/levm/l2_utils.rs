@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use ethrex_common::{
-    types::{BlockHeader, Receipt, Transaction, TxKind, SAFE_BYTES_PER_BLOB},
+    types::{Receipt, Transaction, TxKind, SAFE_BYTES_PER_BLOB},
     H256,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
