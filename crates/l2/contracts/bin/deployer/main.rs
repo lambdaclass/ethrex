@@ -231,6 +231,9 @@ async fn deploy_contracts(
         sp1_verifier_address
     } else {
         opts.sp1_verifier_address
+            .ok_or(DeployerError::InternalError(
+                "SP1Verifier address is not set and sp1_deploy_verifier is false".to_string(),
+            ))?
     };
 
     let pico_verifier_address = if opts.pico_deploy_verifier {
@@ -253,10 +256,17 @@ async fn deploy_contracts(
         pico_verifier_address
     } else {
         opts.pico_verifier_address
+            .ok_or(DeployerError::InternalError(
+                "PicoVerifier address is not set and pico_deploy_verifier is false".to_string(),
+            ))?
     };
 
     // TODO: Add Risc0Verifier deployment
-    let risc0_verifier_address = opts.risc0_verifier_address;
+    let risc0_verifier_address =
+        opts.risc0_verifier_address
+            .ok_or(DeployerError::InternalError(
+                "Risc0Verifier address is not set and risc0_deploy_verifier is false".to_string(),
+            ))?;
 
     Ok((
         on_chain_proposer_address,
