@@ -1,13 +1,15 @@
 use std::{collections::HashMap, str::FromStr};
 
-use ethrex_common::{types::signer::LocalSigner, Address, H160, H256, U256};
+use ethrex_common::{
+    types::signer::{LocalSigner, Signer},
+    Address, H160, H256, U256,
+};
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_rpc::{
     clients::{eth::WrappedTransaction, Overrides},
     EthClient,
 };
 use keccak_hash::keccak;
-use secp256k1::SecretKey;
 use tracing::{debug, error, info};
 
 use crate::{
@@ -47,8 +49,7 @@ pub async fn start_l1_proof_sender() -> Result<(), ConfigError> {
 
 struct L1ProofSender {
     eth_client: EthClient,
-    l1_address: Address,
-    l1_private_key: SecretKey,
+    signer: Signer,
     on_chain_proposer_address: Address,
     needed_proof_types: Vec<ProverType>,
     proof_send_interval_ms: u64,
@@ -61,6 +62,8 @@ impl L1ProofSender {
         eth_config: &EthConfig,
     ) -> Result<Self, ConfigError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
+
+        let signer = LocalSigner::new(config.l1_private_key).into();
 
         let mut needed_proof_types = vec![];
         if !config.dev_mode {
@@ -95,8 +98,7 @@ impl L1ProofSender {
 
         Ok(Self {
             eth_client,
-            l1_address: config.l1_address,
-            l1_private_key: config.l1_private_key,
+            signer,
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             needed_proof_types,
             proof_send_interval_ms: config.proof_send_interval_ms,
@@ -177,7 +179,7 @@ impl L1ProofSender {
             .eth_client
             .build_eip1559_transaction(
                 self.on_chain_proposer_address,
-                self.l1_address,
+                self.signer.address(),
                 calldata.into(),
                 Overrides {
                     max_fee_per_gas: Some(gas_price),
@@ -189,10 +191,9 @@ impl L1ProofSender {
 
         let mut tx = WrappedTransaction::EIP1559(verify_tx);
 
-        let signer = LocalSigner::new(self.l1_private_key).into();
         let verify_tx_hash = self
             .eth_client
-            .send_tx_bump_gas_exponential_backoff(&mut tx, &signer)
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.signer)
             .await?;
 
         info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
