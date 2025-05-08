@@ -10,8 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::TxType;
 pub type Index = u64;
-use std::fmt::Display;
-
 
 /// Result of a transaction
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]

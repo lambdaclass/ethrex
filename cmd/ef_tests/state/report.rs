@@ -206,7 +206,6 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         } else {
             format!("{}", total_passed).red()
         },
-
         // NOTE: Keep in order, see the Fork Enum to check
         // NOTE: Uncomment the summaries if EF tests for those specific forks exist.
 
@@ -215,7 +214,6 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         fork_summary_shell(reports, Fork::Cancun),
         fork_summary_shell(reports, Fork::Shanghai),
         fork_summary_shell(reports, Fork::Paris),
-
         test_dir_summary_for_shell(reports),
     )
 }

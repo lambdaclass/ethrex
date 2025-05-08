@@ -79,9 +79,8 @@ impl<'a> VM<'a> {
     pub fn op_prevrandao(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-4399
         // After Paris the prev randao is the prev_randao (or current_random) field
-        let randao = 
-            U256::from_big_endian(self.env.prev_randao.unwrap_or_default().0.as_slice());
-            
+        let randao = U256::from_big_endian(self.env.prev_randao.unwrap_or_default().0.as_slice());
+
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
         current_call_frame.stack.push(randao)?;
