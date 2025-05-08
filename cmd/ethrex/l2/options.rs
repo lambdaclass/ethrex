@@ -6,6 +6,7 @@ use ethrex_l2::{
     SequencerConfig,
 };
 use ethrex_rpc::clients::eth::get_address_from_secret_key;
+use reqwest::Url;
 use secp256k1::SecretKey;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -104,7 +105,7 @@ impl From<SequencerOptions> for SequencerConfig {
     }
 }
 
-#[derive(Parser, Default)]
+#[derive(Parser)]
 pub struct EthOptions {
     #[arg(
         long = "eth.rpc-url",
@@ -112,7 +113,7 @@ pub struct EthOptions {
         env = "ETHREX_ETH_RPC_URL",
         help_heading = "Eth options"
     )]
-    pub rpc_url: String,
+    pub rpc_url: Url,
     #[arg(
         long = "eth.maximum-allowed-max-fee-per-gas",
         default_value = "10000000000",
@@ -129,6 +130,16 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub maximum_allowed_max_fee_per_blob_gas: u64,
+}
+
+impl Default for EthOptions {
+    fn default() -> Self {
+        Self {
+            rpc_url: Url::parse("http://localhost:8545").unwrap(),
+            maximum_allowed_max_fee_per_gas: Default::default(),
+            maximum_allowed_max_fee_per_blob_gas: Default::default(),
+        }
+    }
 }
 
 #[derive(Parser)]

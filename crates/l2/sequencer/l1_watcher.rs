@@ -41,7 +41,7 @@ impl L1Watcher {
         watcher_config: &L1WatcherConfig,
         eth_config: &EthConfig,
     ) -> Result<Self, L1WatcherError> {
-        let eth_client = EthClient::new(&eth_config.rpc_url);
+        let eth_client = EthClient::new(eth_config.rpc_url.as_str());
         let l2_client = EthClient::new("http://localhost:1729");
 
         let last_block_fetched = U256::zero();
