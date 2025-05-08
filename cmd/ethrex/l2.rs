@@ -18,7 +18,8 @@ use eyre::OptionExt;
 use keccak_hash::keccak;
 use reqwest::Url;
 use secp256k1::SecretKey;
-use std::{fs::create_dir_all, future::IntoFuture, path::PathBuf, time::Duration};
+use std::{fs::create_dir_all, future::IntoFuture, path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
 use tracing::info;
 
