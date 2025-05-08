@@ -421,7 +421,7 @@ mod test {
     fn get_insert_zero() {
         let mut trie = Trie::new_temp();
         trie.insert(vec![0x0], b"value".to_vec()).unwrap();
-        let first = trie.get(&[0x0][..].to_vec()).unwrap();
+        let first = trie.get(&[0x0][..]).unwrap();
         assert_eq!(first, Some(b"value".to_vec()));
     }
 
@@ -431,10 +431,10 @@ mod test {
         trie.insert(vec![16], vec![0]).unwrap();
         trie.insert(vec![16, 0], vec![0]).unwrap();
 
-        let item = trie.get(&vec![16]).unwrap();
+        let item = trie.get(vec![16]).unwrap();
         assert_eq!(item, Some(vec![0]));
 
-        let item = trie.get(&vec![16, 0]).unwrap();
+        let item = trie.get(vec![16, 0]).unwrap();
         assert_eq!(item, Some(vec![0]));
     }
 
@@ -444,10 +444,10 @@ mod test {
         trie.insert(vec![0, 0], vec![0, 0]).unwrap();
         trie.insert(vec![1, 0], vec![1, 0]).unwrap();
 
-        let item = trie.get(&vec![1, 0]).unwrap();
+        let item = trie.get(vec![1, 0]).unwrap();
         assert_eq!(item, Some(vec![1, 0]));
 
-        let item = trie.get(&vec![0, 0]).unwrap();
+        let item = trie.get(vec![0, 0]).unwrap();
         assert_eq!(item, Some(vec![0, 0]));
     }
 
@@ -500,9 +500,9 @@ mod test {
         trie.insert(vec![0xC8], vec![0xC8]).unwrap();
         trie.insert(vec![0xC8, 0x00], vec![0xC8, 0x00]).unwrap();
 
-        assert_eq!(trie.get(&vec![0x00]).unwrap(), Some(vec![0x00]));
-        assert_eq!(trie.get(&vec![0xC8]).unwrap(), Some(vec![0xC8]));
-        assert_eq!(trie.get(&vec![0xC8, 0x00]).unwrap(), Some(vec![0xC8, 0x00]));
+        assert_eq!(trie.get(vec![0x00]).unwrap(), Some(vec![0x00]));
+        assert_eq!(trie.get(vec![0xC8]).unwrap(), Some(vec![0xC8]));
+        assert_eq!(trie.get(vec![0xC8, 0x00]).unwrap(), Some(vec![0xC8, 0x00]));
     }
 
     #[test]
@@ -515,12 +515,12 @@ mod test {
         trie.insert(vec![0x19, 0x00], vec![0x19, 0x00]).unwrap();
         trie.insert(vec![0x1A], vec![0x1A]).unwrap();
 
-        assert_eq!(trie.get(&vec![0x00]).unwrap(), Some(vec![0x00]));
-        assert_eq!(trie.get(&vec![0x01]).unwrap(), Some(vec![0x01]));
-        assert_eq!(trie.get(&vec![0x10]).unwrap(), Some(vec![0x10]));
-        assert_eq!(trie.get(&vec![0x19]).unwrap(), Some(vec![0x19]));
-        assert_eq!(trie.get(&vec![0x19, 0x00]).unwrap(), Some(vec![0x19, 0x00]));
-        assert_eq!(trie.get(&vec![0x1A]).unwrap(), Some(vec![0x1A]));
+        assert_eq!(trie.get(vec![0x00]).unwrap(), Some(vec![0x00]));
+        assert_eq!(trie.get(vec![0x01]).unwrap(), Some(vec![0x01]));
+        assert_eq!(trie.get(vec![0x10]).unwrap(), Some(vec![0x10]));
+        assert_eq!(trie.get(vec![0x19]).unwrap(), Some(vec![0x19]));
+        assert_eq!(trie.get(vec![0x19, 0x00]).unwrap(), Some(vec![0x19, 0x00]));
+        assert_eq!(trie.get(vec![0x1A]).unwrap(), Some(vec![0x1A]));
     }
 
     #[test]
@@ -531,8 +531,8 @@ mod test {
             .unwrap();
         trie.insert(b"doge".to_vec(), b"coin".to_vec()).unwrap();
         trie.remove(b"horse".to_vec()).unwrap();
-        assert_eq!(trie.get(&b"do".to_vec()).unwrap(), Some(b"verb".to_vec()));
-        assert_eq!(trie.get(&b"doge".to_vec()).unwrap(), Some(b"coin".to_vec()));
+        assert_eq!(trie.get(b"do").unwrap(), Some(b"verb".to_vec()));
+        assert_eq!(trie.get(b"doge").unwrap(), Some(b"coin".to_vec()));
     }
 
     #[test]
@@ -542,9 +542,9 @@ mod test {
         trie.insert(vec![185, 0], vec![185, 0]).unwrap();
         trie.insert(vec![185, 1], vec![185, 1]).unwrap();
         trie.remove(vec![185, 1]).unwrap();
-        assert_eq!(trie.get(&vec![185, 0]).unwrap(), Some(vec![185, 0]));
-        assert_eq!(trie.get(&vec![185]).unwrap(), Some(vec![185]));
-        assert!(trie.get(&vec![185, 1]).unwrap().is_none());
+        assert_eq!(trie.get(vec![185, 0]).unwrap(), Some(vec![185, 0]));
+        assert_eq!(trie.get(vec![185]).unwrap(), Some(vec![185]));
+        assert!(trie.get(vec![185, 1]).unwrap().is_none());
     }
 
     #[test]
