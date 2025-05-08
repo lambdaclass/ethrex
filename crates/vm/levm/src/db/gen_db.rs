@@ -42,14 +42,6 @@ impl GeneralizedDatabase {
         }
     }
 
-    /// Gets account without pushing it to the cache
-    pub fn get_account_no_push_cache(&self, address: Address) -> Result<Account, DatabaseError> {
-        match cache::get_account(&self.cache, &address) {
-            Some(acc) => Ok(acc.clone()),
-            None => self.store.get_account(address),
-        }
-    }
-
     /// **Accesses to an account's information.**
     ///
     /// Accessed accounts are stored in the `touched_accounts` set.
