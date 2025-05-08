@@ -30,7 +30,7 @@ impl<'a> VM<'a> {
                     return Err(error);
                 }
 
-                self.restore_state(backup, current_call_frame.cache_backup.clone())?;
+                self.restore_state(backup, current_call_frame.call_frame_backup.clone())?;
 
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
@@ -199,7 +199,7 @@ impl<'a> VM<'a> {
                 Err(error) => {
                     // Revert if error
                     current_call_frame.gas_used = current_call_frame.gas_limit;
-                    self.restore_state(backup, current_call_frame.cache_backup.clone())?;
+                    self.restore_state(backup, current_call_frame.call_frame_backup.clone())?;
 
                     return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
@@ -246,7 +246,7 @@ impl<'a> VM<'a> {
         let output = std::mem::take(&mut current_call_frame.output); // Bytes::new() if error is not RevertOpcode
         let gas_used = current_call_frame.gas_used;
 
-        self.restore_state(backup, current_call_frame.cache_backup.clone())?;
+        self.restore_state(backup, current_call_frame.call_frame_backup.clone())?;
 
         Ok(ExecutionReport {
             result: TxResult::Revert(error),
