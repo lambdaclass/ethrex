@@ -681,13 +681,13 @@ pub(crate) fn generic_system_contract_revm(
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
         transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
-        gas_limit: 30_000_000,
+        gas_limit: 30_000_000 + 21_000,
         data: calldata,
         ..Default::default()
     };
     let mut block_env = block_env(block_header, spec_id);
     block_env.basefee = RevmU256::ZERO;
-    block_env.gas_limit = RevmU256::from(30_000_000);
+    block_env.gas_limit = RevmU256::from(30_000_000 + 21_000);
 
     match state {
         EvmState::Store(db) => {
