@@ -9,7 +9,10 @@ use std::{
 use ethrex_common::{types::AccountState, Bloom, BloomInput, H256, U256};
 use tracing::debug;
 
-use super::{layer::SnapshotLayerImpl, DiskLayer, SnapshotLayer};
+use super::{
+    disklayer::DiskLayer,
+    layer::{SnapshotLayer, SnapshotLayerImpl},
+};
 
 #[derive(Clone, Debug)]
 pub struct DiffLayer {

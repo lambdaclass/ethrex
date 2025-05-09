@@ -8,7 +8,7 @@ use tracing::{debug, error};
 
 use crate::api::StoreEngine;
 
-use super::{DiskLayer, SnapshotLayer};
+use super::{disklayer::DiskLayer, layer::SnapshotLayer};
 
 /// It consists of one persistent base
 /// layer backed by a key-value store, on top of which arbitrarily many in-memory

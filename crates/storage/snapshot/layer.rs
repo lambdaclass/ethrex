@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use ethrex_common::{types::AccountState, Bloom, H256, U256};
 
-use super::DiskLayer;
+use super::disklayer::DiskLayer;
 
 // Snapshot layer methods.
 pub trait SnapshotLayer: SnapshotLayerImpl + Send + Sync + Debug {
