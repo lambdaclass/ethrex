@@ -49,7 +49,7 @@ fn build_sp1_program(features: &[String]) {
     sp1_build::build_program_with_args(
         "./sp1",
         sp1_build::BuildArgs {
-            output_directory: Some("./sp1/elf".to_string()),
+            output_directory: Some("./sp1/out".to_string()),
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features: features.to_vec(),
             ..Default::default()
