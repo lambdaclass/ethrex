@@ -4,10 +4,9 @@
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_rpc::utils::get_withdrawal_hash;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;
-#[cfg(feature = "l2")]
-use keccak_hash::H256;
 use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
@@ -15,6 +14,10 @@ use std::{
     fs::File,
     io::{BufReader, Read as _, Write},
     path::PathBuf,
+};
+
+use crate::{
+    sequencer::l1_committer::get_withdrawals_merkle_root, utils::helpers::is_withdrawal_l2,
 };
 
 use super::error::ProverInputError;
@@ -87,6 +90,38 @@ pub async fn generate_program_input(
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
 
+    let withdrawals_merkle_root = {
+        let mut vm = Evm::new(ethrex_vm::EvmEngine::LEVM, store.clone(), parent_hash);
+        let receipts = vm
+            .execute_block(&block)
+            .map_err(|_| {
+                ProverInputError::WithdrawalsError(
+                    "Failed to get receipts for withdrawals".to_owned(),
+                )
+            })?
+            .receipts;
+        let block_withdrawals = block
+            .body
+            .transactions
+            .iter()
+            .zip(receipts.iter())
+            .filter(|(tx, receipt)| {
+                is_withdrawal_l2(tx, receipt).is_ok_and(|is_withdrawal| is_withdrawal)
+            })
+            .map(|(withdrawal, _)| {
+                get_withdrawal_hash(withdrawal).ok_or(ProverInputError::WithdrawalsError(
+                    "Failed to get withdrawals hash".to_owned(),
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        get_withdrawals_merkle_root(block_withdrawals).map_err(|_| {
+            ProverInputError::WithdrawalsError(
+                "Failed to get merkle root of withdrawals".to_owned(),
+            )
+        })?
+    };
+
     let blocks = vec![block];
     let db = Evm::to_execution_db(&store, &blocks).await?;
 
@@ -94,9 +129,7 @@ pub async fn generate_program_input(
         db,
         blocks,
         parent_block_header,
-        // TODO
-        #[cfg(feature = "l2")]
-        withdrawals_merkle_root: H256::zero(),
+        withdrawals_merkle_root,
     })
 }
 
