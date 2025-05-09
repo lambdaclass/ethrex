@@ -586,7 +586,7 @@ pub fn generic_system_contract_levm(
     let coinbase_backup = db.cache.get(&block_header.coinbase).cloned();
     let env = Environment {
         origin: system_address,
-        gas_limit: 30_000_000,
+        gas_limit: 30_000_000 + 21_000,
         block_number: block_header.number.into(),
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp.into(),
@@ -595,7 +595,7 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: 30_000_000,
+        block_gas_limit: 30_000_000 + 21_000,
         transient_storage: HashMap::new(),
         config,
         ..Default::default()
