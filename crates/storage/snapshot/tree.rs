@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::{atomic::AtomicBool, Arc, RwLock},
 };
 
 use ethrex_common::{types::AccountState, H256, U256};
@@ -95,11 +95,88 @@ impl SnapshotTree {
     /// from the head block until the number of allowed layers is passed.
     ///
     /// It's used to flatten the layers.
-    pub fn cap(&self, root: H256, layers: usize) {
-        let layer = if let Some(layer) = self.snapshot(root) {
-            layer
+    pub fn cap(&self, root: H256, layers: usize) -> Result<(), SnapshotError> {
+        let diff = if let Some(diff) = self.snapshot(root) {
+            diff
         } else {
-            return;
+            return Err(SnapshotError::SnapshotNotFound(root));
         };
+
+        if diff.parent().is_none() {
+            return Err(SnapshotError::SnapshotIsdiskLayer(root));
+        }
+
+        if layers == 0 {
+            // Full commit
+            let base = self.save_diff(diff.flatten())?;
+            // TODO: save diff to disk?
+            let mut layers = self.layers.write().unwrap();
+            layers.clear();
+            layers.insert(root, base);
+            return Ok(());
+        }
+
+        Ok(())
+    }
+
+    // TODO: should we hold the layers lock from the caller during all the cap?
+    fn cap_layers(&self, mut diff: Arc<dyn SnapshotLayer>, layers: usize) -> Option<Arc<DiskLayer>> {
+        // Dive until end or disk layer.
+        for _ in 0..(layers - 1) {
+            if diff.parent().is_some() {
+                diff = diff.parent().unwrap();
+            } else {
+                // Diff stack is shallow, no need to modify.
+                return None;
+            }
+        }
+
+        let parent = diff.parent().unwrap();
+
+        // Stop if its disk layer.
+        if parent.parent().is_none() {
+            return None;
+        }
+
+        let flattened = parent.flatten();
+        {
+            let mut layers = self.layers.write().unwrap();
+            layers.insert(flattened.root(), flattened.clone());
+        }
+
+        todo!()
+    }
+
+    /// Merges the diff into the disk layer.
+    fn save_diff(&self, diff: Arc<dyn SnapshotLayer>) -> Result<Arc<DiskLayer>, SnapshotError> {
+        let prev_disk = diff.origin();
+
+        if prev_disk.mark_stale() {
+            return Err(SnapshotError::StaleSnapshot);
+        }
+
+        // TODO: here we should save the diff to the db (in the future snapshots table) too.
+        let accounts = diff.accounts();
+        for (hash, acc) in accounts.iter() {
+            prev_disk.cache.accounts.insert(*hash, acc.clone());
+        }
+
+        let storage = diff.storage();
+        for (hash, storage) in storage.iter() {
+            for (slot, value) in storage.iter() {
+                prev_disk.cache.storages.insert((*hash, *slot), *value);
+            }
+        }
+
+        let trie = Arc::new(self.db.open_state_trie(diff.root()));
+
+        let disk = DiskLayer {
+            state_trie: trie,
+            db: self.db.clone(),
+            cache: prev_disk.cache.clone(),
+            root: diff.root(),
+            stale: Arc::new(AtomicBool::new(false)),
+        };
+        Ok(Arc::new(disk))
     }
 }

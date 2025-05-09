@@ -21,11 +21,11 @@ use super::{
 
 #[derive(Clone)]
 pub struct DiskLayer {
-    state_trie: Arc<Trie>,
-    db: Arc<dyn StoreEngine>,
-    cache: Cache,
-    root: H256,
-    stale: Arc<AtomicBool>,
+    pub(super) state_trie: Arc<Trie>,
+    pub(super) db: Arc<dyn StoreEngine>,
+    pub(super)  cache: Cache,
+    pub(super) root: H256,
+    pub(super) stale: Arc<AtomicBool>,
 }
 
 impl fmt::Debug for DiskLayer {
@@ -176,4 +176,14 @@ impl SnapshotLayerImpl for DiskLayer {
     fn add_accounts(&self, _accounts: HashMap<H256, Option<AccountState>>) {}
 
     fn add_storage(&self, _storage: HashMap<H256, HashMap<H256, U256>>) {}
+
+    // Only used on diff layers
+    fn accounts(&self) -> HashMap<H256, Option<AccountState>> {
+        HashMap::default()
+    }
+
+    // Only used on diff layers
+    fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
+        HashMap::default()
+    }
 }

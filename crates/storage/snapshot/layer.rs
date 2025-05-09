@@ -44,6 +44,13 @@ pub trait SnapshotLayer: SnapshotLayerImpl + Send + Sync + Debug {
 pub trait SnapshotLayerImpl: Send + Sync + Debug {
     fn diffed(&self) -> Option<Bloom>;
 
+    fn set_parent(&self, parent: Arc<dyn SnapshotLayer>);
+
+    /// Returns the accounts hashmap, expensive, used when saving to disk layer.
+    fn accounts(&self) -> HashMap<H256, Option<AccountState>>;
+    /// Returns the storage hashmap, expensive, used when saving to disk layer.
+    fn storage(&self) -> HashMap<H256, HashMap<H256, U256>>;
+
     // skips bloom checks, used if a higher layer bloom filter is hit
     fn get_account_traverse(
         &self,

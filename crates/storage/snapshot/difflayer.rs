@@ -238,4 +238,12 @@ impl SnapshotLayerImpl for DiffLayer {
             entry.extend(st);
         }
     }
+
+    fn accounts(&self) -> HashMap<H256, Option<AccountState>> {
+        self.accounts.read().unwrap().clone()
+    }
+
+    fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
+        self.storage.read().unwrap().clone()
+    }
 }
