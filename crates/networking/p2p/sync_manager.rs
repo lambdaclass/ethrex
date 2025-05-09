@@ -14,8 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    kademlia::KademliaTable,
-    sync::{SyncMode, Syncer},
+    peer_handler::PeerHandler, sync::{SyncMode, Syncer}
 };
 
 /// Abstraction to interact with the active sync process without disturbing it
@@ -31,7 +30,7 @@ pub struct SyncManager {
 
 impl SyncManager {
     pub async fn new(
-        peer_table: Arc<Mutex<KademliaTable>>,
+        peer_handler: PeerHandler,
         sync_mode: SyncMode,
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
@@ -39,7 +38,7 @@ impl SyncManager {
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
         let syncer = Arc::new(Mutex::new(Syncer::new(
-            peer_table,
+            peer_handler,
             snap_enabled.clone(),
             cancel_token,
             blockchain,
