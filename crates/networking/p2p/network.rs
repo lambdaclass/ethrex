@@ -87,7 +87,7 @@ impl P2PContext {
             self.local_node_record
                 .lock()
                 .await
-                .set_fork_id(fork_id, &self.signer)
+                .set_fork_id(&fork_id, &self.signer)
                 .unwrap();
         }
     }

@@ -319,10 +319,10 @@ impl NodeRecord {
         Ok(())
     }
 
-    pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SigningKey) -> Result<(), String> {
+    pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SigningKey) -> Result<(), String> {
         // a vec! is needed in order to have a single element list
         self.pairs
-            .push(("eth".into(), vec![fork_id].encode_to_vec().into()));
+            .push(("eth".into(), vec![fork_id.clone()].encode_to_vec().into()));
         self.update_seq(signer)?;
         Ok(())
     }

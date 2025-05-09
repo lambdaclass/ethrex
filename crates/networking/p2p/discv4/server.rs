@@ -456,11 +456,12 @@ impl Discv4Server {
                             chain_config,
                             genesis_header,
                         ) {
+                            eprintln!("Invalid?");
                             return Err(DiscoveryError::InvalidMessage(
                                 "Could not validate fork id from new node".into(),
                             ));
                         }
-                        debug!("ENR eth pair validated");
+                        eprintln!("ENR eth pair validated");
                     }
                 }
 
@@ -684,12 +685,16 @@ pub(super) mod tests {
         types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
+    use ethrex_common::{types::ForkId, H32};
     use ethrex_storage::EngineType;
     use ethrex_storage::Store;
 
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        u64,
+    };
     use tokio::{sync::Mutex, time::sleep};
 
     pub async fn insert_random_node_on_custom_bucket(
@@ -719,6 +724,7 @@ pub(super) mod tests {
 
     pub async fn start_discovery_server(
         udp_port: u16,
+        init_storage: bool,
         should_start_server: bool,
     ) -> Result<Discv4Server, DiscoveryError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
@@ -731,8 +737,13 @@ pub(super) mod tests {
             tcp_port: udp_port,
         };
 
-        let storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let storage = if init_storage {
+            let (config, header) = build_basic_config_and_header(false, true);
+            setup_storage(config, header).await.expect("Storage setup")
+        } else {
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB")
+        };
+
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let table = Arc::new(Mutex::new(KademliaTable::new(node_id)));
         let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
@@ -797,8 +808,8 @@ pub(super) mod tests {
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
     async fn discovery_server_revalidation() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(7998, true).await?;
-        let mut server_b = start_discovery_server(7999, true).await?;
+        let mut server_a = start_discovery_server(7998, false, true).await?;
+        let mut server_b = start_discovery_server(7999, false, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -867,8 +878,8 @@ pub(super) mod tests {
      * 5. Verify that the updated node record has been correctly received and stored.
      */
     async fn discovery_enr_message() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8006, true).await?;
-        let mut server_b = start_discovery_server(8007, true).await?;
+        let mut server_a = start_discovery_server(8006, false, true).await?;
+        let mut server_b = start_discovery_server(8007, false, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -931,5 +942,86 @@ pub(super) mod tests {
         assert!(server_a_node_b_record.node.tcp_port == server_b.ctx.local_node.tcp_port);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    /**
+     * This test verifies the exchange and validation of eth pairs in the ENR (Ethereum Node Record) messages.
+     * The test follows these steps:
+     *
+     * 1. Start two nodes.
+     * 2. Add a fork_id to the nodes
+     * 3. Wait until they establish a connection.
+     * 4. Validate they have exchanged the pairs and validated them
+     */
+    async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
+        let mut server_a = start_discovery_server(8086, true, true).await?;
+        let mut server_b = start_discovery_server(8087, true, true).await?;
+
+        let fork_id = ForkId {
+            fork_hash: H32::zero(),
+            fork_next: u64::MAX,
+        };
+
+        server_a
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .set_fork_id(&fork_id, &server_a.ctx.signer)
+            .unwrap();
+
+        server_b
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .set_fork_id(&fork_id, &server_b.ctx.signer)
+            .unwrap();
+
+        connect_servers(&mut server_a, &mut server_b).await?;
+
+        // wait some time for the enr request-response finishes
+        sleep(Duration::from_millis(2500)).await;
+
+        let table = server_b.ctx.table.lock().await;
+        assert!(table
+            .get_by_node_id(server_a.ctx.local_node.node_id)
+            .is_some());
+        Ok(())
+    }
+    use ethrex_common::types::{BlockHeader, ChainConfig};
+    use ethrex_storage::error::StoreError;
+
+    async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
+        let store = Store::new("test", EngineType::InMemory)?;
+        let block_number = header.number;
+        let block_hash = header.compute_block_hash();
+        store.add_block_header(block_hash, header).await?;
+        store.set_canonical_block(block_number, block_hash).await?;
+        store.update_latest_block_number(block_number).await?;
+        store.set_chain_config(&config).await?;
+        Ok(store)
+    }
+
+    fn build_basic_config_and_header(
+        istanbul_active: bool,
+        shanghai_active: bool,
+    ) -> (ChainConfig, BlockHeader) {
+        let config = ChainConfig {
+            shanghai_time: Some(if shanghai_active { 1 } else { 10 }),
+            istanbul_block: Some(if istanbul_active { 1 } else { 10 }),
+            ..Default::default()
+        };
+
+        let header = BlockHeader {
+            number: 0,
+            timestamp: 5,
+            gas_limit: 100_000_000,
+            gas_used: 0,
+            ..Default::default()
+        };
+
+        (config, header)
     }
 }

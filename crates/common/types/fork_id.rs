@@ -16,8 +16,8 @@ const TIMESTAMP_THRESHOLD: u64 = 1438269973;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ForkId {
-    fork_hash: H32,
-    fork_next: BlockNumber,
+    pub fork_hash: H32,
+    pub fork_next: BlockNumber,
 }
 
 impl ForkId {
