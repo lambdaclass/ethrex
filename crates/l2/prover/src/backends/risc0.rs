@@ -46,7 +46,7 @@ pub fn verify(receipt: &Receipt) -> Result<(), Box<dyn std::error::Error>> {
 pub fn to_calldata(receipt: Receipt) -> Result<ProofCalldata, Box<dyn std::error::Error>> {
     let seal = encode_seal(&receipt)?;
     let image_id = ZKVM_RISC0_PROGRAM_ID;
-    let journal_digest = receipt.journal.bytes;
+    let journal = receipt.journal.bytes;
 
     // convert image_id into bytes
     let image_id = {
