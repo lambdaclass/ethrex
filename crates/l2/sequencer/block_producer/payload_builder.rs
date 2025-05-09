@@ -1,15 +1,12 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use ethrex_blockchain::{
     constants::TX_GAS_COST,
+    error::ChainError,
     payload::{PayloadBuildContext, PayloadBuildResult},
     Blockchain,
 };
-use ethrex_common::{
-    types::{AccountInfo, Block, Receipt, Transaction, SAFE_BYTES_PER_BLOB},
-    Address,
-};
+use ethrex_common::types::{Block, SAFE_BYTES_PER_BLOB};
 use ethrex_metrics::metrics;
 
 #[cfg(feature = "metrics")]
@@ -19,16 +16,7 @@ use std::ops::Div;
 use tokio::time::Instant;
 use tracing::debug;
 
-use crate::{
-    sequencer::{
-        errors::BlockProducerError,
-        state_diff::{
-            get_nonce_diff, L2_DEPOSIT_SIZE, L2_WITHDRAWAL_SIZE, LAST_HEADER_FIELDS_SIZE,
-            TX_STATE_DIFF_SIZE,
-        },
-    },
-    utils::helpers::{is_deposit_l2, is_withdrawal_l2},
-};
+use crate::sequencer::{errors::BlockProducerError, state_diff::TX_STATE_DIFF_SIZE};
 
 /// L2 payload builder
 /// Completes the payload building process, return the block value
@@ -41,7 +29,7 @@ pub async fn build_payload(
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
 
-    debug!("Building payload");
+    debug!("Building payload on L2");
     let mut context = PayloadBuildContext::new(payload, blockchain.evm_engine, store)?;
 
     blockchain.apply_withdrawals(&mut context)?;
@@ -74,9 +62,8 @@ pub async fn fill_transactions(
     store: &Store,
 ) -> Result<(), BlockProducerError> {
     // Two bytes for the len
-    let (mut acc_withdrawals_size, mut acc_deposits_size): (usize, usize) = (2, 2);
-    let mut acc_state_diff_size = 0;
-    let mut accounts_info_cache = HashMap::new();
+    // 2 bytes for withdrawals + 2 bytes for deposits
+    context.acc_state_diff_size = Some(4);
 
     let chain_config = store.get_chain_config()?;
     let max_blob_number_per_block: usize = chain_config
@@ -98,6 +85,11 @@ pub async fn fill_transactions(
         };
 
         // Check if we have enough space for the StateDiff to run more transactions
+        let acc_state_diff_size = context
+            .acc_state_diff_size
+            .ok_or(BlockProducerError::Custom(
+                "L2 should have access to accumulated state diff size".to_owned(),
+            ))?;
         if acc_state_diff_size + TX_STATE_DIFF_SIZE > SAFE_BYTES_PER_BLOB {
             debug!("No more StateDiff space to run transactions");
             break;
@@ -150,32 +142,9 @@ pub async fn fill_transactions(
         // or we want it before the return?
         metrics!(METRICS_TX.inc_tx());
 
-        let previous_context = context.clone();
-
         // Execute tx
         let receipt = match blockchain.apply_transaction(&head_tx, context) {
             Ok(receipt) => {
-                // This call is the part that differs from the original `fill_transactions`.
-                if !update_state_diff_size(
-                    &mut acc_withdrawals_size,
-                    &mut acc_deposits_size,
-                    &mut acc_state_diff_size,
-                    head_tx.clone().into(),
-                    &receipt,
-                    context,
-                    &mut accounts_info_cache,
-                )
-                .await?
-                {
-                    debug!(
-                        "Skipping transaction: {}, doesn't fit in blob_size",
-                        head_tx.tx.compute_hash()
-                    );
-                    // We don't have enough space in the blob for the transaction, so we skip all txs from this account
-                    txs.pop();
-                    *context = previous_context.clone();
-                    continue;
-                }
                 txs.shift()?;
                 // Pull transaction from the mempool
                 blockchain.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
@@ -185,6 +154,16 @@ pub async fn fill_transactions(
                     MetricsTxType(head_tx.tx_type())
                 ));
                 receipt
+            }
+            // This call is the part that differs from the original `fill_transactions`.
+            Err(ChainError::EvmError(ethrex_vm::EvmError::StateDiffSizeError)) => {
+                debug!(
+                    "Skipping transaction: {}, doesn't fit in blob_size",
+                    tx_hash
+                );
+                // We don't have enough space in the blob for the transaction, so we skip all txs from this account
+                txs.pop();
+                continue;
             }
             // Ignore following txs from sender
             Err(e) => {
@@ -204,99 +183,4 @@ pub async fn fill_transactions(
         context.receipts.push(receipt);
     }
     Ok(())
-}
-
-/// Calculates the size of the current `StateDiff` of the block.
-/// If the current size exceeds the blob size limit, returns `Ok(false)`.
-/// If there is still space in the blob, returns `Ok(true)`.
-/// Updates the following mutable variables in the process:
-/// - `acc_withdrawals_size`: Accumulated size of withdrawals (incremented by L2_WITHDRAWAL_SIZE if tx is withdrawal)
-/// - `acc_deposits_size`: Accumulated size of deposits (incremented by L2_DEPOSIT_SIZE if tx is deposit)
-/// - `acc_state_diff_size`: Set to current total state diff size if within limit
-/// - `context`: Must be mutable because `get_state_transitions` requires mutable access
-/// - `accounts_info_cache`: When calculating account updates, we store account info in the cache if it's not already present
-///
-///  StateDiff:
-/// +-------------------+
-/// | Version           |
-/// | HeaderFields      |
-/// | AccountsStateDiff |
-/// | Withdrawals       |
-/// | Deposits          |
-/// +-------------------+
-async fn update_state_diff_size(
-    acc_withdrawals_size: &mut usize,
-    acc_deposits_size: &mut usize,
-    acc_state_diff_size: &mut usize,
-    tx: Transaction,
-    receipt: &Receipt,
-    context: &mut PayloadBuildContext,
-    accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
-) -> Result<bool, BlockProducerError> {
-    if is_withdrawal_l2(&tx, receipt)? {
-        *acc_withdrawals_size += L2_WITHDRAWAL_SIZE;
-    }
-    if is_deposit_l2(&tx) {
-        *acc_deposits_size += L2_DEPOSIT_SIZE;
-    }
-    let modified_accounts_size = calc_modified_accounts_size(context, accounts_info_cache).await?;
-
-    let current_state_diff_size = 1 /* version (u8) */ + LAST_HEADER_FIELDS_SIZE + *acc_withdrawals_size + *acc_deposits_size + modified_accounts_size;
-
-    if current_state_diff_size > SAFE_BYTES_PER_BLOB {
-        // Restore the withdrawals and deposits counters.
-        if is_withdrawal_l2(&tx, receipt)? {
-            *acc_withdrawals_size -= L2_WITHDRAWAL_SIZE;
-        }
-        if is_deposit_l2(&tx) {
-            *acc_deposits_size -= L2_DEPOSIT_SIZE;
-        }
-        debug!(
-            "Blob size limit exceeded. current_state_diff_size: {}",
-            current_state_diff_size
-        );
-        return Ok(false);
-    }
-    *acc_state_diff_size = current_state_diff_size;
-    Ok(true)
-}
-
-async fn calc_modified_accounts_size(
-    context: &mut PayloadBuildContext,
-    accounts_info_cache: &mut HashMap<Address, Option<AccountInfo>>,
-) -> Result<usize, BlockProducerError> {
-    let mut modified_accounts_size: usize = 2; // 2bytes | modified_accounts_len(u16)
-
-    // We use a temporary_context because `get_state_transitions` mutates it.
-    let mut temporary_context = context.clone();
-
-    let account_updates = temporary_context.vm.get_state_transitions()?;
-    for account_update in account_updates {
-        modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
-        if account_update.info.is_some() {
-            modified_accounts_size += 32; // 32bytes | new_balance(U256)
-        }
-
-        let nonce_diff = get_nonce_diff(
-            &account_update,
-            &context.store,
-            Some(accounts_info_cache),
-            context.block_number(),
-        )
-        .await
-        .map_err(|e| {
-            BlockProducerError::Custom(format!("Block Producer failed to get nonce diff: {e}"))
-        })?;
-        if nonce_diff != 0 {
-            modified_accounts_size += 2; // 2bytes | nonce_diff(u16)
-        }
-        // for each added_storage: 32bytes + 32bytes | key(H256) + value(U256)
-        modified_accounts_size += account_update.added_storage.len() * 2 * 32;
-
-        if let Some(bytecode) = &account_update.code {
-            modified_accounts_size += 2; // 2bytes | bytecode_len(u16)
-            modified_accounts_size += bytecode.len(); // (len)bytes | bytecode(Bytes)
-        }
-    }
-    Ok(modified_accounts_size)
 }

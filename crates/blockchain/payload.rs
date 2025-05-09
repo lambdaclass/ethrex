@@ -172,6 +172,7 @@ pub struct PayloadBuildContext {
     pub store: Store,
     pub vm: Evm,
     pub account_updates: Vec<AccountUpdate>,
+    pub acc_state_diff_size: Option<usize>,
 }
 
 impl PayloadBuildContext {
@@ -198,6 +199,7 @@ impl PayloadBuildContext {
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
+            acc_state_diff_size: None,
         })
     }
 }
@@ -504,6 +506,7 @@ impl Blockchain {
             &context.payload.header,
             &mut context.remaining_gas,
             head.tx.sender(),
+            &mut context.acc_state_diff_size,
         )?;
         context.block_value += U256::from(gas_used) * head.tip;
         Ok(report)

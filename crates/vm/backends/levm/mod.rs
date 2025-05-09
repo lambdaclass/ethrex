@@ -1,4 +1,7 @@
 pub mod db;
+mod l2_utils;
+use ethrex_levm::db::error::DatabaseError;
+pub use l2_utils::update_state_diff_size;
 
 use super::revm::db::get_potential_child_nodes;
 use super::BlockExecutionResult;
@@ -165,10 +168,20 @@ impl LEVM {
     pub fn get_state_transitions(
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
+        let account_updates = LEVM::get_state_transitions_no_drain(db)?;
+        db.cache.clear();
+        db.in_memory_db.clear();
+        Ok(account_updates)
+    }
+
+    fn get_state_transitions_no_drain(
+        db: &GeneralizedDatabase,
+    ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
-        for (address, new_state_account) in db.cache.drain() {
-            let initial_state_account = db.store.get_account(address)?;
-            let account_existed = db.store.account_exists(address);
+        for (address, new_state_account) in db.cache.iter() {
+            let initial_state_account = db.in_memory_db.get(address).cloned().ok_or_else(|| {
+                DatabaseError::Custom("Initial state account not found in in_memory_db".to_string())
+            })?;
 
             let mut acc_info_updated = false;
             let mut storage_updated = false;
@@ -191,10 +204,15 @@ impl LEVM {
 
             // 2. Storage has been updated if the current value is different from the one before execution.
             let mut added_storage = HashMap::new();
-            for (key, storage_slot) in &new_state_account.storage {
-                let storage_before_block = db.store.get_storage_value(address, *key)?;
-                if *storage_slot != storage_before_block {
-                    added_storage.insert(*key, *storage_slot);
+            for (key, &new_value) in &new_state_account.storage {
+                let old_value = initial_state_account
+                    .storage
+                    .get(key)
+                    .copied()
+                    .unwrap_or(U256::zero());
+
+                if new_value != old_value {
+                    added_storage.insert(*key, new_value);
                     storage_updated = true;
                 }
             }
@@ -207,15 +225,16 @@ impl LEVM {
 
             let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
 
-            // https://eips.ethereum.org/EIPS/eip-161
-            // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
-            if !account_existed && new_state_account.is_empty() {
-                continue;
-            }
             // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
             // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
             if new_state_account.is_empty() {
                 removed = true;
+
+                // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
+                let account_existed = db.store.account_exists(*address);
+                if !account_existed {
+                    continue;
+                }
             }
 
             if !removed && !acc_info_updated && !storage_updated {
@@ -224,7 +243,7 @@ impl LEVM {
             }
 
             let account_update = AccountUpdate {
-                address,
+                address: *address,
                 removed,
                 info,
                 code,
@@ -248,9 +267,12 @@ impl LEVM {
         {
             // We check if it was in block_cache, if not, we get it from DB.
             let mut account = db.cache.get(&address).cloned().unwrap_or({
-                db.store
+                let account = db
+                    .store
                     .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
+                    .map_err(|e| StoreError::Custom(e.to_string()))?;
+                db.in_memory_db.insert(address, account.clone());
+                account
             });
 
             account.info.balance += increment.into();

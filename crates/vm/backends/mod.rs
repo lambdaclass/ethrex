@@ -15,7 +15,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::db::CacheDB;
 use ethrex_storage::Store;
 use ethrex_storage::{error::StoreError, AccountUpdate};
-use levm::LEVM;
+use levm::{update_state_diff_size, LEVM};
 use revm::db::EvmState;
 use revm::REVM;
 use std::sync::Arc;
@@ -109,6 +109,7 @@ impl Evm {
         block_header: &BlockHeader,
         remaining_gas: &mut u64,
         sender: Address,
+        acc_state_diff_size: &mut Option<usize>,
     ) -> Result<(Receipt, u64), EvmError> {
         match self {
             Evm::REVM { state } => {
@@ -143,6 +144,8 @@ impl Evm {
                     block_header.gas_limit - *remaining_gas,
                     execution_report.logs.clone(),
                 );
+
+                update_state_diff_size(acc_state_diff_size, tx, &receipt, db)?;
 
                 Ok((receipt, execution_report.gas_used))
             }
