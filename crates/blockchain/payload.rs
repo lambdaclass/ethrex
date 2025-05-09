@@ -418,8 +418,6 @@ impl Blockchain {
             let receipt = match self.apply_transaction(&head_tx, context) {
                 Ok(receipt) => {
                     txs.shift()?;
-                    // Pull transaction from the mempool
-                    self.remove_transaction_from_pool(&head_tx.tx.compute_hash())?;
 
                     metrics!(METRICS_TX.inc_tx_with_status_and_type(
                         MetricsTxStatus::Succeeded,
