@@ -2,6 +2,7 @@ use crate::config::EthrexL2Config;
 use bytes::Bytes;
 use clap::Subcommand;
 use ethereum_types::{Address, H256, U256};
+use ethrex_common::types::signer::LocalSigner;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::{COMMON_BRIDGE_L2_ADDRESS, L2_WITHDRAW_SIGNATURE};
 use ethrex_rpc::clients::eth::BlockByNumber;
@@ -337,8 +338,9 @@ impl Command {
                     )
                     .await?;
 
+                let signer = LocalSigner::new(cfg.wallet.private_key).into();
                 let tx_hash = client
-                    .send_eip1559_transaction(&transfer_tx, &cfg.wallet.private_key)
+                    .send_eip1559_transaction(&transfer_tx, &signer)
                     .await?;
 
                 println!(
@@ -444,9 +446,8 @@ impl Command {
                         },
                     )
                     .await?;
-                let tx_hash = client
-                    .send_eip1559_transaction(&tx, &cfg.wallet.private_key)
-                    .await?;
+                let signer = LocalSigner::new(cfg.wallet.private_key).into();
+                let tx_hash = client.send_eip1559_transaction(&tx, &signer).await?;
 
                 println!(
                     "[{}] Transaction sent: {tx_hash:#x}",
@@ -503,10 +504,10 @@ impl Command {
                     false => rollup_client,
                 };
 
+                let signer = LocalSigner::new(cfg.wallet.private_key).into();
                 let (deployment_tx_hash, deployed_contract_address) = client
                     .deploy(
-                        from,
-                        cfg.wallet.private_key,
+                        &signer,
                         bytecode,
                         Overrides {
                             value: value.into(),

@@ -3142,6 +3142,7 @@ dependencies = [
  "lazy_static",
  "once_cell",
  "rayon",
+ "reqwest",
  "secp256k1",
  "serde",
  "serde_json",

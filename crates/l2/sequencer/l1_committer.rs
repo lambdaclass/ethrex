@@ -11,9 +11,10 @@ use crate::{
 
 use ethrex_common::{
     types::{
-        blobs_bundle, fake_exponential_checked, BlobsBundle, BlobsBundleError, Block, BlockHeader,
-        BlockNumber, PrivilegedL2Transaction, Receipt, Transaction, TxKind,
-        BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
+        blobs_bundle, fake_exponential_checked,
+        signer::{LocalSigner, RemoteSigner, Signer},
+        BlobsBundle, BlobsBundleError, Block, BlockHeader, BlockNumber, PrivilegedL2Transaction,
+        Receipt, Transaction, TxKind, BLOB_BASE_FEE_UPDATE_FRACTION, MIN_BASE_FEE_PER_BLOB_GAS,
     },
     Address, H256, U256,
 };
@@ -29,7 +30,6 @@ use ethrex_storage::{AccountUpdate, Store};
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::Evm;
 use keccak_hash::keccak;
-use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
@@ -42,12 +42,11 @@ pub struct Committer {
     on_chain_proposer_address: Address,
     store: Store,
     rollup_store: StoreRollup,
-    l1_address: Address,
-    l1_private_key: SecretKey,
     commit_time_ms: u64,
     arbitrary_base_blob_gas_price: u64,
     execution_cache: Arc<ExecutionCache>,
     validium: bool,
+    signer: Signer,
 }
 
 pub async fn start_l1_committer(
@@ -77,6 +76,18 @@ impl Committer {
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
     ) -> Self {
+        let signer = if let Some(remote_signer_url) = eth_config.remote_signer_url {
+            RemoteSigner::new(
+                remote_signer_url,
+                committer_config
+                    .l1_private_key
+                    .public_key(secp256k1::SECP256K1),
+            )
+            .into()
+        } else {
+            LocalSigner::new(committer_config.l1_private_key).into()
+        };
+
         Self {
             eth_client: EthClient::new_with_maximum_fees(
                 &eth_config.rpc_url,
@@ -86,12 +97,11 @@ impl Committer {
             on_chain_proposer_address: committer_config.on_chain_proposer_address,
             store,
             rollup_store,
-            l1_address: committer_config.l1_address,
-            l1_private_key: committer_config.l1_private_key,
             commit_time_ms: committer_config.commit_time_ms,
             arbitrary_base_blob_gas_price: committer_config.arbitrary_base_blob_gas_price,
             execution_cache,
             validium: committer_config.validium,
+            signer,
         }
     }
 
@@ -501,10 +511,10 @@ impl Committer {
                 .eth_client
                 .build_eip4844_transaction(
                     self.on_chain_proposer_address,
-                    self.l1_address,
+                    self.signer.address(),
                     calldata.into(),
                     Overrides {
-                        from: Some(self.l1_address),
+                        from: Some(self.signer.address()),
                         gas_price_per_blob: Some(gas_price_per_blob),
                         max_fee_per_gas: Some(gas_price),
                         max_priority_fee_per_gas: Some(gas_price),
@@ -521,10 +531,10 @@ impl Committer {
                 .eth_client
                 .build_eip1559_transaction(
                     self.on_chain_proposer_address,
-                    self.l1_address,
+                    self.signer.address(),
                     calldata.into(),
                     Overrides {
-                        from: Some(self.l1_address),
+                        from: Some(self.signer.address()),
                         max_fee_per_gas: Some(gas_price),
                         max_priority_fee_per_gas: Some(gas_price),
                         ..Default::default()
@@ -537,12 +547,12 @@ impl Committer {
         };
 
         self.eth_client
-            .set_gas_for_wrapped_tx(&mut tx, self.l1_address)
+            .set_gas_for_wrapped_tx(&mut tx, self.signer.address())
             .await?;
 
         let commit_tx_hash = self
             .eth_client
-            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.l1_private_key)
+            .send_tx_bump_gas_exponential_backoff(&mut tx, &self.signer)
             .await?;
 
         info!("Commitment sent: {commit_tx_hash:#x}");
