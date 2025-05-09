@@ -56,8 +56,11 @@ impl Hook for L2Hook {
                 .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
             // check for nonce mismatch
-            if sender_nonce != vm.env.tx_nonce {
-                return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
+            if sender_account.info.nonce != vm.env.tx_nonce {
+                return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
+                    expected: sender_account.info.nonce,
+                    actual: vm.env.tx_nonce,
+                }));
             }
 
             // (9) SENDER_NOT_EOA
@@ -140,11 +143,13 @@ impl Hook for L2Hook {
             vm.increase_account_balance(vm.env.origin, vm.current_call_frame()?.msg_value)?;
         }
 
+        // 2. Return unused gas + gas refunds to the sender.
+
         if vm.env.is_privileged {
             let gas_to_pay_coinbase = compute_coinbase_fee(vm, report)?;
             default_hook::pay_coinbase(vm, gas_to_pay_coinbase)?;
         } else {
-            let gas_refunded = default_hook::compute_gas_refunded(vm, report)?;
+            let gas_refunded = default_hook::compute_gas_refunded(report)?;
             let actual_gas_used =
                 default_hook::compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
             default_hook::refund_sender(vm, report, gas_refunded, actual_gas_used)?;
@@ -168,7 +173,7 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
 }
 
 pub fn compute_coinbase_fee(vm: &mut VM<'_>, report: &mut ExecutionReport) -> Result<u64, VMError> {
-    let mut gas_refunded = default_hook::compute_gas_refunded(vm, report)?;
+    let mut gas_refunded = default_hook::compute_gas_refunded(report)?;
     let mut gas_consumed = report.gas_used;
 
     report.gas_refunded = gas_refunded;

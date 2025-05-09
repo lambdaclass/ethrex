@@ -5,7 +5,7 @@ use crate::{
     utils::word_to_address,
     vm::VM,
 };
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::U256;
 
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
@@ -27,7 +27,6 @@ impl<'a> VM<'a> {
 
     // BALANCE operation
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
         let (account, address_was_cold) = self
@@ -37,7 +36,7 @@ impl<'a> VM<'a> {
 
         let current_call_frame = self.current_call_frame_mut()?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold, fork)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
 
         current_call_frame.stack.push(account_info.balance)?;
 
@@ -256,7 +255,6 @@ impl<'a> VM<'a> {
 
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
         let (account, address_was_cold) = self
@@ -267,7 +265,7 @@ impl<'a> VM<'a> {
 
         let current_call_frame = self.current_call_frame_mut()?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold, fork)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
 
         current_call_frame.stack.push(account_code_length)?;
 
@@ -276,7 +274,6 @@ impl<'a> VM<'a> {
 
     // EXTCODECOPY operation
     pub fn op_extcodecopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
         let dest_offset = self.current_call_frame_mut()?.stack.pop()?;
         let offset = self.current_call_frame_mut()?.stack.pop()?;
@@ -300,7 +297,6 @@ impl<'a> VM<'a> {
                 new_memory_size,
                 current_memory_size,
                 address_was_cold,
-                fork,
             )?)?;
 
         if size == 0 {
@@ -334,10 +330,6 @@ impl<'a> VM<'a> {
 
     // RETURNDATASIZE operation
     pub fn op_returndatasize(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-211
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
@@ -350,10 +342,6 @@ impl<'a> VM<'a> {
 
     // RETURNDATACOPY operation
     pub fn op_returndatacopy(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-211
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         let current_call_frame = self.current_call_frame_mut()?;
         let dest_offset = current_call_frame.stack.pop()?;
         let returndata_offset: usize = current_call_frame
@@ -411,7 +399,6 @@ impl<'a> VM<'a> {
 
     // EXTCODEHASH operation
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
         let account_is_empty;
@@ -427,7 +414,7 @@ impl<'a> VM<'a> {
         }
         let current_call_frame = self.current_call_frame_mut()?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold, fork)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
         if account_is_empty {

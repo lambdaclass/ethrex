@@ -164,7 +164,6 @@ impl LEVM {
 
     pub fn get_state_transitions(
         db: &mut GeneralizedDatabase,
-        fork: Fork,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.drain() {
@@ -209,17 +208,14 @@ impl LEVM {
             let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
 
             // https://eips.ethereum.org/EIPS/eip-161
-            if fork >= Fork::SpuriousDragon {
-                // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
-                if !account_existed && new_state_account.is_empty() {
-                    continue;
-                }
-
-                // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-                // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
-                if new_state_account.is_empty() {
-                    removed = true;
-                }
+            // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
+            if !account_existed && new_state_account.is_empty() {
+                continue;
+            }
+            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+            // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
+            if new_state_account.is_empty() {
+                removed = true;
             }
 
             if !removed && !acc_info_updated && !storage_updated {
@@ -306,37 +302,59 @@ impl LEVM {
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-    ) -> Option<ExecutionReport> {
+    ) -> Result<ExecutionReport, EvmError> {
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
             db,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
-        .ok()?;
+        )?;
+
+        // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
+        // has any code after being deployed. If not, the whole block becomes invalid.
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md
+        let account = db.get_account(*WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS)?;
+        if !account.has_code() {
+            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+        }
 
         match report.result {
-            TxResult::Success => Some(report),
-            _ => None,
+            TxResult::Success => Ok(report),
+            // EIP-7002 specifies that a failed system call invalidates the entire block.
+            TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
+                "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.", 
+                vm_error
+            ))),
         }
     }
     pub(crate) fn dequeue_consolidation_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
-    ) -> Option<ExecutionReport> {
+    ) -> Result<ExecutionReport, EvmError> {
         let report = generic_system_contract_levm(
             block_header,
             Bytes::new(),
             db,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-        )
-        .ok()?;
+        )?;
+
+        // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
+        // has any code after being deployed. If not, the whole block becomes invalid.
+        // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md
+        let acc = db.get_account(*CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS)?;
+        if !acc.has_code() {
+            return Err(EvmError::Custom("BlockException.SYSTEM_CONTRACT_EMPTY: CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS has no code after deployment".to_string()));
+        }
 
         match report.result {
-            TxResult::Success => Some(report),
-            _ => None,
+            TxResult::Success => Ok(report),
+            // EIP-7251 specifies that a failed system call invalidates the entire block.
+            TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
+                "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.", 
+                vm_error
+            ))),
         }
     }
 
@@ -384,11 +402,10 @@ impl LEVM {
 
         let mut execution_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         for block in blocks {
-            let fork = chain_config.fork(block.header.timestamp);
             let mut db = GeneralizedDatabase::new(logger.clone(), CacheDB::new());
             // pre-execute and get all state changes
             let _ = Self::execute_block(block, &mut db);
-            let account_updates = Self::get_state_transitions(&mut db, fork).map_err(Box::new)?;
+            let account_updates = Self::get_state_transitions(&mut db).map_err(Box::new)?;
             for update in account_updates {
                 execution_updates
                     .entry(update.address)
@@ -634,21 +651,10 @@ pub fn extract_all_requests_levm(
         }
     }
 
-    let withdrawals_data: Vec<u8> = match LEVM::read_withdrawal_requests(header, db) {
-        Some(report) => {
-            // the cache is updated inside the generic_system_call
-            report.output.into()
-        }
-        None => Default::default(),
-    };
-
-    let consolidation_data: Vec<u8> = match LEVM::dequeue_consolidation_requests(header, db) {
-        Some(report) => {
-            // the cache is updated inside the generic_system_call
-            report.output.into()
-        }
-        None => Default::default(),
-    };
+    let withdrawals_data: Vec<u8> = LEVM::read_withdrawal_requests(header, db)?.output.into();
+    let consolidation_data: Vec<u8> = LEVM::dequeue_consolidation_requests(header, db)?
+        .output
+        .into();
 
     let deposits = Requests::from_deposit_receipts(chain_config.deposit_contract_address, receipts);
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);

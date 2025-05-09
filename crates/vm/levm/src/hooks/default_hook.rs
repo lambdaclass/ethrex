@@ -15,7 +15,6 @@ use ethrex_common::{
 use std::cmp::max;
 
 pub const MAX_REFUND_QUOTIENT: u64 = 5;
-pub const MAX_REFUND_QUOTIENT_PRE_LONDON: u64 = 2;
 
 pub struct DefaultHook;
 
@@ -77,8 +76,11 @@ impl Hook for DefaultHook {
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
-        if sender_nonce != vm.env.tx_nonce {
-            return Err(VMError::TxValidation(TxValidationError::NonceMismatch));
+        if sender_account.info.nonce != vm.env.tx_nonce {
+            return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
+                expected: sender_account.info.nonce,
+                actual: vm.env.tx_nonce,
+            }));
         }
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
@@ -144,7 +146,7 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        let gas_refunded: u64 = compute_gas_refunded(vm, report)?;
+        let gas_refunded: u64 = compute_gas_refunded(report)?;
         let actual_gas_used = compute_actual_gas_used(vm, gas_refunded, report.gas_used)?;
         refund_sender(vm, report, gas_refunded, actual_gas_used)?;
 
@@ -195,16 +197,11 @@ pub fn refund_sender(
 }
 
 // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-pub fn compute_gas_refunded(vm: &mut VM<'_>, report: &ExecutionReport) -> Result<u64, VMError> {
-    let refund_quotient = if vm.env.config.fork < Fork::London {
-        MAX_REFUND_QUOTIENT_PRE_LONDON
-    } else {
-        MAX_REFUND_QUOTIENT
-    };
+pub fn compute_gas_refunded(report: &ExecutionReport) -> Result<u64, VMError> {
     Ok(report.gas_refunded.min(
         report
             .gas_used
-            .checked_div(refund_quotient)
+            .checked_div(MAX_REFUND_QUOTIENT)
             .ok_or(VMError::Internal(InternalError::UndefinedState(-1)))?,
     ))
 }
@@ -256,8 +253,7 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     let intrinsic_gas: u64 = vm.get_intrinsic_gas()?;
 
     // calldata_cost = tokens_in_calldata * 4
-    let calldata_cost: u64 =
-        gas_cost::tx_calldata(&calldata, vm.env.config.fork).map_err(VMError::OutOfGas)?;
+    let calldata_cost: u64 = gas_cost::tx_calldata(&calldata).map_err(VMError::OutOfGas)?;
 
     // same as calculated in gas_used()
     let tokens_in_calldata: u64 = calldata_cost

@@ -4,7 +4,7 @@ use crate::{
     gas_cost,
     vm::VM,
 };
-use ethrex_common::{types::Fork, U256};
+use ethrex_common::U256;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -203,12 +203,7 @@ impl<'a> VM<'a> {
 
     // SHL operation (shift left)
     pub fn op_shl(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
-        // Shift opcodes introduced in Constantinople https://eips.ethereum.org/EIPS/eip-145
-        if fork < Fork::Constantinople {
-            return Err(VMError::InvalidOpcode);
-        }
         current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
@@ -253,12 +248,7 @@ impl<'a> VM<'a> {
 
     // SHR operation (shift right)
     pub fn op_shr(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
-        // Shift opcodes introduced in Constantinople https://eips.ethereum.org/EIPS/eip-145
-        if fork < Fork::Constantinople {
-            return Err(VMError::InvalidOpcode);
-        }
         current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
@@ -276,12 +266,7 @@ impl<'a> VM<'a> {
 
     // SAR operation (arithmetic shift right)
     pub fn op_sar(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
-        // Shift opcodes introduced in Constantinople https://eips.ethereum.org/EIPS/eip-145
-        if fork < Fork::Constantinople {
-            return Err(VMError::InvalidOpcode);
-        }
         current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
         let shift = current_call_frame.stack.pop()?;
         let value = current_call_frame.stack.pop()?;
