@@ -306,6 +306,12 @@ impl NodeRecord {
         Ok(record)
     }
 
+    pub fn update_seq(&mut self, signer: &SigningKey) -> Result<(), String> {
+        self.seq += 1;
+        self.signature = self.sign_record(signer)?;
+        Ok(())
+    }
+
     fn sign_record(&mut self, signer: &SigningKey) -> Result<H512, String> {
         let digest = &self.get_signature_digest();
         let (signature, _recovery_id) = signer

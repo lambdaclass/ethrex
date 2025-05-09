@@ -869,7 +869,13 @@ pub(super) mod tests {
 
         // update the enr_seq of server_b so that server_a notices it is outdated
         // and sends a request to update it
-        server_b.ctx.local_node_record.lock().await.seq = 2;
+        server_b
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .update_seq(&server_b.ctx.signer)
+            .unwrap();
 
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated
