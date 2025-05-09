@@ -16,8 +16,7 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, PrivilegedL2Transaction, Transaction,
-        TxKind,
+        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, Transaction, TxKind,
     },
     Address, H256, U256,
 };
@@ -30,7 +29,7 @@ use std::{
 #[cfg(not(feature = "l2"))]
 use crate::hooks::DefaultHook;
 #[cfg(feature = "l2")]
-use crate::hooks::L2Hook;
+use {crate::hooks::L2Hook, ethrex_common::types::PrivilegedL2Transaction};
 
 pub type Storage = HashMap<U256, H256>;
 
