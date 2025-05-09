@@ -84,8 +84,8 @@ impl Prover {
                             blocks: input.blocks,
                             parent_block_header: input.parent_block_header,
                             db: input.db,
-                            #[cfg(feature = "l2")]
-                            withdrawals_merkle_root: input.withdrawals_merkle_root
+                            withdrawals_merkle_root: input.withdrawals_merkle_root,
+                            deposit_logs_hash: input.deposit_logs_hash
                         }
                     };
                     Ok(prover_data)

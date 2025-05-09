@@ -36,6 +36,7 @@ pub struct ProverInputData {
     pub parent_block_header: BlockHeader,
     pub db: ExecutionDB,
     pub withdrawals_merkle_root: H256,
+    pub deposit_logs_hash: H256,
 }
 
 #[derive(Clone)]
@@ -354,6 +355,8 @@ impl ProofCoordinator {
             blocks,
             parent_block_header,
             withdrawals_merkle_root,
+            // TODO add logic to store deposit logs hash to the db
+            deposit_logs_hash: H256::zero(),
         })
     }
 
