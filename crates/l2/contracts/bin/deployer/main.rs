@@ -294,10 +294,12 @@ async fn initialize_contracts(
         "Initializing OnChainProposer",
         Color::Cyan,
     );
-
-    let sp1_verification_key = hex::decode(read_to_string(&opts.sp1_vk_path)?)
-        .map_err(|_| {
-            DeployerError::DecodingError("while parsing SP1 verification key".to_string())
+    let sp1_vk_string = read_to_string(&opts.sp1_vk_path)?;
+    let sp1_vk = hex::decode(&sp1_vk_string.trim_start_matches("0x"))
+        .map_err(|err| {
+            DeployerError::DecodingError(format!(
+                "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
+            ))
         })?
         .into();
 
@@ -307,7 +309,7 @@ async fn initialize_contracts(
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
-            Value::FixedBytes(sp1_verification_key),
+            Value::FixedBytes(sp1_vk),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),
