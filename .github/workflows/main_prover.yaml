@@ -77,7 +77,9 @@ jobs:
         run: |
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
-          docker compose -f docker-compose-l2.yaml up --detach ethrex_l2
+          ETHREX_PROPOSER_BLOCK_TIME_MS=12000 \
+          ETHREX_PROOF_COORDINATOR_DEV_MODE=false \
+          docker compose -f docker-compose-l2.yaml up ethrex_l2 --detach
 
       - name: Run test
         if: ${{ always() && github.event_name == 'merge_group' }}
