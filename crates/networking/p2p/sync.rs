@@ -113,10 +113,9 @@ impl Syncer {
     /// Creates a dummy Syncer for tests where syncing is not needed
     /// This should only be used in tests as it won't be able to connect to the p2p network
     pub fn dummy() -> Self {
-        let dummy_peer_table = Arc::new(Mutex::new(KademliaTable::new(Default::default())));
         Self {
             snap_enabled: Arc::new(AtomicBool::new(false)),
-            peers: PeerHandler::new(dummy_peer_table),
+            peers: PeerHandler::dummy(),
             last_snap_pivot: 0,
             trie_rebuilder: None,
             // This won't be used

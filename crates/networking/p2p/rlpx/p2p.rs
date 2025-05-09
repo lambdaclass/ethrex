@@ -7,6 +7,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use k256::PublicKey;
+use serde::Serialize;
 
 use crate::rlpx::utils::{compress_pubkey, snappy_decompress};
 
@@ -42,6 +43,22 @@ impl RLPDecode for Capability {
             "eth" => Ok((Capability::Eth, rest)),
             "snap" => Ok((Capability::Snap, rest)),
             other => Ok((Capability::UnsupportedCapability(other.to_string()), rest)),
+        }
+    }
+}
+
+/// This implementation could be manually derived using serde's rename attribute
+/// But it will be useful once we also store capability versions as described in https://github.com/lambdaclass/ethrex/issues/1578
+impl Serialize for Capability {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Capability::P2p => serializer.serialize_str("p2p"),
+            Capability::Eth => serializer.serialize_str("eth"),
+            Capability::Snap => serializer.serialize_str("snap"),
+            Capability::UnsupportedCapability(cap) => serializer.serialize_str(cap),
         }
     }
 }

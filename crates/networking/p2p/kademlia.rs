@@ -232,7 +232,7 @@ impl KademliaTable {
     }
 
     /// Returns an iterator for all peers in the table that match the filter
-    fn filter_peers<'a>(
+    pub fn filter_peers<'a>(
         &'a self,
         filter: &'a dyn Fn(&'a PeerData) -> bool,
     ) -> impl Iterator<Item = &'a PeerData> {
@@ -354,7 +354,7 @@ pub struct PeerData {
     pub revalidation: Option<bool>,
     /// communication channels between the peer data and its active connection
     pub channels: Option<PeerChannels>,
-    /// Starts as false when a node is added. Set to true when a connection si active. When a
+    /// Starts as false when a node is added. Set to true when a connection becomes active. When a
     /// connection fails, the peer record is removed, so no need to set it to false.
     pub is_connected: bool,
 }
