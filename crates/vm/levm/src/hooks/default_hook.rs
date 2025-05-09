@@ -76,9 +76,9 @@ impl Hook for DefaultHook {
             .map_err(|_| VMError::TxValidation(TxValidationError::NonceIsMax))?;
 
         // check for nonce mismatch
-        if sender_account.info.nonce != vm.env.tx_nonce {
+        if sender_nonce != vm.env.tx_nonce {
             return Err(VMError::TxValidation(TxValidationError::NonceMismatch {
-                expected: sender_account.info.nonce,
+                expected: sender_nonce,
                 actual: vm.env.tx_nonce,
             }));
         }
