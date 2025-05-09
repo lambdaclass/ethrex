@@ -7,7 +7,7 @@ use redb::{AccessGuard, Database, Key, TableDefinition, Value};
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, DepositsLogHashRLP, WithdrawalHashesRLP},
 };
 
 const BATCHES_BY_BLOCK_NUMBER_TABLE: TableDefinition<BlockNumber, u64> =
@@ -18,6 +18,9 @@ const WITHDRAWALS_BY_BATCH: TableDefinition<u64, WithdrawalHashesRLP> =
 
 const BLOCK_NUMBERS_BY_BATCH: TableDefinition<u64, BlockNumbersRLP> =
     TableDefinition::new("BlockNumbersByBatch");
+
+const DEPOSITS_LOG_HASH_BY_BATCH: TableDefinition<u64, DepositsLogHashRLP> =
+    TableDefinition::new("DepositsLogHashByBatch");
 
 #[derive(Debug)]
 pub struct RedBStoreRollup {
@@ -91,6 +94,7 @@ pub fn init_db() -> Result<Database, StoreError> {
 
     table_creation_txn.open_table(BATCHES_BY_BLOCK_NUMBER_TABLE)?;
     table_creation_txn.open_table(WITHDRAWALS_BY_BATCH)?;
+    table_creation_txn.open_table(DEPOSITS_LOG_HASH_BY_BATCH)?;
     table_creation_txn.commit()?;
 
     Ok(db)
@@ -151,6 +155,29 @@ impl StoreEngineRollup for RedBStoreRollup {
             BlockNumbersRLP::from_bytes(block_numbers.encode_to_vec()),
         )
         .await
+    }
+
+    async fn store_deposit_logs_hash_by_batch(
+        &self,
+        batch_number: u64,
+        deposit_logs_hash: H256,
+    ) -> Result<(), StoreError> {
+        self.write(
+            DEPOSITS_LOG_HASH_BY_BATCH,
+            batch_number,
+            <H256 as Into<DepositsLogHashRLP>>::into(deposit_logs_hash),
+        )
+        .await
+    }
+
+    async fn get_deposit_logs_hash_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self
+            .read(DEPOSITS_LOG_HASH_BY_BATCH, batch_number)
+            .await?
+            .map(|rlp| rlp.value().to()))
     }
 
     async fn get_block_numbers_by_batch(
