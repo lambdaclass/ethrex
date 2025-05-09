@@ -14,7 +14,10 @@ use tracing::debug;
 
 use crate::{api::StoreEngine, cache::Cache, rlp::AccountStateRLP};
 
-use super::{difflayer::DiffLayer, layer::SnapshotLayer};
+use super::{
+    difflayer::DiffLayer,
+    layer::{SnapshotLayer, SnapshotLayerImpl},
+};
 
 #[derive(Clone)]
 pub struct DiskLayer {
@@ -109,6 +112,7 @@ impl SnapshotLayer for DiskLayer {
             block,
             accounts,
             storage,
+            None,
         ))
     }
 
@@ -116,14 +120,16 @@ impl SnapshotLayer for DiskLayer {
         self.stale.load(Ordering::SeqCst)
     }
 
-    fn mark_stale(&self) {
-        self.stale.store(true, Ordering::SeqCst);
+    fn mark_stale(&self) -> bool {
+        self.stale.swap(true, Ordering::SeqCst)
     }
 
     fn origin(&self) -> Arc<DiskLayer> {
         Arc::new(self.clone())
     }
+}
 
+impl SnapshotLayerImpl for DiskLayer {
     fn diffed(&self) -> Option<Bloom> {
         None
     }
@@ -142,4 +148,12 @@ impl SnapshotLayer for DiskLayer {
         debug!("Snapshot DiskLayer get_storage_traverse called at depth {depth}");
         self.get_storage(account_hash, storage_hash)
     }
+
+    fn flatten(self: Arc<Self>) -> Arc<dyn SnapshotLayer> {
+        self.clone()
+    }
+
+    fn add_accounts(&self, _accounts: HashMap<H256, Option<AccountState>>) {}
+
+    fn add_storage(&self, _storage: HashMap<H256, HashMap<H256, U256>>) {}
 }

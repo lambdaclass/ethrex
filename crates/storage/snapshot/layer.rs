@@ -5,7 +5,7 @@ use ethrex_common::{types::AccountState, Bloom, H256, U256};
 use super::DiskLayer;
 
 // Snapshot layer methods.
-pub trait SnapshotLayer: Send + Sync + Debug {
+pub trait SnapshotLayer: SnapshotLayerImpl + Send + Sync + Debug {
     /// Root hash for this snapshot.
     fn root(&self) -> H256;
 
@@ -21,7 +21,7 @@ pub trait SnapshotLayer: Send + Sync + Debug {
 
     fn stale(&self) -> bool;
 
-    fn mark_stale(&self);
+    fn mark_stale(&self) -> bool;
 
     fn parent(&self) -> Option<Arc<dyn SnapshotLayer>>;
 
@@ -34,7 +34,10 @@ pub trait SnapshotLayer: Send + Sync + Debug {
     ) -> Arc<dyn SnapshotLayer>;
 
     fn origin(&self) -> Arc<DiskLayer>;
+}
 
+/// Methods used internally between layers.
+pub trait SnapshotLayerImpl: Send + Sync + Debug {
     fn diffed(&self) -> Option<Bloom>;
 
     // skips bloom checks, used if a higher layer bloom filter is hit
@@ -46,4 +49,11 @@ pub trait SnapshotLayer: Send + Sync + Debug {
         storage_hash: H256,
         depth: usize,
     ) -> Option<U256>;
+
+    /// Flatten diff layers.
+    fn flatten(self: Arc<Self>) -> Arc<dyn SnapshotLayer>;
+
+    fn add_accounts(&self, accounts: HashMap<H256, Option<AccountState>>);
+
+    fn add_storage(&self, storage: HashMap<H256, HashMap<H256, U256>>);
 }
