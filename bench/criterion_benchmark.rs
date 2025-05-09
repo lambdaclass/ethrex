@@ -8,6 +8,7 @@ use ethrex::{
     DEFAULT_DATADIR,
 };
 use ethrex_p2p::network;
+use ethrex_vm::EvmEngine;
 use std::{env::set_current_dir, str::FromStr, thread, time::Duration};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 
@@ -17,8 +18,7 @@ fn block_import() {
     set_datadir(data_dir);
     remove_db(data_dir, true);
 
-    let evm_engine = "revm".to_owned().try_into().unwrap();
-
+    let evm_engine = EvmEngine::default();
     let network = "../../test_data/genesis-l2-ci.json";
 
     let rt = tokio::runtime::Runtime::new().unwrap();
