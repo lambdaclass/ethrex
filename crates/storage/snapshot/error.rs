@@ -1,0 +1,18 @@
+use ethrex_common::H256;
+use ethrex_rlp::error::RLPDecodeError;
+
+#[derive(Debug, thiserror::Error)]
+pub enum SnapshotError {
+    #[error("SnapShot with root {0} not found.")]
+    SnapshotNotFound(H256),
+    #[error("SnapShot with root {0} is the disk layer, wrong api usage.")]
+    SnapshotIsdiskLayer(H256),
+    #[error("Tried to create a snapshot cycle")]
+    SnapshotCycle,
+    #[error("Parent snaptshot not found, parent = {0}, block = {1}")]
+    ParentSnapshotNotFound(H256, H256),
+    #[error("Tried to use a stale snapshot")]
+    StaleSnapshot,
+    #[error(transparent)]
+    RLPDecodeError(#[from] RLPDecodeError),
+}

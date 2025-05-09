@@ -10,12 +10,12 @@ use std::{
 use ethrex_common::{types::AccountState, Bloom, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::Trie;
-use tracing::debug;
 
 use crate::{api::StoreEngine, cache::Cache, rlp::AccountStateRLP};
 
 use super::{
     difflayer::DiffLayer,
+    error::SnapshotError,
     layer::{SnapshotLayer, SnapshotLayerImpl},
 };
 
@@ -58,43 +58,61 @@ impl SnapshotLayer for DiskLayer {
         self.root
     }
 
-    fn get_account(&self, hash: H256) -> Option<Option<AccountState>> {
+    fn get_account(&self, hash: H256) -> Result<Option<Option<AccountState>>, SnapshotError> {
         if let Some(value) = self.cache.accounts.get(&hash) {
-            return Some(value.clone());
+            return Ok(Some(value.clone()));
         }
 
-        let value = self
+        let value = if let Some(value) = self
             .state_trie
             .get(hash)
             .ok()
             .flatten()
-            .map(AccountStateRLP::from_bytes)?;
+            .map(AccountStateRLP::from_bytes)
+        {
+            value
+        } else {
+            return Ok(None);
+        };
 
         let value: AccountState = value.to();
 
         self.cache.accounts.insert(hash, value.clone().into());
 
-        Some(Some(value))
+        Ok(Some(Some(value)))
     }
 
-    fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<U256> {
+    fn get_storage(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, SnapshotError> {
         if let Some(value) = self.cache.storages.get(&(account_hash, storage_hash)) {
-            return Some(value);
+            return Ok(Some(value));
         }
 
-        let account = self.get_account(account_hash)??;
+        let account = if let Some(Some(account)) = self.get_account(account_hash)? {
+            account
+        } else {
+            return Ok(None);
+        };
 
         let storage_trie = self
             .db
             .open_storage_trie(account_hash, account.storage_root);
 
-        let value: U256 = U256::decode(&storage_trie.get(storage_hash).ok().flatten()?).ok()?;
+        let value = if let Some(value) = storage_trie.get(storage_hash).ok().flatten() {
+            value
+        } else {
+            return Ok(None);
+        };
+        let value: U256 = U256::decode(&value)?;
 
         self.cache
             .storages
             .insert((account_hash, storage_hash), value);
 
-        Some(value)
+        Ok(Some(value))
     }
 
     fn parent(&self) -> Option<Arc<dyn SnapshotLayer>> {
@@ -134,8 +152,11 @@ impl SnapshotLayerImpl for DiskLayer {
         None
     }
 
-    fn get_account_traverse(&self, hash: H256, depth: usize) -> Option<Option<AccountState>> {
-        debug!("Snapshot DiskLayer get_account_traverse called at depth {depth}");
+    fn get_account_traverse(
+        &self,
+        hash: H256,
+        _depth: usize,
+    ) -> Result<Option<Option<AccountState>>, SnapshotError> {
         self.get_account(hash)
     }
 
@@ -143,9 +164,8 @@ impl SnapshotLayerImpl for DiskLayer {
         &self,
         account_hash: H256,
         storage_hash: H256,
-        depth: usize,
-    ) -> Option<U256> {
-        debug!("Snapshot DiskLayer get_storage_traverse called at depth {depth}");
+        _depth: usize,
+    ) -> Result<Option<U256>, SnapshotError> {
         self.get_storage(account_hash, storage_hash)
     }
 

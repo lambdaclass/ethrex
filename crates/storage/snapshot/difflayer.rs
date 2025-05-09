@@ -11,6 +11,7 @@ use tracing::debug;
 
 use super::{
     disklayer::DiskLayer,
+    error::SnapshotError,
     layer::{SnapshotLayer, SnapshotLayerImpl},
 };
 
@@ -78,7 +79,7 @@ impl SnapshotLayer for DiffLayer {
         self.root
     }
 
-    fn get_account(&self, hash: H256) -> Option<Option<AccountState>> {
+    fn get_account(&self, hash: H256) -> Result<Option<Option<AccountState>>, SnapshotError> {
         // todo: check stale
 
         let hit = self
@@ -94,7 +95,11 @@ impl SnapshotLayer for DiffLayer {
         self.get_account_traverse(hash, 0)
     }
 
-    fn get_storage(&self, account_hash: H256, storage_hash: H256) -> Option<ethrex_common::U256> {
+    fn get_storage(
+        &self,
+        account_hash: H256,
+        storage_hash: H256,
+    ) -> Result<Option<U256>, SnapshotError> {
         // todo: check stale
 
         let bloom_hash = account_hash ^ storage_hash;
@@ -149,7 +154,11 @@ impl SnapshotLayerImpl for DiffLayer {
     }
 
     // skips bloom checks, used if a higher layer bloom filter is hit
-    fn get_account_traverse(&self, hash: H256, depth: usize) -> Option<Option<AccountState>> {
+    fn get_account_traverse(
+        &self,
+        hash: H256,
+        depth: usize,
+    ) -> Result<Option<Option<AccountState>>, SnapshotError> {
         // todo: check if its stale
 
         // If it's in this layer, return it.
@@ -157,7 +166,7 @@ impl SnapshotLayerImpl for DiffLayer {
             let accounts = self.accounts.read().unwrap();
             if let Some(value) = accounts.get(&hash) {
                 debug!("Snapshot DiffLayer get_account_traverse hit at depth {depth}");
-                return Some(value.clone());
+                return Ok(Some(value.clone()));
             }
         }
 
@@ -170,7 +179,7 @@ impl SnapshotLayerImpl for DiffLayer {
         account_hash: H256,
         storage_hash: H256,
         depth: usize,
-    ) -> Option<U256> {
+    ) -> Result<Option<U256>, SnapshotError> {
         // todo: check if its stale
 
         // If it's in this layer, return it.
@@ -181,7 +190,7 @@ impl SnapshotLayerImpl for DiffLayer {
                 .and_then(|x| x.get(&storage_hash))
             {
                 debug!("Snapshot DiffLayer get_storage_traverse hit at depth {depth}");
-                return Some(*value);
+                return Ok(Some(*value));
             }
         }
 

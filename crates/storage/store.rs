@@ -1,5 +1,6 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+use crate::snapshot::error::SnapshotError;
 use crate::snapshot::SnapshotTree;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
@@ -22,7 +23,7 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -535,7 +536,14 @@ impl Store {
     ) -> Result<Option<U256>, StoreError> {
         if let Some(snapshot) = self.snapshots.snapshot(block_hash) {
             let address = hash_address_fixed(&address);
-            return Ok(snapshot.get_storage(address, storage_key));
+            let result = snapshot.get_storage(address, storage_key);
+
+            match result {
+                Ok(value) => return Ok(value),
+                Err(snapshot_error) => {
+                    error!("Error fetching from snapshot (storage): {}", snapshot_error);
+                }
+            }
         }
 
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
@@ -691,8 +699,14 @@ impl Store {
 
         if let Some(snapshot) = self.snapshots.snapshot(block_hash) {
             let address = hash_address_fixed(&address);
-            if let Some(acc) = snapshot.get_account(address) {
-                return Ok(acc);
+            let result = snapshot.get_account(address);
+
+            match result {
+                Ok(Some(value)) => return Ok(value),
+                Err(snapshot_error) => {
+                    error!("Error fetching from snapshot (account): {}", snapshot_error);
+                }
+                Ok(None) => {}
             }
         }
 
@@ -1124,8 +1138,11 @@ impl Store {
     pub async fn add_block_snapshot(&self, block: Block, account_updates: Vec<AccountUpdate>) {
         let store = self.clone();
 
-        // We don't await the task as we don't need to wait for any result.
-        tokio::spawn(async move {
+        fn add_block_snapshot_task(
+            block: Block,
+            store: Store,
+            account_updates: Vec<AccountUpdate>,
+        ) -> Result<(), SnapshotError> {
             let hash = block.hash();
             let parent_hash = block.header.parent_hash;
             let state_root = block.header.state_root;
@@ -1166,11 +1183,21 @@ impl Store {
                     }
                 }
 
-                store.snapshots.update(hash, parent_hash, accounts, storage);
+                store
+                    .snapshots
+                    .update(hash, parent_hash, accounts, storage)?;
                 info!(
                     "Snapshot (diff layer) created for {} with parent {}",
                     hash, parent_hash
                 );
+            }
+            Ok(())
+        }
+
+        // We don't await the task as we don't need to wait for any result.
+        tokio::spawn(async move {
+            if let Err(err) = add_block_snapshot_task(block, store, account_updates) {
+                error!("Error adding block snapshot: {}", err);
             }
         });
     }
