@@ -203,6 +203,7 @@ impl Discv4Server {
                         debug!("Found outdated enr-seq, send an enr_request");
                         self.send_enr_request(peer.node, self.ctx.table.lock().await)
                             .await?;
+                        return Ok(());
                     }
                 }
 
@@ -456,12 +457,14 @@ impl Discv4Server {
                             chain_config,
                             genesis_header,
                         ) {
-                            eprintln!("Invalid?");
+                            debug!("Invalid eth pair received. Removing peer from table");
+
+                            table_lock.replace_peer(packet.get_node_id());
                             return Err(DiscoveryError::InvalidMessage(
                                 "Could not validate fork id from new node".into(),
                             ));
                         }
-                        eprintln!("ENR eth pair validated");
+                        debug!("ENR eth pair validated");
                     }
                 }
 
@@ -685,7 +688,9 @@ pub(super) mod tests {
         types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
-    use ethrex_common::{types::ForkId, H32};
+    use ethrex_common::types::{BlockHeader, ChainConfig, ForkId};
+    use ethrex_common::H32;
+    use ethrex_storage::error::StoreError;
     use ethrex_storage::EngineType;
     use ethrex_storage::Store;
 
@@ -738,8 +743,7 @@ pub(super) mod tests {
         };
 
         let storage = if init_storage {
-            let (config, header) = build_basic_config_and_header(false, true);
-            setup_storage(config, header).await.expect("Storage setup")
+            setup_storage().await.expect("Storage setup")
         } else {
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB")
         };
@@ -957,10 +961,16 @@ pub(super) mod tests {
     async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
         let mut server_a = start_discovery_server(8086, true, true).await?;
         let mut server_b = start_discovery_server(8087, true, true).await?;
+        let mut server_c = start_discovery_server(8088, true, true).await?;
 
-        let fork_id = ForkId {
+        let fork_id_valid = ForkId {
             fork_hash: H32::zero(),
             fork_next: u64::MAX,
+        };
+
+        let fork_id_invalid = ForkId {
+            fork_hash: H32::zero(),
+            fork_next: 1,
         };
 
         server_a
@@ -968,7 +978,7 @@ pub(super) mod tests {
             .local_node_record
             .lock()
             .await
-            .set_fork_id(&fork_id, &server_a.ctx.signer)
+            .set_fork_id(&fork_id_valid, &server_a.ctx.signer)
             .unwrap();
 
         server_b
@@ -976,52 +986,81 @@ pub(super) mod tests {
             .local_node_record
             .lock()
             .await
-            .set_fork_id(&fork_id, &server_b.ctx.signer)
+            .set_fork_id(&fork_id_valid, &server_b.ctx.signer)
+            .unwrap();
+
+        server_c
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .set_fork_id(&fork_id_invalid, &server_c.ctx.signer)
             .unwrap();
 
         connect_servers(&mut server_a, &mut server_b).await?;
+        connect_servers(&mut server_a, &mut server_c).await?;
 
         // wait some time for the enr request-response finishes
         sleep(Duration::from_millis(2500)).await;
 
-        let table = server_b.ctx.table.lock().await;
+        eprintln!("agarro lock");
+        let table = server_a.ctx.table.lock().await;
+
         assert!(table
-            .get_by_node_id(server_a.ctx.local_node.node_id)
+            .get_by_node_id(server_b.ctx.local_node.node_id)
             .is_some());
+
+        assert!(table
+            .get_by_node_id(server_c.ctx.local_node.node_id)
+            .is_none());
+
         Ok(())
     }
-    use ethrex_common::types::{BlockHeader, ChainConfig};
-    use ethrex_storage::error::StoreError;
 
-    async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
+    async fn setup_storage() -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
-        let block_number = header.number;
-        let block_hash = header.compute_block_hash();
-        store.add_block_header(block_hash, header).await?;
-        store.set_canonical_block(block_number, block_hash).await?;
-        store.update_latest_block_number(block_number).await?;
-        store.set_chain_config(&config).await?;
-        Ok(store)
-    }
 
-    fn build_basic_config_and_header(
-        istanbul_active: bool,
-        shanghai_active: bool,
-    ) -> (ChainConfig, BlockHeader) {
         let config = ChainConfig {
-            shanghai_time: Some(if shanghai_active { 1 } else { 10 }),
-            istanbul_block: Some(if istanbul_active { 1 } else { 10 }),
+            shanghai_time: Some(1),
+            istanbul_block: Some(1),
             ..Default::default()
         };
+        store.set_chain_config(&config).await?;
 
-        let header = BlockHeader {
+        let header0 = BlockHeader {
             number: 0,
-            timestamp: 5,
+            timestamp: 0,
             gas_limit: 100_000_000,
             gas_used: 0,
             ..Default::default()
         };
+        let block_hash0 = header0.compute_block_hash();
+        store.add_block_header(block_hash0, header0).await?;
+        store.set_canonical_block(0, block_hash0).await?;
 
-        (config, header)
+        let header1 = BlockHeader {
+            number: 1,
+            timestamp: 15,
+            gas_limit: 100_000_000,
+            gas_used: 0,
+            ..Default::default()
+        };
+        let block_hash1 = header1.compute_block_hash();
+        store.add_block_header(block_hash1, header1).await?;
+        store.set_canonical_block(1, block_hash1).await?;
+
+        let header2 = BlockHeader {
+            number: 2,
+            timestamp: 15,
+            gas_limit: 100_000_000,
+            gas_used: 0,
+            ..Default::default()
+        };
+        let block_hash2 = header2.compute_block_hash();
+        store.add_block_header(block_hash2, header2).await?;
+        store.set_canonical_block(2, block_hash2).await?;
+
+        store.update_latest_block_number(2).await?;
+        Ok(store)
     }
 }
