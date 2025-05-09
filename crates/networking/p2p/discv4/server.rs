@@ -203,7 +203,6 @@ impl Discv4Server {
                         debug!("Found outdated enr-seq, send an enr_request");
                         self.send_enr_request(peer.node, self.ctx.table.lock().await)
                             .await?;
-                        return Ok(());
                     }
                 }
 
@@ -950,10 +949,13 @@ pub(super) mod tests {
      * This test verifies the exchange and validation of eth pairs in the ENR (Ethereum Node Record) messages.
      * The test follows these steps:
      *
-     * 1. Start two nodes.
-     * 2. Add a fork_id to the nodes
-     * 3. Wait until they establish a connection.
-     * 4. Validate they have exchanged the pairs and validated them
+     * 1. Start three nodes.
+     * 2. Add a valid fork_id to the nodes a and b
+     * 3. Add a invalid fork_id to the node c
+     * 4. Wait until they establish a connection.
+     * 5. Validate they have exchanged the pairs and validated them
+     * 6. node a and b should be connected
+     * 7. node a and c shouldn't be connected
      */
     async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
         let mut server_a = start_discovery_server(8086, true, true).await?;
