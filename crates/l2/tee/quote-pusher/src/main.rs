@@ -2,7 +2,6 @@ mod test;
 
 use std::collections::HashMap;
 use std::env;
-use std::ops::Add;
 use std::str::FromStr;
 
 use ethereum_types::{Address, H160, H256, U256};
