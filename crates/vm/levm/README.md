@@ -134,19 +134,12 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 > [!NOTE]
 > This is updated as of this README's last update. For the most up-to-date status, please run the tests locally.
 
-**Total**: 11322/14408 (78.58%)
+**Total**: 6235/6235 (100.00%)
 
 **Prague**: 2373/2373 (100.00%)
 **Cancun**: 3579/3579 (100.00%)
 **Shanghai**: 221/221 (100.00%)
-**Byzantium**: 1795/2330 (77.04%)
-**Berlin**: 2/35 (5.71%)
-**Constantinople**: 1689/2439 (69.25%)
 **Paris**: 62/62 (100.00%)
-**Homestead**: 612/1324 (46.22%)
-**Istanbul**: 34/35 (97.14%)
-**London**: 39/39 (100.00%)
-**Frontier**: 149/742 (20.08%)
 
 ### How to run EF tests locally
 

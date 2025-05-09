@@ -6,13 +6,16 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use serde::{Deserialize, Serialize};
-
+/// A list of addresses and storage keys that the transaction plans to access.
+/// See [EIP-2930](https://eips.ethereum.org/EIPS/eip-2930)
 pub type AccessList = Vec<AccessListItem>;
 pub type AccessListItem = (Address, Vec<H256>);
 
+/// Used in Type-4 transactions. Added in [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702)
 pub type AuthorizationList = Vec<AuthorizationTuple>;
 #[derive(Debug, Clone, Default, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Used in Type-4 transactions. Added in [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702)
 pub struct AuthorizationTuple {
     pub chain_id: U256,
     pub address: Address,

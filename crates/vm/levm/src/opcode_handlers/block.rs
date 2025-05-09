@@ -79,12 +79,8 @@ impl<'a> VM<'a> {
     pub fn op_prevrandao(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-4399
         // After Paris the prev randao is the prev_randao (or current_random) field
-        let randao = if self.env.config.fork >= Fork::Paris {
-            let randao = self.env.prev_randao.unwrap_or_default(); // Assuming prev_randao has been integrated
-            U256::from_big_endian(randao.0.as_slice())
-        } else {
-            self.env.difficulty
-        };
+        let randao = U256::from_big_endian(self.env.prev_randao.unwrap_or_default().0.as_slice());
+
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::PREVRANDAO)?;
         current_call_frame.stack.push(randao)?;
@@ -105,10 +101,6 @@ impl<'a> VM<'a> {
 
     // CHAINID operation
     pub fn op_chainid(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-1344
-        if self.env.config.fork < Fork::Istanbul {
-            return Err(VMError::InvalidOpcode);
-        }
         let chain_id = self.env.chain_id;
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::CHAINID)?;
@@ -120,11 +112,6 @@ impl<'a> VM<'a> {
 
     // SELFBALANCE operation
     pub fn op_selfbalance(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-1884
-        if self.env.config.fork < Fork::London {
-            return Err(VMError::InvalidOpcode);
-        }
-
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::SELFBALANCE)?;
 
@@ -141,9 +128,6 @@ impl<'a> VM<'a> {
     // BASEFEE operation
     pub fn op_basefee(&mut self) -> Result<OpcodeResult, VMError> {
         // https://eips.ethereum.org/EIPS/eip-3198
-        if self.env.config.fork < Fork::London {
-            return Err(VMError::InvalidOpcode);
-        }
         let base_fee_per_gas = self.env.base_fee_per_gas;
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::BASEFEE)?;

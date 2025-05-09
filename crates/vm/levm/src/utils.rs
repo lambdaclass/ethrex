@@ -25,8 +25,8 @@ use std::collections::{HashMap, HashSet};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
+/// Converts address (H160) to word (U256)
 pub fn address_to_word(address: Address) -> U256 {
-    // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
     let mut word = [0u8; 32];
 
     for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
@@ -53,12 +53,11 @@ pub fn calculate_create_address(
     )?))
 }
 
-/// Calculates the address of a new contract using the CREATE2 opcode as follow
+/// Calculates the address of a new contract using the CREATE2 opcode as follows
 ///
 /// initialization_code = memory[offset:offset+size]
 ///
-/// address = keccak256(0xff + sender_address + salt + keccak256(initialization_code))[12:]
-///
+/// address = keccak256(0xff || sender_address || salt || keccak256(initialization_code))[12:]
 pub fn calculate_create2_address(
     sender_address: Address,
     initialization_code: &Bytes,
@@ -85,6 +84,10 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
+/// Calculates valid jump destinations given some bytecode.
+/// This is a necessary calculation because of PUSH opcodes.
+/// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
+/// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
     let mut valid_jump_destinations = HashSet::new();
     let mut pc = 0;
@@ -483,9 +486,8 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost =
-            gas_cost::tx_calldata(&self.current_call_frame()?.calldata, self.env.config.fork)
-                .map_err(VMError::OutOfGas)?;
+        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame()?.calldata)
+            .map_err(VMError::OutOfGas)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)
@@ -499,11 +501,9 @@ impl<'a> VM<'a> {
         // Create Cost
         if self.is_create() {
             // https://eips.ethereum.org/EIPS/eip-2#specification
-            if self.env.config.fork >= Fork::Homestead {
-                intrinsic_gas = intrinsic_gas
-                    .checked_add(CREATE_BASE_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            }
+            intrinsic_gas = intrinsic_gas
+                .checked_add(CREATE_BASE_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {
@@ -575,7 +575,7 @@ impl<'a> VM<'a> {
         // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
         // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
         // see it in https://eips.ethereum.org/EIPS/eip-7623
-        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
+        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)
             .map_err(VMError::OutOfGas)?
             .checked_div(STANDARD_TOKEN_COST)
             .ok_or(VMError::Internal(InternalError::DivisionError))?;

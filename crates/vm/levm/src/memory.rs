@@ -4,6 +4,7 @@ use crate::{
 };
 use ethrex_common::U256;
 
+/// Memory of the EVM, a volatile byte array.
 pub type Memory = Vec<u8>;
 
 pub fn try_resize(memory: &mut Memory, unchecked_new_size: usize) -> Result<(), VMError> {
