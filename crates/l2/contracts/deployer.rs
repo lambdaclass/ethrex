@@ -12,7 +12,6 @@ use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::calldata::{encode_calldata, Value};
 use ethrex_l2_sdk::get_address_from_secret_key;
 use ethrex_rpc::clients::eth::BlockByNumber;
-use ethrex_rpc::clients::eth::WrappedTransaction;
 use ethrex_rpc::clients::eth::{
     errors::{CalldataEncodeError, EthClientError},
     eth_sender::Overrides,
@@ -80,9 +79,16 @@ lazy_static::lazy_static! {
 }
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address,address[])";
+    "initialize(bool,address,address,address,address,address,address[])";
 
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
+
+struct ProxyDeployment {
+    proxy_address: Address,
+    proxy_tx_hash: H256,
+    implementation_address: Address,
+    implementation_tx_hash: H256,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), DeployError> {
@@ -117,8 +123,8 @@ async fn main() -> Result<(), DeployError> {
         setup_result.deployer_private_key,
         setup_result.committer_address,
         setup_result.verifier_address,
-        on_chain_proposer,
-        bridge_address,
+        on_chain_proposer.proxy_address,
+        bridge_address.proxy_address,
         setup_result.risc0_contract_verifier_address,
         sp1_contract_verifier_address,
         pico_contract_verifier_address,
@@ -129,7 +135,7 @@ async fn main() -> Result<(), DeployError> {
 
     if let Some(arg) = args.get(1) {
         if arg == "--deposit_rich" {
-            make_deposits(bridge_address, &setup_result.eth_client).await?;
+            make_deposits(bridge_address.proxy_address, &setup_result.eth_client).await?;
         }
     }
 
@@ -143,10 +149,10 @@ async fn main() -> Result<(), DeployError> {
             let (envar, _) = line.split_at(eq);
             line = match envar {
                 "COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" => {
-                    format!("{envar}={on_chain_proposer:#x}")
+                    format!("{envar}={:#x}", on_chain_proposer.proxy_address)
                 }
                 "L1_WATCHER_BRIDGE_ADDRESS" => {
-                    format!("{envar}={bridge_address:#x}")
+                    format!("{envar}={:#x}", bridge_address.proxy_address)
                 }
                 "DEPLOYER_SP1_CONTRACT_VERIFIER" => {
                     format!("{envar}={sp1_contract_verifier_address:#x}")
@@ -279,10 +285,11 @@ fn download_contract_deps(contracts_path: &Path) -> Result<(), DeployError> {
     })?;
     Command::new("git")
         .arg("clone")
-        .arg("https://github.com/OpenZeppelin/openzeppelin-contracts.git")
+        .arg("--recurse-submodules")
+        .arg("https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git")
         .arg(
             contracts_path
-                .join("lib/openzeppelin-contracts")
+                .join("lib/openzeppelin-contracts-upgradeable")
                 .to_str()
                 .ok_or(DeployError::FailedToGetStringFromPath)?,
         )
@@ -329,6 +336,11 @@ fn compile_contracts(contracts_path: &Path) -> Result<(), DeployError> {
     compile_contract(contracts_path, "src/l1/CommonBridge.sol", false)?;
     compile_contract(
         contracts_path,
+        "lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol",
+        false
+    )?;
+    compile_contract(
+        contracts_path,
         "lib/sp1-contracts/contracts/src/v4.0.0-rc.3/SP1VerifierGroth16.sol",
         false,
     )?;
@@ -347,7 +359,15 @@ async fn deploy_contracts(
     contracts_path: &Path,
     deploy_sp1_verifier: bool,
     deploy_pico_verifier: bool,
-) -> Result<(Address, Address, Option<Address>, Option<Address>), DeployError> {
+) -> Result<
+    (
+        ProxyDeployment,
+        ProxyDeployment,
+        Option<Address>,
+        Option<Address>,
+    ),
+    DeployError,
+> {
     let deploy_frames = spinner!(["📭❱❱", "❱📬❱", "❱❱📫"], 220);
 
     let mut spinner = Spinner::new(
@@ -356,35 +376,48 @@ async fn deploy_contracts(
         Color::Cyan,
     );
 
-    let (on_chain_proposer_deployment_tx_hash, on_chain_proposer_address) =
-        deploy_on_chain_proposer(
-            deployer,
-            deployer_private_key,
-            eth_client,
-            &contracts_path.join("solc_out/OnChainProposer.bin"),
-        )
-        .await?;
-
-    let msg = format!(
-        "OnChainProposer:\n\tDeployed at address {}\n\tWith tx hash {}",
-        format!("{on_chain_proposer_address:#x}").bright_green(),
-        format!("{on_chain_proposer_deployment_tx_hash:#x}").bright_cyan()
-    );
-    spinner.success(&msg);
-
-    let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying CommonBridge", Color::Cyan);
-    let (bridge_deployment_tx_hash, bridge_address) = deploy_bridge(
+    let on_chain_proposer_deployment = deploy_with_proxy(
         deployer,
         deployer_private_key,
         eth_client,
-        &contracts_path.join("solc_out/CommonBridge.bin"),
+        &contracts_path.join("solc_out"),
+        "OnChainProposer.bin",
     )
     .await?;
 
     let msg = format!(
-        "CommonBridge:\n\tDeployed at address {}\n\tWith tx hash {}",
-        format!("{bridge_address:#x}").bright_green(),
-        format!("{bridge_deployment_tx_hash:#x}").bright_cyan(),
+        r#"OnChainProposer:
+    Deployed implementation at address {}
+    With tx hash {}
+    Deployed proxy at address {}
+    With tx hash {}"#,
+        format!("{:#x}", on_chain_proposer_deployment.implementation_address).bright_green(),
+        format!("{:#x}", on_chain_proposer_deployment.implementation_tx_hash).bright_cyan(),
+        format!("{:#x}", on_chain_proposer_deployment.proxy_address).bright_green(),
+        format!("{:#x}", on_chain_proposer_deployment.proxy_tx_hash).bright_cyan()
+    );
+    spinner.success(&msg);
+
+    let mut spinner = Spinner::new(deploy_frames.clone(), "Deploying CommonBridge", Color::Cyan);
+    let bridge_deployment = deploy_with_proxy(
+        deployer,
+        deployer_private_key,
+        eth_client,
+        &contracts_path.join("solc_out"),
+        "CommonBridge.bin",
+    )
+    .await?;
+
+    let msg = format!(
+        r#"CommonBridge:
+    Deployed implementation at address {}
+    With tx hash {}
+    Deployed proxy at address {}
+    With tx hash {}"#,
+        format!("{:#x}", bridge_deployment.implementation_address).bright_green(),
+        format!("{:#x}", bridge_deployment.implementation_tx_hash).bright_cyan(),
+        format!("{:#x}", bridge_deployment.proxy_address).bright_green(),
+        format!("{:#x}", bridge_deployment.proxy_tx_hash).bright_cyan()
     );
     spinner.success(&msg);
 
@@ -431,8 +464,8 @@ async fn deploy_contracts(
     };
 
     Ok((
-        on_chain_proposer_address,
-        bridge_address,
+        on_chain_proposer_deployment,
+        bridge_deployment,
         sp1_verifier_address,
         pico_verifier_address,
     ))
@@ -442,9 +475,9 @@ async fn deploy_contract(
     deployer: Address,
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
-    contract_path: &Path,
+    contract_binaries: &Path,
 ) -> Result<(H256, Address), DeployError> {
-    let init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
+    let init_code = hex::decode(std::fs::read_to_string(contract_binaries).map_err(|err| {
         DeployError::DecodingError(format!("Failed to read contract init code: {err}"))
     })?)
     .map_err(|err| {
@@ -460,76 +493,70 @@ async fn deploy_contract(
     Ok((deploy_tx_hash, contract_address))
 }
 
-async fn deploy_on_chain_proposer(
+async fn deploy_proxy(
     deployer: Address,
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
-    contract_path: &Path,
+    contract_binaries: &Path,
+    implementation_address: Address,
 ) -> Result<(H256, Address), DeployError> {
-    let mut init_code = hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
-        DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
-    })?)
+    let mut init_code = hex::decode(
+        std::fs::read_to_string(contract_binaries.join("ERC1967Proxy.bin")).map_err(|err| {
+            DeployError::DecodingError(format!("Failed to read on_chain_proposer_init_code: {err}"))
+        })?,
+    )
     .map_err(|err| {
         DeployError::DecodingError(format!(
             "Failed to decode on_chain_proposer_init_code: {err}"
         ))
     })?;
 
-    let validium: bool = read_env_var("COMMITTER_VALIDIUM")?
-        .trim()
-        .parse()
-        .map_err(|err| DeployError::ParseError(format!("Malformed COMMITTER_VALIDIUM: {err}")))?;
+    init_code.extend(H256::from(implementation_address).0);
+    init_code.extend(H256::from_low_u64_be(0x40).0);
+    init_code.extend(H256::zero().0);
 
-    let validium_value = if validium { 1u8 } else { 0u8 };
-    let encoded_validium = vec![0; 31]
-        .into_iter()
-        .chain(std::iter::once(validium_value));
-    init_code.extend(encoded_validium);
-
-    let (deploy_tx_hash, contract_address) = create2_deploy(
+    let (deploy_tx_hash, proxy_address) = create2_deploy(
         deployer,
         deployer_private_key,
-        &init_code.into(),
+        &Bytes::from(init_code),
         eth_client,
     )
     .await
     .map_err(DeployError::from)?;
 
-    Ok((deploy_tx_hash, contract_address))
+    Ok((deploy_tx_hash, proxy_address))
 }
 
-async fn deploy_bridge(
+async fn deploy_with_proxy(
     deployer: Address,
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
-    contract_path: &Path,
-) -> Result<(H256, Address), DeployError> {
-    let mut bridge_init_code =
-        hex::decode(std::fs::read_to_string(contract_path).map_err(|err| {
-            DeployError::DecodingError(format!("Failed to read bridge_init_code: {err}"))
-        })?)
-        .map_err(|err| {
-            DeployError::DecodingError(format!("Failed to decode bridge_init_code: {err}"))
-        })?;
-
-    let encoded_owner = {
-        let offset = 32 - deployer.as_bytes().len() % 32;
-        let mut encoded_owner = vec![0; offset];
-        encoded_owner.extend_from_slice(deployer.as_bytes());
-        encoded_owner
-    };
-
-    bridge_init_code.extend_from_slice(&encoded_owner);
-
-    let (deploy_tx_hash, bridge_address) = create2_deploy(
+    contracts_path: &Path,
+    contract_name: &str,
+) -> Result<ProxyDeployment, DeployError> {
+    let (implementation_tx_hash, implementation_address) = deploy_contract(
         deployer,
         deployer_private_key,
-        &bridge_init_code.into(),
         eth_client,
+        &contracts_path.join(contract_name),
     )
     .await?;
 
-    Ok((deploy_tx_hash, bridge_address))
+    let (proxy_tx_hash, proxy_address) = deploy_proxy(
+        deployer,
+        deployer_private_key,
+        eth_client,
+        contracts_path,
+        implementation_address,
+    )
+    .await?;
+
+    Ok(ProxyDeployment {
+        proxy_address,
+        proxy_tx_hash,
+        implementation_address,
+        implementation_tx_hash,
+    })
 }
 
 async fn create2_deploy(
@@ -681,7 +708,14 @@ async fn initialize_on_chain_proposer(
     verifier: Address,
     eth_client: &EthClient,
 ) -> Result<H256, DeployError> {
+    let validium: bool = read_env_var("COMMITTER_VALIDIUM")?
+        .trim()
+        .parse()
+        .map_err(|err| DeployError::ParseError(format!("Malformed COMMITTER_VALIDIUM: {err}")))?;
+
     let calldata_values = vec![
+        Value::Bool(validium),
+        Value::Address(deployer),
         Value::Address(bridge),
         Value::Address(risc0_verifier_address),
         Value::Address(sp1_verifier_address),
@@ -730,7 +764,7 @@ async fn initialize_bridge(
     deployer_private_key: SecretKey,
     eth_client: &EthClient,
 ) -> Result<H256, DeployError> {
-    let calldata_values = vec![Value::Address(on_chain_proposer)];
+    let calldata_values = vec![Value::Address(deployer), Value::Address(on_chain_proposer)];
     let bridge_initialization_calldata =
         encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
 
@@ -753,9 +787,8 @@ async fn initialize_bridge(
                 ..Default::default()
             },
         )
-        .await
-        .map_err(DeployError::from)?;
-    let mut wrapped_tx = WrappedTransaction::EIP1559(initialize_tx);
+        .await?;
+    let mut wrapped_tx = ethrex_rpc::clients::eth::WrappedTransaction::EIP1559(initialize_tx);
     eth_client
         .set_gas_for_wrapped_tx(&mut wrapped_tx, deployer)
         .await?;
