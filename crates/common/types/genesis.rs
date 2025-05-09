@@ -2,12 +2,14 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
+use k256::elliptic_curve::ff::derive::bitvec::order;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use sha3::{Digest, Keccak256};
 use std::{
     collections::{BTreeMap, HashMap},
     io,
+    ops::Deref,
     path::Path,
 };
 
@@ -376,11 +378,68 @@ impl Genesis {
         });
         Trie::compute_hash_from_unsorted_iter(iter)
     }
-    pub fn write_as_json(&self, path: &Path) -> io::Result<()> {
-        let genesis_json = serde_json::to_string_pretty(&self)?;
-        let ordered_map: BTreeMap<String, Value> = serde_json::from_str(&genesis_json)?;
-        let ordered_json = serde_json::to_string_pretty(&ordered_map)?;
-        std::fs::write(path, ordered_json)
+    pub fn write_as_json(&self, path: &Path) -> Result<(), String> {
+        let genesis_json = serde_json::to_string(&self)
+            .map_err(|e| format!("Could not convert genesis to string: {}", e))?;
+        let genesis_as_map: Map<String, Value> = serde_json::from_str(&genesis_json)
+            .map_err(|e| format!("Failed to de-serialize genesis file: {}", e))?;
+        // Keys sorted based off this ethpandaops example:
+        // https://github.com/ethpandaops/ethereum-genesis-generator/blob/master/apps/el-gen/mainnet/genesis.json
+        let keys = [
+            "config",
+            "nonce",
+            "timestamp",
+            "extraData",
+            "gasLimit",
+            "difficulty",
+            "mixHash",
+            "coinbase",
+            "alloc",
+        ];
+        // Some keys that are in our genesis file,
+        // but are not in the example above or
+        // viceversa.
+        let optional_keys = [
+            "number",
+            "gasUsed",
+            "parentHash",
+            "baseFeePerGas",
+            "excessBlobGas",
+            "requestsHash",
+            "blobGasUsed",
+        ];
+        // This map will preserve insertion order because this crate uses the 'preserve_order'
+        // feature from serde_json.
+        let mut ordered_map: Map<String, Value> = serde_json::Map::new();
+        for k in keys {
+            let Some(v) = genesis_as_map.get(k) else {
+                return Err(format!("Missing key in read genesis file: {}", k));
+            };
+            ordered_map.insert(k.to_owned(), v.clone().take());
+        }
+        for k in optional_keys {
+            if let Some(v) = genesis_as_map.get(k) {
+                ordered_map.insert(k.to_owned(), v.clone().take());
+            }
+        }
+        // Check 1: check we're not missing any keys.
+        for k in genesis_as_map.keys() {
+            if ordered_map.get_key_value(k) != genesis_as_map.get_key_value(k) {
+                return Err(format!("Genesis serialization is missing a key: {}", k));
+            }
+        }
+        // Check 2: the new ordered map can be turned into a genesis struct.
+        let _: Genesis = serde_json::from_value(ordered_map.clone().into())
+            .map_err(|e| format!("Error turning into genesis: {e}"))?;
+        let to_write = serde_json::to_string_pretty(&ordered_map)
+            .map_err(|e| format!("Could not turn map into json: {e}"))?;
+        std::fs::write(path, &to_write).map_err(|e| {
+            format!(
+                "Could not write genesis json to path: {}, error: {}",
+                path.display(),
+                to_write
+            )
+        })
     }
 }
 
