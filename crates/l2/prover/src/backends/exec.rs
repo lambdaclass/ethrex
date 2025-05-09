@@ -9,6 +9,7 @@ use tracing::warn;
 #[cfg(feature = "l2")]
 use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use zkvm_interface::{
+    deposits::{get_block_deposits, get_deposit_hash},
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
 };
@@ -46,6 +47,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         mut db,
         #[cfg(feature = "l2")]
         withdrawals_merkle_root,
+        #[cfg(feature = "l2")]
+        deposit_logs_hash,
     } = input;
 
     // Tries used for validating initial and final state root
@@ -67,6 +70,8 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
     #[cfg(feature = "l2")]
     let mut withdrawals = vec![];
+    #[cfg(feature = "l2")]
+    let mut deposits_hashes = vec![];
 
     for block in blocks {
         // Validate the block
@@ -78,11 +83,20 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         let receipts = result.receipts;
         let account_updates = vm.get_state_transitions()?;
 
-        // Get L2 withdrawals for this block
+        // Get L2 withdrawals and deposits for this block
         #[cfg(feature = "l2")]
         {
             let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)?;
+            let mut block_deposits_hashes = Vec::with_capacity(block_withdrawals.len());
+            for deposit in get_block_deposits(&block.body.transactions) {
+                if let Some(hash) = deposit.get_deposit_hash() {
+                    block_deposits_hashes.push(hash);
+                } else {
+                    return Err("Failed to get deposit hash for tx".to_string().into());
+                }
+            }
             withdrawals.extend(block_withdrawals);
+            deposits_hashes.extend(block_deposits_hashes);
         }
 
         // Update db for the next block
@@ -115,6 +129,17 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         return Err("invalid withdrawals merkle root".to_string().into());
     }
 
+    // Calculate L2 deposits logs root
+    #[cfg(feature = "l2")]
+    let Ok(batch_deposits_logs_hash) = get_deposit_hash(deposits_hashes) else {
+        return Err("Failed to calculate deposits logs hash".to_string().into());
+    };
+    // Check deposits logs root
+    #[cfg(feature = "l2")]
+    if batch_deposits_logs_hash != deposit_logs_hash {
+        return Err("invalid deposits logs hash".to_string().into());
+    }
+
     // Update state trie
     let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
     update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)?;
@@ -130,5 +155,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         final_state_hash,
         #[cfg(feature = "l2")]
         withdrawals_merkle_root: batch_withdrawals_merkle_root,
+        #[cfg(feature = "l2")]
+        deposit_logs_hash: batch_deposits_logs_hash,
     })
 }
