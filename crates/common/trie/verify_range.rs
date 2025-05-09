@@ -174,12 +174,14 @@ fn get_child<'a>(path: &'a mut Nibbles, node: &'a Node) -> Option<NodeHash> {
         Node::Branch(n) => {
             if let Some(choice) = path.next_choice() {
                 if n.choices[choice].is_valid() {
-                    return Some(n.choices[choice]);
+                    return Some(n.choices[choice].compute_hash());
                 }
             }
             None
         }
-        Node::Extension(n) => path.skip_prefix(&n.prefix).then_some(n.child),
+        Node::Extension(n) => path
+            .skip_prefix(&n.prefix)
+            .then_some(n.child.compute_hash()),
         Node::Leaf(_) => None,
     }
 }
@@ -212,13 +214,17 @@ fn has_right_element_inner(
                 if n.choices[choice + 1..].iter().any(|child| child.is_valid()) {
                     return Ok(true);
                 } else if n.choices[choice].is_valid() {
-                    return has_right_element_inner(n.choices[choice], path, trie_state);
+                    return has_right_element_inner(
+                        n.choices[choice].compute_hash(),
+                        path,
+                        trie_state,
+                    );
                 }
             }
         }
         Node::Extension(n) => {
             if path.skip_prefix(&n.prefix) {
-                return has_right_element_inner(n.child, path, trie_state);
+                return has_right_element_inner(n.child.compute_hash(), path, trie_state);
             } else {
                 return Ok(n.prefix.as_ref() > path.as_ref());
             }
@@ -276,14 +282,14 @@ fn remove_internal_references_inner(
                 // Keep going
                 // Check if the child extension node should be removed as a result of this process
                 let should_remove = remove_internal_references_inner(
-                    n.choices[left_choice],
+                    n.choices[left_choice].compute_hash(),
                     left_path,
                     right_path,
                     trie_state,
                 )?;
                 if should_remove {
                     // Remove child node
-                    n.choices[left_choice] = NodeHash::default();
+                    n.choices[left_choice] = NodeHash::default().into();
                     // Update node in the state
                     trie_state.insert_node(n.into(), node_hash);
                 }
@@ -291,19 +297,27 @@ fn remove_internal_references_inner(
                 // We found our fork node, now we can remove the internal references
                 // Remove all child nodes between the left and right child nodes
                 for choice in &mut n.choices[left_choice + 1..right_choice] {
-                    *choice = NodeHash::default()
+                    *choice = NodeHash::default().into();
                 }
                 // Remove nodes on the left and right choice's subtries
-                let should_remove_left =
-                    remove_node(n.choices[left_choice], left_path, false, trie_state);
-                let should_remove_right =
-                    remove_node(n.choices[right_choice], right_path, true, trie_state);
+                let should_remove_left = remove_node(
+                    n.choices[left_choice].compute_hash(),
+                    left_path,
+                    false,
+                    trie_state,
+                );
+                let should_remove_right = remove_node(
+                    n.choices[right_choice].compute_hash(),
+                    right_path,
+                    true,
+                    trie_state,
+                );
                 // Remove left and right child nodes if their subtries where wiped in the process
                 if should_remove_left {
-                    n.choices[left_choice] = NodeHash::default();
+                    n.choices[left_choice] = NodeHash::default().into();
                 }
                 if should_remove_right {
-                    n.choices[right_choice] = NodeHash::default();
+                    n.choices[right_choice] = NodeHash::default().into();
                 }
                 // Update node in the state
                 trie_state.insert_node(n.into(), node_hash);
@@ -319,7 +333,7 @@ fn remove_internal_references_inner(
                 // If both paths contain the same prefix as the extension node, keep going
                 (Ordering::Equal, Ordering::Equal) => {
                     return remove_internal_references_inner(
-                        n.child,
+                        n.child.compute_hash(),
                         left_path.offset(n.prefix.len()),
                         right_path.offset(n.prefix.len()),
                         trie_state,
@@ -379,17 +393,22 @@ fn remove_node(
             };
             if remove_left {
                 for child in &mut n.choices[..choice] {
-                    *child = NodeHash::default()
+                    *child = NodeHash::default().into();
                 }
             } else {
                 for child in &mut n.choices[choice + 1..] {
-                    *child = NodeHash::default()
+                    *child = NodeHash::default().into();
                 }
             }
             // Remove nodes to the left/right of the choice's subtrie
-            let should_remove = remove_node(n.choices[choice], path, remove_left, trie_state);
+            let should_remove = remove_node(
+                n.choices[choice].compute_hash(),
+                path,
+                remove_left,
+                trie_state,
+            );
             if should_remove {
-                n.choices[choice] = NodeHash::default();
+                n.choices[choice] = NodeHash::default().into();
             }
             // Update node in the state
             trie_state.insert_node(n.into(), node_hash);
@@ -405,7 +424,7 @@ fn remove_node(
                 }
             } else {
                 // Remove left/right side of the child subtrie
-                return remove_node(n.child, path, remove_left, trie_state);
+                return remove_node(n.child.compute_hash(), path, remove_left, trie_state);
             }
         }
         Node::Leaf(_) => return true,
