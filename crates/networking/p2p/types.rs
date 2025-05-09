@@ -1,4 +1,5 @@
 use bytes::{BufMut, Bytes};
+use ethrex_common::types::ForkId;
 use ethrex_common::{H264, H512};
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -7,6 +8,7 @@ use ethrex_rlp::{
     structs::{self, Decoder, Encoder},
 };
 use k256::ecdsa::{SigningKey, VerifyingKey};
+use serde::ser::Serializer;
 use sha3::{Digest, Keccak256};
 use std::{
     fmt::Display,
@@ -88,6 +90,15 @@ impl<'de> serde::de::Deserialize<'de> for Node {
         D: serde::Deserializer<'de>,
     {
         Node::from_str(&<String>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+impl serde::Serialize for Node {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.enode_url())
     }
 }
 
@@ -213,7 +224,7 @@ pub struct NodeRecord {
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub struct NodeRecordDecodedPairs {
+pub struct NodeRecordPairs {
     pub id: Option<String>,
     pub ip: Option<u32>,
     // the record structure reference says that tcp_port and udp_ports are big-endian integers
@@ -222,12 +233,14 @@ pub struct NodeRecordDecodedPairs {
     pub tcp_port: Option<u16>,
     pub udp_port: Option<u16>,
     pub secp256k1: Option<H264>,
+    // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
+    pub eth: Option<ForkId>,
     // TODO implement ipv6 addresses
 }
 
 impl NodeRecord {
-    pub fn decode_pairs(&self) -> NodeRecordDecodedPairs {
-        let mut decoded_pairs = NodeRecordDecodedPairs::default();
+    pub fn decode_pairs(&self) -> NodeRecordPairs {
+        let mut decoded_pairs = NodeRecordPairs::default();
         for (key, value) in &self.pairs {
             let Ok(key) = String::from_utf8(key.to_vec()) else {
                 continue;
@@ -247,6 +260,10 @@ impl NodeRecord {
                     }
                     decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
                 }
+                "eth" => {
+                    // the first byte is ignored as an array of array is received
+                    decoded_pairs.eth = ForkId::decode(&value[1..]).ok();
+                }
                 _ => {}
             }
         }
@@ -264,7 +281,7 @@ impl NodeRecord {
         Ok(result)
     }
 
-    pub fn from_node(node: Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
+    pub fn from_node(node: &Node, seq: u64, signer: &SigningKey) -> Result<Self, String> {
         let mut record = NodeRecord {
             seq,
             ..Default::default()
@@ -294,6 +311,20 @@ impl NodeRecord {
         record.signature = record.sign_record(signer)?;
 
         Ok(record)
+    }
+
+    pub fn update_seq(&mut self, signer: &SigningKey) -> Result<(), String> {
+        self.seq += 1;
+        self.signature = self.sign_record(signer)?;
+        Ok(())
+    }
+
+    pub fn set_fork_id(&mut self, fork_id: &ForkId, signer: &SigningKey) -> Result<(), String> {
+        // a vec! is needed in order to have a single element list
+        self.pairs
+            .push(("eth".into(), vec![fork_id.clone()].encode_to_vec().into()));
+        self.update_seq(signer)?;
+        Ok(())
     }
 
     fn sign_record(&mut self, signer: &SigningKey) -> Result<H512, String> {
@@ -461,8 +492,8 @@ mod tests {
             tcp_port: addr.port(),
             udp_port: addr.port(),
         };
-        let record = NodeRecord::from_node(node, 0, &signer).unwrap();
-        let expected_enr_string = "enr:-Iu4QDOLZWVEdbtRUtrZ8PU1vxUJ0t_TUpVghJhJuakBUyYKE_ZfvhR2EKxDyJ8Z5wwoJE4mTSItAcYsErU0NrB7uzCAgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
+        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
 
         assert_eq!(record.enr_url().unwrap(), expected_enr_string);
     }

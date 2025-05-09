@@ -91,7 +91,7 @@ pub struct RpcApiContext {
     pub blockchain: Arc<Blockchain>,
     pub jwt_secret: Bytes,
     pub local_p2p_node: Node,
-    pub local_node_record: NodeRecord,
+    pub local_node_record: Arc<tokio::sync::Mutex<NodeRecord>>,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
     pub client_version: String,
@@ -148,7 +148,7 @@ pub async fn start_api(
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    local_node_record: Arc<tokio::sync::Mutex<NodeRecord>>,
     syncer: SyncManager,
     client_version: String,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
@@ -293,7 +293,7 @@ pub async fn handle_authrpc_request(
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.namespace() {
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
-        Ok(RpcNamespace::Admin) => map_admin_requests(req, context),
+        Ok(RpcNamespace::Admin) => map_admin_requests(req, context).await,
         Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
         Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
         Ok(RpcNamespace::Net) => map_net_requests(req, context),
@@ -443,12 +443,12 @@ pub async fn map_engine_requests(
     }
 }
 
-pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(
             context.storage,
             context.local_p2p_node,
-            context.local_node_record,
+            context.local_node_record.lock().await.clone(),
             context.client_version,
         ),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
@@ -545,7 +545,7 @@ mod tests {
         let context = default_context_with_storage(storage).await;
         let local_p2p_node = context.local_p2p_node;
 
-        let enr_url = context.local_node_record.enr_url().unwrap();
+        let enr_url = context.local_node_record.lock().await.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
         let blob_schedule = serde_json::json!({

@@ -12,7 +12,7 @@ use crate::{
     kademlia::{KademliaTable, MAX_NODES_PER_BUCKET},
     network::{handle_peer_as_initiator, P2PContext},
     rlpx::connection::MAX_PEERS_TCP_CONNECTIONS,
-    types::{Endpoint, Node, NodeRecord},
+    types::{Endpoint, Node},
 };
 use ethrex_common::H256;
 use k256::ecdsa::{signature::hazmat::PrehashVerifier, Signature, VerifyingKey};
@@ -40,6 +40,7 @@ pub enum DiscoveryError {
     PartialMessageSent,
     MessageExpired,
     InvalidMessage(String),
+    StorageAccessError(String),
 }
 
 /// Implements the discv4 protocol see: https://github.com/ethereum/devp2p/blob/master/discv4.md
@@ -338,13 +339,8 @@ impl Discv4Server {
                 if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
-                let Ok(node_record) =
-                    NodeRecord::from_node(self.ctx.local_node, self.ctx.enr_seq, &self.ctx.signer)
-                else {
-                    return Err(DiscoveryError::InvalidMessage(
-                        "could not build local node record".into(),
-                    ));
-                };
+                let node_record = self.ctx.local_node_record.lock().await.clone();
+
                 let msg =
                     Message::ENRResponse(ENRResponseMessage::new(packet.get_hash(), node_record));
                 let mut buf = vec![];
@@ -386,7 +382,6 @@ impl Discv4Server {
                         "msg node record is lower than the one we have".into(),
                     ));
                 }
-
                 let record = msg.node_record.decode_pairs();
                 let Some(id) = record.id else {
                     return Err(DiscoveryError::InvalidMessage(
@@ -424,6 +419,52 @@ impl Discv4Server {
                     return Err(DiscoveryError::InvalidMessage(
                         "Signature verification invalid".into(),
                     ));
+                }
+
+                //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
+                if let Some(eth) = record.eth {
+                    let pairs = self.ctx.local_node_record.lock().await.decode_pairs();
+
+                    if let Some(fork_id) = pairs.eth {
+                        let Ok(block_number) = self.ctx.storage.get_latest_block_number().await
+                        else {
+                            return Err(DiscoveryError::StorageAccessError(
+                                "Could not get last block number".into(),
+                            ));
+                        };
+                        let Ok(Some(block_header)) =
+                            self.ctx.storage.get_block_header(block_number)
+                        else {
+                            return Err(DiscoveryError::StorageAccessError(
+                                "Could not get last block number".into(),
+                            ));
+                        };
+                        let Ok(chain_config) = self.ctx.storage.get_chain_config() else {
+                            return Err(DiscoveryError::StorageAccessError(
+                                "Could not getchaing config".into(),
+                            ));
+                        };
+                        let Ok(Some(genesis_header)) = self.ctx.storage.get_block_header(0) else {
+                            return Err(DiscoveryError::StorageAccessError(
+                                "Could not get genesis block number".into(),
+                            ));
+                        };
+                        if !fork_id.is_valid(
+                            eth,
+                            block_number,
+                            block_header.timestamp,
+                            chain_config,
+                            genesis_header,
+                        ) {
+                            debug!("Invalid eth pair received. Removing peer from table");
+
+                            table_lock.replace_peer(packet.get_node_id());
+                            return Err(DiscoveryError::InvalidMessage(
+                                "Could not validate fork id from new node".into(),
+                            ));
+                        }
+                        debug!("ENR eth pair validated");
+                    }
                 }
 
                 if let Some(ip) = record.ip {
@@ -559,8 +600,9 @@ impl Discv4Server {
             tcp_port: node.tcp_port,
         };
 
-        let ping =
-            Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(self.ctx.enr_seq));
+        let enr_seq = self.ctx.local_node_record.lock().await.seq;
+        let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
+
         ping.encode_with_header(&mut buf, &self.ctx.signer);
         let bytes_sent = self
             .udp_socket
@@ -591,9 +633,8 @@ impl Discv4Server {
             tcp_port: node.tcp_port,
         };
 
-        let pong = Message::Pong(
-            PongMessage::new(to, ping_hash, expiration).with_enr_seq(self.ctx.enr_seq),
-        );
+        let enr_seq = self.ctx.local_node_record.lock().await.seq;
+        let pong = Message::Pong(PongMessage::new(to, ping_hash, expiration).with_enr_seq(enr_seq));
         pong.encode_with_header(&mut buf, &self.ctx.signer);
 
         let bytes_sent = self
@@ -643,9 +684,15 @@ pub(super) mod tests {
     use crate::{
         network::{node_id_from_signing_key, serve_p2p_requests, MAX_MESSAGES_TO_BROADCAST},
         rlpx::message::Message as RLPxMessage,
+        types::NodeRecord,
     };
     use ethrex_blockchain::Blockchain;
-    use ethrex_storage::{EngineType, Store};
+    use ethrex_common::types::{BlockHeader, ChainConfig, ForkId};
+    use ethrex_common::H32;
+    use ethrex_storage::error::StoreError;
+    use ethrex_storage::EngineType;
+    use ethrex_storage::Store;
+
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
     use std::net::{IpAddr, Ipv4Addr};
@@ -678,6 +725,7 @@ pub(super) mod tests {
 
     pub async fn start_discovery_server(
         udp_port: u16,
+        init_storage: bool,
         should_start_server: bool,
     ) -> Result<Discv4Server, DiscoveryError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
@@ -690,20 +738,27 @@ pub(super) mod tests {
             tcp_port: udp_port,
         };
 
-        let storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let storage = if init_storage {
+            setup_storage().await.expect("Storage setup")
+        } else {
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB")
+        };
+
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let table = Arc::new(Mutex::new(KademliaTable::new(node_id)));
         let (broadcast, _) = tokio::sync::broadcast::channel::<(tokio::task::Id, Arc<RLPxMessage>)>(
             MAX_MESSAGES_TO_BROADCAST,
         );
         let tracker = tokio_util::task::TaskTracker::new();
-
+        let local_node_record = Arc::new(Mutex::new(
+            NodeRecord::from_node(&local_node, 1, &signer)
+                .expect("Node record could not be created from local node"),
+        ));
         let ctx = P2PContext {
             local_node,
-            enr_seq: current_unix_time(),
+            local_node_record,
             tracker: tracker.clone(),
-            signer,
+            signer: signer.clone(),
             table,
             storage,
             blockchain,
@@ -753,8 +808,8 @@ pub(super) mod tests {
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
     async fn discovery_server_revalidation() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(7998, true).await?;
-        let mut server_b = start_discovery_server(7999, true).await?;
+        let mut server_a = start_discovery_server(7998, false, true).await?;
+        let mut server_b = start_discovery_server(7999, false, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -823,20 +878,17 @@ pub(super) mod tests {
      * 5. Verify that the updated node record has been correctly received and stored.
      */
     async fn discovery_enr_message() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8006, true).await?;
-        let mut server_b = start_discovery_server(8007, true).await?;
+        let mut server_a = start_discovery_server(8006, false, true).await?;
+        let mut server_b = start_discovery_server(8007, false, true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
         // wait some time for the enr request-response finishes
         sleep(Duration::from_millis(2500)).await;
 
-        let expected_record = NodeRecord::from_node(
-            server_b.ctx.local_node,
-            current_unix_time(),
-            &server_b.ctx.signer,
-        )
-        .expect("Node record is created from node");
+        let expected_record =
+            NodeRecord::from_node(&server_b.ctx.local_node, 1, &server_b.ctx.signer)
+                .expect("Node record is created from node");
 
         let server_a_peer_b = server_a
             .ctx
@@ -865,7 +917,13 @@ pub(super) mod tests {
 
         // update the enr_seq of server_b so that server_a notices it is outdated
         // and sends a request to update it
-        server_b.ctx.enr_seq = current_unix_time();
+        server_b
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .update_seq(&server_b.ctx.signer)
+            .unwrap();
 
         // Send a ping from server_b to server_a.
         // server_a should notice the enr_seq is outdated
@@ -884,5 +942,124 @@ pub(super) mod tests {
         assert!(server_a_node_b_record.node.tcp_port == server_b.ctx.local_node.tcp_port);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    /**
+     * This test verifies the exchange and validation of eth pairs in the ENR (Ethereum Node Record) messages.
+     * The test follows these steps:
+     *
+     * 1. Start three nodes.
+     * 2. Add a valid fork_id to the nodes a and b
+     * 3. Add a invalid fork_id to the node c
+     * 4. Wait until they establish a connection.
+     * 5. Validate they have exchanged the pairs and validated them
+     * 6. node a and b should be connected
+     * 7. node a and c shouldn't be connected
+     */
+    async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
+        let mut server_a = start_discovery_server(8086, true, true).await?;
+        let mut server_b = start_discovery_server(8087, true, true).await?;
+        let mut server_c = start_discovery_server(8088, true, true).await?;
+
+        let fork_id_valid = ForkId {
+            fork_hash: H32::zero(),
+            fork_next: u64::MAX,
+        };
+
+        let fork_id_invalid = ForkId {
+            fork_hash: H32::zero(),
+            fork_next: 1,
+        };
+
+        server_a
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .set_fork_id(&fork_id_valid, &server_a.ctx.signer)
+            .unwrap();
+
+        server_b
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .set_fork_id(&fork_id_valid, &server_b.ctx.signer)
+            .unwrap();
+
+        server_c
+            .ctx
+            .local_node_record
+            .lock()
+            .await
+            .set_fork_id(&fork_id_invalid, &server_c.ctx.signer)
+            .unwrap();
+
+        connect_servers(&mut server_a, &mut server_b).await?;
+        connect_servers(&mut server_a, &mut server_c).await?;
+
+        // wait some time for the enr request-response finishes
+        sleep(Duration::from_millis(2500)).await;
+
+        eprintln!("agarro lock");
+        let table = server_a.ctx.table.lock().await;
+
+        assert!(table
+            .get_by_node_id(server_b.ctx.local_node.node_id)
+            .is_some());
+
+        assert!(table
+            .get_by_node_id(server_c.ctx.local_node.node_id)
+            .is_none());
+
+        Ok(())
+    }
+
+    async fn setup_storage() -> Result<Store, StoreError> {
+        let store = Store::new("test", EngineType::InMemory)?;
+
+        let config = ChainConfig {
+            shanghai_time: Some(1),
+            istanbul_block: Some(1),
+            ..Default::default()
+        };
+        store.set_chain_config(&config).await?;
+
+        let header0 = BlockHeader {
+            number: 0,
+            timestamp: 0,
+            gas_limit: 100_000_000,
+            gas_used: 0,
+            ..Default::default()
+        };
+        let block_hash0 = header0.compute_block_hash();
+        store.add_block_header(block_hash0, header0).await?;
+        store.set_canonical_block(0, block_hash0).await?;
+
+        let header1 = BlockHeader {
+            number: 1,
+            timestamp: 15,
+            gas_limit: 100_000_000,
+            gas_used: 0,
+            ..Default::default()
+        };
+        let block_hash1 = header1.compute_block_hash();
+        store.add_block_header(block_hash1, header1).await?;
+        store.set_canonical_block(1, block_hash1).await?;
+
+        let header2 = BlockHeader {
+            number: 2,
+            timestamp: 15,
+            gas_limit: 100_000_000,
+            gas_used: 0,
+            ..Default::default()
+        };
+        let block_hash2 = header2.compute_block_hash();
+        store.add_block_header(block_hash2, header2).await?;
+        store.set_canonical_block(2, block_hash2).await?;
+
+        store.update_latest_block_number(2).await?;
+        Ok(store)
     }
 }
