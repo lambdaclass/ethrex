@@ -1,7 +1,7 @@
 use crate::{
     call_frame::{CallFrame, CallFrameBackup},
     constants::*,
-    db::{cache, gen_db::GeneralizedDatabase},
+    db::gen_db::GeneralizedDatabase,
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
     hooks::hook::Hook,
@@ -475,31 +475,6 @@ impl<'a> VM<'a> {
         // run
         for hook in self.hooks.clone() {
             hook.finalize_execution(self, report)?;
-        }
-
-        Ok(())
-    }
-
-    /// Restores the cache state to the state before changes made during a callframe.
-    fn restore_cache_state(&mut self, call_frame_backup: CallFrameBackup) -> Result<(), VMError> {
-        for (address, account) in call_frame_backup.original_accounts_info {
-            if let Some(current_account) = cache::get_account_mut(&mut self.db.cache, &address) {
-                current_account.info = account.info;
-                current_account.code = account.code;
-            }
-        }
-
-        for (address, storage) in call_frame_backup.original_account_storage_slots {
-            // This call to `get_account_mut` should never return None, because we are looking up accounts
-            // that had their storage modified, which means they should be in the cache. That's why
-            // we return an internal error in case we haven't found it.
-            let account = cache::get_account_mut(&mut self.db.cache, &address).ok_or(
-                VMError::Internal(crate::errors::InternalError::AccountNotFound),
-            )?;
-
-            for (key, value) in storage {
-                account.storage.insert(key, value);
-            }
         }
 
         Ok(())
