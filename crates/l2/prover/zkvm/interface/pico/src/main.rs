@@ -45,6 +45,8 @@ pub fn main() {
 
     #[cfg(feature = "l2")]
     let mut withdrawals = vec![];
+    #[cfg(feature = "l2")]
+    let mut deposits_hashes = vec![];
 
     for block in blocks {
         let fork = db.chain_config.fork(block.header.timestamp);
@@ -57,12 +59,21 @@ pub fn main() {
         let receipts = result.receipts;
         let account_updates = vm.get_state_transitions(fork)?;
 
-        // Get L2 withdrawals for this block
+        // Get L2 withdrawals and deposits for this block
         #[cfg(feature = "l2")]
         {
             let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)
                 .expect("failed to get block withdrawals");
+            let mut block_deposits_hashes = Vec::with_capacity(block_withdrawals.len());
+            for deposit in get_block_deposits(&block.body.transactions) {
+                block_deposits_hashes.push(
+                    deposit
+                        .get_deposit_hash()
+                        .expect("Failed to get deposit hash for tx"),
+                );
+            }
             withdrawals.extend(block_withdrawals);
+            deposits_hashes.extend(block_deposits_hashes);
         }
 
         // Update db for the next block
@@ -91,6 +102,16 @@ pub fn main() {
     #[cfg(feature = "l2")]
     if batch_withdrawals_merkle_root != withdrawals_merkle_root {
         panic!("invalid withdrawals merkle root");
+    }
+    // Calculate L2 deposits logs root
+    #[cfg(feature = "l2")]
+    let Ok(batch_deposits_logs_hash) = get_deposit_hash(deposits_hashes) else {
+        panic!("Failed to calculate deposits logs hash");
+    };
+    // Check deposits logs root
+    #[cfg(feature = "l2")]
+    if batch_deposits_logs_hash != deposit_logs_hash {
+        panic!("invalid deposits logs hash");
     }
 
     // Update state trie
