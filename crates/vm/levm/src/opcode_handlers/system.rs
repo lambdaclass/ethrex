@@ -830,7 +830,7 @@ impl<'a> VM<'a> {
             self.decrease_account_balance(msg_sender, value)?;
             self.increase_account_balance(to, value)?;
         }
-        
+
         let new_depth = {
             let current_call_frame = self.current_call_frame_mut()?;
 

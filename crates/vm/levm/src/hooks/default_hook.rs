@@ -1,8 +1,9 @@
 use crate::{
     constants::*,
-    errors::{ExecutionReport, InternalError, TxValidationError, VMError},
+    errors::{ExecutionReport, InternalError, TxResult, TxValidationError, VMError},
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
+    precompiles::is_precompile,
     utils::*,
     vm::VM,
 };
@@ -131,6 +132,21 @@ impl Hook for DefaultHook {
         vm: &mut VM<'_>,
         report: &mut ExecutionReport,
     ) -> Result<(), VMError> {
+        // According to EIP-7702, when a precompile is the target of the delegation
+        // it should succeed with no execution. So if we reached this stage with a
+        // revert in a EIP-7702 tx that delegates to a precompile, we should change
+        // the revert to a success so the receipts root is correct.
+        if let TxResult::Revert(error) = &report.result {
+            if let (VMError::PrecompileError(_), Some(auth_vec)) = (error, &vm.authorization_list) {
+                if auth_vec
+                    .iter()
+                    .any(|auth_tup| is_precompile(&auth_tup.address, vm.env.config.fork))
+                {
+                    report.result = TxResult::Success;
+                }
+            }
+        }
+
         if !report.is_success() {
             undo_value_transfer(vm)?;
         }
