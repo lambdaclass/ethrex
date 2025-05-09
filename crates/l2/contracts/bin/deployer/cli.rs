@@ -108,7 +108,7 @@ pub struct DeployerOptions {
         long = "pico.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER",
-        required_unless_present = "pico_deploy_verifier",
+        required_if_eq("pico_deploy_verifier", "false"),
         help_heading = "Deployer options",
         help = "If set to 0xAA skip proof verification -> Only use in dev mode."
     )]
@@ -138,7 +138,7 @@ pub struct DeployerOptions {
         long = "sp1.verifier-address",
         value_name = "ADDRESS",
         env = "ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER",
-        required_unless_present = "sp1_deploy_verifier",
+        required_if_eq("sp1_deploy_verifier", "false"),
         help_heading = "Deployer options",
         help = "If set to 0xAA skip proof verification -> Only use in dev mode."
     )]
@@ -148,7 +148,7 @@ pub struct DeployerOptions {
         default_value = "false",
         value_name = "BOOLEAN",
         action = ArgAction::SetTrue,
-        env = "ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER",
+        env = "ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER",
         required_unless_present = "sp1_verifier_address",
         help_heading = "Deployer options",
         help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
