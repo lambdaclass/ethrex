@@ -1,9 +1,9 @@
 use crate::{
     constants::STACK_LIMIT,
-    errors::{InternalError, OutOfGasError, VMError}, 
-    memory::Memory, 
-    opcodes::Opcode, 
-    utils::get_valid_jump_destinations
+    errors::{InternalError, OutOfGasError, VMError},
+    memory::Memory,
+    opcodes::Opcode,
+    utils::get_valid_jump_destinations,
 };
 use bytes::Bytes;
 use ethrex_common::{

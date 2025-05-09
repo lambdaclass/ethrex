@@ -277,7 +277,10 @@ impl<'a> VM<'a> {
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
-    pub fn restore_cache_state(&mut self, call_frame_backup: CallFrameBackup) -> Result<(), VMError> {
+    pub fn restore_cache_state(
+        &mut self,
+        call_frame_backup: CallFrameBackup,
+    ) -> Result<(), VMError> {
         for (address, account) in call_frame_backup.original_accounts_info {
             if let Some(current_account) = cache::get_account_mut(&mut self.db.cache, &address) {
                 current_account.info = account.info;
