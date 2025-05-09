@@ -20,6 +20,8 @@ struct StoreInner {
     withdrawal_hashes_by_batch: HashMap<u64, Vec<H256>>,
     /// Map of batch number to block numbers
     block_numbers_by_batch: HashMap<u64, Vec<BlockNumber>>,
+    /// Map of batch number to deposits log hash
+    deposit_log_hash_by_batch: HashMap<u64, H256>,
 }
 
 impl Store {
@@ -85,6 +87,31 @@ impl StoreEngineRollup for Store {
             .block_numbers_by_batch
             .insert(batch_number, block_numbers);
         Ok(())
+    }
+
+    /// Stores the deposits logs hash by a given batch_number
+    async fn store_deposit_logs_hash_by_batch(
+        &self,
+        batch_number: u64,
+        deposit_logs_hash: H256,
+    ) -> Result<(), StoreError> {
+        self.inner()?
+            .deposit_log_hash_by_batch
+            .insert(batch_number, deposit_logs_hash);
+        Ok(())
+    }
+
+    /// Returns the block numbers for a given batch_number
+    async fn get_deposit_logs_hash_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        let deposit_logs_hash = self
+            .inner()?
+            .deposit_log_hash_by_batch
+            .get(&batch_number)
+            .cloned();
+        Ok(deposit_logs_hash)
     }
 
     /// Returns the block numbers for a given batch_number

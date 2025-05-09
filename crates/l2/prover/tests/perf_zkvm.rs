@@ -71,12 +71,14 @@ async fn setup() -> (ProgramInput, Block) {
 
     // This works because there are no withdrawals in the test data
     let withdrawals_merkle_root = H256::zero();
+    let deposit_logs_hash = H256::zero();
 
     let input = ProgramInput {
         blocks: vec![block_to_prove.clone()],
         parent_block_header,
         db,
         withdrawals_merkle_root,
+        deposit_logs_hash,
     };
     (input, block_to_prove.clone())
 }

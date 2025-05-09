@@ -11,6 +11,7 @@ use redb::TypeName;
 
 pub type WithdrawalHashesRLP = Rlp<Vec<H256>>;
 pub type BlockNumbersRLP = Rlp<Vec<BlockNumber>>;
+pub type DepositsLogHashRLP = Rlp<H256>;
 
 #[derive(Clone, Debug)]
 pub struct Rlp<T>(Vec<u8>, PhantomData<T>);

@@ -17,6 +17,8 @@ pub enum ProverInputError {
     ExecutionDBError(#[from] ExecutionDBError),
     #[error("Witdrawals error: {0}")]
     WithdrawalsError(String),
+    #[error("Deposits error: {0}")]
+    DepositsError(String),
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -55,7 +55,7 @@ impl Store {
 
     pub async fn init(&self) -> Result<(), StoreError> {
         // Stores batch 0 with block 0
-        self.store_batch(0, 0, 0, Vec::new()).await
+        self.store_batch(0, 0, 0, Vec::new(), H256::zero()).await
     }
 
     /// Stores the block numbers by a given batch_number
@@ -112,12 +112,32 @@ impl Store {
             .await
     }
 
+    pub async fn store_deposit_logs_hash_by_batch(
+        &self,
+        batch_number: u64,
+        deposit_logs_hash: H256,
+    ) -> Result<(), StoreError> {
+        self.engine
+            .store_deposit_logs_hash_by_batch(batch_number, deposit_logs_hash)
+            .await
+    }
+
+    pub async fn get_deposit_logs_hash_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        self.engine
+            .get_deposit_logs_hash_by_batch(batch_number)
+            .await
+    }
+
     pub async fn store_batch(
         &self,
         batch_number: u64,
         first_block_number: u64,
         last_block_number: u64,
         withdrawal_hashes: Vec<H256>,
+        deposit_logs_hash: H256,
     ) -> Result<(), StoreError> {
         let blocks: Vec<u64> = (first_block_number..=last_block_number).collect();
 
@@ -128,6 +148,8 @@ impl Store {
         self.store_block_numbers_by_batch(batch_number, blocks)
             .await?;
         self.store_withdrawal_hashes_by_batch(batch_number, withdrawal_hashes)
+            .await?;
+        self.store_deposit_logs_hash_by_batch(batch_number, deposit_logs_hash)
             .await?;
         Ok(())
     }

@@ -8,6 +8,8 @@ use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
 #[cfg(feature = "l2")]
+use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
+#[cfg(feature = "l2")]
 use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
@@ -23,6 +25,8 @@ pub fn main() {
         mut db,
         #[cfg(feature = "l2")]
         withdrawals_merkle_root,
+        #[cfg(feature = "l2")]
+        deposit_logs_hash,
     } = read_as();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -45,6 +49,8 @@ pub fn main() {
 
     #[cfg(feature = "l2")]
     let mut withdrawals = vec![];
+    #[cfg(feature = "l2")]
+    let mut deposits_hashes = vec![];
 
     for block in blocks {
         let fork = db.chain_config.fork(block.header.timestamp);
@@ -57,12 +63,21 @@ pub fn main() {
         let receipts = result.receipts;
         let account_updates = vm.get_state_transitions(fork)?;
 
-        // Get L2 withdrawals for this block
+        // Get L2 withdrawals and deposits for this block
         #[cfg(feature = "l2")]
         {
             let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)
                 .expect("failed to get block withdrawals");
+            let mut block_deposits_hashes = Vec::with_capacity(block_withdrawals.len());
+            for deposit in get_block_deposits(&block.body.transactions) {
+                block_deposits_hashes.push(
+                    deposit
+                        .get_deposit_hash()
+                        .expect("Failed to get deposit hash for tx"),
+                );
+            }
             withdrawals.extend(block_withdrawals);
+            deposits_hashes.extend(block_deposits_hashes);
         }
 
         // Update db for the next block
@@ -92,6 +107,16 @@ pub fn main() {
     if batch_withdrawals_merkle_root != withdrawals_merkle_root {
         panic!("invalid withdrawals merkle root");
     }
+    // Calculate L2 deposits logs root
+    #[cfg(feature = "l2")]
+    let Ok(batch_deposits_logs_hash) = get_deposit_hash(deposits_hashes) else {
+        panic!("Failed to calculate deposits logs hash");
+    };
+    // Check deposits logs root
+    #[cfg(feature = "l2")]
+    if batch_deposits_logs_hash != deposit_logs_hash {
+        panic!("invalid deposits logs hash");
+    }
 
     // Update state trie
     let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
@@ -109,5 +134,7 @@ pub fn main() {
         final_state_hash,
         #[cfg(feature = "l2")]
         withdrawals_merkle_root: batch_withdrawals_merkle_root,
+        #[cfg(feature = "l2")]
+        deposit_logs_hash: batch_deposits_logs_hash,
     });
 }

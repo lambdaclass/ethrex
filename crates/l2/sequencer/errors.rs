@@ -65,6 +65,8 @@ pub enum ProverServerError {
     WithdrawalsError(u64),
     #[error("ProverServer failed to calculate withdrawals for batch {0}")]
     WithdrawalsMerkelizeError(u64),
+    #[error("ProverServer failed to get deposits logs hash for batch {0}")]
+    DepositsError(u64),
 }
 
 #[derive(Debug, thiserror::Error)]

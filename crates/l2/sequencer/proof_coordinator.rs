@@ -36,6 +36,7 @@ pub struct ProverInputData {
     pub parent_block_header: BlockHeader,
     pub db: ExecutionDB,
     pub withdrawals_merkle_root: H256,
+    pub deposit_logs_hash: H256,
 }
 
 #[derive(Clone)]
@@ -347,6 +348,12 @@ impl ProofCoordinator {
         let withdrawals_merkle_root = get_withdrawals_merkle_root(withdrawals_hashes)
             .map_err(|_| ProverServerError::WithdrawalsMerkelizeError(batch_number))?;
 
+        let deposit_logs_hash = self
+            .rollup_store
+            .get_deposit_logs_hash_by_batch(batch_number)
+            .await?
+            .ok_or(ProverServerError::DepositsError(batch_number))?;
+
         debug!("Created prover input for batch {batch_number}");
 
         Ok(ProverInputData {
@@ -354,6 +361,7 @@ impl ProofCoordinator {
             blocks,
             parent_block_header,
             withdrawals_merkle_root,
+            deposit_logs_hash,
         })
     }
 

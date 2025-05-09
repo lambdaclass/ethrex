@@ -9,6 +9,7 @@ use ethrex_storage::{EngineType, Store};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::ContextCompat;
 use itertools::Itertools;
+use keccak_hash::H256;
 use secp256k1::SecretKey;
 use std::{
     fs::read_dir,
@@ -299,6 +300,7 @@ impl Command {
                             first_block_number,
                             last_block_number,
                             withdrawal_hashes,
+                            H256::zero(),
                         )
                         .await
                         .expect("Error storing batch");
