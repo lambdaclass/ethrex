@@ -323,7 +323,7 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
 
     let config_file = PathBuf::from(data_dir.to_owned() + "/config.json");
 
-    info!("Reading known peer from config file {:?}", config_file);
+    info!("Reading known peers from config file {:?}", config_file);
 
     match read_config_file(config_file) {
         Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
@@ -393,13 +393,14 @@ pub fn get_local_node_record(
 ) -> NodeRecord {
     let config_file = PathBuf::from(data_dir.to_owned() + "/config.json");
 
-    let enr_seq = match read_config_file(config_file) {
-        Ok(ref mut config) => config.enr_seq,
-        Err(_) => 1,
-    };
-
-    NodeRecord::from_node(local_p2p_node, enr_seq, signer)
-        .expect("Node record could not be created from local node")
+    match read_config_file(config_file) {
+        Ok(ref mut config) => {
+            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
+                .expect("Node record could not be created from local node")
+        }
+        Err(_) => NodeRecord::from_node(local_p2p_node, 1, signer)
+            .expect("Node record could not be created from local node"),
+    }
 }
 
 pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
