@@ -183,7 +183,10 @@ impl<'a> VM<'a> {
             let validate_create =
                 if code_length > MAX_CODE_SIZE && self.env.config.fork >= Fork::SpuriousDragon {
                     Err(VMError::ContractOutputTooBig)
-                } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
+                } else if contract_code
+                    .first()
+                    .is_some_and(|prefix| prefix == &INVALID_CONTRACT_PREFIX)
+                {
                     Err(VMError::InvalidContractPrefix)
                 } else if current_call_frame
                     .increase_consumed_gas(code_deposit_cost)
