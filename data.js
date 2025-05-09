@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746806100368,
+  "lastUpdate": 1746810900446,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6025,6 +6025,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178688822819,
             "range": "± 640389179",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "688e1d6c70c614879c1c063eac9694dc51249c07",
+          "message": "fix(core): fix redb not working due to missing table (#2650)\n\n**Motivation**\n\nThe redb code was missing the `InvalidAncestors` table\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-09T16:14:04Z",
+          "tree_id": "30ee848ad871b57cc6ac2e4462b61e4d8be1c2a4",
+          "url": "https://github.com/lambdaclass/ethrex/commit/688e1d6c70c614879c1c063eac9694dc51249c07"
+        },
+        "date": 1746810899414,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178119940301,
+            "range": "± 438193991",
             "unit": "ns/iter"
           }
         ]
