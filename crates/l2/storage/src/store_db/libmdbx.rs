@@ -14,7 +14,7 @@ use libmdbx::{
 
 use crate::{
     api::StoreEngineRollup,
-    rlp::{BlockNumbersRLP, WithdrawalHashesRLP},
+    rlp::{BlockNumbersRLP, DepositsLogHashRLP, WithdrawalHashesRLP},
 };
 
 pub struct Store {
@@ -65,6 +65,7 @@ pub fn init_db(path: Option<impl AsRef<Path>>) -> Result<Database, StoreError> {
         table_info!(BatchesByBlockNumber),
         table_info!(WithdrawalHashesByBatch),
         table_info!(BlockNumbersByBatch),
+        table_info!(DepositsLogHashByBatch),
     ]
     .into_iter()
     .collect();
@@ -124,6 +125,25 @@ impl StoreEngineRollup for Store {
             .await
     }
 
+    async fn store_deposit_logs_hash_by_batch(
+        &self,
+        batch_number: u64,
+        deposit_logs_hash: H256,
+    ) -> Result<(), StoreError> {
+        self.write::<DepositsLogHashByBatch>(batch_number, deposit_logs_hash.into())
+            .await
+    }
+
+    async fn get_deposit_logs_hash_by_batch(
+        &self,
+        batch_number: u64,
+    ) -> Result<Option<H256>, StoreError> {
+        Ok(self
+            .read::<DepositsLogHashByBatch>(batch_number)
+            .await?
+            .map(|numbers| numbers.to()))
+    }
+
     async fn get_block_numbers_by_batch(
         &self,
         batch_number: u64,
@@ -168,4 +188,9 @@ table!(
 table!(
     /// Block numbers by batch number
     ( BlockNumbersByBatch ) u64 => BlockNumbersRLP
+);
+
+table!(
+    /// Deposit logs hash by batch number
+    ( DepositsLogHashByBatch ) u64 => DepositsLogHashRLP
 );
