@@ -136,5 +136,7 @@ fn main() {
         initial_state_hash,
         final_state_hash,
         withdrawals_merkle_root: batch_withdrawals_merkle_root,
+        #[cfg(feature = "l2")]
+        deposit_logs_hash: batch_deposits_logs_hash,
     });
 }
