@@ -296,7 +296,7 @@ impl Committer {
                 }
             }
         }
-        let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
+        let deposit_logs_hash = get_deposit_hash(deposit_logs_hashes)?;
         Ok((
             blobs_bundle,
             new_state_root,
@@ -333,34 +333,6 @@ impl Committer {
             .collect();
 
         deposits
-    }
-
-    fn get_deposit_hash(&self, deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
-        if !deposit_hashes.is_empty() {
-            let deposit_hashes_len: u16 = deposit_hashes
-                .len()
-                .try_into()
-                .map_err(CommitterError::from)?;
-            Ok(H256::from_slice(
-                [
-                    &deposit_hashes_len.to_be_bytes(),
-                    keccak(
-                        deposit_hashes
-                            .iter()
-                            .map(H256::as_bytes)
-                            .collect::<Vec<&[u8]>>()
-                            .concat(),
-                    )
-                    .as_bytes()
-                    .get(2..32)
-                    .ok_or(CommitterError::FailedToDecodeDepositHash)?,
-                ]
-                .concat()
-                .as_slice(),
-            ))
-        } else {
-            Ok(H256::zero())
-        }
     }
 
     /// Prepare the state diff for the block.
@@ -605,6 +577,34 @@ async fn estimate_blob_gas(
 pub fn get_withdrawals_merkle_root(withdrawals_hashes: Vec<H256>) -> Result<H256, CommitterError> {
     if !withdrawals_hashes.is_empty() {
         merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
+    } else {
+        Ok(H256::zero())
+    }
+}
+
+pub fn get_deposit_hash(deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
+    if !deposit_hashes.is_empty() {
+        let deposit_hashes_len: u16 = deposit_hashes
+            .len()
+            .try_into()
+            .map_err(CommitterError::from)?;
+        Ok(H256::from_slice(
+            [
+                &deposit_hashes_len.to_be_bytes(),
+                keccak(
+                    deposit_hashes
+                        .iter()
+                        .map(H256::as_bytes)
+                        .collect::<Vec<&[u8]>>()
+                        .concat(),
+                )
+                .as_bytes()
+                .get(2..32)
+                .ok_or(CommitterError::FailedToDecodeDepositHash)?,
+            ]
+            .concat()
+            .as_slice(),
+        ))
     } else {
         Ok(H256::zero())
     }
