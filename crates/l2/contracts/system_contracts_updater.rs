@@ -59,8 +59,6 @@ fn main() -> Result<(), ContractCompilationError> {
         },
     );
 
-    let modified_genesis = serde_json::to_string(&genesis)?;
-    std::fs::write(&genesis_path, modified_genesis)?;
-
+    genesis.write_as_json(Path::new(&genesis_path))?;
     Ok(())
 }
