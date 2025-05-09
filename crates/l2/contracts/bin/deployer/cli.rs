@@ -231,7 +231,7 @@ impl Default for DeployerOptions {
             sp1_deploy_verifier: false,
             randomize_contract_deployment: false,
             validium: false,
-            sp1_vk_path: "./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf".to_string(),
+            sp1_vk_path: "./prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk".to_string(),
         }
     }
 }
