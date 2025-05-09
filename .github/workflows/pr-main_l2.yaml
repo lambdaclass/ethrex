@@ -128,11 +128,15 @@ jobs:
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           touch .env
-          CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up --detach contract_deployer
+          CI_ETHREX_WORKDIR=/usr/local/bin \
+          ETHREX_DEPLOYER_DEPLOY_RICH=true \
+          ETHREX_DEPLOYER_PICO_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_SP1_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          ETHREX_DEPLOYER_RISC0_CONTRACT_ADDRESS=0x00000000000000000000000000000000000000aa \
+          docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Start Sequencer
         run: |
-          sleep 30
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_COMMITTER_VALIDIUM=${{ matrix.validium }} \
