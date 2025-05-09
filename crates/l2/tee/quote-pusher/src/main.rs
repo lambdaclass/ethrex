@@ -13,7 +13,6 @@ use ethrex_rpc::clients::eth::EthClient;
 use secp256k1::SecretKey;
 use std::process::Command;
 
-
 #[derive(Debug, thiserror::Error)]
 pub enum PusherError {
     #[error("Missing env variable: {0}")]
@@ -69,31 +68,38 @@ async fn setup_key(
     let quote = hex::decode(&quote)
         .map_err(|_| PusherError::ResponseInvalidValue("Invalid quote".to_string()))?;
 
-    let tx_hash = send_update_key(eth_client, private_key, contract_addr, sig_addr, quote).await?;    
+    let tx_hash = send_update_key(eth_client, private_key, contract_addr, sig_addr, quote).await?;
     println!("Signing key set. TX: {tx_hash}");
     Ok(())
 }
 
-const QPL_TOOL_PATH: &str = "automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+const QPL_TOOL_PATH: &str =
+    "automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
 
 async fn prepare_quote_prerequisites(
     eth_client: &EthClient,
     rpc_url: &str,
     private_key_str: &str,
-    quote: &str
+    quote: &str,
 ) -> Result<(), PusherError> {
-    let chain_id = eth_client.get_chain_id().await.map_err(PusherError::EthClientError)?;
+    let chain_id = eth_client
+        .get_chain_id()
+        .await
+        .map_err(PusherError::EthClientError)?;
 
-    Command::new(QPL_TOOL_PATH).args([
-        "--chain_id",
-        &chain_id.to_string(),
-        "--rpc_url",
-        rpc_url,
-        "-p",
-        private_key_str,
-        "--quote_hex",
-        &quote
-    ]).output().map_err(PusherError::CommandError)?;
+    Command::new(QPL_TOOL_PATH)
+        .args([
+            "--chain_id",
+            &chain_id.to_string(),
+            "--rpc_url",
+            rpc_url,
+            "-p",
+            private_key_str,
+            "--quote_hex",
+            &quote,
+        ])
+        .output()
+        .map_err(PusherError::CommandError)?;
     Ok(())
 }
 
@@ -102,10 +108,10 @@ async fn send_update_key(
     private_key: &SecretKey,
     contract_addr: Address,
     sig_addr: Address,
-    quote: Vec<u8>
+    quote: Vec<u8>,
 ) -> Result<H256, PusherError> {
     let my_address = get_address_from_secret_key(&private_key)
-    .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
+        .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
 
     let calldata = encode_calldata(
         UPDATE_KEY_SIGNATURE,
@@ -162,14 +168,19 @@ async fn do_transition(
         .get("signature")
         .ok_or(PusherError::ResponseMissingKey("quote".to_string()))?;
 
-    let new_state = new_state.as_u64()
-        .ok_or(PusherError::ResponseInvalidValue("Invalid new_state".to_string()))?;
-    let signature = signature.as_str()
+    let new_state = new_state.as_u64().ok_or(PusherError::ResponseInvalidValue(
+        "Invalid new_state".to_string(),
+    ))?;
+    let signature = signature
+        .as_str()
         .and_then(|sig| sig.strip_prefix("0x"))
         .and_then(|sig| hex::decode(sig).ok())
-        .ok_or(PusherError::ResponseInvalidValue("signature quote".to_string()))?;
+        .ok_or(PusherError::ResponseInvalidValue(
+            "signature quote".to_string(),
+        ))?;
 
-    let tx_hash = send_transition(eth_client, private_key, contract_addr, new_state, signature).await?;
+    let tx_hash =
+        send_transition(eth_client, private_key, contract_addr, new_state, signature).await?;
     println!("Updated state. TX: {tx_hash}");
     Ok(new_state)
 }
@@ -179,10 +190,10 @@ async fn send_transition(
     private_key: &SecretKey,
     contract_addr: Address,
     new_state: u64,
-    signature: Vec<u8>
+    signature: Vec<u8>,
 ) -> Result<H256, PusherError> {
     let my_address = get_address_from_secret_key(&private_key)
-    .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
+        .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
 
     let calldata = encode_calldata(
         UPDATE_SIGNATURE,
