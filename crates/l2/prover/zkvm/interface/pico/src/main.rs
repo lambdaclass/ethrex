@@ -8,6 +8,8 @@ use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
 #[cfg(feature = "l2")]
+use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
+#[cfg(feature = "l2")]
 use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},

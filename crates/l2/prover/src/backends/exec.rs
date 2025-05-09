@@ -7,9 +7,10 @@ use ethrex_vm::Evm;
 use std::collections::HashMap;
 use tracing::warn;
 #[cfg(feature = "l2")]
+use zkvm_interface::deposits::{get_block_deposits, get_deposit_hash};
+#[cfg(feature = "l2")]
 use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use zkvm_interface::{
-    deposits::{get_block_deposits, get_deposit_hash},
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
 };
