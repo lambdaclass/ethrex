@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746747582017,
+  "lastUpdate": 1746806100368,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -5995,6 +5995,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179811306650,
             "range": "± 634115932",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "f43bd77b86c5654ce2e7fd91c6fe73fc9c534dcb",
+          "message": "chore(levm): minor fixes and refactors to previous PR (#2721)\n\n**Motivation**\n\nFixing some comments left in a previous PR.\n\n**Description**\n\nJust opened this PR since some of the changes requested were out of\nscope. Simply swapped some variables for constants in places where the\nvariables simply held the value of said constants, and applied a minor\nchange to an unwrap in the execution handlers.\n\nCloses #2719",
+          "timestamp": "2025-05-09T14:52:46Z",
+          "tree_id": "513cfa0586799fbb392de635ef8ac10235b260ea",
+          "url": "https://github.com/lambdaclass/ethrex/commit/f43bd77b86c5654ce2e7fd91c6fe73fc9c534dcb"
+        },
+        "date": 1746806098424,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178688822819,
+            "range": "± 640389179",
             "unit": "ns/iter"
           }
         ]
