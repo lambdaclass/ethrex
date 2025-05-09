@@ -116,7 +116,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--deposit-rich \
 	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
+	--genesis-l1-path ../../test_data/genesis-l1-dev.json
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
