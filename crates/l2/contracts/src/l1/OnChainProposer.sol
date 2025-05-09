@@ -221,7 +221,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 risc0ImageId,
         bytes32 risc0JournalDigest,
         //sp1
-        bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
         bytes calldata sp1ProofBytes,
         //pico
@@ -262,7 +261,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         if (SP1VERIFIER != DEV_MODE) {
             // If the verification fails, it will revert.
             ISP1Verifier(SP1VERIFIER).verifyProof(
-                sp1ProgramVKey,
+                SP1VKEY,
                 sp1PublicValues,
                 sp1ProofBytes
             );

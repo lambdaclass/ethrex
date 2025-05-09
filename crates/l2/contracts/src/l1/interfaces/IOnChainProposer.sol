@@ -65,7 +65,6 @@ interface IOnChainProposer {
     /// @param risc0ImageId Digest of the zkVM imageid.
     /// @param risc0JournalDigest Digest of the public_inputs aka journal
     /// ----------------------------------------------------------------------
-    /// @param sp1ProgramVKey Public verifying key
     /// @param sp1PublicValues Values used to perform the execution
     /// @param sp1ProofBytes Groth16 proof
     /// ----------------------------------------------------------------------
@@ -79,7 +78,6 @@ interface IOnChainProposer {
         bytes32 risc0ImageId,
         bytes32 risc0JournalDigest,
         //sp1
-        bytes32 sp1ProgramVKey,
         bytes calldata sp1PublicValues,
         bytes calldata sp1ProofBytes,
         //pico
