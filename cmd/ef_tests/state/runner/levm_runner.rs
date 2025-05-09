@@ -9,10 +9,7 @@ use ethrex_common::{
     H256, U256,
 };
 use ethrex_levm::{
-    db::gen_db::GeneralizedDatabase,
-    errors::{ExecutionReport, TxValidationError, VMError},
-    vm::{EVMConfig, VM},
-    Environment,
+    db::gen_db::GeneralizedDatabase, errors::{ExecutionReport, TxValidationError, VMError}, vm::VM, EVMConfig, Environment
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::AccountUpdate;
