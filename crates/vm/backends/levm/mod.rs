@@ -19,9 +19,10 @@ use ethrex_common::{
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
+use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
-    vm::{EVMConfig, Substate, VM},
+    vm::{Substate, VM},
     Environment,
 };
 use ethrex_storage::error::StoreError;

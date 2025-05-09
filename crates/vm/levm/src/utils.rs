@@ -1,14 +1,9 @@
 use crate::{
-    constants::*,
-    db::gen_db::GeneralizedDatabase,
-    errors::{InternalError, OutOfGasError, TxValidationError, VMError},
-    gas_cost::{
+    constants::*, db::gen_db::GeneralizedDatabase, errors::{InternalError, OutOfGasError, TxValidationError, VMError}, gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
         BLOB_GAS_PER_BLOB, COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, STANDARD_TOKEN_COST,
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
-    },
-    opcodes::Opcode,
-    vm::{EVMConfig, Substate, VM},
+    }, opcodes::Opcode, vm::{Substate, VM}, EVMConfig
 };
 use bytes::Bytes;
 use ethrex_common::types::Account;

@@ -1,6 +1,6 @@
 use ethrex_common::{types::{BlockHeader, ChainConfig, Fork, ForkBlobSchedule}, Address, H256, U256};
 
-use crate::{constants::{BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, MAX_BLOB_COUNT, MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA}, vm::EVMConfig};
+use crate::constants::{BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, MAX_BLOB_COUNT, MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA};
 
 use std::collections::HashMap;
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
@@ -34,6 +34,20 @@ pub struct Environment {
     pub block_gas_limit: u64,
     pub transient_storage: TransientStorage,
     pub is_privileged: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+/// This struct holds special configuration variables specific to the
+/// EVM. In most cases, at least at the time of writing (February
+/// 2025), you want to use the default blob_schedule values for the
+/// specified Fork. The "intended" way to do this is by using the `EVMConfig::canonical_values(fork: Fork)` function.
+///
+/// However, that function should NOT be used IF you want to use a
+/// custom `ForkBlobSchedule`, like it's described in [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840)
+/// Values are determined by [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification)
+pub struct EVMConfig {
+    pub fork: Fork,
+    pub blob_schedule: ForkBlobSchedule,
 }
 
 impl EVMConfig {
