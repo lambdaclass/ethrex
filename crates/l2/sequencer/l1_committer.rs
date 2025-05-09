@@ -157,7 +157,7 @@ impl Committer {
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
                 );
-                self.rollup_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
+                self.rollup_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes, deposit_logs_hash).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
