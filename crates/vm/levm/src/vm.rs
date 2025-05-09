@@ -1,6 +1,5 @@
 use crate::{
     call_frame::{CallFrame, CallFrameBackup},
-    constants::*,
     db::{cache, gen_db::GeneralizedDatabase},
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
@@ -16,7 +15,7 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, PrivilegedL2Transaction, Transaction,
+        Fork, ForkBlobSchedule, PrivilegedL2Transaction, Transaction,
         TxKind,
     },
     Address, H256, U256,
@@ -79,76 +78,6 @@ impl StateBackup {
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
-}
-
-impl EVMConfig {
-    pub fn new(fork: Fork, blob_schedule: ForkBlobSchedule) -> EVMConfig {
-        EVMConfig {
-            fork,
-            blob_schedule,
-        }
-    }
-
-    pub fn new_from_chain_config(chain_config: &ChainConfig, block_header: &BlockHeader) -> Self {
-        let fork = chain_config.fork(block_header.timestamp);
-
-        let blob_schedule = chain_config
-            .get_fork_blob_schedule(block_header.timestamp)
-            .unwrap_or_else(|| EVMConfig::canonical_values(fork));
-
-        EVMConfig::new(fork, blob_schedule)
-    }
-
-    /// This function is used for running the EF tests. If you don't
-    /// have acces to a EVMConfig (mainly in the form of a
-    /// genesis.json file) you can use this function to get the
-    /// "Default" ForkBlobSchedule for that specific Fork.
-    /// NOTE: This function could potentially be expanded to include
-    /// other types of "default"s.
-    pub fn canonical_values(fork: Fork) -> ForkBlobSchedule {
-        let max_blobs_per_block: u64 = Self::max_blobs_per_block(fork);
-        let target: u64 = Self::get_target_blob_gas_per_block_(fork);
-        let base_fee_update_fraction: u64 = Self::get_blob_base_fee_update_fraction_value(fork);
-
-        ForkBlobSchedule {
-            target,
-            max: max_blobs_per_block,
-            base_fee_update_fraction,
-        }
-    }
-
-    const fn max_blobs_per_block(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
-            Fork::Osaka => MAX_BLOB_COUNT_ELECTRA,
-            _ => MAX_BLOB_COUNT,
-        }
-    }
-
-    const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-            _ => BLOB_BASE_FEE_UPDATE_FRACTION,
-        }
-    }
-
-    const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague | Fork::Osaka => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
-            _ => TARGET_BLOB_GAS_PER_BLOCK,
-        }
-    }
-}
-
-impl Default for EVMConfig {
-    /// The default EVMConfig depends on the default Fork.
-    fn default() -> Self {
-        let fork = core::default::Default::default();
-        EVMConfig {
-            fork,
-            blob_schedule: Self::canonical_values(fork),
-        }
-    }
 }
 
 pub struct VM<'a> {
