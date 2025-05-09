@@ -12,7 +12,6 @@ pub struct RpcPeer {
     caps: Vec<Capability>,
     enode: String,
     id: H512,
-    name: String,
     network: PeerNetwork,
     protocols: Protocols,
 }
@@ -24,8 +23,11 @@ struct PeerNetwork {
 
 #[derive(Default, Serialize)]
 struct Protocols {
+    #[serde(skip_serializing_if = "Option::is_none")]
     snap: Option<ProtocolData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     eth: Option<ProtocolData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     p2p: Option<ProtocolData>,
 }
 
@@ -53,7 +55,6 @@ impl From<PeerData> for RpcPeer {
             caps: peer.supported_capabilities,
             enode: peer.node.enode_url(),
             id: peer.node.node_id,
-            name: "Unknown Node Name".to_string(),
             network: PeerNetwork {
                 remote_address: peer.node.ip,
             },
