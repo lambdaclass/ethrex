@@ -28,7 +28,7 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address,address[])";
+    "initialize(address,address,address,address,bytes32,address[])";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
@@ -294,6 +294,14 @@ async fn initialize_contracts(
         "Initializing OnChainProposer",
         Color::Cyan,
     );
+    let sp1_vk_string = read_to_string(&opts.sp1_vk_path)?;
+    let sp1_vk = hex::decode(&sp1_vk_string.trim_start_matches("0x"))
+        .map_err(|err| {
+            DeployerError::DecodingError(format!(
+                "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
+            ))
+        })?
+        .into();
 
     let initialize_tx_hash = {
         let calldata_values = vec![
@@ -301,6 +309,7 @@ async fn initialize_contracts(
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
+            Value::FixedBytes(sp1_vk),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),
