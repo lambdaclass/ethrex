@@ -270,9 +270,7 @@ async fn calc_modified_accounts_size(
     // We use a temporary_context because `get_state_transitions` mutates it.
     let mut temporary_context = context.clone();
 
-    let chain_config = &context.store.get_chain_config()?;
-    let fork = chain_config.fork(context.payload.header.timestamp);
-    let account_updates = temporary_context.vm.get_state_transitions(fork)?;
+    let account_updates = temporary_context.vm.get_state_transitions()?;
     for account_update in account_updates {
         modified_accounts_size += 1 + 20; // 1byte + 20bytes | r#type(u8) + address(H160)
         if account_update.info.is_some() {
