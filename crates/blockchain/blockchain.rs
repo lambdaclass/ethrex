@@ -73,7 +73,6 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
         let chain_config = self.storage.get_chain_config()?;
-        let fork = chain_config.fork(block.header.timestamp);
 
         // Validate the block pre-execution
         validate_block(block, &parent_header, &chain_config)?;
@@ -84,7 +83,7 @@ impl Blockchain {
             block.header.parent_hash,
         );
         let execution_result = vm.execute_block(block)?;
-        let account_updates = vm.get_state_transitions(fork)?;
+        let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
@@ -269,7 +268,7 @@ impl Blockchain {
         }
 
         let account_updates = vm
-            .get_state_transitions(fork)
+            .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
 
         let Some(last_block) = blocks.last() else {
