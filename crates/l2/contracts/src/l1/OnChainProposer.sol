@@ -244,6 +244,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
                     picoWithdrawalsMerkleRoot,
                 "OnChainProposer: wrong withdrawals log merkle root for pico public inputs"
             );
+            bytes32 picoDepositsLogHash = bytes32(picoPublicValues[96:128]);
+            require(
+                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
+                    picoDepositsLogHash,
+                "OnChainProposer: wrong deposits log hash for pico public inputs"
+            );
 
             // If the verification fails, it will revert.
             IPicoVerifier(PICOVERIFIER).verifyPicoProof(
@@ -260,6 +266,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
                     risc0WithdrawalsMerkleRoot,
                 "OnChainProposer: wrong withdrawals log merkle root for risc0 public inputs"
             );
+            bytes32 risc0DepositsLogHash = bytes32(risc0Journal[96:128]);
+            require(
+                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
+                    risc0DepositsLogHash,
+                "OnChainProposer: wrong deposits log hash for risc0 public inputs"
+            );
 
             // If the verification fails, it will revert.
             IRiscZeroVerifier(R0VERIFIER).verify(
@@ -275,6 +287,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
                 batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
                     sp1WithdrawalsMerkleRoot,
                 "OnChainProposer: wrong withdrawals log merkle root for sp1 public inputs"
+            );
+            bytes32 sp1DepositsLogHash = bytes32(sp1PublicValues[112:144]);
+            require(
+                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
+                    sp1DepositsLogHash,
+                "OnChainProposer: wrong deposits log hash for sp1 public inputs"
             );
 
             // If the verification fails, it will revert.
