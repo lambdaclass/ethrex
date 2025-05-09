@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::{rpc::RpcApiContext, utils::RpcErr};
 
+/// Serializable peer data returned by the node's rpc
 #[derive(Serialize)]
 pub struct RpcPeer {
     caps: Vec<Capability>,
@@ -16,11 +17,13 @@ pub struct RpcPeer {
     protocols: Protocols,
 }
 
+/// Serializable peer network data returned by the node's rpc
 #[derive(Serialize)]
 struct PeerNetwork {
     remote_address: IpAddr, // We can add more data about the connection here, such as if it is inbound, the local address, etc
 }
 
+/// Serializable peer protocols data returned by the node's rpc
 #[derive(Default, Serialize)]
 struct Protocols {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -31,6 +34,7 @@ struct Protocols {
     p2p: Option<ProtocolData>,
 }
 
+/// Serializable peer protocol data returned by the node's rpc
 #[derive(Serialize)]
 struct ProtocolData {
     version: u32,
@@ -47,7 +51,7 @@ impl From<PeerData> for RpcPeer {
                 Capability::P2p => protocols.p2p = Some(ProtocolData { version: 5 }),
                 Capability::Eth => protocols.eth = Some(ProtocolData { version: 68 }),
                 Capability::Snap => protocols.snap = Some(ProtocolData { version: 1 }),
-                // Ignore capabilities we don't know of for now as we cannot provide a version
+                // Ignore capabilities we don't know of
                 Capability::UnsupportedCapability(_) => {}
             }
         }
