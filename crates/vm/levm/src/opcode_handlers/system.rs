@@ -789,6 +789,12 @@ impl<'a> VM<'a> {
             calldata
         };
 
+        // Transfer value from caller to callee.
+        if should_transfer_value {
+            self.decrease_account_balance(msg_sender, value)?;
+            self.increase_account_balance(to, value)?;
+        }
+
         let new_depth = {
             let current_call_frame = self.current_call_frame_mut()?;
 
@@ -817,11 +823,6 @@ impl<'a> VM<'a> {
             }
             new_depth
         };
-        // Transfer value from caller to callee.
-        if should_transfer_value {
-            self.decrease_account_balance(msg_sender, value)?;
-            self.increase_account_balance(to, value)?;
-        }
 
         self.return_data.push(RetData {
             is_create: false,
