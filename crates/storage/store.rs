@@ -1,5 +1,7 @@
 use crate::api::StoreEngine;
 use crate::error::StoreError;
+use crate::snapshot::error::SnapshotError;
+use crate::snapshot::SnapshotTree;
 use crate::store_db::in_memory::Store as InMemoryStore;
 #[cfg(feature = "libmdbx")]
 use crate::store_db::libmdbx::Store as LibmdbxStore;
@@ -21,7 +23,7 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -32,6 +34,7 @@ pub const MAX_SNAPSHOT_READS: usize = 100;
 #[derive(Debug, Clone)]
 pub struct Store {
     engine: Arc<dyn StoreEngine>,
+    pub snapshots: SnapshotTree,
 }
 
 #[allow(dead_code)]
@@ -47,19 +50,20 @@ pub enum EngineType {
 impl Store {
     pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
-        let store = match engine_type {
+
+        let engine: Arc<dyn StoreEngine> = match engine_type {
             #[cfg(feature = "libmdbx")]
-            EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
-            },
-            EngineType::InMemory => Self {
-                engine: Arc::new(InMemoryStore::new()),
-            },
+            EngineType::Libmdbx => Arc::new(LibmdbxStore::new(path)?),
+            EngineType::InMemory => Arc::new(InMemoryStore::new()),
             #[cfg(feature = "redb")]
-            EngineType::RedB => Self {
-                engine: Arc::new(RedBStore::new()?),
-            },
+            EngineType::RedB => Arc::new(RedBStore::new()?),
         };
+
+        let store = Self {
+            engine: engine.clone(),
+            snapshots: SnapshotTree::new(engine),
+        };
+
         info!("Started store engine");
         Ok(store)
     }
@@ -76,6 +80,11 @@ impl Store {
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
+
+        // TODO: put it behind a task?
+        store
+            .snapshots
+            .rebuild(store.get_latest_canonical_block_hash().await?.unwrap());
         Ok(store)
     }
 
@@ -435,6 +444,7 @@ impl Store {
     }
 
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
+        // todo
         self.engine.add_blocks(blocks).await
     }
 
@@ -524,6 +534,18 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        if let Some(snapshot) = self.snapshots.snapshot(block_hash) {
+            let address = hash_address_fixed(&address);
+            let result = snapshot.get_storage(address, storage_key);
+
+            match result {
+                Ok(value) => return Ok(value),
+                Err(snapshot_error) => {
+                    error!("Error fetching from snapshot (storage): {}", snapshot_error);
+                }
+            }
+        }
+
         let Some(storage_trie) = self.storage_trie(block_hash, address)? else {
             return Ok(None);
         };
@@ -674,6 +696,20 @@ impl Store {
         let Some(block_hash) = self.engine.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
+
+        if let Some(snapshot) = self.snapshots.snapshot(block_hash) {
+            let address = hash_address_fixed(&address);
+            let result = snapshot.get_account(address);
+
+            match result {
+                Ok(Some(value)) => return Ok(value),
+                Err(snapshot_error) => {
+                    error!("Error fetching from snapshot (account): {}", snapshot_error);
+                }
+                Ok(None) => {}
+            }
+        }
+
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -688,6 +724,7 @@ impl Store {
         let Some(state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
+        dbg!("called get_account_state_by_hash");
         self.get_account_state_from_trie(&state_trie, address)
     }
 
@@ -696,6 +733,7 @@ impl Store {
         state_trie: &Trie,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        dbg!("called get_account_state_from_trie");
         let hashed_address = hash_address(&address);
         let Some(encoded_state) = state_trie.get(&hashed_address)? else {
             return Ok(None);
@@ -750,7 +788,7 @@ impl Store {
         hashed_address: H256,
     ) -> Result<Option<impl Iterator<Item = (H256, U256)>>, StoreError> {
         let state_trie = self.engine.open_state_trie(state_root);
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
@@ -787,7 +825,7 @@ impl Store {
         last_hash: Option<H256>,
     ) -> Result<Option<Vec<Vec<u8>>>, StoreError> {
         let state_trie = self.engine.open_state_trie(state_root);
-        let Some(account_rlp) = state_trie.get(&hashed_address.as_bytes().to_vec())? else {
+        let Some(account_rlp) = state_trie.get(hashed_address.as_bytes())? else {
             return Ok(None);
         };
         let storage_root = AccountState::decode(&account_rlp)?.storage_root;
@@ -1093,6 +1131,76 @@ impl Store {
             .set_latest_valid_ancestor(bad_block, latest_valid)
             .await
     }
+
+    /// Creates a snapshot of the block adding a diff (or disk) layer.
+    ///
+    // Uses owned parameter values due to moving them into a task.
+    pub async fn add_block_snapshot(&self, block: Block, account_updates: Vec<AccountUpdate>) {
+        let store = self.clone();
+
+        fn add_block_snapshot_task(
+            block: Block,
+            store: Store,
+            account_updates: Vec<AccountUpdate>,
+        ) -> Result<(), SnapshotError> {
+            let hash = block.hash();
+            let parent_hash = block.header.parent_hash;
+            let state_root = block.header.state_root;
+            info!("Creating snapshot for block {}", hash);
+
+            // TODO: len acquires briefly a lock, maybe we can track emptiness in another way.
+            if store.snapshots.len() == 0 {
+                // There are no snapshots yet, use this block as root
+                // TODO: find if there is a better place to create the initial "disk layer".
+                store.snapshots.rebuild(hash);
+                info!(
+                    "Snapshot (disk layer) created for {} with parent {}",
+                    hash, parent_hash
+                );
+            } else {
+                // Create the accounts and storage maps for the diff layer.
+                let mut accounts = HashMap::new();
+                let state_trie = store.open_state_trie(state_root);
+
+                let mut storage: HashMap<H256, HashMap<H256, U256>> = HashMap::new();
+
+                for update in account_updates.iter() {
+                    let hashed_address = hash_address_fixed(&update.address);
+
+                    if update.removed {
+                        accounts.insert(hashed_address, None);
+                    } else {
+                        let account_state = match state_trie.get(hashed_address).unwrap() {
+                            Some(encoded_state) => AccountState::decode(&encoded_state).unwrap(),
+                            None => AccountState::default(),
+                        };
+                        accounts.insert(hashed_address, Some(account_state.clone()));
+
+                        for (storage_key, storage_value) in &update.added_storage {
+                            let slots = storage.entry(hashed_address).or_default();
+                            slots.insert(*storage_key, *storage_value);
+                        }
+                    }
+                }
+
+                store
+                    .snapshots
+                    .update(hash, parent_hash, accounts, storage)?;
+                info!(
+                    "Snapshot (diff layer) created for {} with parent {}",
+                    hash, parent_hash
+                );
+            }
+            Ok(())
+        }
+
+        // We don't await the task as we don't need to wait for any result.
+        tokio::spawn(async move {
+            if let Err(err) = add_block_snapshot_task(block, store, account_updates) {
+                error!("Error adding block snapshot: {}", err);
+            }
+        });
+    }
 }
 
 pub fn hash_address(address: &Address) -> Vec<u8> {
@@ -1100,7 +1208,8 @@ pub fn hash_address(address: &Address) -> Vec<u8> {
         .finalize()
         .to_vec()
 }
-fn hash_address_fixed(address: &Address) -> H256 {
+
+pub fn hash_address_fixed(address: &Address) -> H256 {
     H256(
         Keccak256::new_with_prefix(address.to_fixed_bytes())
             .finalize()
