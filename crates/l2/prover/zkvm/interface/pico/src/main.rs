@@ -23,6 +23,8 @@ pub fn main() {
         mut db,
         #[cfg(feature = "l2")]
         withdrawals_merkle_root,
+        #[cfg(feature = "l2")]
+        deposit_logs_hash,
     } = read_as();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
