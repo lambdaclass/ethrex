@@ -15,7 +15,6 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::backends;
 use keccak_hash::keccak;
-use std::collections::HashMap;
 
 pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerError> {
     // There are some tests that don't have a hash, unwrap will panic
@@ -165,7 +164,6 @@ pub fn prepare_vm_for_tx<'a>(
     VM::new(
         Environment {
             origin: test_tx.sender,
-            refunded_gas: 0,
             gas_limit: test_tx.gas_limit,
             config,
             block_number: test.env.current_number,
@@ -184,7 +182,6 @@ pub fn prepare_vm_for_tx<'a>(
             tx_max_fee_per_blob_gas: test_tx.max_fee_per_blob_gas,
             tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
-            transient_storage: HashMap::new(),
             is_privileged: false,
         },
         db,

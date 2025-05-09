@@ -116,7 +116,6 @@ impl LEVM {
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
-            refunded_gas: 0,
             gas_limit: tx.gas_limit(),
             config,
             block_number: block_header.number.into(),
@@ -710,7 +709,6 @@ fn env_from_generic(
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
     Ok(Environment {
         origin: tx.from.0.into(),
-        refunded_gas: 0,
         gas_limit: tx.gas.unwrap_or(header.gas_limit), // Ensure tx doesn't fail due to gas limit
         config,
         block_number: header.number.into(),

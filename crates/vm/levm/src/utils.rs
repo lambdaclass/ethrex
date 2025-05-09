@@ -457,7 +457,7 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?.valid_jump_destinations =
             get_valid_jump_destinations(&self.current_call_frame()?.bytecode).unwrap_or_default();
 
-        self.env.refunded_gas = refunded_gas;
+        self.accrued_substate.refunded_gas = refunded_gas;
 
         Ok(())
     }

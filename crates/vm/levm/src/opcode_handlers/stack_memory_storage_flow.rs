@@ -186,7 +186,7 @@ impl<'a> VM<'a> {
 
         // Gas Refunds
         // Sync gas refund with global env, ensuring consistency accross contexts.
-        let mut gas_refunds = self.env.refunded_gas;
+        let mut gas_refunds = self.accrued_substate.refunded_gas;
 
         // https://eips.ethereum.org/EIPS/eip-2929
         let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) = (4800, 19900, 2800);
@@ -224,7 +224,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        self.env.refunded_gas = gas_refunds;
+        self.accrued_substate.refunded_gas = gas_refunds;
 
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::sstore(

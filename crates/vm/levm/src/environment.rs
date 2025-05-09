@@ -11,7 +11,6 @@ pub type TransientStorage = HashMap<(Address, U256), U256>;
 pub struct Environment {
     /// The sender address of the external transaction.
     pub origin: Address,
-    pub refunded_gas: u64,
     /// Gas limit of the Transaction
     pub gas_limit: u64,
     pub config: EVMConfig,
