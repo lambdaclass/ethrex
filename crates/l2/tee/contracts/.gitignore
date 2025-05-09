@@ -3,6 +3,7 @@ lib/
 
 # Dotenv file
 .env
+.env.out
 
 # Deploy dependencies
 deploydeps/

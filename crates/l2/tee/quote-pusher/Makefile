@@ -21,6 +21,8 @@ integration-test:
 	cd ../contracts; \
 	make deploy-deps; \
 	make deploy; \
+	make mkenv; \
+	export $(shell cat ../contracts/.env.out | xargs); \
 	cd ../quote-pusher; \
 	make test
 

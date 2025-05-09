@@ -1,27 +1,21 @@
 DETERMINISTIC_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C
-CHAIN_ID := $(shell cast chain-id --rpc-url $(RPC_URL))
-PCCS_FILE := deploydeps/automata-dcap-attestation/evm/deployment/$(CHAIN_ID)/onchain_pccs.json
-DCAP_FILE := deploydeps/automata-dcap-attestation/evm/deployment/$(CHAIN_ID)/dcap.json
+DEPLOYMENT_PATH := deploydeps/automata-dcap-attestation/evm/deployment
 
 deploy-p256:
 	rex send $(DETERMINISTIC_DEPLOYER) 0 $(PRIVATE_KEY) --calldata $(shell cat assets/p256.hex)
 
 deploydeps:
 	mkdir -p deploydeps
-	cd deploydeps; git clone https://github.com/automata-network/automata-on-chain-pccs.git
-	cd deploydeps; git clone https://github.com/automata-network/automata-dcap-attestation.git
+	cd deploydeps; git clone https://github.com/lambdaclass/automata-on-chain-pccs.git
+	cd deploydeps; git clone https://github.com/lambdaclass/automata-dcap-attestation.git
 
 deploy-pccs: deploydeps deploy-p256
-	cd deploydeps/automata-on-chain-pccs; git submodule update --init
-	cd deploydeps/automata-on-chain-pccs; forge install
-	cd deploydeps/automata-on-chain-pccs; make deploy-all
+	cd deploydeps/automata-on-chain-pccs; make deploy
 
 deploy-dcap: deploydeps deploy-pccs
-	mkdir -p deploydeps/automata-dcap-attestation/evm/deployment/$(CHAIN_ID)
-	cp deploydeps/automata-on-chain-pccs/deployment/$(CHAIN_ID).json deploydeps/automata-dcap-attestation/evm/deployment/$(CHAIN_ID)/onchain_pccs.json
-	cd deploydeps/automata-dcap-attestation/evm; git submodule update --init
-	cd deploydeps/automata-dcap-attestation/evm; forge install
-	cd deploydeps/automata-dcap-attestation/evm; make deploy-all
+	mkdir -p $(DEPLOYMENT_PATH)
+	cp deploydeps/automata-on-chain-pccs/deployment/* $(DEPLOYMENT_PATH)
+	cd deploydeps/automata-dcap-attestation/evm; make deploy
 
 ROOT_CRL_URI = https://certificates.trustedservices.intel.com/IntelSGXRootCA.der
 deploydeps/root_crl.hex:
@@ -34,15 +28,10 @@ deploydeps/root_ca.hex:
 	curl $(ROOT_CA_URI) | xxd -ps -c0 > deploydeps/root_ca.hex
 
 setup-pccs-ca: deploy-pccs deploydeps/root_ca.hex deploydeps/root_crl.hex
-	$(eval PCSDAO_ADDRESS := $(shell cat ${PCCS_FILE} | jq --raw-output .AutomataPcsDao))
+	$(eval PCSDAO_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataPcsDao))
 	rex send $(PCSDAO_ADDRESS) 0 $(PRIVATE_KEY) -- "upsertPcsCertificates(uint8,bytes)" 0 $(shell cat deploydeps/root_ca.hex)
 	rex send $(PCSDAO_ADDRESS) 0 $(PRIVATE_KEY) -- "upsertRootCACrl(bytes)" $(shell cat deploydeps/root_crl.hex)
 	rex send $(PCSDAO_ADDRESS) 0 $(PRIVATE_KEY) -- "upsertPcsCertificates(uint8,bytes)" 2 $(shell cat assets/platform_ca.hex)
-
-set-verifier-v4: deploy-dcap
-	$(eval DCAP_ADDRESS := $(shell cat ${DCAP_FILE} | jq --raw-output .AutomataDcapAttestationFee))
-	$(eval VERIFIER_V4_ADDR := $(shell cat ${DCAP_FILE} | jq --raw-output .V4QuoteVerifier))
-	rex send $(DCAP_ADDRESS) 0 $(PRIVATE_KEY) -- "setQuoteVerifier(address)" $(VERIFIER_V4_ADDR) \
 
 lib/openzeppelin-contracts:
 	mkdir -p lib
@@ -54,12 +43,20 @@ solc_out/Counter.bin: src/Counter.sol lib/openzeppelin-contracts
 
 deploy: solc_out/Counter.bin
 	$(eval CONTRACT_BIN := $(shell cat solc_out/Counter.bin))
-	$(eval DCAP_ADDRESS := $(shell cat ${DCAP_FILE} | jq --raw-output .AutomataDcapAttestationFee | cut -c 3-))
-	rex deploy $(CONTRACT_BIN)000000000000000000000000$(DCAP_ADDRESS) 0 $(PRIVATE_KEY)
+	$(eval DCAP_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataDcapAttestationFee))
+	rex deploy --print-address $(CONTRACT_BIN) 0 $(PRIVATE_KEY) -- \
+		"constructor(address)" $(DCAP_ADDRESS) > ${DEPLOYMENT_PATH}/Counter
 
-deploy-deps: deploy-dcap set-verifier-v4 setup-pccs-ca
+mkenv:
+	echo CONTRACT_ADDRESS=$(shell cat ${DEPLOYMENT_PATH}/Counter) > .env.out
+	echo ENCLAVE_ID_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataEnclaveIdentityDao)  >> .env.out
+	echo FMSPC_TCB_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataFmspcTcbDao)  >> .env.out
+	echo PCK_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataPckDao)  >> .env.out
+	echo PCS_DAO=$(shell cat ${DEPLOYMENT_PATH}/AutomataPcsDao)  >> .env.out
+
+deploy-deps: deploy-dcap setup-pccs-ca
 
 clean:
 	rm -rf deploydeps cache out deployment/*
 
-.PHONY: deploy-all deploy deploy-pccs deploy-dcap set-verifier-v4 clean
+.PHONY: deploy-all deploy deploy-pccs deploy-dcap clean
