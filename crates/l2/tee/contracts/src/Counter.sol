@@ -16,8 +16,8 @@ contract Counter {
     address public authorizedSignature = address(0);
     uint64 public current = 100;
     bytes public RTMR0 = hex'4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643';
-    bytes public RTMR1 = hex'ff6520a395eadfb0b8621f08cc2816598dfe87271c1705f8ed6a9ea989343b7d25ad2c7c04731a6e94ef14b451d4e1f0';
-    bytes public RTMR2 = hex'a873631d01cf9faf887caab6b3c77a79927845ae7b99754a93699dae0af79c7d8520e8e371be5655dc8a68ad5c0e4d6d';
+    bytes public RTMR1 = hex'ae6d959ed05ad39dea8b03c61c761612d40091c7d5082beaeb54b96231603c65ae7437dcb6794dbc55cfe76f79797532';
+    bytes public RTMR2 = hex'0bcc11304c49a603385c460e63e250e212e5992856bb2f69b116a850133401f0e6613a5e62562cd4a55df757c7124045';
     bytes public MRTD = hex'91eb2b44d141d4ece09f0c75c2c53d247a3c68edd7fafe8a3520c942a604a407de03ae6dc5f87f27428b2538873118b7';
 
     constructor(address _dcap) {
