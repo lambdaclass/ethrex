@@ -170,6 +170,42 @@ The contract will then:
 
 ## What the sequencer can do
 
-The main thing the sequencer can do is CENSOR transactions. Any transaction sent to the sequencer could be arbitrarily dropped and not included in blocks. This is not completely enforceable by the protocol, but there is a big mitigation in the form of an **escape hatch**.
+### Runtime Components
 
-TODO: Explain this in detail.
+| Module                                | Role                                                                                                                                                                                          |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Block Producer**                    | Builds L2 blocks from mempool transactions via `auth.rpc`; runs every `proposer.interval_ms`.                                                                                                 |
+| **L1 Watcher**                        | Polls `CommonBridge` for `DepositInitiated()` events (`watcher.check_interval_ms`, `max_block_step`); materialises each deposit as an L2 tx.                                                  |
+| **L1 Transaction Sender** (Committer) | Posts `commit` (batch data) and `verify` (proof + roots) txs to L1, honouring `committer.commit_time_ms` and `arbitrary_base_blob_gas_price`.                                                 |
+| **Proof Coordinator**                 | TCP server deciding which block is proven next; hands proof input to an external Prover, receives a Groth16 proof back.                                                                       |
+| **L1 Proof Sender**                   | At `proof_send_interval_ms` submits proofs to the correct on-chain verifier (`PICOVERIFIER`, `R0VERIFIER`, `SP1VERIFIER`) via `OnChainProposer.verify(..)`; enforces sequential verification. |
+
+### What It Guarantees
+
+* **Correctness** – Any batch must pass Groth16 verification and on-chain root checks; forged txs or wrong state diffs revert.
+* **Data availability** – State diffs travel either as calldata (`state_diff_hash` checked on-chain) or as an EIP-4844 blob tied to the same polynomial commitment.
+* **Orderliness** – Blocks are finalised on L1 in strict sequence; deposits and withdrawals are provably linked.
+
+### Residual Powers
+
+* **Censorship / MEV** – The producer may drop or reorder txs until the force-inclusion timeout elapses.
+* **Downtime** – If all sequencer nodes fail, L2 stalls until another committer or direct-to-L1 path resumes.
+* **Fee policy** – Sets L2 base-fee and blob-gas bids within the caps `maximum_allowed_max_fee_per_gas` and `maximum_allowed_max_fee_per_blob_gas`.
+
+### Configuration Quick-Start
+
+Create `sequencer_config.toml` (parsed by `deployer.rs`):
+
+```toml
+[deployer]        # L1 contract deployment keys & verifier addresses
+[watcher]         # bridge_address, check_interval_ms, max_block_step
+[proposer]        # interval_ms, coinbase_address
+[committer]       # l1_address, commit_time_ms, on_chain_proposer_address
+[prover_server]   # listen_ip, listen_port, proof_send_interval_ms, dev_mode
+[eth]             # rpc_url, maximum_allowed_max_fee_per_gas, maximum_allowed_max_fee_per_blob_gas
+```
+
+Override with `CONFIGS_PATH` / `SEQUENCER_CONFIG_FILE` if you keep multiple profiles (e.g., testnet vs. mainnet).
+
+**TL;DR:** The ethrex sequencer is trusted only for *liveness*: it crafts blocks, proof-coords them, and relays data to L1; all safety-critical checks live in zk proofs and Ethereum contracts.
+
