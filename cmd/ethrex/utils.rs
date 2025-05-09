@@ -137,9 +137,8 @@ pub async fn store_config_file(config: ConfigFile, file_path: PathBuf) {
 #[allow(dead_code)]
 pub fn read_config_file(file_path: PathBuf) -> Result<ConfigFile, String> {
     match std::fs::File::open(file_path) {
-        Ok(file) => serde_json::from_reader(file)
-            .map_err(|e| format!("Invlid config file {}", e.to_string())),
-        Err(e) => Err(format!("No config file found: {}", e.to_string())),
+        Ok(file) => serde_json::from_reader(file).map_err(|e| format!("Invlid config file {}", e)),
+        Err(e) => Err(format!("No config file found: {}", e)),
     }
 }
 
