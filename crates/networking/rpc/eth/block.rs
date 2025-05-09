@@ -87,7 +87,7 @@ impl RpcHandler for GetBlockByNumberRequest {
         let hash = header.compute_block_hash();
         let block = RpcBlock::build(header, body, hash, self.hydrated);
         info!("Returning block {block:?}");
-        serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
+        dbg!(serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string())))
     }
 }
 
