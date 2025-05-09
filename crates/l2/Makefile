@@ -114,6 +114,8 @@ restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	--private-keys-file-path ../../../test_data/private_keys_l1.txt \
+	--genesis-l1-path ../../../test_data/genesis-l1-dev.json \
 	--contracts-path contracts \
 	--deposit-rich \
 	--private-keys-file-path ../../test_data/private_keys_l1.txt \
