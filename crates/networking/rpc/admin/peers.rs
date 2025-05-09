@@ -20,7 +20,9 @@ pub struct RpcPeer {
 /// Serializable peer network data returned by the node's rpc
 #[derive(Serialize)]
 struct PeerNetwork {
-    remote_address: IpAddr, // We can add more data about the connection here, such as if it is inbound, the local address, etc
+    // We can add more data about the connection here, such the local address, wether the peer is trusted, etc
+    remote_address: IpAddr,
+    inbound: bool,
 }
 
 /// Serializable peer protocols data returned by the node's rpc
@@ -61,6 +63,7 @@ impl From<PeerData> for RpcPeer {
             id: peer.node.node_id,
             network: PeerNetwork {
                 remote_address: peer.node.ip,
+                inbound: peer.is_connection_inbound,
             },
             protocols,
         }

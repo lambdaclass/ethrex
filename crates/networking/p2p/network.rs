@@ -139,7 +139,7 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
 async fn handle_peer_as_receiver(context: P2PContext, peer_addr: SocketAddr, stream: TcpStream) {
     let table = context.table.clone();
     match handshake::as_receiver(context, peer_addr, stream).await {
-        Ok(mut conn) => conn.start(table).await,
+        Ok(mut conn) => conn.start(table, true).await,
         Err(e) => {
             debug!("Error creating tcp connection with peer at {peer_addr}: {e}")
         }
@@ -158,7 +158,7 @@ pub async fn handle_peer_as_initiator(context: P2PContext, node: Node) {
     };
     let table = context.table.clone();
     match handshake::as_initiator(context, node.clone(), stream).await {
-        Ok(mut conn) => conn.start(table).await,
+        Ok(mut conn) => conn.start(table, false).await,
         Err(e) => {
             log_peer_error(&node, &format!("Error creating tcp connection {e}"));
             table.lock().await.replace_peer(node.node_id());
