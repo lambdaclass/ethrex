@@ -7,7 +7,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     precompiles::is_precompile,
     utils::{address_to_word, word_to_address, *},
-    vm::{RetData, StateBackup, VM},
+    vm::{StateBackup, VM},
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -718,21 +718,15 @@ impl<'a> VM<'a> {
             0,
             new_depth,
             true,
+            true,
+            U256::zero(),
+            0,
+            true,
         );
         self.call_frames.push(new_call_frame);
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        self.return_data.push(RetData {
-            is_create: true,
-            ret_offset: U256::zero(),
-            ret_size: 0,
-            should_transfer_value: true,
-            to: new_address,
-            msg_sender: deployer_address,
-            value: value_in_wei_to_send,
-            max_message_call_gas,
-        });
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
         let backup = StateBackup::new(
             self.accrued_substate.clone(),
@@ -823,16 +817,6 @@ impl<'a> VM<'a> {
             self.increase_account_balance(to, value)?;
         }
 
-        self.return_data.push(RetData {
-            is_create: false,
-            ret_offset,
-            ret_size,
-            should_transfer_value,
-            to,
-            msg_sender,
-            value,
-            max_message_call_gas: gas_limit,
-        });
         let new_call_frame = CallFrame::new(
             msg_sender,
             to,
@@ -845,6 +829,10 @@ impl<'a> VM<'a> {
             0,
             new_depth,
             false,
+            false,
+            ret_offset,
+            ret_size,
+            should_transfer_value,
         );
         self.call_frames.push(new_call_frame);
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
@@ -870,14 +858,10 @@ impl<'a> VM<'a> {
             self.call_frames.push(call_frame.clone());
             return Ok(false);
         }
-        let retdata = self
-            .return_data
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-        if retdata.is_create {
-            self.handle_return_create(call_frame, tx_report, retdata)?;
+        if call_frame.is_create {
+            self.handle_return_create(call_frame, tx_report)?;
         } else {
-            self.handle_return_call(call_frame, tx_report, retdata)?;
+            self.handle_return_call(call_frame, tx_report)?;
         }
         Ok(true)
     }
@@ -885,7 +869,6 @@ impl<'a> VM<'a> {
         &mut self,
         call_frame: &CallFrame,
         tx_report: &ExecutionReport,
-        retdata: RetData,
     ) -> Result<(), VMError> {
         // Return gas left from subcontext
         let gas_left_from_new_call_frame = call_frame
@@ -902,8 +885,8 @@ impl<'a> VM<'a> {
             current_call_frame.logs.extend(tx_report.logs.clone());
             memory::try_store_range(
                 &mut current_call_frame.memory,
-                retdata.ret_offset,
-                retdata.ret_size,
+                call_frame.ret_offset,
+                call_frame.ret_size,
                 &tx_report.output,
             )?;
             current_call_frame.sub_return_data = tx_report.output.clone();
@@ -919,10 +902,10 @@ impl<'a> VM<'a> {
             }
             TxResult::Revert(_) => {
                 // Revert value transfer
-                if retdata.should_transfer_value {
-                    self.decrease_account_balance(retdata.to, retdata.value)?;
+                if call_frame.should_transfer_value {
+                    self.decrease_account_balance(call_frame.to, call_frame.msg_value)?;
 
-                    self.increase_account_balance(retdata.msg_sender, retdata.value)?;
+                    self.increase_account_balance(call_frame.msg_sender, call_frame.msg_value)?;
                 }
                 // Push 0 to stack
                 self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
@@ -934,10 +917,9 @@ impl<'a> VM<'a> {
         &mut self,
         call_frame: &CallFrame,
         tx_report: &ExecutionReport,
-        retdata: RetData,
     ) -> Result<(), VMError> {
-        let unused_gas = retdata
-            .max_message_call_gas
+        let unused_gas = call_frame
+            .gas_limit
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
 
@@ -956,16 +938,16 @@ impl<'a> VM<'a> {
             TxResult::Success => {
                 self.current_call_frame_mut()?
                     .stack
-                    .push(address_to_word(retdata.to))?;
+                    .push(address_to_word(call_frame.to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame.call_frame_backup)?;
             }
             TxResult::Revert(err) => {
                 // Return value to sender
-                self.increase_account_balance(retdata.msg_sender, retdata.value)?;
+                self.increase_account_balance(call_frame.msg_sender, call_frame.msg_value)?;
 
                 // Deployment failed so account shouldn't exist
-                cache::remove_account(&mut self.db.cache, &retdata.to);
-                self.accrued_substate.created_accounts.remove(&retdata.to);
+                cache::remove_account(&mut self.db.cache, &call_frame.to);
+                self.accrued_substate.created_accounts.remove(&call_frame.to);
 
                 let current_call_frame = self.current_call_frame_mut()?;
                 // If revert we have to copy the return_data

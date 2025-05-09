@@ -94,6 +94,10 @@ pub struct CallFrame {
     pub create_op_called: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub call_frame_backup: CallFrameBackup,
+    pub is_create: bool,
+    pub ret_offset: U256,
+    pub ret_size: usize,
+    pub should_transfer_value: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -105,6 +109,45 @@ pub struct CallFrameBackup {
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        msg_sender: Address,
+        to: Address,
+        code_address: Address,
+        bytecode: Bytes,
+        msg_value: U256,
+        calldata: Bytes,
+        is_static: bool,
+        gas_limit: u64,
+        gas_used: u64,
+        depth: usize,
+        create_op_called: bool,
+        is_create: bool,
+        ret_offset: U256,
+        ret_size: usize,
+        should_transfer_value: bool
+    ) -> Self {
+        let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
+        Self {
+            gas_limit,
+            msg_sender,
+            to,
+            code_address,
+            bytecode,
+            msg_value,
+            calldata,
+            is_static,
+            depth,
+            gas_used,
+            valid_jump_destinations,
+            create_op_called,
+            is_create,
+            ret_offset,
+            ret_size,
+            should_transfer_value,
+            ..Default::default()
+        }
+    }
+
+    pub fn new_without_retdata(
         msg_sender: Address,
         to: Address,
         code_address: Address,
