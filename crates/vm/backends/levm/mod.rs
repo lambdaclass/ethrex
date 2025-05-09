@@ -134,7 +134,6 @@ impl LEVM {
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
-            transient_storage: HashMap::new(),
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
@@ -597,7 +596,6 @@ pub fn generic_system_contract_levm(
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
         block_gas_limit: 30_000_000,
-        transient_storage: HashMap::new(),
         config,
         ..Default::default()
     };
@@ -730,7 +728,6 @@ fn env_from_generic(
         tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,
-        transient_storage: HashMap::new(),
         difficulty: header.difficulty,
         is_privileged: false,
     })

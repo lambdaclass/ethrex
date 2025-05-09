@@ -5,7 +5,7 @@ use crate::{
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
-    vm::{StateBackup, VM},
+    vm::{Substate, VM},
 };
 
 use bytes::Bytes;
@@ -14,7 +14,7 @@ impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,
-        backup: StateBackup,
+        backup: Substate,
         current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
@@ -153,7 +153,7 @@ impl<'a> VM<'a> {
         current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         let backup = self
-            .backups
+            .substate_backups
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         // On successful create check output validity
@@ -227,7 +227,7 @@ impl<'a> VM<'a> {
         current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         let backup = self
-            .backups
+            .substate_backups
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if error.should_propagate() {
