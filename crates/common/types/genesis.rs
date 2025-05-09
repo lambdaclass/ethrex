@@ -408,7 +408,7 @@ impl Genesis {
             "requestsHash",
             "blobGasUsed",
         ];
-        // This map is ordered because this crate uses the 'preserve_order'
+        // This map will preserve insertion order because this crate uses the 'preserve_order'
         // feature from serde_json.
         let mut ordered_map: Map<String, Value> = serde_json::Map::new();
         for k in keys {
