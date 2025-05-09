@@ -696,10 +696,7 @@ pub(super) mod tests {
 
     use k256::ecdsa::SigningKey;
     use rand::rngs::OsRng;
-    use std::{
-        net::{IpAddr, Ipv4Addr},
-        u64,
-    };
+    use std::net::{IpAddr, Ipv4Addr};
     use tokio::{sync::Mutex, time::sleep};
 
     pub async fn insert_random_node_on_custom_bucket(
