@@ -10,6 +10,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_p2p::{
     kademlia::KademliaTable,
     network::node_id_from_signing_key,
+    peer_handler::PeerHandler,
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -140,10 +141,11 @@ pub async fn init_rpc_api(
         .as_secs();
     let local_node_record = NodeRecord::from_node(local_p2p_node, enr_seq, signer)
         .expect("Node record could not be created from local node");
+    let peer_handler = PeerHandler::new(peer_table);
 
     // Create SyncManager
     let syncer = SyncManager::new(
-        peer_table.clone(),
+        peer_handler.clone(),
         opts.syncmode.clone(),
         cancel_token,
         blockchain.clone(),
@@ -161,6 +163,7 @@ pub async fn init_rpc_api(
         local_node_record,
         syncer,
         get_client_version(),
+        peer_handler,
         #[cfg(feature = "based")]
         get_gateway_http_client(&l2_opts.based_opts),
         #[cfg(feature = "based")]

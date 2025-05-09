@@ -49,6 +49,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 #[cfg(feature = "based")]
 use ethrex_common::Public;
+use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
@@ -95,6 +96,7 @@ pub struct RpcApiContext {
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
     pub client_version: String,
+    pub peer_handler: PeerHandler,
     #[cfg(feature = "based")]
     pub gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -151,6 +153,7 @@ pub async fn start_api(
     local_node_record: NodeRecord,
     syncer: SyncManager,
     client_version: String,
+    peer_handler: PeerHandler,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "based")] gateway_pubkey: Public,
@@ -170,6 +173,7 @@ pub async fn start_api(
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
         client_version,
+        peer_handler,
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
@@ -451,6 +455,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
             context.local_node_record,
             context.client_version,
         ),
+        "admin_peers" => admin::peers(&context),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }

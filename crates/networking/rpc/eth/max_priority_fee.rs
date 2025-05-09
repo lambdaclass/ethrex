@@ -48,6 +48,7 @@ mod tests {
     #[cfg(feature = "based")]
     use bytes::Bytes;
     use ethrex_blockchain::Blockchain;
+    use ethrex_p2p::peer_handler::PeerHandler;
     use ethrex_p2p::sync_manager::SyncManager;
     #[cfg(feature = "l2")]
     use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -68,6 +69,7 @@ mod tests {
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
             client_version: "ethrex/test".to_string(),
+            peer_handler: PeerHandler::dummy(),
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]

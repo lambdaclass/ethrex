@@ -7,6 +7,8 @@ use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 
 use crate::utils::RpcErr;
+mod peers;
+pub use peers::peers;
 
 #[derive(Serialize, Debug)]
 struct NodeInfo {
