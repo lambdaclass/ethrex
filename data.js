@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746810900446,
+  "lastUpdate": 1746826407268,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6055,6 +6055,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178119940301,
             "range": "± 438193991",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "08c6ba25e75f94775fdb15ab4a8db148333c1dcc",
+          "message": "ci(l1): bypassed flaky test, returned comment saying it's flaky (#2736)\n\n**Motivation**\n\nThis removes the flaky tests indicated in #2565 who were added before\nonly with local testing. The issue happens only in\n\n**Description**\n\nRemoves the \"Invalid Missing Ancestor Syncing ReOrg\" tests, while\nkeeping the \"Invalid Missing Ancestor ReOrg\" tests that were fixed and\nadded in #2690. Readded the comment saying is flaky, and expanded by\nsaying it happens only in CI.",
+          "timestamp": "2025-05-09T20:33:05Z",
+          "tree_id": "9cf0e661ab48069e0223b10b03a526a20c1f9c2c",
+          "url": "https://github.com/lambdaclass/ethrex/commit/08c6ba25e75f94775fdb15ab4a8db148333c1dcc"
+        },
+        "date": 1746826404840,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 182562294054,
+            "range": "± 717984892",
             "unit": "ns/iter"
           }
         ]
