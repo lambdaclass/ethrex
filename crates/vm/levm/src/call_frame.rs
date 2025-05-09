@@ -123,7 +123,7 @@ impl CallFrame {
         is_create: bool,
         ret_offset: U256,
         ret_size: usize,
-        should_transfer_value: bool
+        should_transfer_value: bool,
     ) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
@@ -147,6 +147,7 @@ impl CallFrame {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_without_retdata(
         msg_sender: Address,
         to: Address,

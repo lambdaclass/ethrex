@@ -947,7 +947,9 @@ impl<'a> VM<'a> {
 
                 // Deployment failed so account shouldn't exist
                 cache::remove_account(&mut self.db.cache, &call_frame.to);
-                self.accrued_substate.created_accounts.remove(&call_frame.to);
+                self.accrued_substate
+                    .created_accounts
+                    .remove(&call_frame.to);
 
                 let current_call_frame = self.current_call_frame_mut()?;
                 // If revert we have to copy the return_data
