@@ -2,7 +2,7 @@
 #![allow(clippy::expect_used)]
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{Block, Genesis};
+use ethrex_common::types::{Block, Genesis, Transaction};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_rpc::utils::get_withdrawal_hash;
 use ethrex_storage::{EngineType, Store};
@@ -17,7 +17,8 @@ use std::{
 };
 
 use crate::{
-    sequencer::l1_committer::get_withdrawals_merkle_root, utils::helpers::is_withdrawal_l2,
+    sequencer::l1_committer::{get_deposit_hash, get_withdrawals_merkle_root},
+    utils::helpers::is_withdrawal_l2,
 };
 
 use super::error::ProverInputError;
@@ -122,6 +123,25 @@ pub async fn generate_program_input(
         })?
     };
 
+    let deposits_logs_txs_hash = block
+        .body
+        .transactions
+        .iter()
+        .filter_map(|tx| match tx {
+            Transaction::PrivilegedL2Transaction(tx) => Some(tx.clone()),
+            _ => None,
+        })
+        .map(|tx| {
+            tx.get_deposit_hash().ok_or(ProverInputError::DepositsError(
+                "Failed to get deposit hash for transaction".to_owned(),
+            ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let deposit_logs_hash = get_deposit_hash(deposits_logs_txs_hash).map_err(|_| {
+        ProverInputError::DepositsError("Failed to get deposit logs hash".to_owned())
+    })?;
+
     let blocks = vec![block];
     let db = Evm::to_execution_db(&store, &blocks).await?;
 
@@ -130,6 +150,7 @@ pub async fn generate_program_input(
         blocks,
         parent_block_header,
         withdrawals_merkle_root,
+        deposit_logs_hash,
     })
 }
 
