@@ -107,14 +107,13 @@ make init-prover T="prover_type (pico,risc0,sp1) G=true"
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
    - It will remove any old database, if present, stored in your computer. The absolute path of libmdbx is defined by [data_dir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
-3. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` &rarr; check if you want to change any config.
-4. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` &rarr; check if you want to change any config.
-5. `make init`
+3. `cp configs/prover_client_config_example.toml configs/prover_client_config.toml` &rarr; check if you want to change any config.
+4. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.
    - Deploy the needed contracts for the L2 on the L1.
    - Start the L2 locally on port `1729`.
-6. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico)`.
+5. In a new terminal &rarr; `make init-prover T=(sp1,risc0,pico)`.
 
 After this initialization we should have the prover running in `dev_mode` &rarr; No real proofs.
 
@@ -175,22 +174,32 @@ prover_server_endpoint=<ip-address>:3900
 
 2. `ProofCoordinator`/`sequencer` &rarr; this server just needs rust installed.
    1. `cd ethrex/crates/l2`
-   2. `cp configs/sequencer_config_example.toml configs/sequencer_config.toml` and change the addresses and the following fields:
-      - [prover_server]
-        - `listen_ip=0.0.0.0` &rarr; Used to handle TCP communication with other servers from any network interface.
-      - The `COMMITTER` and `PROVER_SERVER_VERIFIER` must be different accounts, the `DEPLOYER_ADDRESS` as well as the `L1_WATCHER` may be the same account used by the `COMMITTER`.
-      - [deployer]
-        - `salt_is_zero=false` &rarr; set to false to randomize the salt.
-      - `sp1_deploy_verifier = true` overwrites `sp1_contract_verifier`. Check if the contract is deployed in your preferred network or set to `true` to deploy it.
-      - `risc0_contract_verifier`
-        - Check the if the contract is present on your preferred network.
-      - `sp1_contract_verifier`
-        - It can be deployed.
-        - Check the if the contract is present on your preferred network.
-      - `pico_contract_verifier`
-        - It can be deployed.
-        - Check the if the contract is present on your preferred network.
-      - Set the [eth] `rpc_url` to any L1 endpoint.
+   2. Create a `.env` file with the following content:
+   ```env
+   // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+   ETHREX_DEPLOYER_L1_PRIVATE_KEY=<private_key>
+   // Should be the same as ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+   ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY=<private_key>
+   // Should be the same as ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY and ETHREX_DEPLOYER_L1_PRIVATE_KEY
+   ETHREX_COMMITTER_L1_PRIVATE_KEY=<private_key>
+   // Should be different from ETHREX_COMMITTER_L1_PRIVATE_KEY and ETHREX_WATCHER_L2_PROPOSER_PRIVATE_KEY
+   ETHREX_PROOF_COORDINATOR_L1_PRIVATE_KEY=<private_key>
+   // Used to handle TCP communication with other servers from any network interface.
+   ETHREX_PROOF_COORDINATOR_LISTEN_IP=0.0.0.0
+   // Set to true to randomize the salt.
+   ETHREX_DEPLOYER_RANDOMIZE_CONTRACT_DEPLOYMENT=true
+   // Check if the contract is deployed in your preferred network or set to `true` to deploy it.
+   ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=true
+   // Check the if the contract is present on your preferred network.
+   ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=<address>
+   // It can be deployed. Check the if the contract is present on your preferred network.
+   ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<address>
+   // It can be deployed. Check the if the contract is present on your preferred network.
+   ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER=<address>
+   // Set to any L1 endpoint.
+   ETHREX_ETH_RPC_URL=<url>
+   ```
+   3. `source .env`
 
 > [!NOTE]
 > Make sure to have funds, if you want to perform a quick test `0.2[ether]` on each account should be enough.

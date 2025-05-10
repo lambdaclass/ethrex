@@ -11,6 +11,7 @@ use std::{
     fs::create_dir_all,
     io::{BufWriter, Write},
 };
+use tracing::info;
 
 #[cfg(not(test))]
 /// The default directory for data storage when not running tests.
@@ -377,6 +378,7 @@ pub fn batch_number_has_all_needed_proofs(
 
         // If the proof is missing return false
         if !proof_exists {
+            info!("Missing {prover_type} proof");
             has_all_proofs = false;
             break;
         }

@@ -1,17 +1,12 @@
-use crate::{
-    sequencer::errors::L1WatcherError,
-    utils::{
-        config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
-        parse::hash_to_address,
-    },
-};
+use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
+use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{types::Transaction, H160};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
-    clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient},
+    clients::eth::{eth_sender::Overrides, EthClient},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
@@ -19,15 +14,15 @@ use keccak_hash::keccak;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
+use super::errors::SequencerError;
 use super::utils::sleep_random;
 
 pub async fn start_l1_watcher(
     store: Store,
     blockchain: Arc<Blockchain>,
-) -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    let watcher_config = L1WatcherConfig::from_env()?;
-    let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config).await?;
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
+    let mut l1_watcher = L1Watcher::new_from_config(&cfg.l1_watcher, &cfg.eth).await?;
     l1_watcher.run(&store, &blockchain).await;
     Ok(())
 }
@@ -43,9 +38,9 @@ pub struct L1Watcher {
 
 impl L1Watcher {
     pub async fn new_from_config(
-        watcher_config: L1WatcherConfig,
-        eth_config: EthConfig,
-    ) -> Result<Self, EthClientError> {
+        watcher_config: &L1WatcherConfig,
+        eth_config: &EthConfig,
+    ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let l2_client = EthClient::new("http://localhost:1729");
 
