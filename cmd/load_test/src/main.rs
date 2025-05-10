@@ -63,7 +63,7 @@ struct Cli {
         long,
         short = 'w',
         default_value_t = 0,
-        help = "Timeout to wait for all transactions to be included. If 0 is specified, wait indefinitely."
+        help = "Timeout in minutes. If the node doesn't provide updates in this time, it's considered stuck and the load test fails. If 0 is specified, the load test will wait indefinitely."
     )]
     wait: u64,
 }
@@ -280,15 +280,15 @@ async fn wait_until_all_included(
     accounts: &[Account],
     tx_amount: u64,
 ) -> Result<(), String> {
-    let start_time = tokio::time::Instant::now();
-
     for (pk, _) in accounts {
         let pk = *pk;
         let client = client.clone();
         let src = address_from_pub_key(pk);
         let encoded_src: String = src.encode_hex();
+        let mut last_updated = tokio::time::Instant::now();
+        let mut last_nonce = 0;
+
         loop {
-            let elapsed = start_time.elapsed();
             let nonce = client.get_nonce(src, BlockByNumber::Latest).await.unwrap();
             if nonce >= tx_amount {
                 println!(
@@ -298,14 +298,21 @@ async fn wait_until_all_included(
                 break;
             } else {
                 println!(
-                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%. Elapsed time: {}s.",
-                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0, elapsed.as_secs()
+                    "Waiting for transactions to be included from {}. Nonce: {}. Needs: {}. Percentage: {:2}%.",
+                    encoded_src, nonce, tx_amount, (nonce as f64 / tx_amount as f64) * 100.0
                 );
             }
 
             if let Some(wait) = wait {
-                if elapsed > wait {
-                    return Err("Timeout reached for transactions to be included".to_string());
+                let elapsed = last_updated.elapsed();
+                if last_nonce == nonce && elapsed > wait {
+                    return Err(format!(
+                        "Node inactive for {} seconds. Timeout reached.",
+                        elapsed.as_secs()
+                    ));
+                } else {
+                    last_nonce = nonce;
+                    last_updated = tokio::time::Instant::now();
                 }
             }
 
