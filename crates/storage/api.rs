@@ -12,7 +12,7 @@ use ethrex_trie::{Nibbles, Trie};
 // We need async_trait because the stabilized feature lacks support for object safety
 // (i.e. dyn StoreEngine)
 #[async_trait::async_trait]
-pub trait StoreEngine: Debug + Send + Sync + RefUnwindSafe {
+pub trait StoreEngine: Debug + Send + Sync {
     /// Add a batch of blocks in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError>;

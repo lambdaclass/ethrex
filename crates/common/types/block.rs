@@ -556,10 +556,9 @@ pub fn validate_block_header(
     if header.ommers_hash != *DEFAULT_OMMERS_HASH {
         return Err(InvalidBlockHeaderError::OmmersHashNotDefault);
     }
-
-    if header.parent_hash != parent_header.compute_block_hash() {
-        return Err(InvalidBlockHeaderError::ParentHashIncorrect);
-    }
+    // if header.parent_hash != parent_header.compute_block_hash() {
+    //     return Err(InvalidBlockHeaderError::ParentHashIncorrect);
+    // }
 
     Ok(())
 }

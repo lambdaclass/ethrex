@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::error::TrieError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -10,13 +12,13 @@ use super::db::TrieDB;
 /// All nodes are stored in the DB and no node is ever removed
 use super::{node::Node, node_hash::NodeHash};
 pub struct TrieState {
-    db: Box<dyn TrieDB>,
+    db: Arc<dyn TrieDB>,
     cache: HashMap<NodeHash, Node>,
 }
 
 impl TrieState {
     /// Creates a TrieState referring to a db.
-    pub fn new(db: Box<dyn TrieDB>) -> TrieState {
+    pub fn new(db: Arc<dyn TrieDB>) -> TrieState {
         TrieState {
             db,
             cache: Default::default(),

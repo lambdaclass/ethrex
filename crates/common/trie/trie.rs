@@ -13,6 +13,8 @@ use ethereum_types::H256;
 use ethrex_rlp::constants::RLP_NULL;
 use sha3::{Digest, Keccak256};
 use std::collections::HashSet;
+use std::rc::Rc;
+use std::sync::Arc;
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::nibbles::Nibbles;
@@ -51,7 +53,7 @@ pub struct Trie {
 
 impl Trie {
     /// Creates a new Trie from a clean DB
-    pub fn new(db: Box<dyn TrieDB>) -> Self {
+    pub fn new(db: Arc<dyn TrieDB>) -> Self {
         Self {
             state: TrieState::new(db),
             root: None,
@@ -59,7 +61,7 @@ impl Trie {
     }
 
     /// Creates a trie from an already-initialized DB and sets root as the root node of the trie
-    pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
+    pub fn open(db: Arc<dyn TrieDB>, root: H256) -> Self {
         let root = (root != *EMPTY_TRIE_HASH).then_some(root.into());
         Self {
             state: TrieState::new(db),
@@ -253,7 +255,7 @@ impl Trie {
             }
         }
 
-        Trie::new(Box::new(NullTrieDB))
+        Trie::new(Arc::new(NullTrieDB))
     }
 
     /// Obtain the encoded node given its path.
@@ -342,7 +344,7 @@ impl Trie {
         let hmap: HashMap<NodeHash, Vec<u8>> = HashMap::new();
         let map = Arc::new(Mutex::new(hmap));
         let db = InMemoryTrieDB::new(map);
-        Trie::new(Box::new(db))
+        Trie::new(Arc::new(db))
     }
 }
 
