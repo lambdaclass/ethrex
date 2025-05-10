@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746826407268,
+  "lastUpdate": 1746886172533,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6085,6 +6085,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 182562294054,
             "range": "± 717984892",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "938db195e8a49bd208ab48bb30978ead9e3ed2b2",
+          "message": "refactor(l2): replace sequencer config toml with CLI flags (#2606)\n\n**Motivation**\n\n- https://github.com/lambdaclass/ethrex/issues/2380\n- https://github.com/lambdaclass/ethrex/issues/2574\n- https://github.com/lambdaclass/ethrex/issues/2609\n\n**Description**\n\n- Adds CLI options for the sequencer components\n- Extends `ethrex l2 init` options with `SequencerOptions` (a struct\nthat contains all the different components' options)\n- Refactors `cmd/ethrex/l2.rs`\n    - Moved the command code to `cmd/ethrex/l2/command.rs`.\n    - Moved the command options to `cmd/ethrex/l2/options.rs`.\n- Leaves the minimum necessary config in the\n`sequencer_config_example.toml` (needed by the deployer).\n- Leaves the minimum necessary logic in the\n`crates/l2/utils/configs/toml_parser.rs` module (needed by the deployer\nand prover).\n- Adds CLI options for the contract deployer bin and the system\ncontracts updater bin (removing the need of a config file).\n- Updates the L2 Makefile.\n- Updates the Docker Compose files.\n- Updates the `pr-main_l2` workflow.\n- Updates the L2 integration test.\n- Removes the `sequencer_config_example.toml` since it is not needed\nanymore.\n- Refactors the `crates/l2/contracts` module\n- Renames the crate from `ethrex-l2_deployer` to `ethrex-l2_contracts`.\n- Adds a `bin` module with the bins `ethrex_l2_l1_deployer` and\n`ethrex_l2_system_contracts_updater`.\n    - All the SDK-related logic was moved to the SDK lib.\n- Cleans up the logic related to the config and toml parsing since now\nthe only bin relying on the config is the Prover. Everything relative to\nthe sequencer was removed, and now it is \"hardcoded\" for the Prover.\n\n**How to test**\n\nIf you are in a dev environment, keep working as usual because under the\nhood, the sequencer initialization is not relying anymore on the\n`sequencer_config.toml`.\n\nIf you are in a prod environment, run `cargo run --release --features l2\n-- l2 init --help` at the root of the repository to explore the\ndifferent configuration flags this PR adds.\n\n**Caveats**\n\nThe prover config file is still needed by the prover (tracked in\nhttps://github.com/lambdaclass/ethrex/issues/2576).\n\nCloses #2574\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>\nCo-authored-by: Manuel Iñaki Bilbao <manuel.bilbao@lambdaclass.com>",
+          "timestamp": "2025-05-10T13:10:11Z",
+          "tree_id": "4c99a1cc733d2700b4e256ab7fa91053bfc8fd23",
+          "url": "https://github.com/lambdaclass/ethrex/commit/938db195e8a49bd208ab48bb30978ead9e3ed2b2"
+        },
+        "date": 1746886170512,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 180007591893,
+            "range": "± 632552860",
             "unit": "ns/iter"
           }
         ]
