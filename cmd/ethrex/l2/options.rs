@@ -53,7 +53,7 @@ pub struct SequencerOptions {
     #[command(flatten)]
     pub watcher_opts: WatcherOptions,
     #[command(flatten)]
-    pub proposer_opts: BlockProducerOptions,
+    pub block_producer_opts: BlockProducerOptions,
     #[command(flatten)]
     pub committer_opts: CommitterOptions,
     #[command(flatten)]
@@ -64,8 +64,8 @@ impl From<SequencerOptions> for SequencerConfig {
     fn from(opts: SequencerOptions) -> Self {
         Self {
             block_producer: BlockProducerConfig {
-                block_time_ms: opts.proposer_opts.block_time_ms,
-                coinbase_address: opts.proposer_opts.coinbase_address,
+                block_time_ms: opts.block_producer_opts.block_time_ms,
+                coinbase_address: opts.block_producer_opts.coinbase_address,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address,
@@ -275,7 +275,7 @@ pub struct ProofCoordinatorOptions {
     )]
     pub proof_coordinator_l1_private_key: SecretKey,
     #[arg(
-        long = "proof-coordinator.address",
+        long = "proof-coordinator.addr",
         default_value = "127.0.0.1",
         value_name = "IP_ADDRESS",
         env = "ETHREX_PROOF_COORDINATOR_LISTEN_ADDRESS",

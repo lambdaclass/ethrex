@@ -97,6 +97,8 @@ impl L1ProofSender {
 
     async fn run(&self) {
         loop {
+            info!("Running L1 Proof Sender");
+            info!("Needed proof systems: {:?}", self.needed_proof_types);
             if let Err(err) = self.main_logic().await {
                 error!("L1 Proof Sender Error: {}", err);
             }
@@ -115,6 +117,8 @@ impl L1ProofSender {
             .is_ok_and(|has_all_proofs| has_all_proofs)
         {
             self.send_proof(batch_to_verify).await?;
+        } else {
+            info!("Missing proofs for batch {batch_to_verify}, skipping sending");
         }
 
         Ok(())
