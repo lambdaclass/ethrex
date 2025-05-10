@@ -216,7 +216,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover -s SIGINT
+	killall ethrex_prover -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 
 # State reconstruction tests
 state-diff-test:
@@ -226,7 +226,7 @@ state-diff-test:
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach --build
 	cargo test state_reconstruct --release
 
 # Purge L2's state
