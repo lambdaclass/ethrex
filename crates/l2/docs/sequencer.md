@@ -89,6 +89,7 @@ The following environment variables are available to configure the Proposer cons
   - `l1_private_key`: Its private key.
   - `commit_time_ms`: Sleep time after sending the commit transaction to the L1. If no new block has been built, the committer will simply wait another `commit_time_ms` and check again.
   - `on_chain_proposer_address`: Address of the on-chain committer.
+  - `elasticity_multiplier`: Value used to set the gas limit of a block. This value is multiplied by the gas target value of the block.
   - `arbitrary_base_blob_gas_price`: Sets the minimum price floor for blob transactions when posting L2 data to the L1. This parameter allows you to control the lower bound of what the sequencer is willing to pay for blob storage. Higher values ensure faster inclusion in L1 blocks but increase operating costs, while lower values reduce costs but may cause delays.
 
 - Under the `[prover_server]` section:
@@ -104,6 +105,10 @@ The following environment variables are available to configure the Proposer cons
 - Under the `[eth]` section:
 
   - `rpc_url`: The URL for interacting with the RPC endpoint from the client.
+  - `max_number_of_retries`: Value to set how many times are you willing to bump the gas in order to send the transaction.
+  - `backoff_factor`: Base of the exponential used to calculate the backoff for the wait time when bumping the gas.
+  - `min_retry_delay`: Minimum wait time for expecting to receive the receipt of the transaction. If not received, bump the transaction
+  - `max_retry_delay`: Maximum wait time to before expecting the transaction's receipt. This prevents from long wait times.
   - `maximum_allowed_max_fee_per_gas`: Sets a hard cap on the maximum fee per gas you are willing to pay for a single transaction.
   - `maximum_allowed_max_fee_per_blob_gas`: Sets a hard cap on the maximum fee per blob gas you are willing to pay for a single transaction.
 

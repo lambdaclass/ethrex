@@ -18,6 +18,10 @@ salt_is_zero = true
 
 [eth]
 rpc_url = "http://localhost:8545"
+max_number_of_retries = 10
+backoff_factor = 2
+min_retry_delay = 96
+max_retry_delay = 1800
 # 10 Gwei
 maximum_allowed_max_fee_per_gas = 10000000000
 maximum_allowed_max_fee_per_blob_gas = 10000000000
@@ -31,6 +35,7 @@ l2_proposer_private_key = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a
 [proposer]
 block_time_ms = 5000
 coinbase_address = "0x0007a881CD95B1484fca47615B64803dad620C8d"
+elasticity_multiplier = 2
 
 [committer]
 # Address of a funded account that the sequencer will use to send commit txs to the L1.

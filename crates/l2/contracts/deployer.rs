@@ -165,12 +165,16 @@ async fn main() -> Result<(), DeployError> {
 
 fn setup() -> Result<SetupResult, DeployError> {
     read_env_file_by_config(ConfigMode::Sequencer)?;
-    let eth_config = EthConfig::from_env().map_err(DeployError::ConfigError)?;
 
-    let eth_client = EthClient::new_with_maximum_fees(
+    let eth_config = EthConfig::from_env().map_err(DeployError::ConfigError)?;
+    let eth_client = EthClient::new_with_config(
         &eth_config.rpc_url,
-        eth_config.maximum_allowed_max_fee_per_gas,
-        eth_config.maximum_allowed_max_fee_per_blob_gas,
+        eth_config.max_number_of_retries,
+        eth_config.backoff_factor,
+        eth_config.min_retry_delay,
+        eth_config.max_retry_delay,
+        Some(eth_config.maximum_allowed_max_fee_per_gas),
+        Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
     );
 
     let deployer_address = parse_env_var("DEPLOYER_L1_ADDRESS")?;

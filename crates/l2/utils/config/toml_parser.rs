@@ -46,6 +46,10 @@ impl Deployer {
 #[derive(Deserialize, Debug)]
 struct Eth {
     rpc_url: String,
+    max_number_of_retries: u64,
+    backoff_factor: u64,
+    min_retry_delay: u64,
+    max_retry_delay: u64,
     maximum_allowed_max_fee_per_gas: u64,
     maximum_allowed_max_fee_per_blob_gas: u64,
 }
@@ -56,16 +60,23 @@ impl Eth {
         format!(
             "
 {prefix}_RPC_URL={}
+{prefix}_MAX_NUMBER_OF_RETRIES={}
+{prefix}_BACKOFF_FACTOR={}
+{prefix}_MIN_RETRY_DELAY={}
+{prefix}_MAX_RETRY_DELAY={}
 {prefix}_MAXIMUM_ALLOWED_MAX_FEE_PER_GAS={}
 {prefix}_MAXIMUM_ALLOWED_MAX_FEE_PER_BLOB_GAS={}
 ",
             self.rpc_url,
+            self.max_number_of_retries,
+            self.backoff_factor,
+            self.min_retry_delay,
+            self.max_retry_delay,
             self.maximum_allowed_max_fee_per_gas,
-            self.maximum_allowed_max_fee_per_blob_gas
+            self.maximum_allowed_max_fee_per_blob_gas,
         )
     }
 }
-
 #[derive(Deserialize, Debug)]
 struct Watcher {
     bridge_address: String,
@@ -96,6 +107,7 @@ impl Watcher {
 struct Proposer {
     block_time_ms: u64,
     coinbase_address: String,
+    elasticity_multiplier: u64,
 }
 
 impl Proposer {
@@ -105,8 +117,9 @@ impl Proposer {
             "
 {prefix}_BLOCK_TIME_MS={}
 {prefix}_COINBASE_ADDRESS={}
+{prefix}_ELASTICITY_MULTIPLIER={}
 ",
-            self.block_time_ms, self.coinbase_address,
+            self.block_time_ms, self.coinbase_address, self.elasticity_multiplier
         )
     }
 }
