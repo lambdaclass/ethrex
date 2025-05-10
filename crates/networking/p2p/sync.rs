@@ -9,7 +9,7 @@ mod trie_rebuild;
 use bytecode_fetcher::bytecode_fetcher;
 use ethrex_blockchain::{error::ChainError, BatchBlockProcessingFailure, Blockchain};
 use ethrex_common::{
-    types::{Block, BlockHash, BlockHeader},
+    types::{validate_block_body, Block, BlockHash, BlockHeader},
     BigEndianHash, H256, U256, U512,
 };
 use ethrex_rlp::error::RLPDecodeError;
@@ -190,7 +190,7 @@ impl Syncer {
         loop {
             debug!("Requesting Block Headers from {search_head}");
 
-            let Some(mut block_headers) = self
+            let Some((mut block_headers, peer_id)) = self
                 .peers
                 .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
@@ -223,6 +223,23 @@ impl Syncer {
                 .iter()
                 .map(|header| header.compute_block_hash())
                 .collect::<Vec<_>>();
+
+            // Validate that, for each header, its parent root is equal to the previous header's
+            // hash. If that's not true, then we have received an invalid header from our peer and we
+            // have to discard it.
+            let any_invalid = block_headers
+                .iter()
+                .skip(1) // Skip the first, since we know the current head is valid
+                .zip(block_hashes.iter())
+                .any(|(current_header, previous_hash)| {
+                    current_header.parent_hash != *previous_hash
+                });
+
+            if any_invalid {
+                warn!("Received invalid header chain from peer, discarding peer {peer_id} and retrying...");
+                self.peers.remove_peer(peer_id).await;
+                continue;
+            }
 
             debug!(
                 "Received {} block headers| First Number: {} Last Number: {}",
@@ -386,7 +403,7 @@ impl Syncer {
         let since = Instant::now();
         loop {
             debug!("Requesting Block Bodies");
-            let Some(block_bodies) = self
+            let Some((block_bodies, peer_id)) = self
                 .peers
                 .request_block_bodies(current_block_hashes_chunk.clone())
                 .await
@@ -422,6 +439,15 @@ impl Syncer {
                     None => break,
                 };
             };
+
+            if let Some(e) = blocks
+                .iter()
+                .find_map(|block| validate_block_body(block).err())
+            {
+                warn!("Invalid block body error {e}, discarding peer {peer_id}");
+                self.peers.remove_peer(peer_id).await;
+                continue; // Retry
+            }
         }
 
         let blocks_len = blocks.len();
@@ -472,6 +498,7 @@ impl Syncer {
                     .set_latest_valid_ancestor(sync_head, last_valid_hash)
                     .await?;
             }
+            // NOTE: Do we want to discard the peer if an execution or validation error happens?
 
             return Err(error.into());
         }
@@ -535,7 +562,7 @@ async fn store_block_bodies(
 ) -> Result<(), SyncError> {
     loop {
         debug!("Requesting Block Bodies ");
-        if let Some(block_bodies) = peers.request_block_bodies(block_hashes.clone()).await {
+        if let Some((block_bodies, _)) = peers.request_block_bodies(block_hashes.clone()).await {
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_hashes = block_hashes.drain(..block_bodies.len());
