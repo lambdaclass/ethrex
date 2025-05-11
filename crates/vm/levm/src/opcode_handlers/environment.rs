@@ -302,7 +302,7 @@ impl<'a> VM<'a> {
 
         // If the bytecode is a delegation designation, it will copy the marker (0xef0100) || address.
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let bytecode = account.code;
+        let bytecode = &account.code;
 
         let mut data = vec![0u8; size];
         if offset < bytecode.len().into() {

@@ -196,6 +196,8 @@ pub enum InternalError {
     AccountNotDelegated,
     #[error("No recipient found for privilege transaction")]
     RecipientNotFoundForPrivilegeTransaction,
+    #[error("Custom Internal Error: {0}")]
+    Custom(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

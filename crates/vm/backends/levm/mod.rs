@@ -13,7 +13,7 @@ use ethrex_common::{
     types::{
         requests::Requests, AccessList, AuthorizationTuple, Block, BlockHeader, EIP1559Transaction,
         EIP7702Transaction, Fork, GenericTransaction, Receipt, Transaction, TxKind, Withdrawal,
-        GWEI_TO_WEI, INITIAL_BASE_FEE,
+        GWEI_TO_WEI, INITIAL_BASE_FEE, Account,
     },
     Address, H256, U256,
 };
@@ -246,15 +246,25 @@ impl LEVM {
             .filter(|withdrawal| withdrawal.amount > 0)
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
-            // We check if it was in block_cache, if not, we get it from DB.
-            let mut account = db.cache.get(&address).cloned().unwrap_or({
-                db.store
-                    .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-            });
+            let mut account_arc: Arc<Account> = match db.cache.get(&address).cloned() {
+                Some(cached_arc) => cached_arc, // Found in cache
+                None => { // Not in cache, fetch from store
+                    let account_from_store = db.store
+                        .get_account(address)
+                        .map_err(|e| StoreError::Custom(e.to_string()))?; // Propagates StoreError if db.store.get_account fails
+                    Arc::new(account_from_store) // Wrap the owned Account in an Arc
+                }
+            };
 
-            account.info.balance += increment.into();
-            db.cache.insert(address, account);
+            // To modify the account, we need a mutable reference to the Account data.
+            // Arc::make_mut will clone the Account data if account_arc is shared (has other strong references),
+            // and update account_arc to point to the new, uniquely owned Arc.
+            // If account_arc is already uniquely owned, it provides a mutable reference without cloning.
+            let account_mut: &mut Account = Arc::make_mut(&mut account_arc);
+
+            account_mut.info.balance += increment.into();
+            // Insert the account_arc (which might be new if cloned by make_mut) back into the cache.
+            db.cache.insert(address, account_arc);
         }
         Ok(())
     }
