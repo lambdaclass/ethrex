@@ -13,6 +13,8 @@ pub enum SnapshotError {
     ParentSnapshotNotFound(H256, H256),
     #[error("Tried to use a stale snapshot")]
     StaleSnapshot,
+    #[error("Tried to use flatten on a disk layer")]
+    DiskLayerFlatten,
     #[error(transparent)]
     RLPDecodeError(#[from] RLPDecodeError),
 }

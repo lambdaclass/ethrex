@@ -7,17 +7,13 @@ use std::{
     },
 };
 
-use ethrex_common::{types::AccountState, Bloom, H256, U256};
+use ethrex_common::{types::AccountState, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_trie::Trie;
 
 use crate::{api::StoreEngine, cache::Cache, rlp::AccountStateRLP};
 
-use super::{
-    difflayer::DiffLayer,
-    error::SnapshotError,
-    layer::{SnapshotLayer, SnapshotLayerImpl},
-};
+use super::{difflayer::DiffLayer, error::SnapshotError, tree::Layers};
 
 #[derive(Clone)]
 pub struct DiskLayer {
@@ -53,15 +49,15 @@ impl DiskLayer {
     }
 }
 
-impl SnapshotLayer for DiskLayer {
-    fn root(&self) -> H256 {
+impl DiskLayer {
+    pub fn root(&self) -> H256 {
         self.root
     }
 
-    fn get_account(
+    pub fn get_account(
         &self,
         hash: H256,
-        _layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+        _layers: &Layers,
     ) -> Result<Option<Option<AccountState>>, SnapshotError> {
         if let Some(value) = self.cache.accounts.get(&hash) {
             return Ok(Some(value.clone()));
@@ -86,11 +82,11 @@ impl SnapshotLayer for DiskLayer {
         Ok(Some(Some(value)))
     }
 
-    fn get_storage(
+    pub fn get_storage(
         &self,
         account_hash: H256,
         storage_hash: H256,
-        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+        layers: &Layers,
     ) -> Result<Option<U256>, SnapshotError> {
         if let Some(value) = self.cache.storages.get(&(account_hash, storage_hash)) {
             return Ok(Some(value));
@@ -120,83 +116,31 @@ impl SnapshotLayer for DiskLayer {
         Ok(Some(value))
     }
 
-    fn parent(&self) -> Option<H256> {
+    pub fn parent(&self) -> Option<H256> {
         None
     }
 
-    fn update(
+    pub fn update(
         &self,
         block: H256,
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
-    ) -> Arc<dyn SnapshotLayer> {
-        Arc::new(DiffLayer::new(
+    ) -> DiffLayer {
+        DiffLayer::new(
             self.root,
             Arc::new(self.clone()),
             block,
             accounts,
             storage,
             None,
-        ))
+        )
     }
 
-    fn stale(&self) -> bool {
+    pub fn stale(&self) -> bool {
         self.stale.load(Ordering::SeqCst)
     }
 
-    fn mark_stale(&self) -> bool {
+    pub fn mark_stale(&self) -> bool {
         self.stale.swap(true, Ordering::SeqCst)
     }
-
-    fn origin(&self) -> Arc<DiskLayer> {
-        Arc::new(self.clone())
-    }
-}
-
-impl SnapshotLayerImpl for DiskLayer {
-    fn diffed(&self) -> Option<Bloom> {
-        None
-    }
-
-    fn get_account_traverse(
-        &self,
-        hash: H256,
-        _depth: usize,
-        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
-    ) -> Result<Option<Option<AccountState>>, SnapshotError> {
-        self.get_account(hash, layers)
-    }
-
-    fn get_storage_traverse(
-        &self,
-        account_hash: H256,
-        storage_hash: H256,
-        _depth: usize,
-        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
-    ) -> Result<Option<U256>, SnapshotError> {
-        self.get_storage(account_hash, storage_hash, layers)
-    }
-
-    fn flatten(
-        self: Arc<Self>,
-        _layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
-    ) -> Arc<dyn SnapshotLayer> {
-        self.clone()
-    }
-
-    fn add_accounts(&self, _accounts: HashMap<H256, Option<AccountState>>) {}
-
-    fn add_storage(&self, _storage: HashMap<H256, HashMap<H256, U256>>) {}
-
-    // Only used on diff layers
-    fn accounts(&self) -> HashMap<H256, Option<AccountState>> {
-        HashMap::default()
-    }
-
-    // Only used on diff layers
-    fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
-        HashMap::default()
-    }
-
-    fn set_parent(&mut self, _parent: H256) {}
 }

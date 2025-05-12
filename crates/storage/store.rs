@@ -23,7 +23,7 @@ use sha3::{Digest as _, Keccak256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 /// Number of state trie segments to fetch concurrently during state sync
 pub const STATE_TRIE_SEGMENTS: usize = 2;
@@ -539,8 +539,9 @@ impl Store {
             .get_storage_at_hash(block_hash, address, storage_key)
         {
             Ok(value) => return Ok(value),
+            // snapshot errors are non-fatal
             Err(snapshot_error) => {
-                error!("Error fetching from snapshot (storage): {}", snapshot_error);
+                debug!("failed to fetch snapshot (storage): {}", snapshot_error);
             }
         }
 
@@ -698,7 +699,7 @@ impl Store {
         match self.snapshots.get_account_state(block_hash, address) {
             Ok(value) => return Ok(value),
             Err(snapshot_error) => {
-                error!("Error fetching from snapshot (account): {}", snapshot_error);
+                debug!("failed to fetch snapshot (storage): {}", snapshot_error);
             }
         }
 
@@ -1126,7 +1127,7 @@ impl Store {
 
     /// Creates a snapshot of the block adding a diff (or disk) layer.
     ///
-    // Uses owned parameter values due to moving them into a task.
+    /// Uses owned parameter values due to moving them into am (non-awaited) task.
     pub async fn add_block_snapshot(&self, block: Block, account_updates: Vec<AccountUpdate>) {
         let store = self.clone();
 
@@ -1186,7 +1187,7 @@ impl Store {
             Ok(())
         }
 
-        // We don't await the task as we don't need to wait for any result.
+        // We don't await the task as we don't need to wait for any result, so it can be done entirely concurrently.
         tokio::spawn(async move {
             if let Err(err) = add_block_snapshot_task(block, store, account_updates) {
                 error!("Error adding block snapshot: {}", err);

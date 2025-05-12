@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
-    },
-};
+use std::{collections::HashMap, sync::Arc};
 
 use ethrex_common::{types::AccountState, Bloom, BloomInput, H256, U256};
 use tracing::debug;
@@ -12,7 +6,7 @@ use tracing::debug;
 use super::{
     disklayer::DiskLayer,
     error::SnapshotError,
-    layer::{SnapshotLayer, SnapshotLayerImpl},
+    tree::{Layer, Layers},
 };
 
 #[derive(Clone, Debug)]
@@ -20,9 +14,9 @@ pub struct DiffLayer {
     origin: Arc<DiskLayer>,
     parent: H256,
     root: H256,
-    stale: Arc<AtomicBool>,
-    accounts: Arc<RwLock<HashMap<H256, Option<AccountState>>>>, // None if deleted
-    storage: Arc<RwLock<HashMap<H256, HashMap<H256, U256>>>>,
+    stale: bool,
+    accounts: HashMap<H256, Option<AccountState>>, // None if deleted
+    storage: HashMap<H256, HashMap<H256, U256>>,
     /// tracks all diffed items up to disk layer
     diffed: Bloom,
 }
@@ -40,9 +34,9 @@ impl DiffLayer {
             origin,
             parent,
             root,
-            stale: AtomicBool::new(false).into(),
-            accounts: Arc::new(RwLock::new(accounts)),
-            storage: Arc::new(RwLock::new(storage)),
+            stale: false,
+            accounts,
+            storage,
             diffed: diffed.unwrap_or_default(),
         };
 
@@ -57,15 +51,13 @@ impl DiffLayer {
         self.diffed = parent_diffed.unwrap_or_default();
 
         {
-            let accounts = self.accounts.read().unwrap();
-            for hash in accounts.keys() {
+            for hash in self.accounts.keys() {
                 self.diffed.accrue(BloomInput::Hash(hash.as_fixed_bytes()));
             }
         }
 
         {
-            let storage = self.storage.read().unwrap();
-            for (hash, slots) in storage.iter() {
+            for (hash, slots) in self.storage.iter() {
                 for slot in slots.keys() {
                     let value = hash ^ slot;
                     self.diffed.accrue(BloomInput::Hash(value.as_fixed_bytes()));
@@ -75,15 +67,15 @@ impl DiffLayer {
     }
 }
 
-impl SnapshotLayer for DiffLayer {
-    fn root(&self) -> H256 {
+impl DiffLayer {
+    pub fn root(&self) -> H256 {
         self.root
     }
 
-    fn get_account(
+    pub fn get_account(
         &self,
         hash: H256,
-        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+        layers: &Layers,
     ) -> Result<Option<Option<AccountState>>, SnapshotError> {
         // todo: check stale
 
@@ -100,11 +92,11 @@ impl SnapshotLayer for DiffLayer {
         self.get_account_traverse(hash, 0, layers)
     }
 
-    fn get_storage(
+    pub fn get_storage(
         &self,
         account_hash: H256,
         storage_hash: H256,
-        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+        layers: &Layers,
     ) -> Result<Option<U256>, SnapshotError> {
         // todo: check stale
 
@@ -122,144 +114,124 @@ impl SnapshotLayer for DiffLayer {
         self.get_storage_traverse(account_hash, storage_hash, 0, layers)
     }
 
-    fn stale(&self) -> bool {
-        self.stale.load(Ordering::Acquire)
+    pub fn stale(&self) -> bool {
+        self.stale
     }
 
-    fn mark_stale(&self) -> bool {
-        self.stale.swap(true, Ordering::SeqCst)
+    pub fn mark_stale(&mut self) -> bool {
+        let old = self.stale;
+        self.stale = true;
+        old
     }
 
-    fn parent(&self) -> Option<H256> {
-        Some(self.parent)
+    pub fn parent(&self) -> H256 {
+        self.parent
     }
 
-    fn update(
+    pub fn update(
         &self,
         block: ethrex_common::H256,
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
-    ) -> Arc<dyn SnapshotLayer> {
-        Arc::new(DiffLayer::new(
+    ) -> DiffLayer {
+        DiffLayer::new(
             self.root,
             self.origin.clone(),
             block,
             accounts,
             storage,
             Some(self.diffed),
-        ))
+        )
     }
 
-    fn origin(&self) -> Arc<DiskLayer> {
+    pub fn origin(&self) -> Arc<DiskLayer> {
         self.origin.clone()
     }
-}
 
-impl SnapshotLayerImpl for DiffLayer {
-    fn diffed(&self) -> Option<Bloom> {
-        Some(self.diffed)
+    pub fn diffed(&self) -> Bloom {
+        self.diffed
     }
 
     // skips bloom checks, used if a higher layer bloom filter is hit
-    fn get_account_traverse(
+    pub fn get_account_traverse(
         &self,
         hash: H256,
         depth: usize,
-        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+        layers: &Layers,
     ) -> Result<Option<Option<AccountState>>, SnapshotError> {
         // todo: check if its stale
 
         // If it's in this layer, return it.
-        {
-            let accounts = self.accounts.read().unwrap();
-            if let Some(value) = accounts.get(&hash) {
-                debug!("Snapshot DiffLayer get_account_traverse hit at depth {depth}");
-                return Ok(Some(value.clone()));
-            }
+        if let Some(value) = self.accounts.get(&hash) {
+            debug!("Snapshot DiffLayer get_account_traverse hit at depth {depth}");
+            return Ok(Some(value.clone()));
         }
 
         // delegate to parent
-        layers[&self.parent].get_account_traverse(hash, depth + 1, layers)
+        match &layers[&self.parent] {
+            Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash, layers),
+            Layer::DiffLayer(diff_layer) => {
+                diff_layer
+                    .read()
+                    .unwrap()
+                    .get_account_traverse(hash, depth + 1, layers)
+            }
+        }
     }
 
-    fn get_storage_traverse(
+    pub fn get_storage_traverse(
         &self,
         account_hash: H256,
         storage_hash: H256,
         depth: usize,
-        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+        layers: &Layers,
     ) -> Result<Option<U256>, SnapshotError> {
         // todo: check if its stale
 
         // If it's in this layer, return it.
+        if let Some(value) = self
+            .storage
+            .get(&account_hash)
+            .and_then(|x| x.get(&storage_hash))
         {
-            let storage = self.storage.read().unwrap();
-            if let Some(value) = storage
-                .get(&account_hash)
-                .and_then(|x| x.get(&storage_hash))
-            {
-                debug!("Snapshot DiffLayer get_storage_traverse hit at depth {depth}");
-                return Ok(Some(*value));
-            }
+            debug!("Snapshot DiffLayer get_storage_traverse hit at depth {depth}");
+            return Ok(Some(*value));
         }
 
         // delegate to parent
-        layers[&self.parent].get_storage_traverse(account_hash, storage_hash, depth + 1, layers)
-    }
-
-    fn flatten(
-        self: Arc<Self>,
-        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
-    ) -> Arc<dyn SnapshotLayer> {
-        // If parent doesn't have a parent it means its not a diff, so we return ourselves as the last diff.
-        if layers[&self.parent].parent().is_none() {
-            return self;
+        match &layers[&self.parent] {
+            Layer::DiskLayer(disk_layer) => {
+                disk_layer.get_storage(account_hash, storage_hash, layers)
+            }
+            Layer::DiffLayer(diff_layer) => diff_layer.read().unwrap().get_storage_traverse(
+                account_hash,
+                storage_hash,
+                depth + 1,
+                layers,
+            ),
         }
-
-        // Flatten diff parent.
-        let parent = layers[&self.parent].clone().flatten(layers);
-
-        if parent.mark_stale() {
-            // todo: make error
-            panic!("parent was stale, we flattened from different children")
-        }
-
-        parent.add_accounts(self.accounts.read().unwrap().clone());
-        parent.add_storage(self.storage.read().unwrap().clone());
-
-        Arc::new(DiffLayer::new(
-            parent.parent().unwrap(),
-            self.origin.clone(),
-            self.root,
-            self.accounts.read().unwrap().clone(),
-            self.storage.read().unwrap().clone(),
-            Some(self.diffed),
-        ))
     }
 
-    fn add_accounts(&self, accounts: HashMap<H256, Option<AccountState>>) {
-        let mut accounts_self = self.accounts.write().unwrap();
-        accounts_self.extend(accounts);
+    pub fn add_accounts(&mut self, accounts: HashMap<H256, Option<AccountState>>) {
+        self.accounts.extend(accounts);
     }
 
-    fn add_storage(&self, storage: HashMap<H256, HashMap<H256, U256>>) {
-        let mut storage_self = self.storage.write().unwrap();
-
+    pub fn add_storage(&mut self, storage: HashMap<H256, HashMap<H256, U256>>) {
         for (address, st) in storage.iter() {
-            let entry = storage_self.entry(*address).or_default();
+            let entry = self.storage.entry(*address).or_default();
             entry.extend(st);
         }
     }
 
-    fn accounts(&self) -> HashMap<H256, Option<AccountState>> {
-        self.accounts.read().unwrap().clone()
+    pub fn accounts(&self) -> HashMap<H256, Option<AccountState>> {
+        self.accounts.clone()
     }
 
-    fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
-        self.storage.read().unwrap().clone()
+    pub fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
+        self.storage.clone()
     }
 
-    fn set_parent(&mut self, parent: H256) {
+    pub fn set_parent(&mut self, parent: H256) {
         self.parent = parent;
     }
 }

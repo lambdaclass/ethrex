@@ -7,11 +7,11 @@ use ethrex_common::{
     types::{AccountState, BlockHash},
     Address, H256, U256,
 };
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::{api::StoreEngine, hash_address_fixed};
 
-use super::{disklayer::DiskLayer, error::SnapshotError, layer::SnapshotLayer};
+use super::{difflayer::DiffLayer, disklayer::DiskLayer, error::SnapshotError};
 
 /// It consists of one persistent base
 /// layer backed by a key-value store, on top of which arbitrarily many in-memory
@@ -26,8 +26,16 @@ use super::{disklayer::DiskLayer, error::SnapshotError, layer::SnapshotLayer};
 #[derive(Clone, Debug)]
 pub struct SnapshotTree {
     db: Arc<dyn StoreEngine>,
-    layers: Arc<RwLock<HashMap<H256, Arc<dyn SnapshotLayer>>>>,
+    layers: Arc<RwLock<Layers>>,
 }
+
+#[derive(Debug, Clone)]
+pub enum Layer {
+    DiskLayer(Arc<DiskLayer>),
+    DiffLayer(Arc<RwLock<DiffLayer>>),
+}
+
+pub type Layers = HashMap<H256, Layer>;
 
 impl SnapshotTree {
     pub fn new(db: Arc<dyn StoreEngine>) -> Self {
@@ -44,14 +52,20 @@ impl SnapshotTree {
         let mut layers = self.layers.write().unwrap();
 
         for layer in layers.values() {
-            layer.mark_stale();
+            match layer {
+                Layer::DiskLayer(disk_layer) => disk_layer.mark_stale(),
+                Layer::DiffLayer(diff_layer) => diff_layer.write().unwrap().mark_stale(),
+            };
         }
 
         layers.clear();
-        layers.insert(root, Arc::new(DiskLayer::new(self.db.clone(), root)));
+        layers.insert(
+            root,
+            Layer::DiskLayer(Arc::new(DiskLayer::new(self.db.clone(), root))),
+        );
     }
 
-    pub fn snapshot(&self, block_root: H256) -> Option<Arc<dyn SnapshotLayer>> {
+    fn snapshot(&self, block_root: H256) -> Option<Layer> {
         self.layers.read().unwrap().get(&block_root).cloned()
     }
 
@@ -63,31 +77,35 @@ impl SnapshotTree {
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Result<(), SnapshotError> {
-        debug!("Creating new diff snapshot");
+        info!("Creating new diff snapshot");
         if block_root == parent_root {
             return Err(SnapshotError::SnapshotCycle);
         }
 
-        let parent = self.snapshot(parent_root);
+        if let Some(parent) = self.snapshot(parent_root) {
+            let snap = match parent {
+                Layer::DiskLayer(parent) => parent.update(block_root, accounts, storage),
+                Layer::DiffLayer(parent) => {
+                    parent.read().unwrap().update(block_root, accounts, storage)
+                }
+            };
 
-        let parent = if let Some(parent) = parent {
-            parent
+            self.layers
+                .write()
+                .unwrap()
+                .insert(block_root, Layer::DiffLayer(Arc::new(RwLock::new(snap))));
+
+            Ok(())
         } else {
             error!(
                 "Parent snaptshot not found, parent = {}, block = {}",
                 parent_root, block_root
             );
-            return Err(SnapshotError::ParentSnapshotNotFound(
+            Err(SnapshotError::ParentSnapshotNotFound(
                 parent_root,
                 block_root,
-            ));
-        };
-
-        let snap = parent.update(block_root, accounts, storage);
-
-        self.layers.write().unwrap().insert(block_root, snap);
-
-        Ok(())
+            ))
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -100,92 +118,138 @@ impl SnapshotTree {
     /// It's used to flatten the layers.
     pub fn cap(&self, root: H256, layers: usize) -> Result<(), SnapshotError> {
         let diff = if let Some(diff) = self.snapshot(root) {
-            diff
+            match diff {
+                Layer::DiskLayer(_) => return Err(SnapshotError::SnapshotIsdiskLayer(root)),
+                Layer::DiffLayer(diff) => diff,
+            }
         } else {
             return Err(SnapshotError::SnapshotNotFound(root));
         };
 
-        if diff.parent().is_none() {
-            return Err(SnapshotError::SnapshotIsdiskLayer(root));
-        }
+        let _diff_value = diff.read().unwrap();
 
         if layers == 0 {
             // Full commit
-            let base = self.save_diff(diff.flatten(&self.layers.read().unwrap()))?;
+            let base = self.save_diff(self.flatten_diff(root)?)?;
             // TODO: save diff to disk?
             let mut layers = self.layers.write().unwrap();
             layers.clear();
-            layers.insert(root, base);
+            layers.insert(root, Layer::DiskLayer(base));
             return Ok(());
         }
 
-        Ok(())
+        todo!();
     }
 
+    /// Internal helper method to flatten diff layers.
     fn cap_layers(
         &self,
-        mut diff: Arc<dyn SnapshotLayer>,
+        diff: Arc<RwLock<DiffLayer>>,
         layers_n: usize,
-    ) -> Option<Arc<DiskLayer>> {
+    ) -> Result<Option<Arc<DiskLayer>>, SnapshotError> {
         // Dive until end or disk layer.
+        let mut diff_wrapped = Layer::DiffLayer(diff.clone());
         let mut layers = self.layers.write().unwrap();
         for _ in 0..(layers_n - 1) {
-            if diff.parent().is_some() {
-                diff = layers[&diff.parent().unwrap()].clone();
-            } else {
-                // Diff stack is shallow, no need to modify.
-                return None;
+            match diff_wrapped {
+                Layer::DiskLayer(_) => {
+                    // Diff stack is shallow, no need to modify.
+                    return Ok(None);
+                }
+                Layer::DiffLayer(diff_layer) => {
+                    let diff_value = diff_layer.read().unwrap();
+                    diff_wrapped = layers[&diff_value.parent()].clone();
+                }
             }
         }
 
-        let parent = layers[&diff.parent().unwrap()].clone();
+        let diff = match diff_wrapped {
+            Layer::DiskLayer(_) => return Ok(None), // should be unreachable
+            Layer::DiffLayer(diff) => diff,
+        };
 
-        // Stop if its disk layer.
-        if parent.parent().is_none() {
-            return None;
-        }
+        let parent = {
+            let diff_value = diff.read().unwrap();
+            layers[&diff_value.parent()].clone()
+        };
 
-        let flattened = parent.flatten(&layers);
+        let parent = match parent {
+            Layer::DiskLayer(_) => return Ok(None),
+            Layer::DiffLayer(diff) => diff,
+        };
+
         {
-            layers.insert(flattened.root(), flattened.clone());
+            // hold write lock until linked to new parent to avoid incorrect external reads
+            let mut diff_value = diff.write().unwrap();
+
+            let parent_root = parent.read().unwrap().root();
+            // flatten parent into grand parent.
+            let flattened = self.flatten_diff(parent_root)?;
+            let flattened_root = match &flattened {
+                Layer::DiskLayer(disk_layer) => disk_layer.root(),
+                Layer::DiffLayer(diff_layer) => diff_layer.read().unwrap().root(),
+            };
+            layers.insert(flattened_root, flattened.clone());
+            diff_value.set_parent(flattened_root);
         }
 
-        todo!()
+        // Persist the bottom most layer
+        let base = self.save_diff(Layer::DiffLayer(parent))?;
+        layers.insert(base.root, Layer::DiskLayer(base.clone()));
+        let mut diff_value = diff.write().unwrap();
+        diff_value.set_parent(base.root());
+
+        Ok(Some(base))
     }
 
     /// Merges the diff into the disk layer.
-    fn save_diff(&self, diff: Arc<dyn SnapshotLayer>) -> Result<Arc<DiskLayer>, SnapshotError> {
-        let prev_disk = diff.origin();
+    ///
+    /// Returning a new disk layer whose root is the diff root.
+    ///
+    /// Returns Err if the current disk layer is already marked stale.
+    fn save_diff(&self, diff: Layer) -> Result<Arc<DiskLayer>, SnapshotError> {
+        let diff = match diff {
+            Layer::DiskLayer(disk_layer) => {
+                return Err(SnapshotError::SnapshotIsdiskLayer(disk_layer.root))
+            }
+            Layer::DiffLayer(diff) => diff,
+        };
+        let diff_value = diff.read().unwrap();
+        let prev_disk = diff_value.origin();
 
         if prev_disk.mark_stale() {
             return Err(SnapshotError::StaleSnapshot);
         }
 
         // TODO: here we should save the diff to the db (in the future snapshots table) too.
-        let accounts = diff.accounts();
+        let accounts = diff_value.accounts();
         for (hash, acc) in accounts.iter() {
             prev_disk.cache.accounts.insert(*hash, acc.clone());
         }
 
-        let storage = diff.storage();
+        let storage = diff_value.storage();
         for (hash, storage) in storage.iter() {
             for (slot, value) in storage.iter() {
                 prev_disk.cache.storages.insert((*hash, *slot), *value);
             }
         }
 
-        let trie = Arc::new(self.db.open_state_trie(diff.root()));
+        let trie = Arc::new(self.db.open_state_trie(diff_value.root()));
 
         let disk = DiskLayer {
             state_trie: trie,
             db: self.db.clone(),
             cache: prev_disk.cache.clone(),
-            root: diff.root(),
+            root: diff_value.root(),
             stale: Arc::new(AtomicBool::new(false)),
         };
         Ok(Arc::new(disk))
     }
 
+    /// Get a account state by its hash.
+    ///
+    /// Note: The result is valid if no Err is returned, this means Ok(None) means it doesn't really exist at all
+    /// and no further checking is needed.
     pub fn get_account_state(
         &self,
         block_hash: BlockHash,
@@ -194,7 +258,12 @@ impl SnapshotTree {
         if let Some(snapshot) = self.snapshot(block_hash) {
             let layers = self.layers.read().unwrap();
             let address = hash_address_fixed(&address);
-            let result = snapshot.get_account(address, &layers);
+            let result = match snapshot {
+                Layer::DiskLayer(snapshot) => snapshot.get_account(address, &layers),
+                Layer::DiffLayer(snapshot) => {
+                    snapshot.read().unwrap().get_account(address, &layers)
+                }
+            };
 
             match result {
                 Ok(Some(value)) => Ok(value),
@@ -206,6 +275,10 @@ impl SnapshotTree {
         }
     }
 
+    /// Get a storage by its account and storage hash.
+    ///
+    /// Note: The result is valid if no Err is returned, this means Ok(None) means it doesn't really exist at all
+    /// and no further checking is needed.
     pub fn get_storage_at_hash(
         &self,
         block_hash: BlockHash,
@@ -215,9 +288,65 @@ impl SnapshotTree {
         if let Some(snapshot) = self.snapshot(block_hash) {
             let layers = self.layers.read().unwrap();
             let address = hash_address_fixed(&address);
-            return snapshot.get_storage(address, storage_key, &layers);
+            return match snapshot {
+                Layer::DiskLayer(snapshot) => snapshot.get_storage(address, storage_key, &layers),
+                Layer::DiffLayer(snapshot) => {
+                    snapshot
+                        .read()
+                        .unwrap()
+                        .get_storage(address, storage_key, &layers)
+                }
+            };
         }
 
         Err(SnapshotError::SnapshotNotFound(block_hash))
+    }
+
+    pub fn flatten_diff(&self, diff: H256) -> Result<Layer, SnapshotError> {
+        let layers = self.layers.write().unwrap();
+
+        let layer = match &layers[&diff] {
+            Layer::DiskLayer(_) => return Err(SnapshotError::DiskLayerFlatten),
+            Layer::DiffLayer(diff) => diff.clone(),
+        };
+
+        // If parent is not a diff layer, layer is first in line, return layer.
+        let parent = {
+            let layer_value = layer.read().unwrap();
+            layers[&layer_value.parent()].clone()
+        };
+
+        let parent = match parent {
+            Layer::DiskLayer(_) => return Ok(Layer::DiffLayer(layer)),
+            Layer::DiffLayer(diff) => diff,
+        };
+
+        // Flatten diff parent first.
+        let parent = match self.flatten_diff(parent.read().unwrap().root())? {
+            Layer::DiskLayer(_) => unreachable!("only diff can be returned at this point"),
+            Layer::DiffLayer(diff) => diff,
+        };
+
+        let mut parent_value = parent.write().unwrap();
+
+        if parent_value.mark_stale() {
+            // parent was stale, we flattened from different children
+            return Err(SnapshotError::StaleSnapshot);
+        }
+
+        let layer_value = layer.read().unwrap();
+        parent_value.add_accounts(layer_value.accounts());
+        parent_value.add_storage(layer_value.storage());
+
+        // Return new parent
+        // TODO: new reblooms always, maybe we dont need in this case?
+        Ok(Layer::DiffLayer(Arc::new(RwLock::new(DiffLayer::new(
+            parent_value.parent(),
+            parent_value.origin().clone(),
+            layer_value.root(),
+            parent_value.accounts(),
+            parent_value.storage(),
+            Some(layer_value.diffed()),
+        )))))
     }
 }
