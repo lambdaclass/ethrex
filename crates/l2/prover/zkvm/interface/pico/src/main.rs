@@ -21,8 +21,6 @@ pub fn main() {
         blocks,
         parent_block_header,
         mut db,
-        #[cfg(feature = "l2")]
-        withdrawals_merkle_root,
     } = read_as();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -84,14 +82,9 @@ pub fn main() {
 
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
-    let Ok(batch_withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
+    let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
         panic!("Failed to calculate withdrawals merkle root");
     };
-    // Check witdrawals root
-    #[cfg(feature = "l2")]
-    if batch_withdrawals_merkle_root != withdrawals_merkle_root {
-        panic!("invalid withdrawals merkle root");
-    }
 
     // Update state trie
     let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
@@ -108,6 +101,6 @@ pub fn main() {
         initial_state_hash,
         final_state_hash,
         #[cfg(feature = "l2")]
-        withdrawals_merkle_root: batch_withdrawals_merkle_root,
+        withdrawals_merkle_root,
     });
 }

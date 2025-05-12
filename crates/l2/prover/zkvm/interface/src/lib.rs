@@ -40,9 +40,6 @@ pub mod io {
         pub parent_block_header: BlockHeader,
         /// database containing only the data necessary to execute
         pub db: ExecutionDB,
-        #[cfg(feature = "l2")]
-        /// Root of the merkle tree with all the L2 withdrawals in the batch
-        pub withdrawals_merkle_root: H256,
     }
 
     /// Public output variables exposed by the zkVM execution program. Some of these are part of

@@ -44,8 +44,6 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         blocks,
         parent_block_header,
         mut db,
-        #[cfg(feature = "l2")]
-        withdrawals_merkle_root,
     } = input;
 
     // Tries used for validating initial and final state root
@@ -104,16 +102,11 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
-    let Ok(batch_withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
+    let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
         return Err("Failed to calculate withdrawals merkle root"
             .to_string()
             .into());
     };
-    // Check witdrawals root
-    #[cfg(feature = "l2")]
-    if batch_withdrawals_merkle_root != withdrawals_merkle_root {
-        return Err("invalid withdrawals merkle root".to_string().into());
-    }
 
     // Update state trie
     let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
@@ -129,6 +122,6 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         initial_state_hash,
         final_state_hash,
         #[cfg(feature = "l2")]
-        withdrawals_merkle_root: batch_withdrawals_merkle_root,
+        withdrawals_merkle_root,
     })
 }

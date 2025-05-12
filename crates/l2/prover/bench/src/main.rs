@@ -89,8 +89,6 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
-            #[cfg(feature = "l2")] // ethrex-prover-bench does not support L2 blocks
-            withdrawals_merkle_root: H256::zero(),
         })
         .expect("proving failed");
     } else {
@@ -99,8 +97,6 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
-            #[cfg(feature = "l2")]
-            withdrawals_merkle_root: H256::zero(),
         })
         .expect("proving failed");
     }

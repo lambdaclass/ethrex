@@ -1,5 +1,4 @@
 use crate::sequencer::errors::ProverServerError;
-use crate::sequencer::l1_committer::get_withdrawals_merkle_root;
 use crate::utils::prover::proving_systems::ProofCalldata;
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
@@ -13,7 +12,6 @@ use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError, ExecutionDB};
-use keccak_hash::H256;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr};
 use tokio::{
@@ -31,7 +29,6 @@ pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
     pub db: ExecutionDB,
-    pub withdrawals_merkle_root: H256,
 }
 
 #[derive(Clone)]
@@ -332,22 +329,12 @@ impl ProofCoordinator {
             .get_block_header_by_hash(parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
-        let withdrawals_hashes = self
-            .rollup_store
-            .get_withdrawal_hashes_by_batch(batch_number)
-            .await?
-            .ok_or(ProverServerError::WithdrawalsError(batch_number))?;
-
-        let withdrawals_merkle_root = get_withdrawals_merkle_root(withdrawals_hashes)
-            .map_err(|_| ProverServerError::WithdrawalsMerkelizeError(batch_number))?;
-
         debug!("Created prover input for batch {batch_number}");
 
         Ok(ProverInputData {
             db,
             blocks,
             parent_block_header,
-            withdrawals_merkle_root,
         })
     }
 
