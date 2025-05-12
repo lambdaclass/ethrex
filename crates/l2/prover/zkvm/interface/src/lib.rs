@@ -6,12 +6,6 @@ pub mod methods {
     #[cfg(all(not(clippy), feature = "risc0"))]
     include!(concat!(env!("OUT_DIR"), "/methods.rs"));
 
-    #[cfg(all(not(clippy), feature = "sp1"))]
-    pub const ZKVM_SP1_PROGRAM_ELF: &[u8] =
-        include_bytes!("../sp1/elf/riscv32im-succinct-zkvm-elf");
-    #[cfg(any(clippy, not(feature = "sp1")))]
-    pub const ZKVM_SP1_PROGRAM_ELF: &[u8] = &[0];
-
     #[cfg(all(not(clippy), feature = "pico"))]
     pub const ZKVM_PICO_PROGRAM_ELF: &[u8] =
         include_bytes!(concat!(env!("OUT_DIR"), "/riscv32im-pico-zkvm-elf"));
