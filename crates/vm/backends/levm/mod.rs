@@ -255,15 +255,10 @@ impl LEVM {
                     Arc::new(account_from_store)
                 }
             };
-
-            // Arc::make_mut will:
-            // If strong_count == 1, return a mutable ref to the existing data.
-            // If strong_count > 1, clone Account data, create a new Arc with it,
-            //    update the Arc pointed in the Hashmap, and return a mutable ref to the new data.
             let account_mut: &mut Account = Arc::make_mut(&mut account_arc);
 
             account_mut.info.balance += increment.into();
-            // Insert the account_arc (which might be new if cloned by make_mut) back into the cache.
+            
             db.cache.insert(address, account_arc);
         }
         Ok(())

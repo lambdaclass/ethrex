@@ -341,11 +341,11 @@ pub async fn ensure_post_state(
                 // Execution result was successful and no exception was expected.
                 None => {
                     let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
-                        .map_err(|_| {
-                            InternalError::Custom(
-                                "Error at LEVM::get_state_transitions in ensure_post_state()"
-                                    .to_owned(),
-                            )
+                        .map_err(|e| {
+                            EFTestRunnerError::Internal(InternalError::Custom(format!(
+                                "Error at LEVM::get_state_transitions in ensure_post_state(): {:?}",
+                                e
+                            )))
                         })?;
                     let vector_post_value = test.post.vector_post_value(vector, *fork);
 

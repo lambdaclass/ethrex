@@ -54,8 +54,7 @@ pub fn get_or_make_mut_account<'cache>(
     cached_accounts.get_mut(address).map(|arc_instance_in_map| {
         // Arc::make_mut will:
         // If strong_count == 1, return a mutable ref to the existing data.
-        // If strong_count > 1, clone Account data, create a new Arc with it,
-        //    update the Arc pointed in the Hashmap, and return a mutable ref to the new data.
+        // If strong_count > 1, clone Account data, create a new Arc with it
         Arc::make_mut(arc_instance_in_map)
     })
 }
