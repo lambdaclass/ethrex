@@ -3,10 +3,8 @@ use crate::{
         errors::CommitterError,
         state_diff::{get_nonce_diff, AccountStateDiff, DepositLog, StateDiff, WithdrawalLog},
     },
-    utils::{
-        config::{committer::CommitterConfig, errors::ConfigError, eth::EthConfig},
-        helpers::is_withdrawal_l2,
-    },
+    utils::helpers::is_withdrawal_l2,
+    CommitterConfig, EthConfig, SequencerConfig,
 };
 
 use ethrex_common::{
@@ -33,7 +31,11 @@ use secp256k1::SecretKey;
 use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error, info, warn};
 
-use super::{errors::BlobEstimationError, execution_cache::ExecutionCache, utils::sleep_random};
+use super::{
+    errors::{BlobEstimationError, SequencerError},
+    execution_cache::ExecutionCache,
+    utils::sleep_random,
+};
 
 const COMMIT_FUNCTION_SIGNATURE: &str = "commitBatch(uint256,bytes32,bytes32,bytes32,bytes32)";
 
@@ -54,13 +56,11 @@ pub async fn start_l1_committer(
     store: Store,
     rollup_store: StoreRollup,
     execution_cache: Arc<ExecutionCache>,
-) -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    let committer_config = CommitterConfig::from_env()?;
-
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
     let mut committer = Committer::new_from_config(
-        &committer_config,
-        eth_config,
+        &cfg.l1_committer,
+        &cfg.eth,
         store,
         rollup_store,
         execution_cache,
@@ -72,7 +72,7 @@ pub async fn start_l1_committer(
 impl Committer {
     pub fn new_from_config(
         committer_config: &CommitterConfig,
-        eth_config: EthConfig,
+        eth_config: &EthConfig,
         store: Store,
         rollup_store: StoreRollup,
         execution_cache: Arc<ExecutionCache>,
@@ -139,7 +139,8 @@ impl Committer {
             return Ok(());
         }
 
-        let withdrawal_logs_merkle_root = get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
+        let withdrawal_logs_merkle_root =
+            self.get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
 
         info!("Sending commitment for batch {batch_to_commit}. first_block: {first_block_to_commit}, last_block: {last_block_of_batch}");
 
@@ -318,6 +319,17 @@ impl Committer {
             }
         }
         Ok(ret)
+    }
+
+    fn get_withdrawals_merkle_root(
+        &self,
+        withdrawals_hashes: Vec<H256>,
+    ) -> Result<H256, CommitterError> {
+        if !withdrawals_hashes.is_empty() {
+            merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
+        } else {
+            Ok(H256::zero())
+        }
     }
 
     fn get_block_deposits(
@@ -572,14 +584,6 @@ async fn estimate_blob_gas(
     };
 
     Ok(blob_gas)
-}
-
-pub fn get_withdrawals_merkle_root(withdrawals_hashes: Vec<H256>) -> Result<H256, CommitterError> {
-    if !withdrawals_hashes.is_empty() {
-        merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
-    } else {
-        Ok(H256::zero())
-    }
 }
 
 pub fn get_deposit_hash(deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {

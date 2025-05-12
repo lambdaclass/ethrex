@@ -47,8 +47,6 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_block_header,
         mut db,
         #[cfg(feature = "l2")]
-        withdrawals_merkle_root,
-        #[cfg(feature = "l2")]
         deposit_logs_hash,
     } = input;
 
@@ -119,16 +117,11 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
     // Calculate L2 withdrawals root
     #[cfg(feature = "l2")]
-    let Ok(batch_withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
+    let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
         return Err("Failed to calculate withdrawals merkle root"
             .to_string()
             .into());
     };
-    // Check witdrawals root
-    #[cfg(feature = "l2")]
-    if batch_withdrawals_merkle_root != withdrawals_merkle_root {
-        return Err("invalid withdrawals merkle root".to_string().into());
-    }
 
     // Calculate L2 deposits logs root
     #[cfg(feature = "l2")]
@@ -155,7 +148,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         initial_state_hash,
         final_state_hash,
         #[cfg(feature = "l2")]
-        withdrawals_merkle_root: batch_withdrawals_merkle_root,
+        withdrawals_merkle_root,
         #[cfg(feature = "l2")]
         deposit_logs_hash: batch_deposits_logs_hash,
     })

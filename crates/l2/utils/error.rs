@@ -15,8 +15,6 @@ pub enum ProverInputError {
     ChainError(#[from] ChainError),
     #[error("ExecutionDB error: {0}")]
     ExecutionDBError(#[from] ExecutionDBError),
-    #[error("Witdrawals error: {0}")]
-    WithdrawalsError(String),
     #[error("Deposits error: {0}")]
     DepositsError(String),
 }

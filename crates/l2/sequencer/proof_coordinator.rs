@@ -1,15 +1,9 @@
 use crate::sequencer::errors::ProverServerError;
-use crate::sequencer::l1_committer::get_withdrawals_merkle_root;
+use crate::utils::prover::proving_systems::ProofCalldata;
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
 };
-use crate::utils::{
-    config::{
-        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        proof_coordinator::ProofCoordinatorConfig,
-    },
-    prover::proving_systems::ProofCalldata,
-};
+use crate::{CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address,
@@ -28,6 +22,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+use super::errors::SequencerError;
 use super::utils::sleep_random;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -35,7 +30,6 @@ pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
     pub db: ExecutionDB,
-    pub withdrawals_merkle_root: H256,
     pub deposit_logs_hash: H256,
 }
 
@@ -117,14 +111,12 @@ impl ProofData {
 pub async fn start_proof_coordinator(
     store: Store,
     rollup_store: StoreRollup,
-) -> Result<(), ConfigError> {
-    let server_config = ProofCoordinatorConfig::from_env()?;
-    let eth_config = EthConfig::from_env()?;
-    let committer_config = CommitterConfig::from_env()?;
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
     let proof_coordinator = ProofCoordinator::new_from_config(
-        server_config.clone(),
-        &committer_config,
-        eth_config.clone(),
+        &cfg.proof_coordinator,
+        &cfg.l1_committer,
+        &cfg.eth,
         store,
         rollup_store,
     )
@@ -136,12 +128,12 @@ pub async fn start_proof_coordinator(
 
 impl ProofCoordinator {
     pub async fn new_from_config(
-        config: ProofCoordinatorConfig,
+        config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
-        eth_config: EthConfig,
+        eth_config: &EthConfig,
         store: Store,
         rollup_store: StoreRollup,
-    ) -> Result<Self, ConfigError> {
+    ) -> Result<Self, SequencerError> {
         let eth_client = EthClient::new_with_maximum_fees(
             &eth_config.rpc_url,
             eth_config.maximum_allowed_max_fee_per_blob_gas,
@@ -339,15 +331,6 @@ impl ProofCoordinator {
             .get_block_header_by_hash(parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
-        let withdrawals_hashes = self
-            .rollup_store
-            .get_withdrawal_hashes_by_batch(batch_number)
-            .await?
-            .ok_or(ProverServerError::WithdrawalsError(batch_number))?;
-
-        let withdrawals_merkle_root = get_withdrawals_merkle_root(withdrawals_hashes)
-            .map_err(|_| ProverServerError::WithdrawalsMerkelizeError(batch_number))?;
-
         let deposit_logs_hash = self
             .rollup_store
             .get_deposit_logs_hash_by_batch(batch_number)
@@ -360,7 +343,6 @@ impl ProofCoordinator {
             db,
             blocks,
             parent_block_header,
-            withdrawals_merkle_root,
             deposit_logs_hash,
         })
     }

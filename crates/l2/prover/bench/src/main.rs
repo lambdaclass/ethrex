@@ -1,8 +1,6 @@
 use std::{fs::File, io::Write};
 
 use clap::Parser;
-#[cfg(feature = "l2")]
-use ethrex_common::H256;
 use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
@@ -89,10 +87,8 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
-            #[cfg(feature = "l2")] // ethrex-prover-bench does not support L2 blocks
-            withdrawals_merkle_root: H256::zero(),
             #[cfg(feature = "l2")]
-            deposit_logs_hash: H256::zero()
+            deposit_logs_hash: H256::zero(),
         })
         .expect("proving failed");
     } else {
@@ -101,8 +97,6 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
-            #[cfg(feature = "l2")]
-            withdrawals_merkle_root: H256::zero(),
             #[cfg(feature = "l2")]
             deposit_logs_hash: H256::zero(),
         })

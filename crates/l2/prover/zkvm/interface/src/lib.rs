@@ -40,10 +40,6 @@ pub mod io {
         pub parent_block_header: BlockHeader,
         /// database containing only the data necessary to execute
         pub db: ExecutionDB,
-        #[cfg(feature = "l2")]
-        /// Root of the merkle tree with all the L2 withdrawals in the batch
-        pub withdrawals_merkle_root: H256,
-        #[cfg(feature = "l2")]
         /// hash of all the deposit logs made in a batch
         pub deposit_logs_hash: H256,
     }

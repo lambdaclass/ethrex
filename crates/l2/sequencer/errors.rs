@@ -1,4 +1,3 @@
-use crate::utils::config::errors::ConfigError;
 use crate::utils::error::UtilsError;
 use crate::utils::prover::errors::SaveStateError;
 use crate::utils::prover::proving_systems::ProverType;
@@ -14,6 +13,22 @@ use ethrex_vm::EvmError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
+pub enum SequencerError {
+    #[error("Failed to start L1Watcher: {0}")]
+    L1WatcherError(#[from] L1WatcherError),
+    #[error("Failed to start ProverServer: {0}")]
+    ProverServerError(#[from] ProverServerError),
+    #[error("Failed to start BlockProducer: {0}")]
+    BlockProducerError(#[from] BlockProducerError),
+    #[error("Failed to start Committer: {0}")]
+    CommitterError(#[from] CommitterError),
+    #[error("Failed to start ProofSender: {0}")]
+    ProofSenderError(#[from] ProofSenderError),
+    #[error("Failed to start MetricsGatherer: {0}")]
+    MetricsGathererError(#[from] MetricsGathererError),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum L1WatcherError {
     #[error("L1Watcher error: {0}")]
     EthClientError(#[from] EthClientError),
@@ -23,8 +38,6 @@ pub enum L1WatcherError {
     FailedToDeserializePrivateKey(String),
     #[error("L1Watcher failed to retrieve chain config: {0}")]
     FailedToRetrieveChainConfig(String),
-    #[error("L1Watcher failed to get config: {0}")]
-    FailedToGetConfig(#[from] ConfigError),
     #[error("L1Watcher failed to access Store: {0}")]
     FailedAccessingStore(#[from] StoreError),
     #[error("{0}")]
@@ -61,10 +74,6 @@ pub enum ProverServerError {
     InternalError(String),
     #[error("ProverServer failed when (de)serializing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("ProverServer failed to get withdrawals for batch {0}")]
-    WithdrawalsError(u64),
-    #[error("ProverServer failed to calculate withdrawals for batch {0}")]
-    WithdrawalsMerkelizeError(u64),
     #[error("ProverServer failed to get deposits logs hash for batch {0}")]
     DepositsError(u64),
 }
@@ -81,6 +90,8 @@ pub enum ProofSenderError {
     ProofNotPresent(ProverType),
     #[error("Unexpected Error: {0}")]
     InternalError(String),
+    #[error("Failed to parse OnChainProposer response: {0}")]
+    FailedToParseOnChainProposerResponse(String),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -175,8 +186,6 @@ pub enum StateDiffError {
     FailedToDeserializeStateDiff(String),
     #[error("StateDiff failed to serialize: {0}")]
     FailedToSerializeStateDiff(String),
-    #[error("StateDiff failed to get config: {0}")]
-    FailedToGetConfig(#[from] ConfigError),
     #[error("StateDiff invalid account state diff type: {0}")]
     InvalidAccountStateDiffType(u8),
     #[error("StateDiff unsupported version: {0}")]
