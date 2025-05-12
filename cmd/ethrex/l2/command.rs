@@ -5,7 +5,7 @@ use crate::{
         init_metrics, init_network, init_rollup_store, init_rpc_api, init_store,
     },
     l2::options::Options,
-    utils::{self, set_datadir, store_config_file, ConfigFile},
+    utils::{set_datadir, store_config_file, ConfigFile},
     DEFAULT_L2_DATADIR,
 };
 use clap::Subcommand;
@@ -19,7 +19,6 @@ use ethrex_rpc::{
 use eyre::OptionExt;
 use keccak_hash::keccak;
 use reqwest::Url;
-use secp256k1::SecretKey;
 use std::{fs::create_dir_all, future::IntoFuture, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::task::TaskTracker;
