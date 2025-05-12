@@ -3,7 +3,7 @@ use crate::{
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
-    gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
+    gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     precompiles::is_precompile,
     utils::{address_to_word, word_to_address, *},
@@ -71,7 +71,7 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let (account_info, address_was_cold) =
+        let (account, address_was_cold) =
             self.db.access_account(&mut self.accrued_substate, callee)?;
 
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
@@ -89,12 +89,10 @@ impl<'a> VM<'a> {
             new_memory_size,
             current_memory_size,
             address_was_cold,
-            account_info.is_empty(),
-            account_exists(self.db, callee),
+            account.is_empty(),
             value_to_transfer,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -196,7 +194,6 @@ impl<'a> VM<'a> {
             value_to_transfer,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -257,10 +254,6 @@ impl<'a> VM<'a> {
 
     // DELEGATECALL operation
     pub fn op_delegatecall(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-7
-        if self.env.config.fork < Fork::Homestead {
-            return Err(VMError::InvalidOpcode);
-        }
         // STACK
         let (
             gas,
@@ -325,7 +318,6 @@ impl<'a> VM<'a> {
             address_was_cold,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -359,10 +351,6 @@ impl<'a> VM<'a> {
 
     // STATICCALL operation
     pub fn op_staticcall(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-214
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         // STACK
         let (
             gas,
@@ -427,7 +415,6 @@ impl<'a> VM<'a> {
             address_was_cold,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -487,10 +474,6 @@ impl<'a> VM<'a> {
 
     // CREATE2 operation
     pub fn op_create2(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-1014
-        if self.env.config.fork < Fork::Constantinople {
-            return Err(VMError::InvalidOpcode);
-        }
         let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
@@ -525,9 +508,6 @@ impl<'a> VM<'a> {
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        }
         let current_call_frame = self.current_call_frame_mut()?;
 
         let offset = current_call_frame.stack.pop()?;
@@ -579,7 +559,6 @@ impl<'a> VM<'a> {
             let to = current_call_frame.to;
             (target_address, to)
         };
-        let fork = self.env.config.fork;
 
         let (target_account, target_account_is_cold) = self
             .db
@@ -589,17 +568,11 @@ impl<'a> VM<'a> {
             self.db.access_account(&mut self.accrued_substate, to)?;
         let balance_to_transfer = current_account.info.balance;
 
-        let account_is_empty = if self.env.config.fork >= Fork::SpuriousDragon {
-            target_account.is_empty()
-        } else {
-            !account_exists(self.db, target_address)
-        };
         self.current_call_frame_mut()?
             .increase_consumed_gas(gas_cost::selfdestruct(
                 target_account_is_cold,
-                account_is_empty,
+                target_account.is_empty(),
                 balance_to_transfer,
-                fork,
             )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
@@ -618,24 +591,7 @@ impl<'a> VM<'a> {
             self.increase_account_balance(target_address, balance_to_transfer)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
 
-            // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-            // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
-            if self.env.config.fork < Fork::London
-                && !self.accrued_substate.selfdestruct_set.contains(&to)
-            {
-                self.env.refunded_gas = self
-                    .env
-                    .refunded_gas
-                    .checked_add(SELFDESTRUCT_REFUND)
-                    .ok_or(VMError::GasRefundsOverflow)?;
-            }
-
             self.accrued_substate.selfdestruct_set.insert(to);
-        }
-        if account_exists(self.db, target_address) && target_account.is_empty() {
-            self.accrued_substate
-                .touched_accounts
-                .insert(target_address);
         }
 
         Ok(OpcodeResult::Halt)
@@ -740,11 +696,8 @@ impl<'a> VM<'a> {
             .ok_or(VMError::BalanceOverflow)?;
 
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
-        let new_account = if self.env.config.fork < Fork::SpuriousDragon {
-            Account::new(new_balance, Bytes::new(), 0, Default::default())
-        } else {
-            Account::new(new_balance, Bytes::new(), 1, Default::default())
-        };
+        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
+
         self.insert_account(new_address, new_account)?;
 
         // 2. Increment sender's nonce.
@@ -962,12 +915,7 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
-                for (address, account_opt) in call_frame.cache_backup.clone() {
-                    self.current_call_frame_mut()?
-                        .cache_backup
-                        .entry(address)
-                        .or_insert(account_opt);
-                }
+                self.merge_call_frame_backup_with_parent(&call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
                 // Revert value transfer
@@ -1009,12 +957,7 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(address_to_word(retdata.to))?;
-                for (address, account_opt) in call_frame.cache_backup.clone() {
-                    self.current_call_frame_mut()?
-                        .cache_backup
-                        .entry(address)
-                        .or_insert(account_opt);
-                }
+                self.merge_call_frame_backup_with_parent(&call_frame.call_frame_backup)?;
             }
             TxResult::Revert(err) => {
                 // Return value to sender
