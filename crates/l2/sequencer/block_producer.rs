@@ -17,9 +17,12 @@ use payload_builder::build_payload;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 
-use crate::utils::config::{block_producer::BlockProducerConfig, errors::ConfigError};
+use crate::{BlockProducerConfig, SequencerConfig};
 
-use super::{errors::BlockProducerError, execution_cache::ExecutionCache};
+use super::{
+    errors::{BlockProducerError, SequencerError},
+    execution_cache::ExecutionCache,
+};
 
 pub struct BlockProducer {
     block_time_ms: u64,
@@ -30,10 +33,9 @@ pub async fn start_block_producer(
     store: Store,
     blockchain: Arc<Blockchain>,
     execution_cache: Arc<ExecutionCache>,
-) -> Result<(), ConfigError> {
-    let proposer_config = BlockProducerConfig::from_env()?;
-    let proposer = BlockProducer::new_from_config(proposer_config).map_err(ConfigError::from)?;
-
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
+    let proposer = BlockProducer::new_from_config(&cfg.block_producer);
     proposer
         .run(store.clone(), blockchain, execution_cache)
         .await;
@@ -41,15 +43,15 @@ pub async fn start_block_producer(
 }
 
 impl BlockProducer {
-    pub fn new_from_config(config: BlockProducerConfig) -> Result<Self, BlockProducerError> {
+    pub fn new_from_config(config: &BlockProducerConfig) -> Self {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
         } = config;
-        Ok(Self {
-            block_time_ms,
-            coinbase_address,
-        })
+        Self {
+            block_time_ms: *block_time_ms,
+            coinbase_address: *coinbase_address,
+        }
     }
 
     pub async fn run(
