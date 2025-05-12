@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747047767023,
+  "lastUpdate": 1747063412729,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6145,6 +6145,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 177054188943,
             "range": "± 639538719",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "7841ac97a2835b690fa969936ba1a1d0646f34d9",
+          "message": "fix(l2): `make deploy-l1` (#2740)\n\n**Motivation**\n\n- `--deposit-rich` flag is missing in `make deploy-l1`.\n- `--private-keys-file-path` path is wrong in `make deploy-l1`.\n- `--genesis-l1-path` path is wrong in `make deploy-l1`.",
+          "timestamp": "2025-05-12T14:26:16Z",
+          "tree_id": "b53752c50ba1bad6d8e8fe34362b7e67cc08d288",
+          "url": "https://github.com/lambdaclass/ethrex/commit/7841ac97a2835b690fa969936ba1a1d0646f34d9"
+        },
+        "date": 1747063410355,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 183775110439,
+            "range": "± 1826527448",
             "unit": "ns/iter"
           }
         ]
