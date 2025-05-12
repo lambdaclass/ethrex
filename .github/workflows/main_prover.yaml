@@ -62,10 +62,13 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
+      # The `rm -rf .env` command is needed because of an state bug in the
+      # GPU runner.
       - name: Deploy L1 Contracts
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
+          rm -rf .env
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
