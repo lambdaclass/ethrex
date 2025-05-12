@@ -119,6 +119,7 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 **Shanghai**: 3214/3214 (100.00%)
 **Paris**: 2886/2886 (100.00%)
 
+
 ### How to run EF tests locally
 
 ```
