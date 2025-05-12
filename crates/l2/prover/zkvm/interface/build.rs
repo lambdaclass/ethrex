@@ -1,20 +1,14 @@
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
 
-    let features = if cfg!(feature = "l2") {
-        vec!["l2".to_string()]
-    } else {
-        vec![]
-    };
-
     #[cfg(feature = "pico")]
     build_pico_program();
 
     #[cfg(feature = "risc0")]
-    build_risc0_program(&features);
+    build_risc0_program();
 
     #[cfg(feature = "sp1")]
-    build_sp1_program(&features);
+    build_sp1_program();
 }
 
 #[cfg(feature = "pico")]
@@ -32,26 +26,38 @@ fn build_pico_program() {
 }
 
 #[cfg(feature = "risc0")]
-fn build_risc0_program(features: &[String]) {
+fn build_risc0_program() {
+    let features = if cfg!(feature = "l2") {
+        vec!["l2".to_string()]
+    } else {
+        vec![]
+    };
+
     risc0_build::embed_methods_with_options(std::collections::HashMap::from([(
         "zkvm-risc0-program",
         risc0_build::GuestOptions {
-            features: features.to_vec(),
+            features,
             ..Default::default()
         },
     )]));
 }
 
 #[cfg(feature = "sp1")]
-fn build_sp1_program(features: &[String]) {
+fn build_sp1_program() {
     use sp1_sdk::{HashableKey, ProverClient};
+
+    let features = if cfg!(feature = "l2") {
+        vec!["l2".to_string()]
+    } else {
+        vec![]
+    };
 
     sp1_build::build_program_with_args(
         "./sp1",
         sp1_build::BuildArgs {
             output_directory: Some("./sp1/out".to_string()),
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
-            features: features.to_vec(),
+            features,
             ..Default::default()
         },
     );

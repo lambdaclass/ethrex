@@ -295,7 +295,7 @@ async fn initialize_contracts(
         Color::Cyan,
     );
     let sp1_vk_string = read_to_string(&opts.sp1_vk_path)?;
-    let sp1_vk = hex::decode(&sp1_vk_string.trim_start_matches("0x"))
+    let sp1_vk = hex::decode(sp1_vk_string.trim_start_matches("0x"))
         .map_err(|err| {
             DeployerError::DecodingError(format!(
                 "failed to parse sp1_vk ({sp1_vk_string}) from hex: {err}"
