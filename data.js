@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747069697880,
+  "lastUpdate": 1747076518924,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6265,6 +6265,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 178607911356,
             "range": "± 1250090379",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "estefano.bargas@fing.edu.uy",
+            "name": "Estéfano Bargas",
+            "username": "xqft"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "897af4f15412c87f82e434e784e5717a4d3b3b62",
+          "message": "feat(l2): bench job (#2663)\n\n**Motivation**\n\nContinously (on each push to main) prove an Ethereum Mainnet block to\ntest and benchmark ethrex-prover.\n\n**Description**\n\n- adds job to prove an L1 block using the `bench` crate\n- post the gas rate (Mgas/s) into gh pages with the github benchmark\naction.",
+          "timestamp": "2025-05-12T18:13:42Z",
+          "tree_id": "8bc3d7fd4c58439dd35616dbef9894ef3ae7995e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/897af4f15412c87f82e434e784e5717a4d3b3b62"
+        },
+        "date": 1747076517684,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 181842593499,
+            "range": "± 911294658",
             "unit": "ns/iter"
           }
         ]
