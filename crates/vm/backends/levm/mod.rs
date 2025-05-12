@@ -247,12 +247,12 @@ impl LEVM {
             .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
         {
             let mut account_arc: Arc<Account> = match db.cache.get(&address).cloned() {
-                Some(cached_arc) => cached_arc, // Found in cache
-                None => { // Not in cache, fetch from store
+                Some(cached_arc) => cached_arc,
+                None => {
                     let account_from_store = db.store
                         .get_account(address)
-                        .map_err(|e| StoreError::Custom(e.to_string()))?; // Propagates StoreError if db.store.get_account fails
-                    Arc::new(account_from_store) // Wrap the owned Account in an Arc
+                        .map_err(|e| StoreError::Custom(e.to_string()))?;
+                    Arc::new(account_from_store)
                 }
             };
 
