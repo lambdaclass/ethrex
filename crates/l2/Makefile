@@ -119,9 +119,9 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--private-keys-file-path ../../test_data/private_keys_l1.txt \
 	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
 	--contracts-path contracts \
-	--pico.verifier-address 0x00000000000000000000000000000000000000AA \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000AA \
-	--sp1.verifier-address 0x00000000000000000000000000000000000000AA \
+	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
+	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--deposit-rich
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
