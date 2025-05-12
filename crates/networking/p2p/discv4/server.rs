@@ -340,6 +340,9 @@ impl Discv4Server {
                 if is_msg_expired(msg.expiration) {
                     return Err(DiscoveryError::MessageExpired);
                 }
+
+                // Update node_record
+                self.ctx.set_fork_id().await;
                 let node_record = self.ctx.local_node_record.lock().await.clone();
 
                 let msg =
@@ -426,6 +429,8 @@ impl Discv4Server {
 
                     //https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
                     if let Some(eth) = record.eth {
+                        //update node_record
+                        self.ctx.set_fork_id().await;
                         let pairs = self.ctx.local_node_record.lock().await.decode_pairs();
 
                         if let Some(fork_id) = pairs.eth {
@@ -754,7 +759,7 @@ pub(super) mod tests {
 
     pub async fn start_discovery_server(
         udp_port: u16,
-        init_storage: bool,
+        initial_blocks: Option<u64>,
         should_start_server: bool,
     ) -> Result<Discv4Server, DiscoveryError> {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), udp_port);
@@ -767,10 +772,9 @@ pub(super) mod tests {
             tcp_port: udp_port,
         };
 
-        let storage = if init_storage {
-            setup_storage().await.expect("Storage setup")
-        } else {
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB")
+        let storage = match initial_blocks {
+            Some(blocks) => setup_storage(blocks).await.expect("Storage setup"),
+            None => Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB"),
         };
 
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
@@ -826,7 +830,7 @@ pub(super) mod tests {
         Ok(())
     }
 
-    async fn setup_storage() -> Result<Store, StoreError> {
+    async fn setup_storage(blocks: u64) -> Result<Store, StoreError> {
         let store = Store::new("test", EngineType::InMemory)?;
 
         let config = ChainConfig {
@@ -836,40 +840,19 @@ pub(super) mod tests {
         };
         store.set_chain_config(&config).await?;
 
-        let header0 = BlockHeader {
-            number: 0,
-            timestamp: 0,
-            gas_limit: 100_000_000,
-            gas_used: 0,
-            ..Default::default()
-        };
-        let block_hash0 = header0.compute_block_hash();
-        store.add_block_header(block_hash0, header0).await?;
-        store.set_canonical_block(0, block_hash0).await?;
-
-        let header1 = BlockHeader {
-            number: 1,
-            timestamp: 15,
-            gas_limit: 100_000_000,
-            gas_used: 0,
-            ..Default::default()
-        };
-        let block_hash1 = header1.compute_block_hash();
-        store.add_block_header(block_hash1, header1).await?;
-        store.set_canonical_block(1, block_hash1).await?;
-
-        let header2 = BlockHeader {
-            number: 2,
-            timestamp: 15,
-            gas_limit: 100_000_000,
-            gas_used: 0,
-            ..Default::default()
-        };
-        let block_hash2 = header2.compute_block_hash();
-        store.add_block_header(block_hash2, header2).await?;
-        store.set_canonical_block(2, block_hash2).await?;
-
-        store.update_latest_block_number(2).await?;
+        for i in 0..blocks {
+            let header = BlockHeader {
+                number: 0,
+                timestamp: i * 5,
+                gas_limit: 100_000_000,
+                gas_used: 0,
+                ..Default::default()
+            };
+            let block_hash = header.compute_block_hash();
+            store.add_block_header(block_hash, header).await?;
+            store.set_canonical_block(i, block_hash).await?;
+        }
+        store.update_latest_block_number(blocks - 1).await?;
         Ok(store)
     }
 
@@ -884,8 +867,8 @@ pub(super) mod tests {
      * To make this run faster, we'll change the revalidation time to be every 2secs
      */
     async fn discovery_server_revalidation() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(7998, false, true).await?;
-        let mut server_b = start_discovery_server(7999, false, true).await?;
+        let mut server_a = start_discovery_server(7998, Some(1), true).await?;
+        let mut server_b = start_discovery_server(7999, Some(1), true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -954,17 +937,15 @@ pub(super) mod tests {
      * 5. Verify that the updated node record has been correctly received and stored.
      */
     async fn discovery_enr_message() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8006, false, true).await?;
-        let mut server_b = start_discovery_server(8007, false, true).await?;
+        let mut server_a = start_discovery_server(8006, Some(1), true).await?;
+        let mut server_b = start_discovery_server(8007, Some(1), true).await?;
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
         // wait some time for the enr request-response finishes
         sleep(Duration::from_millis(2500)).await;
 
-        let expected_record =
-            NodeRecord::from_node(&server_b.ctx.local_node, 1, &server_b.ctx.signer)
-                .expect("Node record is created from node");
+        let expected_record = server_b.ctx.local_node_record.lock().await.decode_pairs();
 
         let server_a_peer_b = server_a
             .ctx
@@ -977,7 +958,7 @@ pub(super) mod tests {
 
         // we only match the pairs, as the signature and seq will change
         // because they are calculated with the current time
-        assert!(server_a_peer_b.record.decode_pairs() == expected_record.decode_pairs());
+        assert!(server_a_peer_b.record.decode_pairs() == expected_record);
 
         // Modify server_a's record of server_b with an incorrect TCP port.
         // This simulates an outdated or incorrect entry in the node table.
@@ -1034,9 +1015,19 @@ pub(super) mod tests {
      * 7. node a and c shouldn't be connected
      */
     async fn discovery_eth_pair_validation() -> Result<(), DiscoveryError> {
-        let mut server_a = start_discovery_server(8086, true, true).await?;
-        let mut server_b = start_discovery_server(8087, true, true).await?;
-        let mut server_c = start_discovery_server(8088, true, true).await?;
+        let mut server_a = start_discovery_server(8086, Some(10), true).await?;
+        let mut server_b = start_discovery_server(8087, Some(10), true).await?;
+        let mut server_c = start_discovery_server(8088, None, true).await?;
+
+        let config = ChainConfig {
+            ..Default::default()
+        };
+        server_c
+            .ctx
+            .storage
+            .set_chain_config(&config)
+            .await
+            .unwrap();
 
         let fork_id_valid = ForkId {
             fork_hash: H32::zero(),
