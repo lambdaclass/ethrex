@@ -8,5 +8,11 @@ To upgrade a contract, you have to create the new contract and, as the original 
 
 Once you have the new contract, you need to do the following two steps:
 
-- Deploy the new contract
-- Upgrade the proxy by calling the method `upgradeToAndCall(address newImplementation, bytes memory data)`. The `data` parameter is the calldata to call on the new implementation as an initialization, you can pass an empty stream.
+1. Deploy the new contract
+  ```sh
+  rex deploy <NEW_IMPLEMENTATION_BYTECODE> 0 <DEPLOYER_PRIVATE_KEY>
+  ```
+2. Upgrade the proxy by calling the method `upgradeToAndCall(address newImplementation, bytes memory data)`. The `data` parameter is the calldata to call on the new implementation as an initialization, you can pass an empty stream.
+  ```sh
+  rex send <PROXY_ADDRESS> 0 <PRIVATE_KEY> -- 'upgradeToAndCall(address,bytes)' 0 <NEW_IMPLEMENTATION_ADDRESS> <INITIALIZATION_CALLDATA>
+  ```
