@@ -134,8 +134,8 @@ update-system-contracts:
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
-DEFAULT_BRIDGE_ADDRESS=0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=0xc66617ef7eff0ce31a54067183f541f52f39a7dc
+DEFAULT_BRIDGE_ADDRESS=0x9adc87890bfb57b0512426c6e8ccdcd3e548161a
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=0xdd6cbd2252c213b518a02a2d0558b76cb57f1ec3
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \

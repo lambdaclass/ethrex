@@ -218,7 +218,7 @@ async fn deploy_contracts(
     .await?;
 
     spinner.success(&format!(
-        r#"OnChainProposer:
+        r#"CommonBridge:
     Deployed implementation at address {}
     With tx hash {},
     Deployed proxy at address {}
