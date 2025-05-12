@@ -15,8 +15,7 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        Fork, PrivilegedL2Transaction, Transaction,
-        TxKind,
+        Fork, PrivilegedL2Transaction, Transaction, TxKind,
     },
     Address, H256, U256,
 };
@@ -129,7 +128,7 @@ impl<'a> VM<'a> {
             touched_storage_slots: default_touched_storage_slots,
             created_accounts: HashSet::new(),
             refunded_gas: 0,
-            transient_storage: HashMap::new()
+            transient_storage: HashMap::new(),
         };
 
         let bytecode;

@@ -1,6 +1,12 @@
-use ethrex_common::{types::{BlockHeader, ChainConfig, Fork, ForkBlobSchedule}, Address, H256, U256};
+use ethrex_common::{
+    types::{BlockHeader, ChainConfig, Fork, ForkBlobSchedule},
+    Address, H256, U256,
+};
 
-use crate::constants::{BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, MAX_BLOB_COUNT, MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA};
+use crate::constants::{
+    BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, MAX_BLOB_COUNT,
+    MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
+};
 
 use std::collections::HashMap;
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
