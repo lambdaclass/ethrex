@@ -790,38 +790,42 @@ impl<'a> VM<'a> {
         };
 
         let new_depth = {
-            let current_call_frame = self.current_call_frame_mut()?;
-
             // 2. Validate max depth has not been reached yet.
-            let new_depth = current_call_frame
+            let new_depth = self
+                .current_call_frame_mut()?
                 .depth
                 .checked_add(1)
                 .ok_or(InternalError::ArithmeticOperationOverflow)?;
 
             if new_depth > 1024 {
-                current_call_frame.gas_used = current_call_frame
+                self.current_call_frame_mut()?.gas_used = self
+                    .current_call_frame_mut()?
                     .gas_used
                     .checked_sub(gas_limit)
                     .ok_or(InternalError::GasOverflow)?;
-                current_call_frame.stack.push(REVERT_FOR_CALL)?;
+                self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
 
+            // Transfer value from caller to callee.
+            if should_transfer_value {
+                self.decrease_account_balance(msg_sender, value)?;
+                self.increase_account_balance(to, value)?;
+            }
+
             if bytecode.is_empty() && is_delegation {
-                current_call_frame.gas_used = current_call_frame
+                self.current_call_frame_mut()?.gas_used = self
+                    .current_call_frame_mut()?
                     .gas_used
                     .checked_sub(gas_limit)
                     .ok_or(InternalError::GasOverflow)?;
-                current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
+                self.current_call_frame_mut()?
+                    .stack
+                    .push(SUCCESS_FOR_CALL)?;
                 return Ok(OpcodeResult::Continue { pc_increment: 1 });
             }
             new_depth
         };
-        // Transfer value from caller to callee.
-        if should_transfer_value {
-            self.decrease_account_balance(msg_sender, value)?;
-            self.increase_account_balance(to, value)?;
-        }
 
         self.return_data.push(RetData {
             is_create: false,
