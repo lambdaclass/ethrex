@@ -15,7 +15,7 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, Transaction, TxKind,
+        Fork, Transaction, TxKind,
     },
     Address, H256, U256,
 };
