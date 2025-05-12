@@ -16,3 +16,7 @@ Once you have the new contract, you need to do the following two steps:
   ```sh
   rex send <PROXY_ADDRESS> 0 <PRIVATE_KEY> -- 'upgradeToAndCall(address,bytes)' 0 <NEW_IMPLEMENTATION_ADDRESS> <INITIALIZATION_CALLDATA>
   ```
+3. Check the proxy updated the pointed address to the new implementation. It should return the address of the new implementation:
+  ```sh
+  curl http://localhost:8545 -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": [<PROXY_ADDRESS>, "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
+  ```
