@@ -1,10 +1,11 @@
 use crate::sequencer::errors::ProverServerError;
-use crate::utils::config::block_producer::BlockProducerConfig;
 use crate::utils::prover::proving_systems::ProofCalldata;
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
 };
-use crate::{CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig};
+use crate::{
+    BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
+};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address,
@@ -118,7 +119,8 @@ pub async fn start_proof_coordinator(
         &cfg.proof_coordinator,
         &cfg.l1_committer,
         &cfg.eth,
-        store, // falta agregar el config del block producer
+        &cfg.block_producer,
+        store,
         rollup_store,
     )
     .await?;
@@ -132,10 +134,11 @@ impl ProofCoordinator {
         config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
         eth_config: &EthConfig,
+        proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
     ) -> Result<Self, SequencerError> {
-        let eth_client = EthClient::new_with_maximum_fees(
+        let eth_client = EthClient::new_with_config(
             &eth_config.rpc_url,
             eth_config.max_number_of_retries,
             eth_config.backoff_factor,

@@ -51,9 +51,9 @@ impl BlockProducer {
             elasticity_multiplier,
         } = config;
         Self {
-            block_time_ms,
-            coinbase_address,
-            elasticity_multiplier,
+            block_time_ms: *block_time_ms,
+            coinbase_address: *coinbase_address,
+            elasticity_multiplier: *elasticity_multiplier,
         }
     }
 
