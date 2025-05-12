@@ -245,8 +245,7 @@ impl RpcDB {
 
         // pre-execute and get all state changes
         let result = LEVM::execute_block(block, &mut db).map_err(Box::new)?;
-        let execution_updates =
-            LEVM::get_state_transitions(&mut db, Fork::default()).map_err(Box::new)?;
+        let execution_updates = LEVM::get_state_transitions(&mut db).map_err(Box::new)?;
 
         let index: Vec<(Address, Vec<H256>)> = self
             .cache
