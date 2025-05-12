@@ -13,7 +13,10 @@ mod quote_pusher_integration_test {
     #[tokio::test]
     #[serial]
     async fn integration_happy() {
-        let rpc_url = read_env_var("RPC_URL").unwrap();
+        let Ok(rpc_url) = read_env_var("RPC_URL") else {
+            // Skip test if the environment is not correct
+            return;
+        };
         let private_key_str = read_env_var("PRIVATE_KEY").unwrap();
         let contract_addr = read_env_var("CONTRACT_ADDRESS").unwrap();
 
@@ -42,7 +45,9 @@ mod quote_pusher_integration_test {
     #[tokio::test]
     #[serial]
     async fn bad_quote() {
-        let rpc_url = read_env_var("RPC_URL").unwrap();
+        let Ok(rpc_url) = read_env_var("RPC_URL") else {
+            return;
+        };
         let private_key_str = read_env_var("PRIVATE_KEY").unwrap();
         let contract_addr = read_env_var("CONTRACT_ADDRESS").unwrap();
 
@@ -66,7 +71,9 @@ mod quote_pusher_integration_test {
     #[tokio::test]
     #[serial]
     async fn unloaded_key() {
-        let rpc_url = read_env_var("RPC_URL").unwrap();
+        let Ok(rpc_url) = read_env_var("RPC_URL") else {
+            return;
+        };
         let private_key_str = read_env_var("PRIVATE_KEY").unwrap();
         let contract_addr = read_env_var("CONTRACT_ADDRESS").unwrap();
 
@@ -85,7 +92,9 @@ mod quote_pusher_integration_test {
     #[tokio::test]
     #[serial]
     async fn invalid_newstate() {
-        let rpc_url = read_env_var("RPC_URL").unwrap();
+        let Ok(rpc_url) = read_env_var("RPC_URL") else {
+            return;
+        };
         let private_key_str = read_env_var("PRIVATE_KEY").unwrap();
         let contract_addr = read_env_var("CONTRACT_ADDRESS").unwrap();
 
