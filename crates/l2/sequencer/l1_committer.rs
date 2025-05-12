@@ -321,7 +321,7 @@ impl Committer {
         Ok(ret)
     }
 
-    pub fn get_withdrawals_merkle_root(
+    fn get_withdrawals_merkle_root(
         &self,
         withdrawals_hashes: Vec<H256>,
     ) -> Result<H256, CommitterError> {
