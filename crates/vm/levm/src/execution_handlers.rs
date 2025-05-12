@@ -180,7 +180,10 @@ impl<'a> VM<'a> {
             // If current_consumed_gas + code_deposit_cost > gas_limit
             let validate_create = if code_length > MAX_CODE_SIZE {
                 Err(VMError::ContractOutputTooBig)
-            } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
+            } else if contract_code
+                .first()
+                .is_some_and(|val| val == &INVALID_CONTRACT_PREFIX)
+            {
                 Err(VMError::InvalidContractPrefix)
             } else if current_call_frame
                 .increase_consumed_gas(code_deposit_cost)

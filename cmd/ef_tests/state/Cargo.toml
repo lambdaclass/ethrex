@@ -19,8 +19,8 @@ keccak-hash.workspace = true
 colored = "2.1.0"
 spinoff = "0.8.0"
 thiserror.workspace = true
-clap = { version = "4.3", features = ["derive"] }
-clap_complete = "4.5.17"
+clap.workspace = true
+clap_complete.workspace = true
 itertools = "0.13.0"
 revm = { version = "19.0.0", features = [
     "serde",
