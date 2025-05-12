@@ -68,6 +68,7 @@ jobs:
           cargo test l2 --no-run --release
 
       - name: Deploy L1 Contracts
+        if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
@@ -78,6 +79,7 @@ jobs:
           docker compose -f docker-compose-l2.yaml up contract_deployer
 
       - name: Start Sequencer
+        if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
           CI_ETHREX_WORKDIR=/usr/local/bin \
