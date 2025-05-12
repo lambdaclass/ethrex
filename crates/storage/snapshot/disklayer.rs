@@ -23,7 +23,7 @@ use super::{
 pub struct DiskLayer {
     pub(super) state_trie: Arc<Trie>,
     pub(super) db: Arc<dyn StoreEngine>,
-    pub(super)  cache: Cache,
+    pub(super) cache: Cache,
     pub(super) root: H256,
     pub(super) stale: Arc<AtomicBool>,
 }
@@ -58,7 +58,11 @@ impl SnapshotLayer for DiskLayer {
         self.root
     }
 
-    fn get_account(&self, hash: H256) -> Result<Option<Option<AccountState>>, SnapshotError> {
+    fn get_account(
+        &self,
+        hash: H256,
+        _layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+    ) -> Result<Option<Option<AccountState>>, SnapshotError> {
         if let Some(value) = self.cache.accounts.get(&hash) {
             return Ok(Some(value.clone()));
         }
@@ -86,12 +90,13 @@ impl SnapshotLayer for DiskLayer {
         &self,
         account_hash: H256,
         storage_hash: H256,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
     ) -> Result<Option<U256>, SnapshotError> {
         if let Some(value) = self.cache.storages.get(&(account_hash, storage_hash)) {
             return Ok(Some(value));
         }
 
-        let account = if let Some(Some(account)) = self.get_account(account_hash)? {
+        let account = if let Some(Some(account)) = self.get_account(account_hash, layers)? {
             account
         } else {
             return Ok(None);
@@ -115,7 +120,7 @@ impl SnapshotLayer for DiskLayer {
         Ok(Some(value))
     }
 
-    fn parent(&self) -> Option<Arc<dyn SnapshotLayer>> {
+    fn parent(&self) -> Option<H256> {
         None
     }
 
@@ -126,6 +131,7 @@ impl SnapshotLayer for DiskLayer {
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Arc<dyn SnapshotLayer> {
         Arc::new(DiffLayer::new(
+            self.root,
             Arc::new(self.clone()),
             block,
             accounts,
@@ -156,8 +162,9 @@ impl SnapshotLayerImpl for DiskLayer {
         &self,
         hash: H256,
         _depth: usize,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
     ) -> Result<Option<Option<AccountState>>, SnapshotError> {
-        self.get_account(hash)
+        self.get_account(hash, layers)
     }
 
     fn get_storage_traverse(
@@ -165,11 +172,15 @@ impl SnapshotLayerImpl for DiskLayer {
         account_hash: H256,
         storage_hash: H256,
         _depth: usize,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
     ) -> Result<Option<U256>, SnapshotError> {
-        self.get_storage(account_hash, storage_hash)
+        self.get_storage(account_hash, storage_hash, layers)
     }
 
-    fn flatten(self: Arc<Self>) -> Arc<dyn SnapshotLayer> {
+    fn flatten(
+        self: Arc<Self>,
+        _layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+    ) -> Arc<dyn SnapshotLayer> {
         self.clone()
     }
 
@@ -186,4 +197,6 @@ impl SnapshotLayerImpl for DiskLayer {
     fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
         HashMap::default()
     }
+
+    fn set_parent(&mut self, _parent: H256) {}
 }

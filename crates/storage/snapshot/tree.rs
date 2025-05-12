@@ -3,10 +3,13 @@ use std::{
     sync::{atomic::AtomicBool, Arc, RwLock},
 };
 
-use ethrex_common::{types::AccountState, H256, U256};
+use ethrex_common::{
+    types::{AccountState, BlockHash},
+    Address, H256, U256,
+};
 use tracing::{debug, error};
 
-use crate::api::StoreEngine;
+use crate::{api::StoreEngine, hash_address_fixed};
 
 use super::{disklayer::DiskLayer, error::SnapshotError, layer::SnapshotLayer};
 
@@ -108,7 +111,7 @@ impl SnapshotTree {
 
         if layers == 0 {
             // Full commit
-            let base = self.save_diff(diff.flatten())?;
+            let base = self.save_diff(diff.flatten(&self.layers.read().unwrap()))?;
             // TODO: save diff to disk?
             let mut layers = self.layers.write().unwrap();
             layers.clear();
@@ -119,28 +122,31 @@ impl SnapshotTree {
         Ok(())
     }
 
-    // TODO: should we hold the layers lock from the caller during all the cap?
-    fn cap_layers(&self, mut diff: Arc<dyn SnapshotLayer>, layers: usize) -> Option<Arc<DiskLayer>> {
+    fn cap_layers(
+        &self,
+        mut diff: Arc<dyn SnapshotLayer>,
+        layers_n: usize,
+    ) -> Option<Arc<DiskLayer>> {
         // Dive until end or disk layer.
-        for _ in 0..(layers - 1) {
+        let mut layers = self.layers.write().unwrap();
+        for _ in 0..(layers_n - 1) {
             if diff.parent().is_some() {
-                diff = diff.parent().unwrap();
+                diff = layers[&diff.parent().unwrap()].clone();
             } else {
                 // Diff stack is shallow, no need to modify.
                 return None;
             }
         }
 
-        let parent = diff.parent().unwrap();
+        let parent = layers[&diff.parent().unwrap()].clone();
 
         // Stop if its disk layer.
         if parent.parent().is_none() {
             return None;
         }
 
-        let flattened = parent.flatten();
+        let flattened = parent.flatten(&layers);
         {
-            let mut layers = self.layers.write().unwrap();
             layers.insert(flattened.root(), flattened.clone());
         }
 
@@ -178,5 +184,40 @@ impl SnapshotTree {
             stale: Arc::new(AtomicBool::new(false)),
         };
         Ok(Arc::new(disk))
+    }
+
+    pub fn get_account_state(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+    ) -> Result<Option<AccountState>, SnapshotError> {
+        if let Some(snapshot) = self.snapshot(block_hash) {
+            let layers = self.layers.read().unwrap();
+            let address = hash_address_fixed(&address);
+            let result = snapshot.get_account(address, &layers);
+
+            match result {
+                Ok(Some(value)) => Ok(value),
+                Err(snapshot_error) => Err(snapshot_error),
+                Ok(None) => Ok(None),
+            }
+        } else {
+            Err(SnapshotError::SnapshotNotFound(block_hash))
+        }
+    }
+
+    pub fn get_storage_at_hash(
+        &self,
+        block_hash: BlockHash,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, SnapshotError> {
+        if let Some(snapshot) = self.snapshot(block_hash) {
+            let layers = self.layers.read().unwrap();
+            let address = hash_address_fixed(&address);
+            return snapshot.get_storage(address, storage_key, &layers);
+        }
+
+        Err(SnapshotError::SnapshotNotFound(block_hash))
     }
 }

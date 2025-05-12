@@ -534,15 +534,13 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        if let Some(snapshot) = self.snapshots.snapshot(block_hash) {
-            let address = hash_address_fixed(&address);
-            let result = snapshot.get_storage(address, storage_key);
-
-            match result {
-                Ok(value) => return Ok(value),
-                Err(snapshot_error) => {
-                    error!("Error fetching from snapshot (storage): {}", snapshot_error);
-                }
+        match self
+            .snapshots
+            .get_storage_at_hash(block_hash, address, storage_key)
+        {
+            Ok(value) => return Ok(value),
+            Err(snapshot_error) => {
+                error!("Error fetching from snapshot (storage): {}", snapshot_error);
             }
         }
 
@@ -697,16 +695,10 @@ impl Store {
             return Ok(None);
         };
 
-        if let Some(snapshot) = self.snapshots.snapshot(block_hash) {
-            let address = hash_address_fixed(&address);
-            let result = snapshot.get_account(address);
-
-            match result {
-                Ok(Some(value)) => return Ok(value),
-                Err(snapshot_error) => {
-                    error!("Error fetching from snapshot (account): {}", snapshot_error);
-                }
-                Ok(None) => {}
+        match self.snapshots.get_account_state(block_hash, address) {
+            Ok(value) => return Ok(value),
+            Err(snapshot_error) => {
+                error!("Error fetching from snapshot (account): {}", snapshot_error);
             }
         }
 

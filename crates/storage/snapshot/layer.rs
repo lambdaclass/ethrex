@@ -12,13 +12,18 @@ pub trait SnapshotLayer: SnapshotLayerImpl + Send + Sync + Debug {
     /// Get a account state  by its hash.
     ///
     /// Returned inner Option is None if deleted.
-    fn get_account(&self, hash: H256) -> Result<Option<Option<AccountState>>, SnapshotError>;
+    fn get_account(
+        &self,
+        hash: H256,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+    ) -> Result<Option<Option<AccountState>>, SnapshotError>;
 
     /// Get a storage by its account and storage hash.
     fn get_storage(
         &self,
         account_hash: H256,
         storage_hash: H256,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
     ) -> Result<Option<U256>, SnapshotError>;
 
     // TODO: maybe move these to a private trait.
@@ -27,7 +32,7 @@ pub trait SnapshotLayer: SnapshotLayerImpl + Send + Sync + Debug {
 
     fn mark_stale(&self) -> bool;
 
-    fn parent(&self) -> Option<Arc<dyn SnapshotLayer>>;
+    fn parent(&self) -> Option<H256>;
 
     /// Creates a new layer on top of the existing diff tree.
     fn update(
@@ -44,7 +49,7 @@ pub trait SnapshotLayer: SnapshotLayerImpl + Send + Sync + Debug {
 pub trait SnapshotLayerImpl: Send + Sync + Debug {
     fn diffed(&self) -> Option<Bloom>;
 
-    fn set_parent(&self, parent: Arc<dyn SnapshotLayer>);
+    fn set_parent(&mut self, parent: H256);
 
     /// Returns the accounts hashmap, expensive, used when saving to disk layer.
     fn accounts(&self) -> HashMap<H256, Option<AccountState>>;
@@ -56,6 +61,7 @@ pub trait SnapshotLayerImpl: Send + Sync + Debug {
         &self,
         hash: H256,
         depth: usize,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
     ) -> Result<Option<Option<AccountState>>, SnapshotError>;
 
     fn get_storage_traverse(
@@ -63,10 +69,14 @@ pub trait SnapshotLayerImpl: Send + Sync + Debug {
         account_hash: H256,
         storage_hash: H256,
         depth: usize,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
     ) -> Result<Option<U256>, SnapshotError>;
 
     /// Flatten diff layers.
-    fn flatten(self: Arc<Self>) -> Arc<dyn SnapshotLayer>;
+    fn flatten(
+        self: Arc<Self>,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+    ) -> Arc<dyn SnapshotLayer>;
 
     fn add_accounts(&self, accounts: HashMap<H256, Option<AccountState>>);
 

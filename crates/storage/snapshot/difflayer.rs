@@ -18,7 +18,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct DiffLayer {
     origin: Arc<DiskLayer>,
-    parent: Arc<dyn SnapshotLayer>,
+    parent: H256,
     root: H256,
     stale: Arc<AtomicBool>,
     accounts: Arc<RwLock<HashMap<H256, Option<AccountState>>>>, // None if deleted
@@ -29,14 +29,15 @@ pub struct DiffLayer {
 
 impl DiffLayer {
     pub fn new(
-        parent: Arc<dyn SnapshotLayer>,
+        parent: H256,
+        origin: Arc<DiskLayer>,
         root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
         diffed: Option<Bloom>,
     ) -> Self {
         let mut layer = DiffLayer {
-            origin: parent.origin(),
+            origin,
             parent,
             root,
             stale: AtomicBool::new(false).into(),
@@ -45,15 +46,15 @@ impl DiffLayer {
             diffed: diffed.unwrap_or_default(),
         };
 
-        layer.rebloom();
+        layer.rebloom(diffed);
 
         layer
     }
 }
 
 impl DiffLayer {
-    pub fn rebloom(&mut self) {
-        self.diffed = self.parent.diffed().unwrap_or_default();
+    pub fn rebloom(&mut self, parent_diffed: Option<Bloom>) {
+        self.diffed = parent_diffed.unwrap_or_default();
 
         {
             let accounts = self.accounts.read().unwrap();
@@ -79,7 +80,11 @@ impl SnapshotLayer for DiffLayer {
         self.root
     }
 
-    fn get_account(&self, hash: H256) -> Result<Option<Option<AccountState>>, SnapshotError> {
+    fn get_account(
+        &self,
+        hash: H256,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+    ) -> Result<Option<Option<AccountState>>, SnapshotError> {
         // todo: check stale
 
         let hit = self
@@ -88,17 +93,18 @@ impl SnapshotLayer for DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_account(hash);
+            return self.origin.get_account(hash, layers);
         }
 
         // Start traversing layers.
-        self.get_account_traverse(hash, 0)
+        self.get_account_traverse(hash, 0, layers)
     }
 
     fn get_storage(
         &self,
         account_hash: H256,
         storage_hash: H256,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
     ) -> Result<Option<U256>, SnapshotError> {
         // todo: check stale
 
@@ -109,11 +115,11 @@ impl SnapshotLayer for DiffLayer {
 
         // If bloom misses we can skip diff layers
         if !hit {
-            return self.origin.get_storage(account_hash, storage_hash);
+            return self.origin.get_storage(account_hash, storage_hash, layers);
         }
 
         // Start traversing layers.
-        self.get_storage_traverse(account_hash, storage_hash, 0)
+        self.get_storage_traverse(account_hash, storage_hash, 0, layers)
     }
 
     fn stale(&self) -> bool {
@@ -124,8 +130,8 @@ impl SnapshotLayer for DiffLayer {
         self.stale.swap(true, Ordering::SeqCst)
     }
 
-    fn parent(&self) -> Option<Arc<dyn SnapshotLayer>> {
-        Some(self.parent.clone())
+    fn parent(&self) -> Option<H256> {
+        Some(self.parent)
     }
 
     fn update(
@@ -135,11 +141,12 @@ impl SnapshotLayer for DiffLayer {
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Arc<dyn SnapshotLayer> {
         Arc::new(DiffLayer::new(
-            Arc::new(self.clone()),
+            self.root,
+            self.origin.clone(),
             block,
             accounts,
             storage,
-            None,
+            Some(self.diffed),
         ))
     }
 
@@ -158,6 +165,7 @@ impl SnapshotLayerImpl for DiffLayer {
         &self,
         hash: H256,
         depth: usize,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
     ) -> Result<Option<Option<AccountState>>, SnapshotError> {
         // todo: check if its stale
 
@@ -171,7 +179,7 @@ impl SnapshotLayerImpl for DiffLayer {
         }
 
         // delegate to parent
-        self.parent.get_account_traverse(hash, depth + 1)
+        layers[&self.parent].get_account_traverse(hash, depth + 1, layers)
     }
 
     fn get_storage_traverse(
@@ -179,6 +187,7 @@ impl SnapshotLayerImpl for DiffLayer {
         account_hash: H256,
         storage_hash: H256,
         depth: usize,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
     ) -> Result<Option<U256>, SnapshotError> {
         // todo: check if its stale
 
@@ -195,18 +204,20 @@ impl SnapshotLayerImpl for DiffLayer {
         }
 
         // delegate to parent
-        self.parent
-            .get_storage_traverse(account_hash, storage_hash, depth + 1)
+        layers[&self.parent].get_storage_traverse(account_hash, storage_hash, depth + 1, layers)
     }
 
-    fn flatten(self: Arc<Self>) -> Arc<dyn SnapshotLayer> {
+    fn flatten(
+        self: Arc<Self>,
+        layers: &HashMap<H256, Arc<dyn SnapshotLayer>>,
+    ) -> Arc<dyn SnapshotLayer> {
         // If parent doesn't have a parent it means its not a diff, so we return ourselves as the last diff.
-        if self.parent.parent().is_none() {
+        if layers[&self.parent].parent().is_none() {
             return self;
         }
 
         // Flatten diff parent.
-        let parent = self.parent.clone().flatten();
+        let parent = layers[&self.parent].clone().flatten(layers);
 
         if parent.mark_stale() {
             // todo: make error
@@ -218,6 +229,7 @@ impl SnapshotLayerImpl for DiffLayer {
 
         Arc::new(DiffLayer::new(
             parent.parent().unwrap(),
+            self.origin.clone(),
             self.root,
             self.accounts.read().unwrap().clone(),
             self.storage.read().unwrap().clone(),
@@ -245,5 +257,9 @@ impl SnapshotLayerImpl for DiffLayer {
 
     fn storage(&self) -> HashMap<H256, HashMap<H256, U256>> {
         self.storage.read().unwrap().clone()
+    }
+
+    fn set_parent(&mut self, parent: H256) {
+        self.parent = parent;
     }
 }
