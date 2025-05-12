@@ -39,7 +39,6 @@ fn main() {
     let mut cumulative_gas_used = 0;
 
     for block in blocks {
-        let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
 
@@ -48,7 +47,7 @@ fn main() {
         let result = vm.execute_block(&block).expect("failed to execute block");
         let receipts = result.receipts;
         let account_updates = vm
-            .get_state_transitions(fork)
+            .get_state_transitions()
             .expect("failed to get state transitions");
 
         cumulative_gas_used += receipts
