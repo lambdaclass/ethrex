@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747063412729,
+  "lastUpdate": 1747064476766,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6175,6 +6175,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 183775110439,
             "range": "± 1826527448",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "67517699+ilitteri@users.noreply.github.com",
+            "name": "Ivan Litteri",
+            "username": "ilitteri"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "4492a243d6fe45b6194d1b83e1c399f6419059de",
+          "message": "ci(l2): patch `main_prover` workflow (#2741)\n\n**Motivation**\n\nThere's a bug in our GPU runner where sometimes a `.env` directory is\ncreated, which causes the workflow to fail in different steps.\n\nThis only happens in our GPU runner. I filed an issue to tackle this\nhttps://github.com/lambdaclass/ethrex/pull/2741.\n\n**Description**\n\nRemoves the `.env` dir if it exists.",
+          "timestamp": "2025-05-12T14:34:36Z",
+          "tree_id": "1aa13a4df0acb24f6c6a702910113d1ec3e0b6ea",
+          "url": "https://github.com/lambdaclass/ethrex/commit/4492a243d6fe45b6194d1b83e1c399f6419059de"
+        },
+        "date": 1747064474689,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179421695544,
+            "range": "± 1126619344",
             "unit": "ns/iter"
           }
         ]
