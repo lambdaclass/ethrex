@@ -7,7 +7,6 @@ use ethrex_prover_bench::{
 };
 use ethrex_prover_lib::execute;
 use serde_json::json;
-use system_info_lite::get_system_info;
 use zkvm_interface::io::ProgramInput;
 
 #[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
@@ -125,16 +124,8 @@ fn write_benchmark_file(gas_used: f64, elapsed: f64) {
         unreachable!();
     };
 
-    let system_info = get_system_info().expect("Failed to get system information");
-
-    let processing_unit = if cfg!(feature = "gpu") && system_info.gpu.is_some() {
-        format!("GPU: {}", system_info.gpu.unwrap()[0].model)
-    } else {
-        format!("CPU: {}", system_info.cpu.model)
-    };
-
     let benchmark_json = &json!([{
-        "name": format!("{backend}, {processing_unit}"),
+        "name": format!("{backend}, {}", if cfg!(feature = "gpu") {"GPU"} else {"CPU"}),
         "unit": "Mgas/s",
         "value": rate
     }]);
