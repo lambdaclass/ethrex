@@ -407,9 +407,9 @@ async fn deploy_proxy(
 ) -> Result<(H256, Address), DeployError> {
     let mut init_code = hex::decode(
         std::fs::read_to_string(contract_binaries.join("ERC1967Proxy.bin"))
-            .map_err(|err| DeployError::FailedToReadInitCode(err))?,
+            .map_err(DeployError::FailedToReadInitCode)?,
     )
-    .map_err(|err| DeployError::FailedToDecodeBytecode(err))?;
+    .map_err(DeployError::FailedToDecodeBytecode)?;
 
     init_code.extend(H256::from(implementation_address).0);
     init_code.extend(H256::from_low_u64_be(0x40).0);

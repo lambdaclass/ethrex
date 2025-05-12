@@ -16,7 +16,7 @@ use ethrex_l2::utils::test_data_io::read_genesis_file;
 use ethrex_l2_sdk::{
     calldata::{encode_calldata, Value},
     compile_contract, deploy_contract, deploy_with_proxy, get_address_from_secret_key,
-    initialize_contract, ProxyDeployment,
+    initialize_contract,
 };
 use ethrex_rpc::{
     clients::{eth::BlockByNumber, EthClientError, Overrides},
