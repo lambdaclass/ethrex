@@ -246,7 +246,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
             bytes32 picoDepositsLogHash = bytes32(picoPublicValues[96:128]);
             require(
-                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
+                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                     picoDepositsLogHash,
                 "OnChainProposer: wrong deposits log hash for pico public inputs"
             );
@@ -268,7 +268,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
             bytes32 risc0DepositsLogHash = bytes32(risc0Journal[96:128]);
             require(
-                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
+                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                     risc0DepositsLogHash,
                 "OnChainProposer: wrong deposits log hash for risc0 public inputs"
             );
@@ -290,7 +290,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             );
             bytes32 sp1DepositsLogHash = bytes32(sp1PublicValues[112:144]);
             require(
-                batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
+                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                     sp1DepositsLogHash,
                 "OnChainProposer: wrong deposits log hash for sp1 public inputs"
             );
