@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{types::Block, H256};
+use ethrex_common::types::Block;
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;
@@ -69,14 +69,10 @@ async fn setup() -> (ProgramInput, Block) {
         .await
         .unwrap();
 
-    // This works because there are no withdrawals in the test data
-    let deposit_logs_hash = H256::zero();
-
     let input = ProgramInput {
         blocks: vec![block_to_prove.clone()],
         parent_block_header,
         db,
-        deposit_logs_hash,
     };
     (input, block_to_prove.clone())
 }

@@ -105,16 +105,12 @@ fn main() {
     let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
         panic!("Failed to calculate withdrawals merkle root");
     };
+
     // Calculate L2 deposits logs root
     #[cfg(feature = "l2")]
-    let Ok(batch_deposits_logs_hash) = get_deposit_hash(deposits_hashes) else {
+    let Ok(deposit_logs_hash) = get_deposit_hash(deposits_hashes) else {
         panic!("Failed to calculate deposits logs hash");
     };
-    // Check deposits logs root
-    #[cfg(feature = "l2")]
-    if batch_deposits_logs_hash != deposit_logs_hash {
-        panic!("invalid deposits logs hash");
-    }
 
     // Update state trie
     let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
@@ -135,6 +131,6 @@ fn main() {
         #[cfg(feature = "l2")]
         withdrawals_merkle_root,
         #[cfg(feature = "l2")]
-        deposit_logs_hash: batch_deposits_logs_hash,
+        deposit_logs_hash,
     });
 }

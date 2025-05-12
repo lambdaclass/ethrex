@@ -40,8 +40,6 @@ pub mod io {
         pub parent_block_header: BlockHeader,
         /// database containing only the data necessary to execute
         pub db: ExecutionDB,
-        /// hash of all the deposit logs made in a batch
-        pub deposit_logs_hash: H256,
     }
 
     /// Public output variables exposed by the zkVM execution program. Some of these are part of

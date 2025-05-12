@@ -84,7 +84,6 @@ impl Prover {
                             blocks: input.blocks,
                             parent_block_header: input.parent_block_header,
                             db: input.db,
-                            deposit_logs_hash: input.deposit_logs_hash
                         }
                     };
                     Ok(prover_data)

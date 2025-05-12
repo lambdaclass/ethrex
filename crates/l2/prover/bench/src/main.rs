@@ -87,8 +87,6 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
-            #[cfg(feature = "l2")]
-            deposit_logs_hash: H256::zero(),
         })
         .expect("proving failed");
     } else {
@@ -97,8 +95,6 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
-            #[cfg(feature = "l2")]
-            deposit_logs_hash: H256::zero(),
         })
         .expect("proving failed");
     }

@@ -46,8 +46,6 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         blocks,
         parent_block_header,
         mut db,
-        #[cfg(feature = "l2")]
-        deposit_logs_hash,
     } = input;
 
     // Tries used for validating initial and final state root
@@ -125,14 +123,9 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
     // Calculate L2 deposits logs root
     #[cfg(feature = "l2")]
-    let Ok(batch_deposits_logs_hash) = get_deposit_hash(deposits_hashes) else {
+    let Ok(deposit_logs_hash) = get_deposit_hash(deposits_hashes) else {
         return Err("Failed to calculate deposits logs hash".to_string().into());
     };
-    // Check deposits logs root
-    #[cfg(feature = "l2")]
-    if batch_deposits_logs_hash != deposit_logs_hash {
-        return Err("invalid deposits logs hash".to_string().into());
-    }
 
     // Update state trie
     let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
@@ -150,6 +143,6 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         #[cfg(feature = "l2")]
         withdrawals_merkle_root,
         #[cfg(feature = "l2")]
-        deposit_logs_hash: batch_deposits_logs_hash,
+        deposit_logs_hash,
     })
 }

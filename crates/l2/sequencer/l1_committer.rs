@@ -158,7 +158,7 @@ impl Committer {
                 info!(
                     "Sent commitment for batch {batch_to_commit}, with tx hash {commit_tx_hash:#x}.",
                 );
-                self.rollup_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes, deposit_logs_hash).await?;
+                self.rollup_store.store_batch(batch_to_commit, first_block_to_commit, last_block_of_batch, withdrawal_hashes).await?;
                 Ok(())
             }
             Err(error) => Err(CommitterError::FailedToSendCommitment(format!(
@@ -297,7 +297,7 @@ impl Committer {
                 }
             }
         }
-        let deposit_logs_hash = get_deposit_hash(deposit_logs_hashes)?;
+        let deposit_logs_hash = self.get_deposit_hash(deposit_logs_hashes)?;
         Ok((
             blobs_bundle,
             new_state_root,
@@ -345,6 +345,34 @@ impl Committer {
             .collect();
 
         deposits
+    }
+
+    pub fn get_deposit_hash(&self, deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
+        if !deposit_hashes.is_empty() {
+            let deposit_hashes_len: u16 = deposit_hashes
+                .len()
+                .try_into()
+                .map_err(CommitterError::from)?;
+            Ok(H256::from_slice(
+                [
+                    &deposit_hashes_len.to_be_bytes(),
+                    keccak(
+                        deposit_hashes
+                            .iter()
+                            .map(H256::as_bytes)
+                            .collect::<Vec<&[u8]>>()
+                            .concat(),
+                    )
+                    .as_bytes()
+                    .get(2..32)
+                    .ok_or(CommitterError::FailedToDecodeDepositHash)?,
+                ]
+                .concat()
+                .as_slice(),
+            ))
+        } else {
+            Ok(H256::zero())
+        }
     }
 
     /// Prepare the state diff for the block.
@@ -584,32 +612,4 @@ async fn estimate_blob_gas(
     };
 
     Ok(blob_gas)
-}
-
-pub fn get_deposit_hash(deposit_hashes: Vec<H256>) -> Result<H256, CommitterError> {
-    if !deposit_hashes.is_empty() {
-        let deposit_hashes_len: u16 = deposit_hashes
-            .len()
-            .try_into()
-            .map_err(CommitterError::from)?;
-        Ok(H256::from_slice(
-            [
-                &deposit_hashes_len.to_be_bytes(),
-                keccak(
-                    deposit_hashes
-                        .iter()
-                        .map(H256::as_bytes)
-                        .collect::<Vec<&[u8]>>()
-                        .concat(),
-                )
-                .as_bytes()
-                .get(2..32)
-                .ok_or(CommitterError::FailedToDecodeDepositHash)?,
-            ]
-            .concat()
-            .as_slice(),
-        ))
-    } else {
-        Ok(H256::zero())
-    }
 }

@@ -42,19 +42,6 @@ pub trait StoreEngineRollup: Debug + Send + Sync + RefUnwindSafe {
         block_numbers: Vec<BlockNumber>,
     ) -> Result<(), StoreError>;
 
-    /// Stores the deposits logs hash by a given batch_number
-    async fn store_deposit_logs_hash_by_batch(
-        &self,
-        batch_number: u64,
-        deposit_logs_hash: H256,
-    ) -> Result<(), StoreError>;
-
-    /// Gets the withdrawal hashes by a given batch number.
-    async fn get_deposit_logs_hash_by_batch(
-        &self,
-        batch_number: u64,
-    ) -> Result<Option<H256>, StoreError>;
-
     /// Returns the block numbers by a given batch_number
     async fn get_block_numbers_by_batch(
         &self,

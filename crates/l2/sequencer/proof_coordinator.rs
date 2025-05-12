@@ -12,7 +12,6 @@ use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::{Evm, EvmError, ExecutionDB};
-use keccak_hash::H256;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr};
 use tokio::{
@@ -30,7 +29,6 @@ pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
     pub db: ExecutionDB,
-    pub deposit_logs_hash: H256,
 }
 
 #[derive(Clone)]
@@ -331,19 +329,12 @@ impl ProofCoordinator {
             .get_block_header_by_hash(parent_hash)?
             .ok_or(ProverServerError::StorageDataIsNone)?;
 
-        let deposit_logs_hash = self
-            .rollup_store
-            .get_deposit_logs_hash_by_batch(batch_number)
-            .await?
-            .ok_or(ProverServerError::DepositsError(batch_number))?;
-
         debug!("Created prover input for batch {batch_number}");
 
         Ok(ProverInputData {
             db,
             blocks,
             parent_block_header,
-            deposit_logs_hash,
         })
     }
 
