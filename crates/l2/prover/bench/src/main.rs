@@ -124,8 +124,16 @@ fn write_benchmark_file(gas_used: f64, elapsed: f64) {
         unreachable!();
     };
 
+    let processor = if cfg!(feature = "ci") {
+        "RTX A6000"
+    } else if cfg!(feature = "gpu") {
+        "GPU"
+    } else {
+        "CPU"
+    };
+
     let benchmark_json = &json!([{
-        "name": format!("{backend}, {}", if cfg!(feature = "gpu") {"GPU"} else {"CPU"}),
+        "name": format!("{backend}, {}", processor),
         "unit": "Mgas/s",
         "value": rate
     }]);
