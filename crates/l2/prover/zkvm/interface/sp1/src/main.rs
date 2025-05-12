@@ -41,7 +41,6 @@ pub fn main() {
     let mut cumulative_gas_used = 0;
 
     for block in blocks {
-        let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(
             &block,
