@@ -252,9 +252,8 @@ impl LEVM {
             } else {
                 let mut account = db
                     .store
-                    .get_account(address)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?
-                    .clone();
+                    .get_account_mut(address)
+                    .map_err(|e| StoreError::Custom(e.to_string()))?;
                 account.info.balance += increment.into();
                 db.cache.insert(address, account);
             }

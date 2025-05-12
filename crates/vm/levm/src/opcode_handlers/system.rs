@@ -71,12 +71,9 @@ impl<'a> VM<'a> {
             calculate_memory_size(return_data_start_offset, return_data_size)?;
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
-        let account_is_empty;
-        let address_was_cold;
-        {
-            let (account, was_cold) = self.db.access_account(&mut self.accrued_substate, callee)?;
-            account_is_empty = account.is_empty();
-            address_was_cold = was_cold;
+        let (account_is_empty, address_was_cold) = {
+            let (account, address_was_cold) = self.db.access_account(&mut self.accrued_substate, callee)?;
+            (account.is_empty(), address_was_cold)
         }
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.accrued_substate, callee)?;
@@ -564,14 +561,11 @@ impl<'a> VM<'a> {
             (target_address, to)
         };
 
-        let target_account_is_empty;
-        let target_account_is_cold;
-        {
+        let (target_account_is_empty, target_account_is_cold) = {
             let (target_account, is_cold) = self
                 .db
                 .access_account(&mut self.accrued_substate, target_address)?;
-            target_account_is_empty = target_account.is_empty();
-            target_account_is_cold = is_cold;
+            (target_account.is_empty(), target_account_is_cold)
         }
         let (current_account, _current_account_is_cold) =
             self.db.access_account(&mut self.accrued_substate, to)?;
@@ -637,15 +631,12 @@ impl<'a> VM<'a> {
             let deployer_address = current_call_frame.to;
             (deployer_address, max_message_call_gas)
         };
-        let deployer_balance;
-        let deployer_nonce;
-        {
+        let (deployer_balance, deployer_nonce) = {
             let deployer_account = self
                 .db
                 .access_account(&mut self.accrued_substate, deployer_address)?
                 .0;
-            deployer_balance = deployer_account.info.balance;
-            deployer_nonce = deployer_account.info.nonce;
+            (deployer_account.info.balance, deployer_account.info.nonce)
         }
         let code = Bytes::from(
             memory::load_range(
@@ -776,14 +767,7 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation: bool,
     ) -> Result<OpcodeResult, VMError> {
-        let sender_balance;
-        {
-            let sender_account = self
-                .db
-                .access_account(&mut self.accrued_substate, msg_sender)?
-                .0;
-            sender_balance = sender_account.info.balance;
-        }
+        let sender_balance = self.get_account(msg_sender)?.0.info.balance;
         let calldata = {
             let current_call_frame = self.current_call_frame_mut()?;
             // Clear callframe subreturn data

@@ -401,16 +401,11 @@ impl<'a> VM<'a> {
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
-        let account_is_empty;
-        let account_code_hash;
-        let address_was_cold;
-        {
-            let (account, was_cold) = self
+        let (account_is_empty, account_code_hash, address_was_cold) = {
+            let (account, address_was_cold) = self
                 .db
                 .access_account(&mut self.accrued_substate, address)?;
-            address_was_cold = was_cold;
-            account_is_empty = account.is_empty();
-            account_code_hash = account.info.code_hash.0;
+            (account.is_empty(), account.info.code_hash.0, address_was_cold)
         }
         let current_call_frame = self.current_call_frame_mut()?;
 
