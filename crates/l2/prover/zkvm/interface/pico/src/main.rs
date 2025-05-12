@@ -40,7 +40,6 @@ pub fn main() {
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
     for block in blocks {
-        let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
 
@@ -48,7 +47,7 @@ pub fn main() {
         let mut vm = Evm::from_execution_db(db.clone());
         let result = vm.execute_block(&block).expect("failed to execute block");
         let receipts = result.receipts;
-        let account_updates = vm.get_state_transitions(fork)?;
+        let account_updates = vm.get_state_transitions()?;
 
         // Update db for the next block
         db.apply_account_updates(&account_updates);
