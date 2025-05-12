@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747064476766,
+  "lastUpdate": 1747069147214,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6205,6 +6205,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179421695544,
             "range": "± 1126619344",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9c9fd9257cd3f25be52f41864ba9562427ca66c2",
+          "message": "fix(l2): remove fork as parameter in get_state_transitions function (#2723)\n\nIn [this\nPR](https://github.com/lambdaclass/ethrex/commit/a5da369f9a220976eb97429dcce0356363025d87)\nwe forgot to remove fork from some places in which get_state_transitions\nwas being used.\n\nWe should try to find a way to fix rust-analyzer so that it detects\nthose cases but I don't know how hard it is.",
+          "timestamp": "2025-05-12T15:57:48Z",
+          "tree_id": "72050d6af6a533468e55248afe05ecff462dac53",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9c9fd9257cd3f25be52f41864ba9562427ca66c2"
+        },
+        "date": 1747069144620,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 179086308237,
+            "range": "± 803295633",
             "unit": "ns/iter"
           }
         ]
