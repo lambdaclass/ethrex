@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747076518924,
+  "lastUpdate": 1747079868860,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6295,6 +6295,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 181842593499,
             "range": "± 911294658",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "18f113b85e5d79c88ef29cf4dc796f87fde33def",
+          "message": "fix(l1, l2): make levm default in enum (#2632)\n\n**Motivation**\nJust set the default vm in a single place\n\n**Description**\n- Even though the cli changed to `levm`, we still had `revm` as the\ndefault enum\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-05-12T18:28:19Z",
+          "tree_id": "7ed875111239d95fc9900ad507c008d67d55a2de",
+          "url": "https://github.com/lambdaclass/ethrex/commit/18f113b85e5d79c88ef29cf4dc796f87fde33def"
+        },
+        "date": 1747079866880,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 216779995269,
+            "range": "± 1993440012",
             "unit": "ns/iter"
           }
         ]
