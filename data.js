@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1746886172533,
+  "lastUpdate": 1747047767023,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6115,6 +6115,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 180007591893,
             "range": "± 632552860",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49fd5c7b2fd195d8e80b96eb9f1e0495ade77cb2",
+          "message": "refactor(core): cleanup import blocks bench code (#2631)\n\n**Description**\n- Moved import blocks benchmark from the top folder to /cmd/ethrex\n- Updated evm in benchmark to use the default one\n- Renamed generic `criterion_benchmark` to `import_block_benchmark`\n- Renamed confusing `genesis-l2-ci.json` to `genesis-perf-ci.json` since\nit's not really related to l2.\n- Removed deprecated flamegraph script\n\n---------\n\nCo-authored-by: Javier Chatruc <jrchatruc@gmail.com>",
+          "timestamp": "2025-05-12T10:15:38Z",
+          "tree_id": "e638530518a4f09b16687da111fb1a034f54765f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/49fd5c7b2fd195d8e80b96eb9f1e0495ade77cb2"
+        },
+        "date": 1747047763854,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 177054188943,
+            "range": "± 639538719",
             "unit": "ns/iter"
           }
         ]
