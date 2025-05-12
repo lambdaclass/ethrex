@@ -1,7 +1,7 @@
 #[cfg(test)]
-mod test {
+mod quote_pusher_integration_test {
     use serial_test::serial;
-    use std::{env, str::FromStr};
+    use std::str::FromStr;
 
     use ethereum_types::{Address, H160, H256};
     use ethrex_l2_sdk::{calldata::encode_calldata, get_address_from_secret_key};
@@ -113,7 +113,7 @@ mod test {
     const RESET_SIGNATURE: &str = "reset()";
 
     async fn send_reset(eth_client: &EthClient, private_key: &SecretKey, contract_addr: Address) {
-        let my_address = get_address_from_secret_key(&private_key).unwrap();
+        let my_address = get_address_from_secret_key(private_key).unwrap();
 
         let calldata = encode_calldata(RESET_SIGNATURE, &[]).unwrap();
 
@@ -132,7 +132,7 @@ mod test {
             .await
             .unwrap();
         eth_client
-            .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &private_key)
+            .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, private_key)
             .await
             .unwrap();
     }

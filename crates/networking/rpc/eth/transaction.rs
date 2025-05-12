@@ -14,7 +14,7 @@ use crate::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     types::{
-        transaction, AccessListEntry, BlockHash, BlockHeader, BlockNumber, Fork, GenericTransaction, TxKind
+        AccessListEntry, BlockHash, BlockHeader, BlockNumber, Fork, GenericTransaction, TxKind,
     },
     H256, U256,
 };
@@ -572,10 +572,10 @@ fn simulate_tx(
     fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
     let mut transaction = transaction.clone();
-    transaction.input = if transaction.input.len() > 0 {
-        transaction.input
-    } else {
+    transaction.input = if transaction.input.is_empty() {
         transaction.data.clone()
+    } else {
+        transaction.input
     };
     let mut vm = Evm::new(
         blockchain.evm_engine,

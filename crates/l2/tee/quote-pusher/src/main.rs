@@ -60,11 +60,11 @@ async fn setup_key(
         .get("quote")
         .ok_or(PusherError::ResponseMissingKey("quote".to_string()))?;
 
-    prepare_quote_prerequisites(eth_client, rpc_url, private_key_str, &quote).await?;
+    prepare_quote_prerequisites(eth_client, rpc_url, private_key_str, quote).await?;
 
-    let sig_addr = H160::from_str(&sig_addr)
+    let sig_addr = H160::from_str(sig_addr)
         .map_err(|_| PusherError::ResponseInvalidValue("Invalid address".to_string()))?;
-    let quote = hex::decode(&quote)
+    let quote = hex::decode(quote)
         .map_err(|_| PusherError::ResponseInvalidValue("Invalid quote".to_string()))?;
 
     let tx_hash = send_update_key(eth_client, private_key, contract_addr, sig_addr, quote).await?;
@@ -95,7 +95,7 @@ async fn prepare_quote_prerequisites(
             "-p",
             private_key_str,
             "--quote_hex",
-            &quote,
+            quote,
         ])
         .output()
         .map_err(PusherError::CommandError)?;
@@ -109,7 +109,7 @@ async fn send_update_key(
     sig_addr: Address,
     quote: Vec<u8>,
 ) -> Result<H256, PusherError> {
-    let my_address = get_address_from_secret_key(&private_key)
+    let my_address = get_address_from_secret_key(private_key)
         .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
 
     let calldata = encode_calldata(
@@ -133,7 +133,7 @@ async fn send_update_key(
         .await
         .map_err(PusherError::EthClientError)?;
     let tx_hash: H256 = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, private_key)
         .await
         .map_err(PusherError::EthClientError)?;
     Ok(tx_hash)
@@ -191,7 +191,7 @@ async fn send_transition(
     new_state: u64,
     signature: Vec<u8>,
 ) -> Result<H256, PusherError> {
-    let my_address = get_address_from_secret_key(&private_key)
+    let my_address = get_address_from_secret_key(private_key)
         .map_err(|_| PusherError::ParseError("Invalid private key".to_string()))?;
 
     let calldata = encode_calldata(
@@ -218,14 +218,14 @@ async fn send_transition(
         .await
         .map_err(PusherError::EthClientError)?;
     let tx_hash = eth_client
-        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, &private_key)
+        .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, private_key)
         .await
         .map_err(PusherError::EthClientError)?;
     Ok(tx_hash)
 }
 
 fn read_env_var(name: &str) -> Result<String, PusherError> {
-    env::var(name.to_string()).map_err(|_| PusherError::MissingConfig(name.to_string()))
+    env::var(name).map_err(|_| PusherError::MissingConfig(name.to_string()))
 }
 
 #[tokio::main]
