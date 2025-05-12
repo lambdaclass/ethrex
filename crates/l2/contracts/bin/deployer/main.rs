@@ -317,7 +317,7 @@ async fn initialize_contracts(
     let initialize_tx_hash = {
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(deployer_address),
+            Value::Address(opts.on_chain_proposer_owner.unwrap_or(deployer_address)),
             Value::Address(bridge_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
@@ -351,7 +351,7 @@ async fn initialize_contracts(
     );
     let initialize_tx_hash = {
         let calldata_values = vec![
-            Value::Address(deployer_address),
+            Value::Address(opts.bridge_owner.unwrap_or(deployer_address)),
             Value::Address(on_chain_proposer_address),
         ];
         let bridge_initialization_calldata =

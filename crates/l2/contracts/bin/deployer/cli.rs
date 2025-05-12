@@ -173,6 +173,22 @@ pub struct DeployerOptions {
         help = "If set to true, initializes the committer in validium mode."
     )]
     pub validium: bool,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_ON_CHAIN_PROPOSER_OWNER",
+        help_heading = "Deployer options",
+        help = "Address of the owner of the OnChainProposer contract, who can upgrade the contract. Defaults to deployer."
+    )]
+    pub on_chain_proposer_owner: Option<Address>,
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        env = "ETHREX_BRIDGE_OWNER",
+        help_heading = "Deployer options",
+        help = "Address of the owner of the CommonBridge contract, who can upgrade the contract. Defaults to deployer."
+    )]
+    pub bridge_owner: Option<Address>,
 }
 
 impl Default for DeployerOptions {
@@ -222,6 +238,8 @@ impl Default for DeployerOptions {
             sp1_deploy_verifier: false,
             randomize_contract_deployment: false,
             validium: false,
+            on_chain_proposer_owner: None,
+            bridge_owner: None,
         }
     }
 }
