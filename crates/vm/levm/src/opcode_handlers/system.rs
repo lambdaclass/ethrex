@@ -3,7 +3,7 @@ use crate::{
     constants::{CREATE_DEPLOYMENT_FAIL, INIT_CODE_MAX_SIZE, REVERT_FOR_CALL, SUCCESS_FOR_CALL},
     db::cache,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
-    gas_cost::{self, max_message_call_gas, SELFDESTRUCT_REFUND},
+    gas_cost::{self, max_message_call_gas},
     memory::{self, calculate_memory_size},
     precompiles::is_precompile,
     utils::{address_to_word, word_to_address, *},
@@ -93,7 +93,6 @@ impl<'a> VM<'a> {
             value_to_transfer,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -195,7 +194,6 @@ impl<'a> VM<'a> {
             value_to_transfer,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -256,10 +254,6 @@ impl<'a> VM<'a> {
 
     // DELEGATECALL operation
     pub fn op_delegatecall(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-7
-        if self.env.config.fork < Fork::Homestead {
-            return Err(VMError::InvalidOpcode);
-        }
         // STACK
         let (
             gas,
@@ -324,7 +318,6 @@ impl<'a> VM<'a> {
             address_was_cold,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -358,10 +351,6 @@ impl<'a> VM<'a> {
 
     // STATICCALL operation
     pub fn op_staticcall(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-214
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         // STACK
         let (
             gas,
@@ -426,7 +415,6 @@ impl<'a> VM<'a> {
             address_was_cold,
             gas,
             gas_left,
-            self.env.config.fork,
         )?;
 
         self.current_call_frame_mut()?.increase_consumed_gas(cost)?;
@@ -486,10 +474,6 @@ impl<'a> VM<'a> {
 
     // CREATE2 operation
     pub fn op_create2(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-1014
-        if self.env.config.fork < Fork::Constantinople {
-            return Err(VMError::InvalidOpcode);
-        }
         let fork = self.env.config.fork;
         let current_call_frame = self.current_call_frame_mut()?;
         let value_in_wei_to_send = current_call_frame.stack.pop()?;
@@ -524,9 +508,6 @@ impl<'a> VM<'a> {
         // Returns: VMError RevertOpcode if executed correctly.
         // Notes:
         //      The actual reversion of changes is made in the execute() function.
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        }
         let current_call_frame = self.current_call_frame_mut()?;
 
         let offset = current_call_frame.stack.pop()?;
@@ -578,7 +559,6 @@ impl<'a> VM<'a> {
             let to = current_call_frame.to;
             (target_address, to)
         };
-        let fork = self.env.config.fork;
 
         let (target_account, target_account_is_cold) = self
             .db
@@ -593,7 +573,6 @@ impl<'a> VM<'a> {
                 target_account_is_cold,
                 target_account.is_empty(),
                 balance_to_transfer,
-                fork,
             )?)?;
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
@@ -611,18 +590,6 @@ impl<'a> VM<'a> {
         } else {
             self.increase_account_balance(target_address, balance_to_transfer)?;
             self.get_account_mut(to)?.info.balance = U256::zero();
-
-            // [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529)
-            // https://github.com/ethereum/execution-specs/blob/master/src/ethereum/constantinople/vm/instructions/system.py#L471
-            if self.env.config.fork < Fork::London
-                && !self.accrued_substate.selfdestruct_set.contains(&to)
-            {
-                self.env.refunded_gas = self
-                    .env
-                    .refunded_gas
-                    .checked_add(SELFDESTRUCT_REFUND)
-                    .ok_or(VMError::GasRefundsOverflow)?;
-            }
 
             self.accrued_substate.selfdestruct_set.insert(to);
         }
@@ -729,11 +696,8 @@ impl<'a> VM<'a> {
             .ok_or(VMError::BalanceOverflow)?;
 
         // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-161.md
-        let new_account = if self.env.config.fork < Fork::SpuriousDragon {
-            Account::new(new_balance, Bytes::new(), 0, Default::default())
-        } else {
-            Account::new(new_balance, Bytes::new(), 1, Default::default())
-        };
+        let new_account = Account::new(new_balance, Bytes::new(), 1, Default::default());
+
         self.insert_account(new_address, new_account)?;
 
         // 2. Increment sender's nonce.
@@ -899,11 +863,11 @@ impl<'a> VM<'a> {
 
     pub fn handle_return(
         &mut self,
-        call_frame: &CallFrame,
+        executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<bool, VMError> {
-        if call_frame.depth == 0 {
-            self.call_frames.push(call_frame.clone());
+        if executed_call_frame.depth == 0 {
+            self.call_frames.push(executed_call_frame.clone());
             return Ok(false);
         }
         let retdata = self
@@ -911,38 +875,38 @@ impl<'a> VM<'a> {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if retdata.is_create {
-            self.handle_return_create(call_frame, tx_report, retdata)?;
+            self.handle_return_create(executed_call_frame, tx_report, retdata)?;
         } else {
-            self.handle_return_call(call_frame, tx_report, retdata)?;
+            self.handle_return_call(executed_call_frame, tx_report, retdata)?;
         }
         Ok(true)
     }
     pub fn handle_return_call(
         &mut self,
-        call_frame: &CallFrame,
+        executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
         retdata: RetData,
     ) -> Result<(), VMError> {
         // Return gas left from subcontext
-        let gas_left_from_new_call_frame = call_frame
+        let gas_left_from_new_call_frame = executed_call_frame
             .gas_limit
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
         {
-            let current_call_frame = self.current_call_frame_mut()?;
-            current_call_frame.gas_used = current_call_frame
+            let parent_call_frame = self.current_call_frame_mut()?;
+            parent_call_frame.gas_used = parent_call_frame
                 .gas_used
                 .checked_sub(gas_left_from_new_call_frame)
                 .ok_or(InternalError::GasOverflow)?;
 
-            current_call_frame.logs.extend(tx_report.logs.clone());
+            parent_call_frame.logs.extend(tx_report.logs.clone());
             memory::try_store_range(
-                &mut current_call_frame.memory,
+                &mut parent_call_frame.memory,
                 retdata.ret_offset,
                 retdata.ret_size,
                 &tx_report.output,
             )?;
-            current_call_frame.sub_return_data = tx_report.output.clone();
+            parent_call_frame.sub_return_data = tx_report.output.clone();
         }
 
         // What to do, depending on TxResult
@@ -951,12 +915,7 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
-                for (address, account_opt) in call_frame.cache_backup.clone() {
-                    self.current_call_frame_mut()?
-                        .cache_backup
-                        .entry(address)
-                        .or_insert(account_opt);
-                }
+                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
                 // Revert value transfer
@@ -973,7 +932,7 @@ impl<'a> VM<'a> {
     }
     pub fn handle_return_create(
         &mut self,
-        call_frame: &CallFrame,
+        executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
         retdata: RetData,
     ) -> Result<(), VMError> {
@@ -983,14 +942,14 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::GasOverflow)?;
 
         {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let parent_call_frame = self.current_call_frame_mut()?;
             // Return reserved gas
-            current_call_frame.gas_used = current_call_frame
+            parent_call_frame.gas_used = parent_call_frame
                 .gas_used
                 .checked_sub(unused_gas)
                 .ok_or(InternalError::GasOverflow)?;
 
-            current_call_frame.logs.extend(tx_report.logs.clone());
+            parent_call_frame.logs.extend(tx_report.logs.clone());
         }
 
         match tx_report.result.clone() {
@@ -998,12 +957,7 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(address_to_word(retdata.to))?;
-                for (address, account_opt) in call_frame.cache_backup.clone() {
-                    self.current_call_frame_mut()?
-                        .cache_backup
-                        .entry(address)
-                        .or_insert(account_opt);
-                }
+                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(err) => {
                 // Return value to sender
