@@ -1,8 +1,6 @@
 use std::{fs::File, io::Write};
 
 use clap::Parser;
-#[cfg(feature = "l2")]
-use ethrex_common::H256;
 use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
