@@ -13,6 +13,7 @@ fn block_import() {
     remove_db(data_dir, true);
 
     let evm_engine = EvmEngine::default();
+
     let network = "../../test_data/genesis-perf-ci.json";
 
     let rt = tokio::runtime::Runtime::new().unwrap();
