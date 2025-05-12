@@ -25,7 +25,7 @@ jobs:
       - name: Install gnuplot
         run: sudo apt-get install -y gnuplot
       - name: Run benchmark
-        run: cd cmd/ethrex && cargo bench --bench criterion_benchmark -- --output-format bencher |sed 2d | tee output.txt
+        run: cd cmd/ethrex && cargo bench --bench import_blocks_benchmark -- --output-format bencher |sed 2d | tee output.txt
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
