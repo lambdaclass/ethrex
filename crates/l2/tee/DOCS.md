@@ -70,5 +70,9 @@ You must have [rex](https://github.com/lambdaclass/rex) installed.
 (ethrex crates/l2/tee/contracts) make deploy
 (ethrex crates/l2/tee/contracts) make mkenv
 (ethrex crates/l2/tee/contracts) source .env.out
-(ethrex crates/l2/tee/quote-pusher) cargo run
+(ethrex crates/l2/tee/quote-pusher) make run
 ```
+
+You can run integration tests by replacing the last step with `make test`.
+
+Alternatively, running `make integration-test` will deploy the contracts for you and then run the tests.
