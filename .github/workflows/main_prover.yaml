@@ -40,6 +40,11 @@ jobs:
         if: ${{ always() && github.event_name == 'merge_group' }}
         uses: docker/setup-buildx-action@v3
 
+      # This step is needed because of an state bug in the GPU runner.
+      - name: Clean .env
+        if: ${{ always() && github.event_name == 'merge_group' }}
+        run: rm -rf crates/l2/.env
+
       - name: Bake docker images
         if: ${{ always() && github.event_name == 'merge_group' }}
         uses: docker/bake-action@v6
@@ -62,13 +67,10 @@ jobs:
         run: |
           cargo test l2 --no-run --release
 
-      # The `rm -rf .env` command is needed because of an state bug in the
-      # GPU runner.
       - name: Deploy L1 Contracts
         run: |
           cd crates/l2
           cp configs/prover_client_config_example.toml configs/prover_client_config.toml
-          rm -rf .env
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
