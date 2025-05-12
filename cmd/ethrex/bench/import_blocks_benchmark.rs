@@ -1,16 +1,10 @@
-#![allow(unused)]
-
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use ethrex::{
     cli::{import_blocks, remove_db},
-    initializers::{init_blockchain, init_store},
     utils::set_datadir,
     DEFAULT_DATADIR,
 };
-use ethrex_p2p::network;
 use ethrex_vm::EvmEngine;
-use std::{env::set_current_dir, str::FromStr, thread, time::Duration};
-use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 
 #[inline]
 fn block_import() {
@@ -19,7 +13,7 @@ fn block_import() {
     remove_db(data_dir, true);
 
     let evm_engine = EvmEngine::default();
-    let network = "../../test_data/genesis-l2-ci.json";
+    let network = "../../test_data/genesis-perf-ci.json";
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(import_blocks(
@@ -30,12 +24,12 @@ fn block_import() {
     ));
 }
 
-pub fn criterion_benchmark(c: &mut Criterion) {
+pub fn import_blocks_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Block import");
     group.sample_size(10);
     group.bench_function("Block import ERC20 transfers", |b| b.iter(block_import));
     group.finish();
 }
 
-criterion_group!(runner, criterion_benchmark);
+criterion_group!(runner, import_blocks_benchmark);
 criterion_main!(runner);
