@@ -9,6 +9,7 @@ use crate::engine::{
     },
     ExchangeCapabilitiesRequest,
 };
+use crate::eth;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -36,7 +37,6 @@ use crate::utils::{
     RpcSuccessResponse,
 };
 use crate::{admin, net};
-use crate::{eth, web3};
 #[cfg(feature = "based")]
 use crate::{EngineClient, EthClient};
 use axum::extract::State;
@@ -94,6 +94,7 @@ pub struct RpcApiContext {
     pub local_node_record: NodeRecord,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
+    pub client_version: String,
     #[cfg(feature = "based")]
     pub gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -149,6 +150,7 @@ pub async fn start_api(
     local_p2p_node: Node,
     local_node_record: NodeRecord,
     syncer: SyncManager,
+    client_version: String,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
     #[cfg(feature = "based")] gateway_auth_client: EngineClient,
     #[cfg(feature = "based")] gateway_pubkey: Public,
@@ -167,6 +169,7 @@ pub async fn start_api(
         local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
+        client_version,
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
@@ -446,6 +449,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
             context.storage,
             context.local_p2p_node,
             context.local_node_record,
+            context.client_version,
         ),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
@@ -453,7 +457,7 @@ pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Va
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => web3::client_version(req, context.storage),
+        "web3_clientVersion" => Ok(Value::String(context.client_version)),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -540,6 +544,7 @@ mod tests {
             .unwrap();
         let context = default_context_with_storage(storage).await;
         let local_p2p_node = context.local_p2p_node;
+
         let enr_url = context.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
@@ -555,7 +560,7 @@ mod tests {
                 "enr": enr_url,
                 "id": hex::encode(Keccak256::digest(local_p2p_node.node_id)),
                 "ip": "127.0.0.1",
-                "name": "ethrex/0.1.0/rust1.82",
+                "name": "ethrex/test",
                 "ports": {
                     "discovery": 30303,
                     "listener": 30303
@@ -590,8 +595,8 @@ mod tests {
                     }
                 },
             }
-        }).to_string();
-        let expected_response = to_rpc_response_success_value(&json);
+        });
+        let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 

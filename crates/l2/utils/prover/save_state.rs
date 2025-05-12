@@ -11,6 +11,7 @@ use std::{
     fs::create_dir_all,
     io::{BufWriter, Write},
 };
+use tracing::info;
 
 #[cfg(not(test))]
 /// The default directory for data storage when not running tests.
@@ -377,6 +378,7 @@ pub fn batch_number_has_all_needed_proofs(
 
         // If the proof is missing return false
         if !proof_exists {
+            info!("Missing {prover_type} proof");
             has_all_proofs = false;
             break;
         }
@@ -414,7 +416,7 @@ mod tests {
         let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test_data"));
 
         let chain_file_path = path.join("l2-loadtest.rlp");
-        let genesis_file_path = path.join("genesis-l2-ci.json");
+        let genesis_file_path = path.join("genesis-perf-ci.json");
 
         // Create an InMemory Store to later perform an execute_block so we can have the Vec<AccountUpdate>.
         let in_memory_db =
@@ -461,8 +463,7 @@ mod tests {
             };
             let mut db = GeneralizedDatabase::new(Arc::new(store.clone()), CacheDB::new());
             LEVM::execute_block(blocks.last().unwrap(), &mut db)?;
-            let fork = db.store.get_chain_config().fork(block.header.timestamp);
-            let account_updates = LEVM::get_state_transitions(&mut db, fork)?;
+            let account_updates = LEVM::get_state_transitions(&mut db)?;
 
             account_updates_vec.push(account_updates.clone());
 

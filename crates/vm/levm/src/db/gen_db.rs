@@ -1,13 +1,12 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
 use ethrex_common::types::Account;
-use ethrex_common::types::Fork;
 use ethrex_common::Address;
 use ethrex_common::U256;
 use keccak_hash::H256;
 
-use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::vm::Substate;
 use crate::vm::VM;
@@ -42,14 +41,6 @@ impl GeneralizedDatabase {
         }
     }
 
-    /// Gets account without pushing it to the cache
-    pub fn get_account_no_push_cache(&self, address: Address) -> Result<Account, DatabaseError> {
-        match cache::get_account(&self.cache, &address) {
-            Some(acc) => Ok(acc.clone()),
-            None => self.store.get_account(address),
-        }
-    }
-
     /// **Accesses to an account's information.**
     ///
     /// Accessed accounts are stored in the `touched_accounts` set.
@@ -69,27 +60,39 @@ impl GeneralizedDatabase {
 impl<'a> VM<'a> {
     // ================== Account related functions =====================
 
+    /*
+        Each callframe has a CallFrameBackup, which contains:
+
+        - A list with account infos of every account that was modified so far (balance, nonce, bytecode/code hash)
+        - A list with a tuple (address, storage) that contains, for every account whose storage was accessed, a hashmap
+        of the storage slots that were modified, with their original value.
+
+        On every call frame, at the end one of two things can happen:
+
+        - The transaction succeeds. In this case:
+            - The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
+            For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
+            For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
+            Do the same for every individual storage slot.
+        - The transaction reverts. In this case:
+            - Insert into the cache the value of every account on the CallFrameBackup.
+            - Insert into the cache the value of every storage slot in every account on the CallFrameBackup.
+
+    */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut Account, VMError> {
-        let backup_account = match cache::get_account(&self.db.cache, &address) {
-            Some(acc) => acc.clone(),
-            None => {
-                let acc = self.db.store.get_account(address)?;
-                cache::insert_account(&mut self.db.cache, address, acc.clone());
-                acc
-            }
-        };
-
-        if let Ok(frame) = self.current_call_frame_mut() {
-            frame
-                .cache_backup
-                .entry(address)
-                .or_insert_with(|| Some(backup_account));
+        if cache::is_account_cached(&self.db.cache, &address) {
+            self.backup_account_info(address)?;
+            cache::get_account_mut(&mut self.db.cache, &address).ok_or(VMError::Internal(
+                crate::errors::InternalError::AccountNotFound,
+            ))
+        } else {
+            let acc = self.db.store.get_account(address)?;
+            cache::insert_account(&mut self.db.cache, address, acc);
+            self.backup_account_info(address)?;
+            cache::get_account_mut(&mut self.db.cache, &address).ok_or(VMError::Internal(
+                crate::errors::InternalError::AccountNotFound,
+            ))
         }
-
-        let account = cache::get_account_mut(&mut self.db.cache, &address)
-            .ok_or(VMError::Internal(InternalError::AccountNotFound))?;
-
-        Ok(account)
     }
 
     pub fn increase_account_balance(
@@ -144,28 +147,8 @@ impl<'a> VM<'a> {
 
     /// Inserts account to cache backing up the previus state of it in the CacheBackup (if it wasn't already backed up)
     pub fn insert_account(&mut self, address: Address, account: Account) -> Result<(), VMError> {
-        let previous_account = cache::insert_account(&mut self.db.cache, address, account);
-
-        if let Ok(frame) = self.current_call_frame_mut() {
-            frame
-                .cache_backup
-                .entry(address)
-                .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
-        }
-
-        Ok(())
-    }
-
-    /// Removes account from cache backing up the previus state of it in the CacheBackup (if it wasn't already backed up)
-    pub fn remove_account(&mut self, address: Address) -> Result<(), VMError> {
-        let previous_account = cache::remove_account(&mut self.db.cache, &address);
-
-        if let Ok(frame) = self.current_call_frame_mut() {
-            frame
-                .cache_backup
-                .entry(address)
-                .or_insert_with(|| previous_account.as_ref().map(|account| (*account).clone()));
-        }
+        self.backup_account_info(address)?;
+        let _ = cache::insert_account(&mut self.db.cache, address, account);
 
         Ok(())
     }
@@ -199,15 +182,12 @@ impl<'a> VM<'a> {
         key: H256,
     ) -> Result<(U256, bool), VMError> {
         // [EIP-2929] - Introduced conditional tracking of accessed storage slots for Berlin and later specs.
-        let mut storage_slot_was_cold = false;
-        if self.env.config.fork >= Fork::Berlin {
-            storage_slot_was_cold = self
-                .accrued_substate
-                .touched_storage_slots
-                .entry(address)
-                .or_default()
-                .insert(key);
-        }
+        let storage_slot_was_cold = self
+            .accrued_substate
+            .touched_storage_slots
+            .entry(address)
+            .or_default()
+            .insert(key);
 
         let storage_slot = self.get_storage_value(address, key)?;
 
@@ -239,8 +219,59 @@ impl<'a> VM<'a> {
         key: H256,
         new_value: U256,
     ) -> Result<(), VMError> {
+        self.backup_storage_slot(address, key)?;
+
         let account = self.get_account_mut(address)?;
         account.storage.insert(key, new_value);
+        Ok(())
+    }
+
+    pub fn backup_storage_slot(&mut self, address: Address, key: H256) -> Result<(), VMError> {
+        let value = self.get_storage_value(address, key)?;
+
+        let account_storage_backup = self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_account_storage_slots
+            .entry(address)
+            .or_insert(HashMap::new());
+
+        account_storage_backup.entry(key).or_insert(value);
+
+        Ok(())
+    }
+
+    pub fn backup_account_info(&mut self, address: Address) -> Result<(), VMError> {
+        if self.call_frames.is_empty() {
+            return Ok(());
+        }
+
+        let is_not_backed_up = !self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_accounts_info
+            .contains_key(&address);
+
+        if is_not_backed_up {
+            let account = cache::get_account(&self.db.cache, &address).ok_or(VMError::Internal(
+                crate::errors::InternalError::AccountNotFound,
+            ))?;
+            let info = account.info.clone();
+            let code = account.code.clone();
+
+            self.current_call_frame_mut()?
+                .call_frame_backup
+                .original_accounts_info
+                .insert(
+                    address,
+                    Account {
+                        info,
+                        code,
+                        storage: HashMap::new(),
+                    },
+                );
+        }
+
         Ok(())
     }
 }

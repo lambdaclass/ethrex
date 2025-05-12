@@ -1,15 +1,10 @@
 use crate::sequencer::errors::ProverServerError;
 use crate::utils::config::block_producer::BlockProducerConfig;
+use crate::utils::prover::proving_systems::ProofCalldata;
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
 };
-use crate::utils::{
-    config::{
-        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        proof_coordinator::ProofCoordinatorConfig,
-    },
-    prover::proving_systems::ProofCalldata,
-};
+use crate::{CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig};
 use ethrex_common::{
     types::{Block, BlockHeader},
     Address,
@@ -27,6 +22,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+use super::errors::SequencerError;
 use super::utils::sleep_random;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -116,17 +112,13 @@ impl ProofData {
 pub async fn start_proof_coordinator(
     store: Store,
     rollup_store: StoreRollup,
-) -> Result<(), ConfigError> {
-    let server_config = ProofCoordinatorConfig::from_env()?;
-    let eth_config = EthConfig::from_env()?;
-    let committer_config = CommitterConfig::from_env()?;
-    let proposer_config = BlockProducerConfig::from_env()?;
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
     let proof_coordinator = ProofCoordinator::new_from_config(
-        server_config.clone(),
-        &committer_config,
-        eth_config.clone(),
-        &proposer_config,
-        store,
+        &cfg.proof_coordinator,
+        &cfg.l1_committer,
+        &cfg.eth,
+        store, // falta agregar el config del block producer
         rollup_store,
     )
     .await?;
@@ -137,14 +129,13 @@ pub async fn start_proof_coordinator(
 
 impl ProofCoordinator {
     pub async fn new_from_config(
-        config: ProofCoordinatorConfig,
+        config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
-        eth_config: EthConfig,
-        proposer_config: &BlockProducerConfig,
+        eth_config: &EthConfig,
         store: Store,
         rollup_store: StoreRollup,
-    ) -> Result<Self, ConfigError> {
-        let eth_client = EthClient::new_with_config(
+    ) -> Result<Self, SequencerError> {
+        let eth_client = EthClient::new_with_maximum_fees(
             &eth_config.rpc_url,
             eth_config.max_number_of_retries,
             eth_config.backoff_factor,

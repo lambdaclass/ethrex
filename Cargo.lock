@@ -2520,6 +2520,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_builder"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "507dfb09ea8b7fa618fcf76e953f4f5e192547945816d5358edffe39f6f94947"
+dependencies = [
+ "derive_builder_macro",
+]
+
+[[package]]
+name = "derive_builder_core"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d5bcf7b024d6835cfb3d473887cd966994907effbe9227e8c8219824d06c4e8"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "derive_builder_macro"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab63b0e2bf4d5928aff72e83a7dace85d7bba5fe12dcc3c5a572d78caffd3f3c"
+dependencies = [
+ "derive_builder_core",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "derive_more"
 version = "0.99.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3071,6 +3102,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "vergen 9.0.6",
 ]
 
 [[package]]
@@ -3290,7 +3322,6 @@ dependencies = [
  "clap 4.5.36",
  "derive_more 1.0.0",
  "ethrex-common",
- "ethrex-l2",
  "ethrex-levm",
  "ethrex-prover",
  "ethrex-rlp",
@@ -3379,6 +3410,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "keccak-hash",
+ "lazy_static",
  "reqwest",
  "secp256k1",
  "serde",
@@ -3480,16 +3512,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex_l2-deployer"
+name = "ethrex_l2-contracts"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
+ "clap_complete",
  "colored",
  "ethereum-types",
  "ethrex-common",
  "ethrex-l2",
  "ethrex-rpc",
  "ethrex-sdk",
+ "eyre",
  "hex",
  "keccak-hash",
  "lazy_static",
@@ -6711,7 +6746,7 @@ dependencies = [
  "pico-vm 1.0.1 (git+https://github.com/brevis-network/pico)",
  "serde",
  "serde_json",
- "vergen",
+ "vergen 8.3.2",
  "yansi",
 ]
 
@@ -10621,6 +10656,30 @@ dependencies = [
  "git2",
  "rustversion",
  "time",
+]
+
+[[package]]
+name = "vergen"
+version = "9.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b2bf58be11fc9414104c6d3a2e464163db5ef74b12296bda593cac37b6e4777"
+dependencies = [
+ "anyhow",
+ "derive_builder",
+ "rustc_version 0.4.1",
+ "rustversion",
+ "vergen-lib",
+]
+
+[[package]]
+name = "vergen-lib"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b07e6010c0f3e59fcb164e0163834597da68d1f864e2b8ca49f74de01e9c166"
+dependencies = [
+ "anyhow",
+ "derive_builder",
+ "rustversion",
 ]
 
 [[package]]

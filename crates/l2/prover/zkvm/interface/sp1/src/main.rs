@@ -56,7 +56,7 @@ pub fn main() {
         let result = vm.execute_block(&block).expect("failed to execute block");
         let receipts = result.receipts;
         let account_updates = vm
-            .get_state_transitions(fork)
+            .get_state_transitions()
             .expect("failed to get state transitions");
 
         cumulative_gas_used += receipts

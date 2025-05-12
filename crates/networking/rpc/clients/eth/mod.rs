@@ -966,10 +966,53 @@ impl EthClient {
             .await
     }
 
+    pub async fn get_pending_deposit_logs(
+        &self,
+        common_bridge_address: Address,
+    ) -> Result<Vec<H256>, EthClientError> {
+        let response = self
+            ._generic_call(b"getPendingDepositLogs()", common_bridge_address)
+            .await?;
+        Self::from_hex_string_to_h256_array(&response)
+    }
+
+    pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthClientError> {
+        let bytes = hex::decode(hex_string.strip_prefix("0x").unwrap_or(hex_string))
+            .map_err(|_| EthClientError::Custom("Invalid hex string".to_owned()))?;
+
+        // The ABI encoding for dynamic arrays is:
+        // 1. Offset to data (32 bytes)
+        // 2. Length of array (32 bytes)
+        // 3. Array elements (each 32 bytes)
+        if bytes.len() < 64 {
+            return Err(EthClientError::Custom("Response too short".to_owned()));
+        }
+
+        // Get the offset (should be 0x20 for simple arrays)
+        let offset = U256::from_big_endian(&bytes[0..32]).as_usize();
+
+        // Get the length of the array
+        let length = U256::from_big_endian(&bytes[offset..offset + 32]).as_usize();
+
+        // Calculate the start of the array data
+        let data_start = offset + 32;
+        let data_end = data_start + (length * 32);
+
+        if data_end > bytes.len() {
+            return Err(EthClientError::Custom("Invalid array length".to_owned()));
+        }
+
+        // Convert the slice directly to H256 array
+        bytes[data_start..data_end]
+            .chunks_exact(32)
+            .map(|chunk| Ok(H256::from_slice(chunk)))
+            .collect()
+    }
+
     async fn _generic_call(
         &self,
         selector: &[u8],
-        on_chain_proposer_address: Address,
+        contract_address: Address,
     ) -> Result<String, EthClientError> {
         let selector = keccak(selector)
             .as_bytes()
@@ -984,11 +1027,7 @@ impl EthClient {
         calldata.extend(vec![0; leading_zeros]);
 
         let hex_string = self
-            .call(
-                on_chain_proposer_address,
-                calldata.into(),
-                Overrides::default(),
-            )
+            .call(contract_address, calldata.into(), Overrides::default())
             .await?;
 
         Ok(hex_string)
