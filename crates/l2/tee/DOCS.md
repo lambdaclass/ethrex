@@ -57,16 +57,18 @@ Runs `mkosi.build.chroot` to produce the output
 - Adding a root password in `mkosi.conf` to allow logging in to the container
 
 
-## Chain verification
+## Quote pusher
+
+Set RPC_URL and PRIVATE_KEY to the corresponding values.
+
+You must have [rex](https://github.com/lambdaclass/rex) installed.
 
 ```
 # NOTE: initialize&update submodules on all repos
 (ethrex) make dev # start L1
 (ethrex crates/l2/tee/contracts) make deploy-deps
 (ethrex crates/l2/tee/contracts) make deploy
-(automata-network/automata-dcap-qpl automata-dcap-qpl-tool/) # edit and source env/automata_testnet
-
-# To validate a quote
-(automata-network/automata-dcap-qpl automata-dcap-qpl-tool/) cargo run -- -p PRIVATE_KEY --chain_id=$CHAIN_ID --rpc_url=$RPC_URL --quote_hex QUOTE # Inserts missing pieces
-Now AutomataDcapAttestationFee.verifyAndAttestOnChain(QUOTE) can validate the quote.
+(ethrex crates/l2/tee/contracts) make mkenv
+(ethrex crates/l2/tee/contracts) source .env.out
+(ethrex crates/l2/tee/quote-pusher) cargo run
 ```
