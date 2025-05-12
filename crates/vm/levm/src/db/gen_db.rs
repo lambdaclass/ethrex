@@ -74,8 +74,8 @@ impl<'a> VM<'a> {
 
         - The transaction succeeds. In this case:
             - The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
-            For every account that\'s present in the parent backup, do nothing (i.e. keep the one that\'s already there).
-            For every account that\'s NOT present in the parent backup but is on the child backup, add the child backup to it.
+            For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
+            For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
             Do the same for every individual storage slot.
         - The transaction reverts. In this case:
             - Insert into the cache the value of every account on the CallFrameBackup.
