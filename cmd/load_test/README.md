@@ -36,7 +36,7 @@ cargo run --bin ethrex --release --features dev -- --network test_data/genesis-p
 
 Genesis-l2-ci has many rich accounts and does not include the prague fork, which is important for dev mode until it's fixed.
 
-After the node is runing, still in the repo root folder, execute the script with `make`. For example:
+After the node is running, ruining, still in the repo root folder, execute the script with `make`. For example:
 
 ```bash
 # Eth transfer load test
