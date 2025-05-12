@@ -300,11 +300,9 @@ async fn handle_forkchoice(
         }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
-                InvalidForkChoice::NewHeadAlreadyCanonical => {
-                    ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        fork_choice_state.head_block_hash
-                    ))
-                }
+                InvalidForkChoice::NewHeadAlreadyCanonical => ForkChoiceResponse::from(
+                    PayloadStatus::valid_with_hash(fork_choice_state.head_block_hash),
+                ),
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     context
