@@ -855,11 +855,11 @@ impl<'a> VM<'a> {
 
     pub fn handle_return(
         &mut self,
-        call_frame: &CallFrame,
+        executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<bool, VMError> {
-        if call_frame.depth == 0 {
-            self.call_frames.push(call_frame.clone());
+        if executed_call_frame.depth == 0 {
+            self.call_frames.push(executed_call_frame.clone());
             return Ok(false);
         }
         let retdata = self
@@ -867,38 +867,38 @@ impl<'a> VM<'a> {
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if retdata.is_create {
-            self.handle_return_create(call_frame, tx_report, retdata)?;
+            self.handle_return_create(executed_call_frame, tx_report, retdata)?;
         } else {
-            self.handle_return_call(call_frame, tx_report, retdata)?;
+            self.handle_return_call(executed_call_frame, tx_report, retdata)?;
         }
         Ok(true)
     }
     pub fn handle_return_call(
         &mut self,
-        call_frame: &CallFrame,
+        executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
         retdata: RetData,
     ) -> Result<(), VMError> {
         // Return gas left from subcontext
-        let gas_left_from_new_call_frame = call_frame
+        let gas_left_from_new_call_frame = executed_call_frame
             .gas_limit
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
         {
-            let current_call_frame = self.current_call_frame_mut()?;
-            current_call_frame.gas_used = current_call_frame
+            let parent_call_frame = self.current_call_frame_mut()?;
+            parent_call_frame.gas_used = parent_call_frame
                 .gas_used
                 .checked_sub(gas_left_from_new_call_frame)
                 .ok_or(InternalError::GasOverflow)?;
 
-            current_call_frame.logs.extend(tx_report.logs.clone());
+            parent_call_frame.logs.extend(tx_report.logs.clone());
             memory::try_store_range(
-                &mut current_call_frame.memory,
+                &mut parent_call_frame.memory,
                 retdata.ret_offset,
                 retdata.ret_size,
                 &tx_report.output,
             )?;
-            current_call_frame.sub_return_data = tx_report.output.clone();
+            parent_call_frame.sub_return_data = tx_report.output.clone();
         }
 
         // What to do, depending on TxResult
@@ -907,7 +907,7 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
-                self.merge_call_frame_backup_with_parent(&call_frame.call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
                 // Revert value transfer
@@ -924,7 +924,7 @@ impl<'a> VM<'a> {
     }
     pub fn handle_return_create(
         &mut self,
-        call_frame: &CallFrame,
+        executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
         retdata: RetData,
     ) -> Result<(), VMError> {
@@ -934,14 +934,14 @@ impl<'a> VM<'a> {
             .ok_or(InternalError::GasOverflow)?;
 
         {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let parent_call_frame = self.current_call_frame_mut()?;
             // Return reserved gas
-            current_call_frame.gas_used = current_call_frame
+            parent_call_frame.gas_used = parent_call_frame
                 .gas_used
                 .checked_sub(unused_gas)
                 .ok_or(InternalError::GasOverflow)?;
 
-            current_call_frame.logs.extend(tx_report.logs.clone());
+            parent_call_frame.logs.extend(tx_report.logs.clone());
         }
 
         match tx_report.result.clone() {
@@ -949,7 +949,7 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(address_to_word(retdata.to))?;
-                self.merge_call_frame_backup_with_parent(&call_frame.call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(err) => {
                 // Return value to sender
