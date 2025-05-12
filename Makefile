@@ -76,7 +76,8 @@ stop-localnet-silent:
 	@kurtosis enclave stop $(ENCLAVE) >/dev/null 2>&1 || true
 	@kurtosis enclave rm $(ENCLAVE) --force >/dev/null 2>&1 || true
 
-HIVE_REVISION := f9004c7e85de003bbdeb4fbcc4a9dbf8c3c4c9c2
+# Commit points to branch please update
+HIVE_REVISION := 84df640b91670d40e9b361e7987d03a653e600fb
 # Shallow clones can't specify a single revision, but at least we avoid working
 # the whole history by making it shallow since a given date (one day before our
 # target revision).
@@ -85,10 +86,10 @@ QUIET ?= false
 
 hive:
 	if [ "$(QUIET)" = "true" ]; then \
-		git clone --quiet --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
+		git clone --quiet --single-branch --branch use-forked-execution-specs-test --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
 		cd hive && git checkout --quiet --detach $(HIVE_REVISION) && go build .; \
 	else \
-		git clone --single-branch --branch master --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
+		git clone --single-branch --branch use-forked-execution-specs-test --shallow-since=$(HIVE_SHALLOW_SINCE) https://github.com/lambdaclass/hive && \
 		cd hive && git checkout --detach $(HIVE_REVISION) && go build .; \
 	fi
 
@@ -96,12 +97,12 @@ setup-hive: hive ## 🐝 Set up Hive testing framework
 	if [ "$$(cd hive && git rev-parse HEAD)" != "$(HIVE_REVISION)" ]; then \
 		if [ "$(QUIET)" = "true" ]; then \
 			cd hive && \
-			git checkout --quiet master && \
+			git checkout --quiet use-forked-execution-specs-test && \
 			git fetch --quiet --shallow-since=$(HIVE_SHALLOW_SINCE) && \
 			git checkout --quiet --detach $(HIVE_REVISION) && go build .;\
 		else \
 			cd hive && \
-			git checkout master && \
+			git checkout use-forked-execution-specs-test && \
 			git fetch --shallow-since=$(HIVE_SHALLOW_SINCE) && \
 			git checkout --detach $(HIVE_REVISION) && go build .;\
 		fi \
