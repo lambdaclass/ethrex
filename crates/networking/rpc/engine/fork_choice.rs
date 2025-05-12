@@ -1,7 +1,6 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
-    latest_canonical_block_hash,
     payload::{create_payload, BuildPayloadArgs},
 };
 use ethrex_common::types::BlockHeader;
