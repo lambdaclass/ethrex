@@ -680,9 +680,9 @@ pub fn calculate_gas_price(tx: &GenericTransaction, basefee: u64) -> U256 {
 /// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
 /// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
 fn adjust_disabled_base_fee(env: &mut Environment) {
-    if env.gas_price == U256::zero() {
-        env.base_fee_per_gas = U256::zero();
-    }
+    // if env.gas_price == U256::zero() {
+    env.base_fee_per_gas = U256::zero();
+    // }
     if env
         .tx_max_fee_per_blob_gas
         .is_some_and(|v| v == U256::zero())
