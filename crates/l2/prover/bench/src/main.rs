@@ -91,6 +91,8 @@ async fn main() {
             db,
             #[cfg(feature = "l2")] // ethrex-prover-bench does not support L2 blocks
             withdrawals_merkle_root: H256::zero(),
+            #[cfg(feature = "l2")]
+            deposit_logs_hash: H256::zero()
         })
         .expect("proving failed");
     } else {
@@ -101,6 +103,8 @@ async fn main() {
             db,
             #[cfg(feature = "l2")]
             withdrawals_merkle_root: H256::zero(),
+            #[cfg(feature = "l2")]
+            deposit_logs_hash: H256::zero(),
         })
         .expect("proving failed");
     }
