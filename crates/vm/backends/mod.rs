@@ -18,13 +18,23 @@ use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
+use std::fmt;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum EvmEngine {
     #[default]
-    REVM,
     LEVM,
+    REVM,
+}
+
+impl fmt::Display for EvmEngine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EvmEngine::LEVM => write!(f, "levm"),
+            EvmEngine::REVM => write!(f, "revm"),
+        }
+    }
 }
 
 // Allow conversion from string for backward compatibility
