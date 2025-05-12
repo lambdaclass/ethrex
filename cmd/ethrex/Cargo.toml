@@ -78,11 +78,17 @@ based = ["l2", "ethrex-rpc/based"]
 
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "0.5.1", features = ["html_reports", "async_tokio"] }
+ethrex-sdk.workspace = true
 
 [[bench]]
 path = "./bench/import_blocks_benchmark.rs"
 name = "import_blocks_benchmark"
+harness = false
+
+[[bench]]
+path = "./bench/build_block_benchmark.rs"
+name = "build_block_benchmark"
 harness = false
 
 [build-dependencies]
