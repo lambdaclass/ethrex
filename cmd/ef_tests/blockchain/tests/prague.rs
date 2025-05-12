@@ -56,6 +56,7 @@ datatest_stable::harness!(
     parse_and_execute_with_levm,
     "vectors/prague/",
     r".*/.*\.json",
+    // "eip7702_set_code_tx/set_code_txs/set_code_to_precompile_not_enough_gas_for_precompile_execution.json"
 );
 
 // eip7702_set_code_tx/set_code_txs/set_code_to_precompile_not_enough_gas_for_precompile_execution.json

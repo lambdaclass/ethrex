@@ -296,6 +296,8 @@ impl<'a> VM<'a> {
             false,
         );
 
+        // dbg!(&tx);
+
         Ok(Self {
             call_frames: vec![initial_call_frame],
             env,
@@ -314,25 +316,60 @@ impl<'a> VM<'a> {
     pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
         let fork = self.env.config.fork;
 
-        if is_precompile(&self.current_call_frame()?.code_address, fork) {
-            let mut current_call_frame = self
-                .call_frames
-                .pop()
-                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let precompile_result = execute_precompile(&mut current_call_frame, fork);
-            let backup = self
-                .backups
-                .pop()
-                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let report =
-                self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
-            self.handle_return(&current_call_frame, &report)?;
-            self.current_call_frame_mut()?.increment_pc_by(1)?;
-            return Ok(report);
+        let delegated_addresses: Vec<Address> = if let Some(list) = &self.authorization_list {
+            list.iter().map(|l| l.address).collect()
+        } else {
+            vec![]
+        };
+        let code_address = self.current_call_frame()?.code_address;
+
+        if is_precompile(&code_address, fork) {
+            // println!(
+            //     "Oh no, I'm into a precompile. {}",
+            //     &self.current_call_frame()?.code_address
+            // );
+            if delegated_addresses.contains(&code_address) {
+                // println!("delegated contains it!");
+                let current_call_frame = self
+                    .call_frames
+                    .pop()
+                    .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+
+                let report = ExecutionReport {
+                    result: TxResult::Success,
+                    gas_used: 0,
+                    gas_refunded: 0,
+                    output: Bytes::new(),
+                    logs: vec![],
+                };
+
+                self.handle_return(&current_call_frame, &report)?;
+                self.current_call_frame_mut()?.increment_pc_by(1)?;
+            } else {
+                // println!("delegated doesn't contain it!");
+                let mut current_call_frame = self
+                    .call_frames
+                    .pop()
+                    .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+                let precompile_result = execute_precompile(&mut current_call_frame, fork);
+                let backup = self
+                    .backups
+                    .pop()
+                    .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+                let report = self.handle_precompile_result(
+                    precompile_result,
+                    backup,
+                    &mut current_call_frame,
+                )?;
+                self.handle_return(&current_call_frame, &report)?;
+                self.current_call_frame_mut()?.increment_pc_by(1)?;
+                return Ok(report);
+            }
         }
 
         loop {
             let opcode = self.current_call_frame()?.next_opcode();
+            // dbg!(&opcode);
 
             let op_result = self.handle_current_opcode(opcode);
 
