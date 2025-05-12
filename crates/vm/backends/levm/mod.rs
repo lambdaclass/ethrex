@@ -256,10 +256,10 @@ impl LEVM {
                 }
             };
 
-            // To modify the account, we need a mutable reference to the Account data.
-            // Arc::make_mut will clone the Account data if account_arc is shared (has other strong references),
-            // and update account_arc to point to the new, uniquely owned Arc.
-            // If account_arc is already uniquely owned, it provides a mutable reference without cloning.
+            // Arc::make_mut will:
+            // If strong_count == 1, return a mutable ref to the existing data.
+            // If strong_count > 1, clone Account data, create a new Arc with it,
+            //    update the Arc pointed in the Hashmap, and return a mutable ref to the new data.
             let account_mut: &mut Account = Arc::make_mut(&mut account_arc);
 
             account_mut.info.balance += increment.into();
