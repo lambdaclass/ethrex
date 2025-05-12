@@ -35,11 +35,11 @@ impl GeneralizedDatabase {
             // acc_arc is already an Arc<Account> cloned from the cache
             Ok(acc_arc)
         } else {
-            let account = self.store.get_account(address)?; // Fetches owned Account
-            let account_arc = Arc::new(account); // Wrap the owned Account in an Arc
+            let account = self.store.get_account(address)?;
+            let account_arc = Arc::new(account);
             // Insert a clone of the new Arc into the cache
             cache::insert_arc_account(&mut self.cache, address, Arc::clone(&account_arc));
-            Ok(account_arc) // Return the new Arc
+            Ok(account_arc)
         }
     }
 
@@ -86,7 +86,7 @@ impl<'a> VM<'a> {
         // Ensure account is cached, loading from store if necessary.
         if !cache::is_account_cached(&self.db.cache, &address) {
             let acc_from_store = self.db.store.get_account(address).map_err(VMError::DatabaseError)?;
-            cache::insert_account(&mut self.db.cache, address, acc_from_store); // Wraps in Arc internally.
+            cache::insert_account(&mut self.db.cache, address, acc_from_store);
         }
 
         // Backup account info *before* potential COW in the next step.
@@ -94,7 +94,7 @@ impl<'a> VM<'a> {
 
         // Get mutable reference; COW is handled by `get_or_make_mut_account`.
         cache::get_or_make_mut_account(&mut self.db.cache, &address)
-            .ok_or(VMError::Internal(crate::errors::InternalError::AccountShouldHaveBeenCached)) // Must be cached by now.
+            .ok_or(VMError::Internal(crate::errors::InternalError::AccountShouldHaveBeenCached))
     }
 
     pub fn increase_account_balance(
@@ -272,16 +272,16 @@ impl<'a> VM<'a> {
         let call_frame_mut = self.current_call_frame_mut()?;
 
         let info = (*account_arc).info.clone();
-        let code = (*account_arc).code.clone(); // Bytes is cheap to clone
+        let code = (*account_arc).code.clone();
 
         call_frame_mut.call_frame_backup
             .original_accounts_info
             .insert(
                 address,
-                Account { // Create a new owned Account for the backup
+                Account {
                     info,
                     code,
-                    storage: HashMap::new(), // Storage is backed up separately
+                    storage: HashMap::new(),
                 },
             );
 
