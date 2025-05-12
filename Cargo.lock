@@ -3410,6 +3410,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "keccak-hash",
+ "lazy_static",
  "reqwest",
  "secp256k1",
  "serde",
@@ -3512,16 +3513,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex_l2-deployer"
+name = "ethrex_l2-contracts"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
+ "clap_complete",
  "colored",
  "ethereum-types",
  "ethrex-common",
  "ethrex-l2",
  "ethrex-rpc",
  "ethrex-sdk",
+ "eyre",
  "hex",
  "keccak-hash",
  "lazy_static",
