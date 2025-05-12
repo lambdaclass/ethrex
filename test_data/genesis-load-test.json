@@ -16,13 +16,11 @@
     "londonBlock": 0,
     "arrowGlacierBlock": null,
     "grayGlacierBlock": null,
-    "mergeNetsplitBlock": 0,
+    "terminalTotalDifficulty": 0,
     "shanghaiTime": 0,
     "cancunTime": 0,
     "pragueTime": null,
-    "verkleTime": null,
-    "terminalTotalDifficulty": 0,
-    "terminalTotalDifficultyPassed": true,
+    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
     "blobSchedule": {
       "cancun": {
         "target": 3,
@@ -34,8 +32,7 @@
         "max": 9,
         "baseFeeUpdateFraction": 5007716
       }
-    },
-    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa"
+    }
   },
   "nonce": "0x0",
   "timestamp": "1554584971",
