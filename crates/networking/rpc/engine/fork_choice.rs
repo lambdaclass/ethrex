@@ -302,9 +302,7 @@ async fn handle_forkchoice(
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
                     ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        latest_canonical_block_hash(&context.storage)
-                            .await
-                            .map_err(|e| RpcErr::Internal(e.to_string()))?,
+                        fork_choice_state.head_block_hash
                     ))
                 }
                 InvalidForkChoice::Syncing => {
