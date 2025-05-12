@@ -1,5 +1,5 @@
 use std::{
-    fs::{read_to_string, OpenOptions},
+    fs::{read_to_string, File, OpenOptions},
     io::{BufWriter, Write},
     path::PathBuf,
     process::{Command, ExitStatus},
@@ -463,10 +463,22 @@ fn write_contract_addresses_to_env(
     risc0_verifier_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
+    let env_file_path =
+        env_file_path.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env")); // ethrex/crates/l2/.env
+
+    if !env_file_path.exists() {
+        File::create(&env_file_path).map_err(|err| {
+            DeployerError::InternalError(format!(
+                "Failed to create .env file at {}: {err}",
+                env_file_path.display()
+            ))
+        })?;
+    }
+
     let env_file = OpenOptions::new()
         .write(true)
         .truncate(true)
-        .open(env_file_path.unwrap_or(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env")))?; // ethrex/crates/l2/.env
+        .open(env_file_path)?; // ethrex/crates/l2/.env
     let mut writer = BufWriter::new(env_file);
     writeln!(
         writer,
