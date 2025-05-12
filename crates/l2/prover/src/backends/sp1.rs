@@ -10,7 +10,7 @@ use tracing::info;
 use zkvm_interface::io::ProgramInput;
 
 static PROGRAM_ELF: &[u8] =
-    include_bytes!("../../zkvm/interface/sp1/elf/riscv32im-succinct-zkvm-elf");
+    include_bytes!("../../zkvm/interface/sp1/out/riscv32im-succinct-zkvm-elf");
 
 struct ProverSetup {
     client: EnvProver,
