@@ -405,8 +405,12 @@ impl<'a> VM<'a> {
             let (account, address_was_cold) = self
                 .db
                 .access_account(&mut self.accrued_substate, address)?;
-            (account.is_empty(), account.info.code_hash.0, address_was_cold)
-        }
+            (
+                account.is_empty(),
+                account.info.code_hash.0,
+                address_was_cold,
+            )
+        };
         let current_call_frame = self.current_call_frame_mut()?;
 
         current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;

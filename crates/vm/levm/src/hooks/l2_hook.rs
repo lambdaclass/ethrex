@@ -26,8 +26,8 @@ impl Hook for L2Hook {
         let sender_address = vm.env.origin;
         let (sender_balance, sender_nonce) = {
             let sender_account = vm.db.get_account(sender_address)?;
-            (sender_account.info.balance, sender_nonce)
-        }
+            (sender_account.info.balance, sender_account.info.nonce)
+        };
 
         if vm.env.config.fork >= Fork::Prague {
             default_hook::validate_min_gas_limit(vm)?;

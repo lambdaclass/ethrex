@@ -72,9 +72,11 @@ impl<'a> VM<'a> {
         let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
 
         let (account_is_empty, address_was_cold) = {
-            let (account, address_was_cold) = self.db.access_account(&mut self.accrued_substate, callee)?;
+            let (account, address_was_cold) =
+                self.db.access_account(&mut self.accrued_substate, callee)?;
             (account.is_empty(), address_was_cold)
-        }
+        };
+
         let (is_delegation, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(self.db, &mut self.accrued_substate, callee)?;
 
@@ -562,11 +564,12 @@ impl<'a> VM<'a> {
         };
 
         let (target_account_is_empty, target_account_is_cold) = {
-            let (target_account, is_cold) = self
+            let (target_account, target_account_is_cold) = self
                 .db
                 .access_account(&mut self.accrued_substate, target_address)?;
             (target_account.is_empty(), target_account_is_cold)
-        }
+        };
+
         let (current_account, _current_account_is_cold) =
             self.db.access_account(&mut self.accrued_substate, to)?;
         let balance_to_transfer = current_account.info.balance;
@@ -637,7 +640,8 @@ impl<'a> VM<'a> {
                 .access_account(&mut self.accrued_substate, deployer_address)?
                 .0;
             (deployer_account.info.balance, deployer_account.info.nonce)
-        }
+        };
+
         let code = Bytes::from(
             memory::load_range(
                 &mut self.current_call_frame_mut()?.memory,
@@ -767,7 +771,7 @@ impl<'a> VM<'a> {
         bytecode: Bytes,
         is_delegation: bool,
     ) -> Result<OpcodeResult, VMError> {
-        let sender_balance = self.get_account(msg_sender)?.0.info.balance;
+        let sender_balance = self.db.get_account(msg_sender)?.info.balance;
         let calldata = {
             let current_call_frame = self.current_call_frame_mut()?;
             // Clear callframe subreturn data
