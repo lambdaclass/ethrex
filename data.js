@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747088796255,
+  "lastUpdate": 1747089986896,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6355,6 +6355,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 221423130440,
             "range": "± 542666992",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "b038adc6a2af4a120c2748205088715e32003e79",
+          "message": "fix(l2): panic when trying to read gpu info in bench crate (#2755)\n\n**Motivation**\n\nThe ci was failing because a crate `machine-info` was panicking when\ntrying to read gpu info\nsystem-info-lite crate was tried but returns an empty string in linux\nservers with nvidia-gpu so for now the gpu/cpu info was removed and only\nshows if it ran in a gpu or in a cpu\n\n**Description**\n\n- Remove gpu/cpu information from output json\n\nCreated #2756 to re-add this when possible",
+          "timestamp": "2025-05-12T21:42:52Z",
+          "tree_id": "f305c2d5311785ed2933f26d7de6f4ddc094cdeb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b038adc6a2af4a120c2748205088715e32003e79"
+        },
+        "date": 1747089985847,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 217621497335,
+            "range": "± 826858822",
             "unit": "ns/iter"
           }
         ]
