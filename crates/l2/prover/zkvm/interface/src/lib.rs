@@ -257,6 +257,9 @@ pub mod trie {
 }
 
 pub mod withdrawals {
+    // TODO: We should move this to some kind of "common" library for the L2, but the zkvm programs
+    // can't depend on ethrex-l2 because of incompatible dependencies.
+
     use std::str::FromStr;
 
     use ethrex_common::{
