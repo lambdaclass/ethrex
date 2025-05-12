@@ -54,7 +54,6 @@ ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain
 CI_ETHREX_WORKDIR := /usr/local/bin
 
 ethrex_L2_CONFIGS_PATH=$(shell pwd)/configs
-ethrex_L2_SEQUENCER_CONFIG_FILE=sequencer_config.toml
 ethrex_L2_PROVER_CLIENT_CONFIG_FILE=prover_client_config.toml
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
@@ -114,26 +113,29 @@ clean-contract-deps: ## 🧹 Cleans the dependencies for the L1 contracts.
 restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for the L1 contracts.
 
 deploy-l1: ## 📜 Deploys the L1 contracts
-	DEPLOYER_CONTRACTS_PATH=contracts \
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	SEQUENCER_CONFIG_FILE=${ethrex_L2_SEQUENCER_CONFIG_FILE} \
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- --deposit_rich
+	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	--private-keys-file-path ../../../test_data/private_keys_l1.txt \
+	--genesis-l1-path ../../../test_data/genesis-l1-dev.json \
+	--contracts-path contracts \
+	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
+	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
+	--risc0.verifier-address 0x00000000000000000000000000000000000000aa
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
-	DEPLOYER_CONTRACTS_PATH=contracts \
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	SEQUENCER_CONFIG_FILE=${ethrex_L2_SEQUENCER_CONFIG_FILE} \
-	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml
+	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
+	--contracts-path contracts
 
 update-system-contracts:
-	DEPLOYER_CONTRACTS_PATH=contracts \
-	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	SEQUENCER_CONFIG_FILE=${ethrex_L2_SEQUENCER_CONFIG_FILE} \
-	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path ${ethrex_L2_CONTRACTS_PATH}/Cargo.toml -- ${L2_GENESIS_FILE_PATH}
+	cargo run --release --bin ethrex_l2_system_contracts_updater --manifest-path contracts/Cargo.toml -- \
+	--contracts-path contracts \
+	--l2-genesis-path ../../test_data/genesis-l2.json
 
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
+
+DEFAULT_BRIDGE_ADDRESS=0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=0xc66617ef7eff0ce31a54067183f541f52f39a7dc
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
@@ -151,7 +153,9 @@ init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--metrics \
 	--metrics.port ${L2_PROMETHEUS_METRICS_PORT} \
 	--evm levm \
-	--datadir ${ethrex_L2_DEV_LIBMDBX}
+	--datadir ${ethrex_L2_DEV_LIBMDBX} \
+	--bridge-address ${DEFAULT_BRIDGE_ADDRESS} \
+	--on-chain-proposer-address ${DEFAULT_ON_CHAIN_PROPOSER_ADDRESS}
 
 init-metrics: ## 🚀 Initializes Grafana and Prometheus with containers
 	docker compose -f ${ethrex_METRICS_DOCKER_COMPOSE_PATH} -f ${ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH} up -d
@@ -200,22 +204,32 @@ rm-db-l2: ## 🛑 Removes the DB used by the L2
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
 	cargo test l2 --release -- --nocapture --test-threads=1 || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
-integration-test: rm-db-l2 rm-db-l1
-	# We create an empty .env file simply because if the file
+integration-test: rm-db-l2 rm-db-l1# We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
 	touch .env
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
+	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
+	ETHREX_COMMITTER_VALIDIUM=${ETHREX_COMMITTER_VALIDIUM} \
+	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	RUST_LOG=info,ethrex_prover_lib=debug make init-prover & \
+	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
+	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
+	cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover -s SIGINT
 
 integration-test-gpu: rm-db-l2 rm-db-l1
 	# We create an empty .env file simply because if the file
 	# does not exists, the container fails to write to it.
 	touch .env
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & cargo test l2 --release -- --nocapture --test-threads=1
+	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
+	ETHREX_PROOF_COORDINATOR_DEV_MODE=${ETHREX_PROOF_COORDINATOR_DEV_MODE} \
+	ETHREX_PROPOSER_BLOCK_TIME_MS=${ETHREX_PROPOSER_BLOCK_TIME_MS} \
+	ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER} \
+	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
+	
+	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
+	cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover -s SIGINT
 
 # State reconstruction tests
@@ -225,8 +239,10 @@ state-diff-test:
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- config set ci
 	cargo run --release --manifest-path ../../cmd/ethrex_l2/Cargo.toml --bin ethrex_l2 -- stack reconstruct -g ../../test_data/genesis-l2.json -b ../../test_data/blobs/ -s $$PWD/store -c 0x0007a881CD95B1484fca47615B64803dad620C8d
 	cargo b --manifest-path ../../Cargo.toml --release
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
-	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
+	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
+	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
+	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
+	
 	cargo test state_reconstruct --release
 
 # Purge L2's state
