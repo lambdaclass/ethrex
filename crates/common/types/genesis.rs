@@ -2,7 +2,6 @@ use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
-use k256::elliptic_curve::ff::derive::bitvec::order;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha3::{Digest, Keccak256};
@@ -381,12 +380,13 @@ impl Genesis {
     pub fn write_as_json(&self, path: &Path) -> Result<(), String> {
         let genesis_json = serde_json::to_string(&self)
             .map_err(|e| format!("Could not convert genesis to string: {}", e))?;
-        let genesis_as_map: Map<String, Value> = serde_json::from_str(&genesis_json)
+        let mut genesis_as_map: Map<String, Value> = serde_json::from_str(&genesis_json)
             .map_err(|e| format!("Failed to de-serialize genesis file: {}", e))?;
-        // Keys sorted based off this ethpandaops example:
+        // Keys sorting based off this ethpandaops example:
         // https://github.com/ethpandaops/ethereum-genesis-generator/blob/master/apps/el-gen/mainnet/genesis.json
+        // We actually want 'config' as the first key, but we sort that
+        // separately.
         let keys = [
-            "config",
             "nonce",
             "timestamp",
             "extraData",
@@ -396,6 +396,7 @@ impl Genesis {
             "coinbase",
             "alloc",
         ];
+        let ordered_config = sort_config(&mut genesis_as_map)?;
         // Some keys that are in our genesis file,
         // but are not in the example above or
         // viceversa.
@@ -411,6 +412,10 @@ impl Genesis {
         // This map will preserve insertion order because this crate uses the 'preserve_order'
         // feature from serde_json.
         let mut ordered_map: Map<String, Value> = serde_json::Map::new();
+        ordered_map.insert(
+            "config".to_owned(),
+            serde_json::Value::Object(ordered_config),
+        );
         for k in keys {
             let Some(v) = genesis_as_map.get(k) else {
                 return Err(format!("Missing key in read genesis file: {}", k));
@@ -424,7 +429,7 @@ impl Genesis {
         }
         // Check 1: check we're not missing any keys.
         for k in genesis_as_map.keys() {
-            if ordered_map.get_key_value(k) != genesis_as_map.get_key_value(k) {
+            if ordered_map.contains_key(k) != genesis_as_map.contains_key(k) {
                 return Err(format!("Genesis serialization is missing a key: {}", k));
             }
         }
@@ -441,6 +446,52 @@ impl Genesis {
             )
         })
     }
+}
+
+fn sort_config(genesis_map: &mut Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let config_keys_order = [
+        "chainId",
+        "homesteadBlock",
+        "daoForkBlock",
+        "daoForkSupport",
+        "eip150Block",
+        "eip150Hash",
+        "eip155Block",
+        "eip158Block",
+        "byzantiumBlock",
+        "constantinopleBlock",
+        "petersburgBlock",
+        "istanbulBlock",
+        "muirGlacierBlock",
+        "berlinBlock",
+        "londonBlock",
+        "arrowGlacierBlock",
+        "grayGlacierBlock",
+        "terminalTotalDifficulty",
+        "shanghaiTime",
+        "cancunTime",
+        "pragueTime",
+        "ethash",
+        "depositContractAddress",
+        "blobSchedule",
+    ];
+    let config = genesis_map
+        .get_mut("config")
+        .ok_or_else(|| format!("Genesis file is missing config"))?;
+    let mut ordered_config: Map<String, Value> = Map::new();
+    for key in config_keys_order {
+        // If a key is not present in the config, this means
+        // we're reading a genesis file that simply does not support
+        // a certain configuration from the genesis block,
+        // so we simply ignore it.
+        match config.get(key).take() {
+            Some(value) => {
+                ordered_config.insert(key.to_owned(), value.clone());
+            }
+            None => {}
+        };
+    }
+    Ok(ordered_config)
 }
 
 #[cfg(test)]
