@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747069147214,
+  "lastUpdate": 1747069697880,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6235,6 +6235,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 179086308237,
             "range": "± 803295633",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "90105443+DiegoCivi@users.noreply.github.com",
+            "name": "DiegoC",
+            "username": "DiegoCivi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "d1003c1451d9fdaddb3f6c97dae992eac034377c",
+          "message": "refactor(levm): use more descriptive names when popping call_frame  (#2730)\n\n**Motivation**\n\nGive a better description of call_frame related variables in\nrun_execution().\n\n**Description**\n\n- Use `executed_call_frame` in scenarios in which the callframe has\nalready been executed.\n- Use `parent_call_frame` in scenarios in which a callframe has been\npopped before, to we are working with the previous one.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2569",
+          "timestamp": "2025-05-12T16:20:42Z",
+          "tree_id": "6401b1a228e1a3fae6419d4dd35298a607e0f525",
+          "url": "https://github.com/lambdaclass/ethrex/commit/d1003c1451d9fdaddb3f6c97dae992eac034377c"
+        },
+        "date": 1747069696027,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 178607911356,
+            "range": "± 1250090379",
             "unit": "ns/iter"
           }
         ]
