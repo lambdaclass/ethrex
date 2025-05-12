@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747079868860,
+  "lastUpdate": 1747088796255,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6325,6 +6325,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 216779995269,
             "range": "± 1993440012",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "112426153+tomip01@users.noreply.github.com",
+            "name": "Tomás Paradelo",
+            "username": "tomip01"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2a6c44c3aee6477c17755b6d5523ba23d7065d1d",
+          "message": "feat(l2): config eth client through .toml (#2510)\n\n**Motivation**\n\nHere we want to be able to configure some constant values in our L2.\nThese changes aim to improve flexibility in the L2 and provide better\ncontrol.\n\n**Description**\n\n* Added `elasticity_multiplier` to `BuildPayloadArgs` and passed it to\n`calculate_base_fee_per_gas`.\n* Incorporated `elasticity_multiplier` into `BlockProducer`.\n* Introduced new fields (`max_number_of_retries`, `backoff_factor`,\n`min_retry_delay`, `max_retry_delay`) in `EthClient`.\n\nCloses #2479\n\n---------\n\nCo-authored-by: Javier Rodríguez Chatruc <49622509+jrchatruc@users.noreply.github.com>",
+          "timestamp": "2025-05-12T21:22:40Z",
+          "tree_id": "65e61f12e2ef168d96dc2bc4dde6548ee55bf123",
+          "url": "https://github.com/lambdaclass/ethrex/commit/2a6c44c3aee6477c17755b6d5523ba23d7065d1d"
+        },
+        "date": 1747088794426,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 221423130440,
+            "range": "± 542666992",
             "unit": "ns/iter"
           }
         ]
