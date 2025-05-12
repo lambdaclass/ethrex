@@ -52,9 +52,8 @@ impl GeneralizedDatabase {
         &mut self,
         accrued_substate: &mut Substate,
         address: Address,
-    ) -> Result<(Arc<Account>, bool), DatabaseError> { // Return type changed
+    ) -> Result<(Arc<Account>, bool), DatabaseError> {
         let address_was_cold = accrued_substate.touched_accounts.insert(address);
-        // self.get_account now returns Result<Arc<Account>, DatabaseError>
         let account_arc = self.get_account(address)?;
         Ok((account_arc, address_was_cold))
     }
