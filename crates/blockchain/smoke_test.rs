@@ -11,7 +11,7 @@ mod blockchain_integration_test {
     };
 
     use ethrex_common::{
-        types::{Block, BlockHeader},
+        types::{Block, BlockHeader, ELASTICITY_MULTIPLIER},
         H160, H256,
     };
     use ethrex_storage::{EngineType, Store};
@@ -301,6 +301,7 @@ mod blockchain_integration_test {
             withdrawals: Some(Vec::new()),
             beacon_root: Some(H256::random()),
             version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
         };
 
         // Create blockchain

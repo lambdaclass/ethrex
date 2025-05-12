@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, ELASTICITY_MULTIPLIER};
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;
@@ -16,7 +16,6 @@ async fn test_performance_zkvm() {
     let (input, block_to_prove) = setup().await;
 
     let start = std::time::Instant::now();
-
     // this is only executing because these tests run as a CI job and should be fast
     // TODO: create a test for actual proving
     execute(input).unwrap();
@@ -69,10 +68,14 @@ async fn setup() -> (ProgramInput, Block) {
         .await
         .unwrap();
 
+    // This is just a test, so we can use the default value for the elasticity multiplier.
+    let elasticity_multiplier = ELASTICITY_MULTIPLIER;
+
     let input = ProgramInput {
         blocks: vec![block_to_prove.clone()],
         parent_block_header,
         db,
+        elasticity_multiplier,
     };
     (input, block_to_prove.clone())
 }
