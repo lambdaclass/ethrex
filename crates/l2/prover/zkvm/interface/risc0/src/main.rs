@@ -107,6 +107,7 @@ fn main() {
     env::commit(&ProgramOutput {
         initial_state_hash,
         final_state_hash,
+        #[cfg(feature = "l2")]
         withdrawals_merkle_root,
     });
 }
