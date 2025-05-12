@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{types::Block, H256};
+use ethrex_common::types::Block;
 use ethrex_prover_lib::execute;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::Evm;

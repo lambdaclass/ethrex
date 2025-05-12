@@ -139,7 +139,8 @@ impl Committer {
             return Ok(());
         }
 
-        let withdrawal_logs_merkle_root = get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
+        let withdrawal_logs_merkle_root =
+            self.get_withdrawals_merkle_root(withdrawal_hashes.clone())?;
 
         info!("Sending commitment for batch {batch_to_commit}. first_block: {first_block_to_commit}, last_block: {last_block_of_batch}");
 
@@ -318,6 +319,17 @@ impl Committer {
             }
         }
         Ok(ret)
+    }
+
+    pub fn get_withdrawals_merkle_root(
+        &self,
+        withdrawals_hashes: Vec<H256>,
+    ) -> Result<H256, CommitterError> {
+        if !withdrawals_hashes.is_empty() {
+            merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
+        } else {
+            Ok(H256::zero())
+        }
     }
 
     fn get_block_deposits(
@@ -600,12 +612,4 @@ async fn estimate_blob_gas(
     };
 
     Ok(blob_gas)
-}
-
-pub fn get_withdrawals_merkle_root(withdrawals_hashes: Vec<H256>) -> Result<H256, CommitterError> {
-    if !withdrawals_hashes.is_empty() {
-        merkelize(withdrawals_hashes).map_err(CommitterError::FailedToMerkelize)
-    } else {
-        Ok(H256::zero())
-    }
 }
