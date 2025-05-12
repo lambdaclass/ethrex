@@ -17,7 +17,7 @@ Implementation of a simple Ethereum Virtual Machine in Rust.
 | --- | ------------------------------- | ------ |
 | 1   | Support Merge->Cancun forks     | ✅     |
 | 2   | Integrate `ethrex L1` <> `levm` | 🏗️     |
-| 3   | Support Pectra upgrade          | ✅     |
+| 3   | Support Pectra upgrade          | 🏗️     |
 | 4   | Integrate `ethrex L2` <> `levm` | ❌     |
 | 5   | Performance                     | 🏗️     |
 
@@ -112,12 +112,12 @@ We'll run flamegraph or Samply over the VM to identify bottlenecks and improve t
 > [!NOTE]
 > This is updated as of this README's last update. For the most up-to-date status, please run the tests locally.
 
-**Total**: 6235/6235 (100.00%)
+**Total**: 18909/18909 (100.00%)
 
-**Prague**: 2628/2628 (100.00%)
-**Cancun**: 6197/6197 (100.00%)
-**Shanghai**: 2821/2821 (100.00%)
-**Paris**: 2663/2663 (100.00%)
+**Prague** 5201/5201 (100.00%)
+**Cancun**: 7608/7608 (100.00%)
+**Shanghai**: 3214/3214 (100.00%)
+**Paris**: 2886/2886 (100.00%)
 
 ### How to run EF tests locally
 
