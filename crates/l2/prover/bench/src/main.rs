@@ -6,8 +6,8 @@ use ethrex_prover_bench::{
     rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
 use ethrex_prover_lib::execute;
-use machine_info::Machine;
 use serde_json::json;
+use system_info_lite::get_system_info;
 use zkvm_interface::io::ProgramInput;
 
 #[cfg(not(any(feature = "sp1", feature = "risc0", feature = "pico")))]
@@ -125,20 +125,12 @@ fn write_benchmark_file(gas_used: f64, elapsed: f64) {
         unreachable!();
     };
 
-    let mut machine = Machine::new();
-    let processing_unit = if cfg!(feature = "gpu") {
-        // assumes single GPU
-        format!(
-            "GPU: {}",
-            machine
-                .system_info()
-                .graphics
-                .first()
-                .expect("could not write bench file: no gpu info found")
-                .name
-        )
+    let system_info = get_system_info().expect("Failed to get system information");
+
+    let processing_unit = if cfg!(feature = "gpu") && system_info.gpu.is_some() {
+        format!("GPU: {}", system_info.gpu.unwrap()[0].model)
     } else {
-        format!("CPU: {}", machine.system_info().processor.brand)
+        format!("CPU: {}", system_info.cpu.model)
     };
 
     let benchmark_json = &json!([{
