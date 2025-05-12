@@ -598,43 +598,32 @@ fn address_access_cost(
     cold_dynamic_cost: u64,
     warm_dynamic_cost: u64,
 ) -> Result<u64, VMError> {
-    let static_gas = static_cost;
-
     let dynamic_cost: u64 = if address_was_cold {
         cold_dynamic_cost
     } else {
         warm_dynamic_cost
     };
 
-    Ok(static_gas
+    Ok(static_cost
         .checked_add(dynamic_cost)
         .ok_or(OutOfGasError::GasCostOverflow)?)
 }
 
 pub fn balance(address_was_cold: bool) -> Result<u64, VMError> {
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) =
-        (BALANCE_STATIC, BALANCE_COLD_DYNAMIC, BALANCE_WARM_DYNAMIC);
-
     address_access_cost(
         address_was_cold,
-        static_cost,
-        cold_dynamic_cost,
-        warm_dynamic_cost,
+        BALANCE_STATIC,
+        BALANCE_COLD_DYNAMIC,
+        BALANCE_WARM_DYNAMIC,
     )
 }
 
 pub fn extcodesize(address_was_cold: bool) -> Result<u64, VMError> {
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
+    address_access_cost(
+        address_was_cold,
         EXTCODESIZE_STATIC,
         EXTCODESIZE_COLD_DYNAMIC,
         EXTCODESIZE_WARM_DYNAMIC,
-    );
-
-    address_access_cost(
-        address_was_cold,
-        static_cost,
-        cold_dynamic_cost,
-        warm_dynamic_cost,
     )
 }
 
@@ -651,18 +640,11 @@ pub fn extcodecopy(
         EXTCODECOPY_DYNAMIC_BASE,
         EXTCODECOPY_STATIC,
     )?;
-
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
+    let expansion_access_cost = address_access_cost(
+        address_was_cold,
         EXTCODECOPY_STATIC,
         EXTCODECOPY_COLD_DYNAMIC,
         EXTCODECOPY_WARM_DYNAMIC,
-    );
-
-    let expansion_access_cost = address_access_cost(
-        address_was_cold,
-        static_cost,
-        cold_dynamic_cost,
-        warm_dynamic_cost,
     )?;
 
     Ok(base_access_cost
@@ -671,17 +653,11 @@ pub fn extcodecopy(
 }
 
 pub fn extcodehash(address_was_cold: bool) -> Result<u64, VMError> {
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
+    address_access_cost(
+        address_was_cold,
         EXTCODEHASH_STATIC,
         EXTCODEHASH_COLD_DYNAMIC,
         EXTCODEHASH_WARM_DYNAMIC,
-    );
-
-    address_access_cost(
-        address_was_cold,
-        static_cost,
-        cold_dynamic_cost,
-        warm_dynamic_cost,
     )
 }
 
@@ -697,14 +673,11 @@ pub fn call(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) =
-        (CALL_STATIC, CALL_COLD_DYNAMIC, CALL_WARM_DYNAMIC);
-
     let address_access_cost = address_access_cost(
         address_was_cold,
-        static_cost,
-        cold_dynamic_cost,
-        warm_dynamic_cost,
+        CALL_STATIC,
+        CALL_COLD_DYNAMIC,
+        CALL_WARM_DYNAMIC,
     )?;
     let positive_value_cost = if !value_to_transfer.is_zero() {
         CALL_POSITIVE_VALUE
@@ -744,18 +717,11 @@ pub fn callcode(
     gas_left: u64,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
-
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
+    let address_access_cost = address_access_cost(
+        address_was_cold,
         DELEGATECALL_STATIC,
         DELEGATECALL_COLD_DYNAMIC,
         DELEGATECALL_WARM_DYNAMIC,
-    );
-
-    let address_access_cost = address_access_cost(
-        address_was_cold,
-        static_cost,
-        cold_dynamic_cost,
-        warm_dynamic_cost,
     )?;
 
     let positive_value_cost = if !value_to_transfer.is_zero() {
@@ -787,17 +753,11 @@ pub fn delegatecall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
+    let address_access_cost = address_access_cost(
+        address_was_cold,
         DELEGATECALL_STATIC,
         DELEGATECALL_COLD_DYNAMIC,
         DELEGATECALL_WARM_DYNAMIC,
-    );
-
-    let address_access_cost = address_access_cost(
-        address_was_cold,
-        static_cost,
-        cold_dynamic_cost,
-        warm_dynamic_cost,
     )?;
 
     let call_gas_costs = memory_expansion_cost
@@ -816,17 +776,11 @@ pub fn staticcall(
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
-    let (static_cost, cold_dynamic_cost, warm_dynamic_cost) = (
+    let address_access_cost = address_access_cost(
+        address_was_cold,
         STATICCALL_STATIC,
         STATICCALL_COLD_DYNAMIC,
         STATICCALL_WARM_DYNAMIC,
-    );
-
-    let address_access_cost = address_access_cost(
-        address_was_cold,
-        static_cost,
-        cold_dynamic_cost,
-        warm_dynamic_cost,
     )?;
 
     let call_gas_costs = memory_expansion_cost
