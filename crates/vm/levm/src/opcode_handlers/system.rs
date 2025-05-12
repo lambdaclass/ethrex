@@ -754,6 +754,7 @@ impl<'a> VM<'a> {
             0,
             new_depth,
             true,
+            false,
         );
         self.call_frames.push(new_call_frame);
 
@@ -847,15 +848,19 @@ impl<'a> VM<'a> {
             self.increase_account_balance(to, value)?;
         }
 
-        if bytecode.is_empty() && is_delegation {
-            let current_call_frame = self.current_call_frame_mut()?;
-            current_call_frame.gas_used = current_call_frame
-                .gas_used
-                .checked_sub(gas_limit)
-                .ok_or(InternalError::GasOverflow)?;
-            current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
-            return Ok(OpcodeResult::Continue { pc_increment: 1 });
-        }
+        // if bytecode.is_empty() && is_delegation {
+        //     println!(
+        //         "I'm in the area empty bytecode and delegation for code_address {}",
+        //         code_address
+        //     );
+        //     let current_call_frame = self.current_call_frame_mut()?;
+        //     current_call_frame.gas_used = current_call_frame
+        //         .gas_used
+        //         .checked_sub(gas_limit)
+        //         .ok_or(InternalError::GasOverflow)?;
+        //     current_call_frame.stack.push(SUCCESS_FOR_CALL)?;
+        //     return Ok(OpcodeResult::Continue { pc_increment: 1 });
+        // }
 
         self.return_data.push(RetData {
             is_create: false,
@@ -879,6 +884,7 @@ impl<'a> VM<'a> {
             0,
             new_depth,
             false,
+            is_delegation,
         );
         self.call_frames.push(new_call_frame);
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted

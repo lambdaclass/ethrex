@@ -90,6 +90,7 @@ pub struct CallFrame {
     pub create_op_called: bool,
     /// Everytime we want to write an account during execution of a callframe we store the pre-write state so that we can restore if it reverts
     pub cache_backup: CacheBackup,
+    pub is_delegation: bool,
 }
 
 pub type CacheBackup = HashMap<Address, Option<Account>>;
@@ -108,6 +109,7 @@ impl CallFrame {
         gas_used: u64,
         depth: usize,
         create_op_called: bool,
+        is_delegation: bool,
     ) -> Self {
         let valid_jump_destinations = get_valid_jump_destinations(&bytecode).unwrap_or_default();
         Self {
@@ -123,6 +125,7 @@ impl CallFrame {
             gas_used,
             valid_jump_destinations,
             create_op_called,
+            is_delegation,
             ..Default::default()
         }
     }

@@ -250,6 +250,7 @@ impl<'a> VM<'a> {
 
         let bytecode;
         let destination_and_code_address;
+        let is_delegation;
 
         match tx.to() {
             TxKind::Call(address_to) => {
@@ -259,6 +260,7 @@ impl<'a> VM<'a> {
                     eip7702_get_code(db, &mut substate, address_to)?;
                 destination_and_code_address = address_to;
                 bytecode = bytes;
+                is_delegation = _is_delegation;
             }
 
             TxKind::Create => {
@@ -278,7 +280,8 @@ impl<'a> VM<'a> {
                     .created_accounts
                     .insert(destination_and_code_address);
 
-                bytecode = Bytes::new() //Bytecode will be later assigned from the calldata after passing validations;
+                bytecode = Bytes::new(); //Bytecode will be later assigned from the calldata after passing validations;
+                is_delegation = false;
             }
         }
 
@@ -294,6 +297,7 @@ impl<'a> VM<'a> {
             0,
             0,
             false,
+            is_delegation,
         );
 
         // dbg!(&tx);
@@ -328,8 +332,10 @@ impl<'a> VM<'a> {
             //     "Oh no, I'm into a precompile. {}",
             //     &self.current_call_frame()?.code_address
             // );
-            if delegated_addresses.contains(&code_address) {
-                // println!("delegated contains it!");
+            if delegated_addresses.contains(&code_address)
+                || self.current_call_frame()?.is_delegation
+            {
+                println!("delegated contains it or is delegated precompile!");
                 let current_call_frame = self
                     .call_frames
                     .pop()
@@ -338,15 +344,21 @@ impl<'a> VM<'a> {
                 let report = ExecutionReport {
                     result: TxResult::Success,
                     gas_used: 0,
-                    gas_refunded: 0,
+                    gas_refunded: self.env.refunded_gas,
                     output: Bytes::new(),
                     logs: vec![],
                 };
 
+                let _backup = self
+                    .backups
+                    .pop()
+                    .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+
                 self.handle_return(&current_call_frame, &report)?;
                 self.current_call_frame_mut()?.increment_pc_by(1)?;
+                return Ok(report);
             } else {
-                // println!("delegated doesn't contain it!");
+                println!("delegated doesn't contain it!");
                 let mut current_call_frame = self
                     .call_frames
                     .pop()
