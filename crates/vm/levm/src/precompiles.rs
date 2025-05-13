@@ -209,23 +209,23 @@ const FP2_ZERO_MAPPED_TO_G2: [u8; 256] = [
 pub const G1_POINT_AT_INFINITY: [u8; 128] = [0_u8; 128];
 pub const G2_POINT_AT_INFINITY: [u8; 256] = [0_u8; 256];
 
-pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
+pub fn is_precompile(address: &Address, fork: Fork) -> bool {
     // Cancun specs is the only one that allows point evaluation precompile
-    if *callee_address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
+    if *address == POINT_EVALUATION_ADDRESS && fork < Fork::Cancun {
         return false;
     }
     // Prague or newers forks should only use this precompiles
     // https://eips.ethereum.org/EIPS/eip-2537
-    if PRECOMPILES_POST_CANCUN.contains(callee_address) && fork < Fork::Prague {
+    if PRECOMPILES_POST_CANCUN.contains(address) && fork < Fork::Prague {
         return false;
     }
 
     #[cfg(feature = "l2")]
-    if RIP_PRECOMPILES.contains(callee_address) {
+    if RIP_PRECOMPILES.contains(address) {
         return true;
     }
 
-    PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
+    PRECOMPILES.contains(address) || PRECOMPILES_POST_CANCUN.contains(address)
 }
 
 pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<(), VMError> {
