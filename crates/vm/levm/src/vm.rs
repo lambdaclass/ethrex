@@ -1,6 +1,5 @@
 use crate::{
     call_frame::{CallFrame, CallFrameBackup},
-    constants::*,
     db::gen_db::GeneralizedDatabase,
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
