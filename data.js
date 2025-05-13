@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747160517485,
+  "lastUpdate": 1747161829035,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6775,6 +6775,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 214806609740,
             "range": "± 604960177",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b0cdf7d0aadfc9e88fc204aa7b0c1bbae6221382",
+          "message": "refactor(l1): rename ExecutionDB to ProverDB. (#2770)\n\n**Motivation**\nTo have a clearer name.",
+          "timestamp": "2025-05-13T17:46:25Z",
+          "tree_id": "fc5fe9ab4869c2c5a2ceb7db65e611b5fcfeb0eb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b0cdf7d0aadfc9e88fc204aa7b0c1bbae6221382"
+        },
+        "date": 1747161826315,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 216092296164,
+            "range": "± 748659977",
             "unit": "ns/iter"
           }
         ]
