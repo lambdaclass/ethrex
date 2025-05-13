@@ -1,6 +1,7 @@
 use std::{fs::File, io::Write};
 
 use clap::Parser;
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
@@ -89,6 +90,7 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
         })
         .expect("proving failed");
     } else {
@@ -97,6 +99,7 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
         })
         .expect("proving failed");
     }
