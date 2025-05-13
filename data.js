@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747153571538,
+  "lastUpdate": 1747154907760,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6655,6 +6655,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 214787702115,
             "range": "± 1266159413",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "48994069+JereSalo@users.noreply.github.com",
+            "name": "Jeremías Salomón",
+            "username": "JereSalo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "37498c67ad14aea3aaf0e68ae433762022306dda",
+          "message": "ci(l1): comment flaky snap sync test (#2672)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n- Test is flaky in CI\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-13T15:52:23Z",
+          "tree_id": "f184df6d22863e40b16db7bb3514450de8493f93",
+          "url": "https://github.com/lambdaclass/ethrex/commit/37498c67ad14aea3aaf0e68ae433762022306dda"
+        },
+        "date": 1747154905475,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 212556006834,
+            "range": "± 468298929",
             "unit": "ns/iter"
           }
         ]
