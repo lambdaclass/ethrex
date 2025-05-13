@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747159710031,
+  "lastUpdate": 1747160517485,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6745,6 +6745,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 217383880094,
             "range": "± 489849781",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "20262dbd521ff694788b2739087a6965001b0bf8",
+          "message": "chore(l2): remove default contract addresses from Makefile (#2769)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nContract addresses change frequently and they need to be changed in the\nMakefile.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nRemove the default values and read the addresses from the `.env` file,\nwhich are written by the deployer in case of using. In case you want to\nuse the `init-l2` flow without the deployer and the `.env` file, you\nhave to set the variables `BRIDGE_ADDRESS` and\n`ON_CHAIN_PROPOSER_ADDRESS` when running the target, else it will fail\nwith an error like `error: a value is required for '--bridge-address\n<ADDRESS>' but none was supplied`. For example:\n\n```sh\nmake init-l2 BRIDGE_ADDRESS=0x8ccf74999c496e4d27a2b02941673f41dd0dab2a ON_CHAIN_PROPOSER_ADDRESS=0x60020c8cc59dac4716a0375f1d30e65da9915d3f\n```\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-05-13T17:26:45Z",
+          "tree_id": "90a0c46f8a377e45e8167cb92d9f0d0811c70458",
+          "url": "https://github.com/lambdaclass/ethrex/commit/20262dbd521ff694788b2739087a6965001b0bf8"
+        },
+        "date": 1747160514719,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 214806609740,
+            "range": "± 604960177",
             "unit": "ns/iter"
           }
         ]
