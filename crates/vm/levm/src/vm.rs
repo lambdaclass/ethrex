@@ -268,7 +268,6 @@ impl<'a> VM<'a> {
             false,
             env.gas_limit,
             0,
-            0,
             true,
             false,
             U256::zero(),
