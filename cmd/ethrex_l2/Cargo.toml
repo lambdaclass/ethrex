@@ -22,9 +22,9 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
 hex.workspace = true
 log = "0.4"
-clap = { version = "4.3", features = ["derive"] }
-clap_complete = "4.5.17"
-eyre = "0.6"
+clap.workspace = true
+clap_complete.workspace = true
+eyre.workspace = true
 dirs = "5.0.1"
 toml = "0.8.19"
 dialoguer = "0.11"

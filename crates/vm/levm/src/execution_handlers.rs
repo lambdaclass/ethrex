@@ -5,10 +5,8 @@ use crate::{
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
-    vm::{StateBackup, VM},
+    vm::{Substate, VM},
 };
-
-use ethrex_common::types::Fork;
 
 use bytes::Bytes;
 
@@ -16,14 +14,14 @@ impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,
-        backup: StateBackup,
+        backup: Substate,
         current_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
             Ok(output) => Ok(ExecutionReport {
                 result: TxResult::Success,
                 gas_used: current_call_frame.gas_used,
-                gas_refunded: self.env.refunded_gas,
+                gas_refunded: self.accrued_substate.refunded_gas,
                 output,
                 logs: std::mem::take(&mut current_call_frame.logs),
             }),
@@ -32,12 +30,12 @@ impl<'a> VM<'a> {
                     return Err(error);
                 }
 
-                self.restore_state(backup, current_call_frame.cache_backup.clone())?;
+                self.restore_state(backup, current_call_frame.call_frame_backup.clone())?;
 
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
                     gas_used: current_call_frame.gas_limit,
-                    gas_refunded: self.env.refunded_gas,
+                    gas_refunded: self.accrued_substate.refunded_gas,
                     output: Bytes::new(),
                     logs: vec![],
                 })
@@ -152,17 +150,17 @@ impl<'a> VM<'a> {
 
     pub fn handle_opcode_result(
         &mut self,
-        current_call_frame: &mut CallFrame,
+        executed_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         let backup = self
-            .backups
+            .substate_backups
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         // On successful create check output validity
-        if (self.is_create() && current_call_frame.depth == 0)
-            || current_call_frame.create_op_called
+        if (self.is_create() && executed_call_frame.depth == 0)
+            || executed_call_frame.create_op_called
         {
-            let contract_code = std::mem::take(&mut current_call_frame.output);
+            let contract_code = std::mem::take(&mut executed_call_frame.output);
             let code_length = contract_code.len();
 
             let code_length_u64: u64 = code_length
@@ -180,19 +178,21 @@ impl<'a> VM<'a> {
             // If the first byte of code is 0xef
             // If the code_length > MAX_CODE_SIZE
             // If current_consumed_gas + code_deposit_cost > gas_limit
-            let validate_create =
-                if code_length > MAX_CODE_SIZE && self.env.config.fork >= Fork::SpuriousDragon {
-                    Err(VMError::ContractOutputTooBig)
-                } else if contract_code.first().unwrap_or(&0) == &INVALID_CONTRACT_PREFIX {
-                    Err(VMError::InvalidContractPrefix)
-                } else if current_call_frame
-                    .increase_consumed_gas(code_deposit_cost)
-                    .is_err()
-                {
-                    Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
-                } else {
-                    Ok(current_call_frame.to)
-                };
+            let validate_create = if code_length > MAX_CODE_SIZE {
+                Err(VMError::ContractOutputTooBig)
+            } else if contract_code
+                .first()
+                .is_some_and(|val| val == &INVALID_CONTRACT_PREFIX)
+            {
+                Err(VMError::InvalidContractPrefix)
+            } else if executed_call_frame
+                .increase_consumed_gas(code_deposit_cost)
+                .is_err()
+            {
+                Err(VMError::OutOfGas(OutOfGasError::MaxGasLimitExceeded))
+            } else {
+                Ok(executed_call_frame.to)
+            };
 
             match validate_create {
                 Ok(new_address) => {
@@ -201,14 +201,14 @@ impl<'a> VM<'a> {
                 }
                 Err(error) => {
                     // Revert if error
-                    current_call_frame.gas_used = current_call_frame.gas_limit;
-                    self.restore_state(backup, current_call_frame.cache_backup.clone())?;
+                    executed_call_frame.gas_used = executed_call_frame.gas_limit;
+                    self.restore_state(backup, executed_call_frame.call_frame_backup.clone())?;
 
                     return Ok(ExecutionReport {
                         result: TxResult::Revert(error),
-                        gas_used: current_call_frame.gas_used,
-                        gas_refunded: self.env.refunded_gas,
-                        output: std::mem::take(&mut current_call_frame.output),
+                        gas_used: executed_call_frame.gas_used,
+                        gas_refunded: self.accrued_substate.refunded_gas,
+                        output: std::mem::take(&mut executed_call_frame.output),
                         logs: vec![],
                     });
                 }
@@ -217,20 +217,20 @@ impl<'a> VM<'a> {
 
         Ok(ExecutionReport {
             result: TxResult::Success,
-            gas_used: current_call_frame.gas_used,
-            gas_refunded: self.env.refunded_gas,
-            output: std::mem::take(&mut current_call_frame.output),
-            logs: std::mem::take(&mut current_call_frame.logs),
+            gas_used: executed_call_frame.gas_used,
+            gas_refunded: self.accrued_substate.refunded_gas,
+            output: std::mem::take(&mut executed_call_frame.output),
+            logs: std::mem::take(&mut executed_call_frame.logs),
         })
     }
 
     pub fn handle_opcode_error(
         &mut self,
         error: VMError,
-        current_call_frame: &mut CallFrame,
+        executed_call_frame: &mut CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         let backup = self
-            .backups
+            .substate_backups
             .pop()
             .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
         if error.should_propagate() {
@@ -239,17 +239,17 @@ impl<'a> VM<'a> {
 
         // Unless error is from Revert opcode, all gas is consumed
         if error != VMError::RevertOpcode {
-            let left_gas = current_call_frame
+            let left_gas = executed_call_frame
                 .gas_limit
-                .saturating_sub(current_call_frame.gas_used);
-            current_call_frame.gas_used = current_call_frame.gas_used.saturating_add(left_gas);
+                .saturating_sub(executed_call_frame.gas_used);
+            executed_call_frame.gas_used = executed_call_frame.gas_used.saturating_add(left_gas);
         }
 
         let refunded = backup.refunded_gas;
-        let output = std::mem::take(&mut current_call_frame.output); // Bytes::new() if error is not RevertOpcode
-        let gas_used = current_call_frame.gas_used;
+        let output = std::mem::take(&mut executed_call_frame.output); // Bytes::new() if error is not RevertOpcode
+        let gas_used = executed_call_frame.gas_used;
 
-        self.restore_state(backup, current_call_frame.cache_backup.clone())?;
+        self.restore_state(backup, executed_call_frame.call_frame_backup.clone())?;
 
         Ok(ExecutionReport {
             result: TxResult::Revert(error),

@@ -15,8 +15,7 @@ use ethrex_common::types::{
     validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
     BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction,
 };
-use ethrex_common::types::{validate_block_body, MempoolTransaction};
-use ethrex_common::types::{BlobsBundle, Fork};
+use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
 
 use ethrex_common::{Address, H256};
 use mempool::Mempool;
@@ -73,10 +72,9 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
         let chain_config = self.storage.get_chain_config()?;
-        let fork = chain_config.fork(block.header.timestamp);
 
         // Validate the block pre-execution
-        validate_block(block, &parent_header, &chain_config)?;
+        validate_block(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
         let mut vm = Evm::new(
             self.evm_engine,
@@ -84,7 +82,7 @@ impl Blockchain {
             block.header.parent_hash,
         );
         let execution_result = vm.execute_block(block)?;
-        let account_updates = vm.get_state_transitions(fork)?;
+        let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
         validate_gas_used(&execution_result.receipts, &block.header)?;
@@ -103,7 +101,7 @@ impl Blockchain {
         vm: &mut Evm,
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
-        validate_block(block, parent_header, chain_config)?;
+        validate_block(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
 
         let execution_result = vm.execute_block(block)?;
 
@@ -269,7 +267,7 @@ impl Blockchain {
         }
 
         let account_updates = vm
-            .get_state_transitions(fork)
+            .get_state_transitions()
             .map_err(|err| (ChainError::EvmError(err), None))?;
 
         let Some(last_block) = blocks.last() else {
@@ -561,9 +559,11 @@ pub fn validate_block(
     block: &Block,
     parent_header: &BlockHeader,
     chain_config: &ChainConfig,
+    elasticity_multiplier: u64,
 ) -> Result<(), ChainError> {
     // Verify initial header validity against parent
-    validate_block_header(&block.header, parent_header).map_err(InvalidBlockError::from)?;
+    validate_block_header(&block.header, parent_header, elasticity_multiplier)
+        .map_err(InvalidBlockError::from)?;
     validate_block_body(block).map_err(InvalidBlockError::from)?;
 
     if chain_config.is_prague_activated(block.header.timestamp) {
