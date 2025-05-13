@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747148067582,
+  "lastUpdate": 1747149322542,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6505,6 +6505,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 218104494696,
             "range": "± 989460263",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e3d755829dcf91ab2c31f44d6d6fba196fe4f868",
+          "message": "refactor(l1): group node data in RpcContext (#2752)\n\n**Motivation**\n`RpcContext` has become quite extensive lately, so we need to group some\nof its fields into individual structures that hold data used for similar\npurposes. This PR groups static data related to the node (such as p2p\naddress, version, etc) into a `NodeData` struct in order to simplify it.\n\n**Description**\n* Group static data about the node held in `RpcContext` into `NodeData`\n* (Misc) Remove duplicated code between test functions\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nAddresses review comment:\nhttps://github.com/lambdaclass/ethrex/pull/2732#discussion_r2084894577",
+          "timestamp": "2025-05-13T14:21:16Z",
+          "tree_id": "6eb11c4593dd4a636ed0fd0000a503ab0b60989a",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e3d755829dcf91ab2c31f44d6d6fba196fe4f868"
+        },
+        "date": 1747149320481,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 215689162333,
+            "range": "± 607668027",
             "unit": "ns/iter"
           }
         ]
