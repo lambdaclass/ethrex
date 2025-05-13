@@ -444,7 +444,6 @@ pub mod test_utils {
 
     pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-        let local_node_record = Arc::new(tokio::sync::Mutex::new(example_local_node_record()));
         RpcApiContext {
             storage,
             blockchain,
