@@ -1,4 +1,4 @@
-use super::utils::sleep_random;
+use super::{errors::SequencerError, utils::sleep_random};
 use crate::{
     sequencer::errors::ProofSenderError,
     utils::prover::{
@@ -9,8 +9,7 @@ use crate::{
 };
 use aligned_sdk::core::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData};
 use aligned_sdk::sdk::{
-    aggregation::{is_proof_verified_in_aggregation_mode, AggregationModeVerificationData},
-    estimate_fee, get_nonce_from_ethereum, submit,
+    aggregation::AggregationModeVerificationData, estimate_fee, get_nonce_from_ethereum, submit,
 };
 use ethers::prelude::*;
 use ethers::signers::Wallet;
@@ -264,23 +263,23 @@ impl L1ProofSender {
 
         let verification_data = AggregationModeVerificationData::SP1 { vk, public_inputs };
 
-        match is_proof_verified_in_aggregation_mode(
-            verification_data,
-            Network::Devnet,
-            self.eth_client.url.clone(),
-            "http://127.0.0.1:58517".to_string(), // beacon_client
-            None,
-        )
-        .await
-        {
-            Ok(res) => {
-                info!(
-                    "L1 proof sender: Proof has been verified in the aggregated proof with merkle root 0x{}",
-                    hex::encode(res)
-                );
-            }
-            Err(e) => error!("Error while trying to verify proof {:?}", e),
-        };
+        // match is_proof_verified_in_aggregation_mode(
+        //     verification_data,
+        //     Network::Devnet,
+        //     self.eth_client.url.clone(),
+        //     "http://127.0.0.1:58517".to_string(), // beacon_client
+        //     None,
+        // )
+        // .await
+        // {
+        //     Ok(res) => {
+        //         info!(
+        //             "L1 proof sender: Proof has been verified in the aggregated proof with merkle root 0x{}",
+        //             hex::encode(res)
+        //         );
+        //     }
+        //     Err(e) => error!("Error while trying to verify proof {:?}", e),
+        // };
 
         Ok(())
     }
