@@ -390,10 +390,6 @@ impl<'a> VM<'a> {
             let Some(authority_address) = eip7702_recover_address(&auth_tuple)? else {
                 continue;
             };
-            println!(
-                "Auth address: {}, Address: {}",
-                authority_address, auth_tuple.address
-            );
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
             let (authority_account, _address_was_cold) = self

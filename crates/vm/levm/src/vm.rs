@@ -3,7 +3,7 @@ use crate::{
     constants::*,
     db::{cache, gen_db::GeneralizedDatabase},
     environment::Environment,
-    errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
+    errors::{ExecutionReport, InternalError, OpcodeResult, PrecompileError, TxResult, VMError},
     hooks::hook::Hook,
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
@@ -309,13 +309,17 @@ impl<'a> VM<'a> {
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
 
-            let delegated_addresses: Vec<Address> = self
-                .authorization_list
-                .as_ref()
-                .map_or(vec![], |list| list.iter().map(|l| l.address).collect());
-
-            let precompile_result = if delegated_addresses.contains(code_address) {
-                Ok(Bytes::new())
+            // Avoid executing precompile if it is target of a delegation in EIP-7702 transaction.
+            let is_delegation_target = self.authorization_list.as_ref().map_or(false, |list| {
+                list.iter().any(|item| item.address == *code_address)
+            });
+            let precompile_result = if is_delegation_target {
+                if current_call_frame.gas_limit > 0 {
+                    Ok(Bytes::new())
+                } else {
+                    // pointer_to_precompile.json tests that it should fail in a call with zero gas limit. Which is weird because this doesn't consume gas anyway...
+                    Err(VMError::PrecompileError(PrecompileError::NotEnoughGas))
+                }
             } else {
                 execute_precompile(&mut current_call_frame)
             };
