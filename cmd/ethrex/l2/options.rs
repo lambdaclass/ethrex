@@ -49,6 +49,7 @@ impl From<SequencerOptions> for SequencerConfig {
             block_producer: BlockProducerConfig {
                 block_time_ms: opts.proposer_opts.block_time_ms,
                 coinbase_address: opts.proposer_opts.coinbase_address,
+                elasticity_multiplier: opts.proposer_opts.elasticity_multiplier,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address,
@@ -63,6 +64,10 @@ impl From<SequencerOptions> for SequencerConfig {
             },
             eth: EthConfig {
                 rpc_url: opts.eth_opts.rpc_url,
+                max_number_of_retries: opts.eth_opts.max_number_of_retries,
+                backoff_factor: opts.eth_opts.backoff_factor,
+                min_retry_delay: opts.eth_opts.min_retry_delay,
+                max_retry_delay: opts.eth_opts.max_retry_delay,
                 maximum_allowed_max_fee_per_gas: opts.eth_opts.maximum_allowed_max_fee_per_gas,
                 maximum_allowed_max_fee_per_blob_gas: opts
                     .eth_opts
@@ -115,6 +120,38 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub maximum_allowed_max_fee_per_blob_gas: u64,
+    #[arg(
+        long = "eth-max-number-of-retries",
+        default_value = "10",
+        value_name = "UINT64",
+        env = "ETHREX_MAX_NUMBER_OF_RETRIES",
+        help_heading = "Eth options"
+    )]
+    pub max_number_of_retries: u64,
+    #[arg(
+        long = "eth-backoff-factor",
+        default_value = "2",
+        value_name = "UINT64",
+        env = "ETHREX_BACKOFF_FACTOR",
+        help_heading = "Eth options"
+    )]
+    pub backoff_factor: u64,
+    #[arg(
+        long = "eth-min-retry-delay",
+        default_value = "96",
+        value_name = "UINT64",
+        env = "ETHREX_MIN_RETRY_DELAY",
+        help_heading = "Eth options"
+    )]
+    pub min_retry_delay: u64,
+    #[arg(
+        long = "eth-max-retry-delay",
+        default_value = "1800",
+        value_name = "UINT64",
+        env = "ETHREX_MAX_RETRY_DELAY",
+        help_heading = "Eth options"
+    )]
+    pub max_retry_delay: u64,
 }
 
 #[derive(Parser)]
@@ -187,6 +224,14 @@ pub struct ProposerOptions {
         help_heading = "Proposer options"
     )]
     pub coinbase_address: Address,
+    #[arg(
+        long,
+        default_value = "2",
+        value_name = "UINT64",
+        env = "ETHREX_PROPOSER_ELASTICITY_MULTIPLIER",
+        help_heading = "Proposer options"
+    )]
+    pub elasticity_multiplier: u64,
 }
 
 #[derive(Parser)]
