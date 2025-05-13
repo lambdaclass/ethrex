@@ -210,20 +210,20 @@ impl<'a> VM<'a> {
                     .current_call_frame_mut()?
                     .increment_pc_by(pc_increment)?,
                 Ok(OpcodeResult::Halt) | Err(_) => {
-                    let mut executed_call_frame = self.pop_callframe()?;
-
                     let report = match op_result {
-                        Ok(OpcodeResult::Halt) => {
-                            self.handle_opcode_result(&mut executed_call_frame)?
-                        }
-                        Err(error) => self.handle_opcode_error(error, &mut executed_call_frame)?,
+                        Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
+                        Err(error) => self.handle_opcode_error(error)?,
                         _ => unreachable!(),
                     };
 
-                    if self.handle_return(&executed_call_frame, &report)? {
-                        self.current_call_frame_mut()?.increment_pc_by(1)?;
-                    } else {
+                    // Return if the executed callframe is the initial one.
+                    if self.current_call_frame()?.depth == 1 {
                         return Ok(report);
+                    } else {
+                        // Otherwise, continue executing the previous callframe
+                        let executed_call_frame = self.pop_callframe()?;
+                        self.handle_return(&executed_call_frame, &report)?;
+                        self.current_call_frame_mut()?.increment_pc_by(1)?;
                     }
                 }
             }

@@ -842,17 +842,13 @@ impl<'a> VM<'a> {
         &mut self,
         executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
-    ) -> Result<bool, VMError> {
-        if executed_call_frame.depth == 0 {
-            self.call_frames.push(executed_call_frame.clone());
-            return Ok(false);
-        }
+    ) -> Result<(), VMError> {
         if executed_call_frame.create_op_called {
             self.handle_return_create(executed_call_frame, tx_report)?;
         } else {
             self.handle_return_call(executed_call_frame, tx_report)?;
         }
-        Ok(true)
+        Ok(())
     }
     pub fn handle_return_call(
         &mut self,
