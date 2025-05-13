@@ -15,7 +15,7 @@ env:
 jobs:
   test:
     name: Integration Test Prover SP1
-    runs-on: gpu
+    runs-on: gpu-test
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
