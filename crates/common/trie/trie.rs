@@ -68,6 +68,10 @@ impl Trie {
         }
     }
 
+    pub fn db(&self) -> &dyn TrieDB {
+        self.db.as_ref()
+    }
+
     /// Retrieve an RLP-encoded value from the trie given its RLP-encoded path.
     pub fn get(&self, path: &PathRLP) -> Result<Option<ValueRLP>, TrieError> {
         Ok(match self.root {
