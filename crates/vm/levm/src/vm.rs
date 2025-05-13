@@ -195,8 +195,13 @@ impl<'a> VM<'a> {
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
             let report =
                 self.handle_precompile_result(precompile_result, backup, &mut current_call_frame)?;
-            self.handle_return(&current_call_frame, &report)?;
-            self.current_call_frame_mut()?.increment_pc_by(1)?;
+
+            if self.current_call_frame()?.depth > 1 {
+                self.handle_return(&current_call_frame, &report)?;
+                self.current_call_frame_mut()?.increment_pc_by(1)?;
+            } else {
+                self.call_frames.push(current_call_frame);
+            }
             return Ok(report);
         }
 
