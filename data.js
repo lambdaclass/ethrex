@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747144735282,
+  "lastUpdate": 1747145057771,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6445,6 +6445,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 215258300059,
             "range": "± 381179602",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49622509+jrchatruc@users.noreply.github.com",
+            "name": "Javier Rodríguez Chatruc",
+            "username": "jrchatruc"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "12bb08d726dcb1515391ea4846399a6c41fd63b4",
+          "message": "fix(l2): fix prover benchmarks not compiling (#2757)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-13T13:07:50Z",
+          "tree_id": "fe9bd1acf64e6517a84b840ec0215933c89a958f",
+          "url": "https://github.com/lambdaclass/ethrex/commit/12bb08d726dcb1515391ea4846399a6c41fd63b4"
+        },
+        "date": 1747145055671,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 216613314283,
+            "range": "± 471487870",
             "unit": "ns/iter"
           }
         ]
