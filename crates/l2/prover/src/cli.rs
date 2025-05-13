@@ -2,7 +2,7 @@ use clap::Parser;
 use ethrex_l2::utils::config::prover::ProverConfig;
 use tracing::Level;
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 pub struct ProverClientOptions {
     #[arg(
         long = "prover-server-endpoint",
