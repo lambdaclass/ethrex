@@ -1,11 +1,10 @@
 use crate::{
-    call_frame::CallFrame,
     constants::*,
     errors::{ExecutionReport, InternalError, OpcodeResult, OutOfGasError, TxResult, VMError},
     gas_cost::CODE_DEPOSIT_COST,
     opcodes::Opcode,
     utils::*,
-    vm::{Substate, VM},
+    vm::VM,
 };
 
 use bytes::Bytes;

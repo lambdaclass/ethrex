@@ -842,21 +842,21 @@ impl<'a> VM<'a> {
 
     /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
     pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
-        let executed_call_frame = self
-            .call_frames
-            .pop()
-            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+        let executed_call_frame = self.pop_call_frame()?;
 
+        // Here happens the interaction between child (executed) and parent (caller) callframe.
         if executed_call_frame.create_op_called {
             self.handle_return_create(&executed_call_frame, tx_report)?;
         } else {
             self.handle_return_call(&executed_call_frame, tx_report)?;
         }
 
+        // Increment PC of the parent callframe after execution of the child.
         self.current_call_frame_mut()?.increment_pc_by(1)?;
 
         Ok(())
     }
+
     pub fn handle_return_call(
         &mut self,
         executed_call_frame: &CallFrame,
