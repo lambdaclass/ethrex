@@ -1,15 +1,14 @@
-#[cfg(feature = "c-kzg")]
-use lazy_static::lazy_static;
 use std::ops::AddAssign;
 
 use crate::serde_utils;
-use crate::{
-    types::{constants::VERSIONED_HASH_VERSION_KZG, transaction::EIP4844Transaction},
-    Bytes, H256,
-};
+use crate::{types::constants::VERSIONED_HASH_VERSION_KZG, Bytes, H256};
 
 #[cfg(feature = "c-kzg")]
-use c_kzg::{ethereum_kzg_settings, KzgCommitment, KzgProof, KzgSettings};
+use {
+    crate::types::transaction::EIP4844Transaction,
+    c_kzg::{ethereum_kzg_settings, KzgCommitment, KzgProof, KzgSettings},
+    lazy_static::lazy_static,
+};
 
 use ethrex_rlp::{
     decode::RLPDecode,

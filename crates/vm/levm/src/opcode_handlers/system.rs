@@ -851,45 +851,45 @@ impl<'a> VM<'a> {
 
     pub fn handle_return(
         &mut self,
-        call_frame: &CallFrame,
+        executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<bool, VMError> {
-        if call_frame.depth == 0 {
-            self.call_frames.push(call_frame.clone());
+        if executed_call_frame.depth == 0 {
+            self.call_frames.push(executed_call_frame.clone());
             return Ok(false);
         }
-        if call_frame.is_create {
-            self.handle_return_create(call_frame, tx_report)?;
+        if executed_call_frame.is_create {
+            self.handle_return_create(executed_call_frame, tx_report)?;
         } else {
-            self.handle_return_call(call_frame, tx_report)?;
+            self.handle_return_call(executed_call_frame, tx_report)?;
         }
         Ok(true)
     }
     pub fn handle_return_call(
         &mut self,
-        call_frame: &CallFrame,
+        executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<(), VMError> {
         // Return gas left from subcontext
-        let gas_left_from_new_call_frame = call_frame
+        let gas_left_from_new_call_frame = executed_call_frame
             .gas_limit
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
         {
-            let current_call_frame = self.current_call_frame_mut()?;
-            current_call_frame.gas_used = current_call_frame
+            let parent_call_frame = self.current_call_frame_mut()?;
+            parent_call_frame.gas_used = parent_call_frame
                 .gas_used
                 .checked_sub(gas_left_from_new_call_frame)
                 .ok_or(InternalError::GasOverflow)?;
 
-            current_call_frame.logs.extend(tx_report.logs.clone());
+            parent_call_frame.logs.extend(tx_report.logs.clone());
             memory::try_store_range(
-                &mut current_call_frame.memory,
-                call_frame.ret_offset,
-                call_frame.ret_size,
+                &mut parent_call_frame.memory,
+                executed_call_frame.ret_offset,
+                executed_call_frame.ret_size,
                 &tx_report.output,
             )?;
-            current_call_frame.sub_return_data = tx_report.output.clone();
+            parent_call_frame.sub_return_data = tx_report.output.clone();
         }
 
         // What to do, depending on TxResult
@@ -898,14 +898,20 @@ impl<'a> VM<'a> {
                 self.current_call_frame_mut()?
                     .stack
                     .push(SUCCESS_FOR_CALL)?;
-                self.merge_call_frame_backup_with_parent(&call_frame.call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(_) => {
                 // Revert value transfer
-                if call_frame.should_transfer_value {
-                    self.decrease_account_balance(call_frame.to, call_frame.msg_value)?;
+                if executed_call_frame.should_transfer_value {
+                    self.decrease_account_balance(
+                        executed_call_frame.to,
+                        executed_call_frame.msg_value,
+                    )?;
 
-                    self.increase_account_balance(call_frame.msg_sender, call_frame.msg_value)?;
+                    self.increase_account_balance(
+                        executed_call_frame.msg_sender,
+                        executed_call_frame.msg_value,
+                    )?;
                 }
                 // Push 0 to stack
                 self.current_call_frame_mut()?.stack.push(REVERT_FOR_CALL)?;
@@ -915,41 +921,44 @@ impl<'a> VM<'a> {
     }
     pub fn handle_return_create(
         &mut self,
-        call_frame: &CallFrame,
+        executed_call_frame: &CallFrame,
         tx_report: &ExecutionReport,
     ) -> Result<(), VMError> {
-        let unused_gas = call_frame
+        let unused_gas = executed_call_frame
             .gas_limit
             .checked_sub(tx_report.gas_used)
             .ok_or(InternalError::GasOverflow)?;
 
         {
-            let current_call_frame = self.current_call_frame_mut()?;
+            let parent_call_frame = self.current_call_frame_mut()?;
             // Return reserved gas
-            current_call_frame.gas_used = current_call_frame
+            parent_call_frame.gas_used = parent_call_frame
                 .gas_used
                 .checked_sub(unused_gas)
                 .ok_or(InternalError::GasOverflow)?;
 
-            current_call_frame.logs.extend(tx_report.logs.clone());
+            parent_call_frame.logs.extend(tx_report.logs.clone());
         }
 
         match tx_report.result.clone() {
             TxResult::Success => {
                 self.current_call_frame_mut()?
                     .stack
-                    .push(address_to_word(call_frame.to))?;
-                self.merge_call_frame_backup_with_parent(&call_frame.call_frame_backup)?;
+                    .push(address_to_word(executed_call_frame.to))?;
+                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
             }
             TxResult::Revert(err) => {
                 // Return value to sender
-                self.increase_account_balance(call_frame.msg_sender, call_frame.msg_value)?;
+                self.increase_account_balance(
+                    executed_call_frame.msg_sender,
+                    executed_call_frame.msg_value,
+                )?;
 
                 // Deployment failed so account shouldn't exist
-                cache::remove_account(&mut self.db.cache, &call_frame.to);
+                cache::remove_account(&mut self.db.cache, &executed_call_frame.to);
                 self.accrued_substate
                     .created_accounts
-                    .remove(&call_frame.to);
+                    .remove(&executed_call_frame.to);
 
                 let current_call_frame = self.current_call_frame_mut()?;
                 // If revert we have to copy the return_data
