@@ -49,23 +49,18 @@ refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-
 
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
-		cd ../../../ && \
-		time cargo test --quiet -p ef_tests-state --test all --release -- $(flags) --summary;\
+		time cargo test --quiet --test all --release -- $(flags) --summary;\
 	elif [ "$(DEBUG)" = "true" ]; then \
-		cd ../../../ && \
-		time cargo test -p ef_tests-state --test all -- $(flags);\
+		time cargo test --test all -- $(flags);\
 	else \
-		cd ../../../ && \
-		time cargo test -p ef_tests-state --test all --release -- $(flags);\
+		time cargo test --test all --release -- $(flags);\
 	fi
 
 run-evm-ef-tests-ci: ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
-	cd ../../../ && \
-	time cargo test -p ef_tests-state --test all --release -- --summary
+	time cargo test --test all --release -- --summary
 
 generate-evm-ef-tests-report: ## 📊 Generate EF Tests Report
-	cd ../../../ && \
-	cargo test -p ef_tests-state --test all --release -- --summary
+	cargo test --test all --release -- --summary
 
 test-levm: 
 	$(MAKE) run-evm-ef-tests flags="--summary"
