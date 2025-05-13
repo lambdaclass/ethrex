@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747152675679,
+  "lastUpdate": 1747153571538,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6625,6 +6625,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 219429486378,
             "range": "± 473058913",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cbe66e9c87ea0b67ab86e7b930784d03580c3751",
+          "message": "fix(l2): disable RPC bench slack message (#2765)\n\n**Motivation**\n\nThe job is unstable, we should reenable when possible\n\n**Description**\n\n- Comment out the last step of the job",
+          "timestamp": "2025-05-13T15:30:24Z",
+          "tree_id": "ab1ff838429147820ba7652ecb72b21cffe19f30",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cbe66e9c87ea0b67ab86e7b930784d03580c3751"
+        },
+        "date": 1747153568728,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 214787702115,
+            "range": "± 1266159413",
             "unit": "ns/iter"
           }
         ]
