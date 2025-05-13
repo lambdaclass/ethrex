@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747158144892,
+  "lastUpdate": 1747159710031,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6801,6 +6801,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007372243771372741,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cf1b0a811151ef84f5eee3832356fddbdf01b2db",
+          "message": "feat(l2): prove deposits (#2737)\n\n> [!NOTE]\n> This is an updated version of #2209  from @xqft \n\n**Motivation**\n\nWe want to prove the L2 deposits in our prover\n\n**Description**\n\n- Add to `ProgramInput` and `ProverInputData` the field\n`deposit_logs_hash` the hash that is created by hashing the concatenated\ntransaction hashes from a batch of blocks to send to the prover\n- Inside the prover add logic to for every batch:\n- Gather the deposit tx hashes for each block from the block's\ntransactions.\n  - Calculate the logs hash the same way the l1_committer does\n  - Compare our resulting hash with the incoming from the `ProgramInput`\n\n\nCloses #2199\n\n---------\n\nCo-authored-by: Estéfano Bargas <estefano.bargas@fing.edu.uy>",
+          "timestamp": "2025-05-13T16:45:04Z",
+          "tree_id": "a0311c49b1691af7c96d595664f3d13217f2c8dc",
+          "url": "https://github.com/lambdaclass/ethrex/commit/cf1b0a811151ef84f5eee3832356fddbdf01b2db"
+        },
+        "date": 1747159708978,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007419362340216323,
             "unit": "Mgas/s"
           }
         ]
