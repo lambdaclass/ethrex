@@ -31,7 +31,7 @@ impl DiffLayer {
         diffed: Option<Bloom>,
     ) -> Self {
         let mut layer = DiffLayer {
-            origin,
+            origin: origin.clone(),
             parent,
             root,
             stale: false,
@@ -40,15 +40,18 @@ impl DiffLayer {
             diffed: diffed.unwrap_or_default(),
         };
 
-        layer.rebloom(diffed);
+        layer.rebloom(diffed, origin);
 
         layer
     }
 }
 
 impl DiffLayer {
-    pub fn rebloom(&mut self, parent_diffed: Option<Bloom>) {
+    pub fn rebloom(&mut self, parent_diffed: Option<Bloom>, new_origin: Arc<DiskLayer>) {
         self.diffed = parent_diffed.unwrap_or_default();
+
+        // Set the new origin that triggered a rebloom.
+        self.origin = new_origin;
 
         {
             for hash in self.accounts.keys() {

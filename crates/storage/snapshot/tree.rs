@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{atomic::AtomicBool, Arc, RwLock},
 };
 
@@ -7,7 +7,7 @@ use ethrex_common::{
     types::{AccountState, BlockHash},
     Address, H256, U256,
 };
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::{api::StoreEngine, hash_address_fixed};
 
@@ -126,8 +126,6 @@ impl SnapshotTree {
             return Err(SnapshotError::SnapshotNotFound(root));
         };
 
-        let _diff_value = diff.read().unwrap();
-
         if layers == 0 {
             // Full commit
             let base = self.save_diff(self.flatten_diff(root)?)?;
@@ -138,7 +136,94 @@ impl SnapshotTree {
             return Ok(());
         }
 
-        todo!();
+        let persisted = self.cap_layers(diff, layers)?;
+
+        // Remove stale layers or ones that link into one.
+
+        let mut layers = self.layers.write().unwrap();
+
+        info!(
+            "SnapshotTree cap triggered, current layers: {}",
+            layers.len()
+        );
+
+        let mut children: HashMap<H256, Vec<H256>> = HashMap::new();
+
+        for (hash, snap) in layers.iter() {
+            match snap {
+                Layer::DiskLayer(_) => {}
+                Layer::DiffLayer(diff_layer) => {
+                    let parent = diff_layer.read().unwrap().parent();
+                    let entry = children.entry(parent).or_default();
+                    entry.push(*hash);
+                }
+            }
+        }
+
+        let mut to_remove: HashSet<H256> = HashSet::new();
+
+        fn remove(root: H256, children: &HashMap<H256, Vec<H256>>, to_remove: &mut HashSet<H256>) {
+            to_remove.insert(root);
+            if let Some(childs) = children.get(&root) {
+                for child in childs {
+                    remove(*child, children, to_remove);
+                }
+            }
+        }
+
+        for (root, snap) in layers.iter() {
+            match snap {
+                Layer::DiskLayer(disk_layer) => {
+                    if disk_layer.stale() {
+                        remove(*root, &children, &mut to_remove);
+                    }
+                }
+                Layer::DiffLayer(diff_layer) => {
+                    if diff_layer.read().unwrap().stale() {
+                        remove(*root, &children, &mut to_remove);
+                    }
+                }
+            }
+        }
+
+        for root in to_remove.iter() {
+            layers.remove(root);
+            children.remove(root);
+        }
+
+        let mut new_root = root;
+        if let Some(base) = persisted {
+            fn rebloom(
+                root: H256,
+                layers: &HashMap<H256, Layer>,
+                children: &HashMap<H256, Vec<H256>>,
+                base: Arc<DiskLayer>,
+            ) {
+                if let Some(layer) = layers.get(&root) {
+                    match layer {
+                        Layer::DiskLayer(_) => {}
+                        Layer::DiffLayer(layer) => {
+                            layer.write().unwrap().rebloom(None, base.clone())
+                        }
+                    }
+                }
+                if let Some(childs) = children.get(&root) {
+                    for child in childs {
+                        rebloom(*child, layers, children, base.clone());
+                    }
+                }
+            }
+            new_root = base.root;
+            rebloom(base.root, &layers, &children, base);
+        }
+
+        info!(
+            "SnapshotTree cap finished, current layers: {}, using disk layer block {}",
+            layers.len(),
+            new_root
+        );
+
+        Ok(())
     }
 
     /// Internal helper method to flatten diff layers.
