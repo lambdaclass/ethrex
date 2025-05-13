@@ -10,7 +10,6 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hex::ToHex;
 use secp256k1::{PublicKey, SecretKey};
-use sha3::{Digest, Keccak256};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -220,9 +219,8 @@ async fn load_test(
         let client = client.clone();
         let tx_builder = tx_builder.clone();
         tasks.push(async move {
-            let address = get_address_from_secret_key(&sk).map_err(|e| {
-                EthClientError::Custom(format!("Failed to get address from secret key: {}", e))
-            })?;
+            let address =
+                get_address_from_secret_key(&sk).expect("Failed to get address from secret key");
 
             let nonce = client
                 .get_nonce(address, BlockByNumber::Latest)
@@ -269,20 +267,6 @@ async fn load_test(
     Ok(())
 }
 
-// Function to derive address from public key
-fn address_from_pub_key(public_key: PublicKey) -> Address {
-    let public_key = public_key.serialize_uncompressed();
-
-    // The public key is 65 bytes, the first byte is a format byte
-    // so we skip it and hash only the actual key data
-    let hash = Keccak256::digest(&public_key[1..]);
-
-    // Take the last 20 bytes of the hash as the address
-    let mut address = Address::default();
-    address.0.copy_from_slice(&hash[12..]);
-    address
-}
-
 // Waits until the nonce of each account has reached the tx_amount.
 async fn wait_until_all_included(
     client: EthClient,
@@ -292,10 +276,9 @@ async fn wait_until_all_included(
 ) -> Result<(), String> {
     let start_time = tokio::time::Instant::now();
 
-    for (pk, _) in accounts {
-        let pk = *pk;
+    for (_, sk) in accounts {
         let client = client.clone();
-        let src = address_from_pub_key(pk);
+        let src = get_address_from_secret_key(sk).expect("Failed to get address from secret key");
         let encoded_src: String = src.encode_hex();
         loop {
             let elapsed = start_time.elapsed();
