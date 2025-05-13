@@ -571,19 +571,13 @@ fn simulate_tx(
     blockchain: Arc<Blockchain>,
     fork: Fork,
 ) -> Result<ExecutionResult, RpcErr> {
-    let mut transaction = transaction.clone();
-    transaction.input = if transaction.input.is_empty() {
-        transaction.data.clone()
-    } else {
-        transaction.input
-    };
     let mut vm = Evm::new(
         blockchain.evm_engine,
         storage.clone(),
         block_header.compute_block_hash(),
     );
 
-    match vm.simulate_tx_from_generic(&transaction, block_header, fork)? {
+    match vm.simulate_tx_from_generic(transaction, block_header, fork)? {
         ExecutionResult::Revert {
             gas_used: _,
             output,
