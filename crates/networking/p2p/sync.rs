@@ -190,7 +190,7 @@ impl Syncer {
         loop {
             debug!("Requesting Block Headers from {search_head}");
 
-            let Some((mut block_headers, peer_id)) = self
+            let Some((mut block_headers, mut block_hashes)) = self
                 .peers
                 .request_block_headers(search_head, BlockRequestOrder::OldToNew)
                 .await
@@ -216,28 +216,6 @@ impl Syncer {
                 // There is no path to the sync head this goes back until it find a common ancerstor
                 warn!("Sync failed to find target block header, going back to the previous parent");
                 search_head = first_block_header.parent_hash;
-                continue;
-            }
-
-            let mut block_hashes = block_headers
-                .iter()
-                .map(|header| header.compute_block_hash())
-                .collect::<Vec<_>>();
-
-            // Validate that, for each header, its parent root is equal to the previous header's
-            // hash. If that's not true, then we have received an invalid header from our peer and we
-            // have to discard it.
-            let any_invalid = block_headers
-                .iter()
-                .skip(1) // Skip the first, since we know the current head is valid
-                .zip(block_hashes.iter())
-                .any(|(current_header, previous_hash)| {
-                    current_header.parent_hash != *previous_hash
-                });
-
-            if any_invalid {
-                warn!("Received invalid header chain from peer, discarding peer {peer_id} and retrying...");
-                self.peers.remove_peer(peer_id).await;
                 continue;
             }
 

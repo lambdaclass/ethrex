@@ -28,7 +28,7 @@ use crate::{
     },
     snap::encodable_to_proof,
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 pub const PEER_SELECT_RETRY_ATTEMPTS: usize = 3;
 pub const REQUEST_RETRY_ATTEMPTS: usize = 5;
@@ -87,7 +87,7 @@ impl PeerHandler {
         &self,
         start: H256,
         order: BlockRequestOrder,
-    ) -> Option<(Vec<BlockHeader>, H512)> {
+    ) -> Option<(Vec<BlockHeader>, Vec<H256>)> {
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let request_id = rand::random();
             let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
@@ -103,13 +103,36 @@ impl PeerHandler {
                 debug!("Failed to send message to peer: {err}");
                 continue;
             }
-            if let Some(block_headers) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
+            if let Some((block_headers, block_hashes)) = tokio::time::timeout(PEER_REPLY_TIMEOUT, async move {
                 loop {
                     match receiver.recv().await {
                         Some(RLPxMessage::BlockHeaders(BlockHeaders { id, block_headers }))
                             if id == request_id =>
                         {
-                            return Some(block_headers)
+                            let block_hashes = block_headers
+                                .iter()
+                                .map(|header| header.compute_block_hash())
+                                .collect::<Vec<_>>();
+
+                            // Validate that, for each header, its parent root is equal to the previous header's
+                            // hash. If that's not true, then we have received an invalid header from our peer and we
+                            // have to discard it.
+                            let any_invalid = block_headers
+                                .iter()
+                                .skip(1) // Skip the first, since we know the current head is valid
+                                .zip(block_hashes.iter())
+                                .any(|(current_header, previous_hash)| {
+                                    current_header.parent_hash != *previous_hash
+                                });
+
+                            if any_invalid {
+                                warn!("Received invalid headers from peer, discarding peer {peer_id} and retrying...");
+                                self.remove_peer(peer_id).await;
+                                continue;
+                            }
+
+                            // If the headers are valid, we can return them
+                            return Some((block_headers, block_hashes))
                         }
                         // Ignore replies that don't match the expected id (such as late responses)
                         Some(_) => continue,
@@ -120,9 +143,9 @@ impl PeerHandler {
             .await
             .ok()
             .flatten()
-            .and_then(|headers| (!headers.is_empty()).then_some(headers))
+            .and_then(|(headers, hashes)| (!headers.is_empty()).then_some((headers, hashes)))
             {
-                return Some((block_headers, peer_id));
+                return Some((block_headers, block_hashes));
             }
         }
         None
