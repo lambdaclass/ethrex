@@ -84,7 +84,6 @@ pub async fn generate_program_input(
     let parent_block_header = store
         .get_block_header_by_hash(block.header.parent_hash)?
         .ok_or(ProverInputError::InvalidParentBlock(parent_hash))?;
-
     let elasticity_multiplier = ELASTICITY_MULTIPLIER;
     let blocks = vec![block];
     let db = Evm::to_prover_db(&store, &blocks).await?;
