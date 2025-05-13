@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747149711840,
+  "lastUpdate": 1747150589027,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6565,6 +6565,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 216117720419,
             "range": "± 813275620",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "46695152+LeanSerra@users.noreply.github.com",
+            "name": "LeanSerra",
+            "username": "LeanSerra"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "00f6389fdcfc07c8c31350c311475cd0c64f9ca9",
+          "message": "feat(l2): prove withdrawals (#2668)\n\n**Motivation**\n\nWe want to prove the L2 withdrawals in our prover.\n\n**Description**\n\n- Add to `ProgramInput` and `ProverInputData` the field\n`withdrawals_merkle_root` the merkle root that is created by merkelizing\nall the withdrawals from a batch of blocks to send to the prover\n- Inside the prover add logic to for every batch:\n- Gather the withdrawals hashes for each block from the block's\ntransactions.\n  - Get the root of the Merkle tree from these hashes\n- Compare our resulting Merkle root with the incoming from the\n`ProgramInput`\n- Modify the l2 integration-test so that it executes 5 withdrawals to\nensure that the merkelization is working correctly\n- Added a dirty fix where `cargo check` is complaining about a missing\nfield in the struct `ProgramInput` because the crate `l2` enables the\nfeature `l2` in `zkvm-interface` but neither of those crates depend on\n`ethrex-prover` so the feature isn't enabled\n  - This should be fixed by completing #2662\n\nCloses #2201\n\n---------\n\nCo-authored-by: Estéfano Bargas <estefano.bargas@fing.edu.uy>",
+          "timestamp": "2025-05-13T14:38:18Z",
+          "tree_id": "da414022328038ea91bbd3af15c2678f475eaf6e",
+          "url": "https://github.com/lambdaclass/ethrex/commit/00f6389fdcfc07c8c31350c311475cd0c64f9ca9"
+        },
+        "date": 1747150586903,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 215909501737,
+            "range": "± 407125643",
             "unit": "ns/iter"
           }
         ]
