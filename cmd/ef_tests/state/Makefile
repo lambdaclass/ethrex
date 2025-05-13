@@ -1,5 +1,6 @@
 .PHONY: run-evm-ef-tests
 
+FIXTURES_FILE := .fixtures_url
 VECTORS_DIR := vectors
 TMP_DIR := tmp
 TESTS_REPO := $(TMP_DIR)/ethereum-tests
@@ -11,7 +12,7 @@ COMMIT_LEGACY_TESTS_FOR_TAG := b3f67fe
 STATETEST_VERSION := pectra-devnet-6%40v1.0.0
 STATETEST_NET := pectra-devnet-6
 STATETEST_ARTIFACT := fixtures_$(STATETEST_NET).tar.gz
-STATETEST_URL := https://github.com/ethereum/execution-spec-tests/releases/download/$(STATETEST_VERSION)/fixtures_$(STATETEST_NET).tar.gz
+STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
