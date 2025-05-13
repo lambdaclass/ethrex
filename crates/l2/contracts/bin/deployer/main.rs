@@ -310,8 +310,6 @@ async fn initialize_contracts(
 ) -> Result<(), DeployerError> {
     let initialize_frames = spinner!(["🪄❱❱", "❱🪄❱", "❱❱🪄"], 200);
 
-    let deployer_address = get_address_from_secret_key(&opts.private_key)?;
-
     let mut spinner = Spinner::new(
         initialize_frames.clone(),
         "Initializing OnChainProposer",
@@ -321,7 +319,7 @@ async fn initialize_contracts(
     let initialize_tx_hash = {
         let calldata_values = vec![
             Value::Bool(opts.validium),
-            Value::Address(opts.on_chain_proposer_owner.unwrap_or(deployer_address)),
+            Value::Address(opts.on_chain_proposer_owner),
             Value::Address(bridge_address),
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
@@ -355,7 +353,7 @@ async fn initialize_contracts(
     );
     let initialize_tx_hash = {
         let calldata_values = vec![
-            Value::Address(opts.bridge_owner.unwrap_or(deployer_address)),
+            Value::Address(opts.bridge_owner),
             Value::Address(on_chain_proposer_address),
         ];
         let bridge_initialization_calldata =
