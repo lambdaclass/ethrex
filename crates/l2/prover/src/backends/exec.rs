@@ -6,6 +6,8 @@ use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
 use tracing::warn;
+#[cfg(feature = "l2")]
+use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -42,6 +44,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         blocks,
         parent_block_header,
         mut db,
+        elasticity_multiplier,
     } = input;
 
     // Tries used for validating initial and final state root
@@ -61,15 +64,30 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     let mut parent_header = parent_block_header;
     let mut acc_account_updates: HashMap<Address, AccountUpdate> = HashMap::new();
 
+    #[cfg(feature = "l2")]
+    let mut withdrawals = vec![];
+
     for block in blocks {
         // Validate the block
-        validate_block(&block, &parent_header, &db.chain_config)?;
+        validate_block(
+            &block,
+            &parent_header,
+            &db.chain_config,
+            elasticity_multiplier,
+        )?;
 
         // Execute block
         let mut vm = Evm::from_execution_db(db.clone());
         let result = vm.execute_block(&block)?;
         let receipts = result.receipts;
         let account_updates = vm.get_state_transitions()?;
+
+        // Get L2 withdrawals for this block
+        #[cfg(feature = "l2")]
+        {
+            let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)?;
+            withdrawals.extend(block_withdrawals);
+        }
 
         // Update db for the next block
         db.apply_account_updates(&account_updates);
@@ -88,6 +106,14 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         parent_header = block.header;
     }
 
+    // Calculate L2 withdrawals root
+    #[cfg(feature = "l2")]
+    let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
+        return Err("Failed to calculate withdrawals merkle root"
+            .to_string()
+            .into());
+    };
+
     // Update state trie
     let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
     update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)?;
@@ -101,5 +127,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
+        #[cfg(feature = "l2")]
+        withdrawals_merkle_root,
     })
 }

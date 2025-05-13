@@ -114,12 +114,13 @@ restart-contract-deps: clean-contract-deps ## 🔄 Restarts the dependencies for
 
 deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
-	--private-keys-file-path ../../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../../test_data/genesis-l1-dev.json \
+	--private-keys-file-path ../../test_data/private_keys_l1.txt \
+	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
 	--contracts-path contracts \
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa
+	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--deposit-rich
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
@@ -134,8 +135,8 @@ update-system-contracts:
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
-DEFAULT_BRIDGE_ADDRESS=0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=0xc66617ef7eff0ce31a54067183f541f52f39a7dc
+DEFAULT_BRIDGE_ADDRESS=0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=0x9185452b7d40694572ca6623799223dd5ada60f7
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
@@ -230,7 +231,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
 	cargo test l2 --release -- --nocapture --test-threads=1
-	killall ethrex_prover -s SIGINT
+	killall ethrex_prover -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 
 # State reconstruction tests
 state-diff-test:
