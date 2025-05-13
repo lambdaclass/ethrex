@@ -19,9 +19,10 @@ use ethrex_common::{
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
+use ethrex_levm::EVMConfig;
 use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
-    vm::{EVMConfig, Substate, VM},
+    vm::{Substate, VM},
     Environment,
 };
 use ethrex_storage::error::StoreError;
@@ -115,7 +116,6 @@ impl LEVM {
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
-            refunded_gas: 0,
             gas_limit: tx.gas_limit(),
             config,
             block_number: block_header.number.into(),
@@ -133,7 +133,6 @@ impl LEVM {
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas().map(U256::from),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
-            transient_storage: HashMap::new(),
             difficulty: block_header.difficulty,
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
         };
@@ -593,7 +592,6 @@ pub fn generic_system_contract_levm(
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
         block_gas_limit: 30_000_000,
-        transient_storage: HashMap::new(),
         config,
         ..Default::default()
     };
@@ -708,7 +706,6 @@ fn env_from_generic(
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
     Ok(Environment {
         origin: tx.from.0.into(),
-        refunded_gas: 0,
         gas_limit: tx.gas.unwrap_or(header.gas_limit), // Ensure tx doesn't fail due to gas limit
         config,
         block_number: header.number.into(),
@@ -726,7 +723,6 @@ fn env_from_generic(
         tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,
-        transient_storage: HashMap::new(),
         difficulty: header.difficulty,
         is_privileged: false,
     })

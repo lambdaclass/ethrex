@@ -7,7 +7,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     precompiles::is_precompile,
     utils::{address_to_word, word_to_address, *},
-    vm::{StateBackup, VM},
+    vm::VM,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -725,13 +725,10 @@ impl<'a> VM<'a> {
 
         self.accrued_substate.created_accounts.insert(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let backup = StateBackup::new(
-            self.accrued_substate.clone(),
-            self.env.refunded_gas,
-            self.env.transient_storage.clone(),
-        );
-        self.backups.push(backup);
+        // Backup of Substate, a copy of the substate to restore if sub-context is reverted
+        let backup = self.accrued_substate.clone();
+        self.substate_backups.push(backup);
+
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
@@ -831,13 +828,9 @@ impl<'a> VM<'a> {
             ret_size,
         );
         self.call_frames.push(new_call_frame);
-        // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let backup = StateBackup::new(
-            self.accrued_substate.clone(),
-            self.env.refunded_gas,
-            self.env.transient_storage.clone(),
-        );
-        self.backups.push(backup);
+        // Backup of Substate, a copy of the substate to restore if sub-context is reverted
+        let backup = self.accrued_substate.clone();
+        self.substate_backups.push(backup);
 
         if is_precompile(&code_address, self.env.config.fork) {
             let _report = self.run_execution()?;

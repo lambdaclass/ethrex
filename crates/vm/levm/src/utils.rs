@@ -8,7 +8,8 @@ use crate::{
         TOTAL_COST_FLOOR_PER_TOKEN, WARM_ADDRESS_ACCESS_COST,
     },
     opcodes::Opcode,
-    vm::{EVMConfig, Substate, VM},
+    vm::{Substate, VM},
+    EVMConfig,
 };
 use bytes::Bytes;
 use ethrex_common::types::Account;
@@ -462,7 +463,7 @@ impl<'a> VM<'a> {
         self.current_call_frame_mut()?.valid_jump_destinations =
             get_valid_jump_destinations(&self.current_call_frame()?.bytecode).unwrap_or_default();
 
-        self.env.refunded_gas = refunded_gas;
+        self.accrued_substate.refunded_gas = refunded_gas;
 
         Ok(())
     }
