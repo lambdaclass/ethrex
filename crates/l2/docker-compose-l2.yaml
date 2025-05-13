@@ -33,7 +33,6 @@ services:
       - ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_SP1_DEPLOY_VERIFIER:-false}
     depends_on:
       - ethrex
-    restart: on-failure:3
 
   ethrex_l2:
     restart: always
