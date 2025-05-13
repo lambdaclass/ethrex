@@ -68,7 +68,7 @@ pub fn prove(input: ProgramInput) -> Result<ProveOutput, Box<dyn std::error::Err
     let setup = &*PROVER_SETUP;
 
     // contains the receipt along with statistics about execution of the guest
-    let proof = setup.client.prove(&setup.pk, &stdin).groth16().run()?;
+    let proof = setup.client.prove(&setup.pk, &stdin).compressed().run()?;
     info!("Successfully generated SP1Proof.");
     Ok(ProveOutput::new(proof, setup.vk.clone()))
 }
@@ -84,6 +84,14 @@ pub fn to_calldata(proof: ProveOutput) -> Result<ProofCalldata, Box<dyn std::err
     // bytes32 programVKey,
     // bytes calldata publicValues,
     // bytes calldata proofBytes
+
+    // Correct way of saving the proof
+    let _ = proof.proof.save("/home/admin/proof");
+    std::fs::write("/home/admin/pub", proof.proof.public_values.clone())
+        .expect("failed to save public inputs");
+    std::fs::write("/home/admin/vk", proof.vk.hash_bytes()).expect("failed to save vk hash");
+    std::fs::write("/home/admin/elf", PROGRAM_ELF).expect("failed to save elf file");
+
     let calldata = vec![
         Value::FixedBytes(bytes::Bytes::from_owner(proof.vk.bytes32_raw())),
         Value::Bytes(proof.proof.public_values.to_vec().into()),

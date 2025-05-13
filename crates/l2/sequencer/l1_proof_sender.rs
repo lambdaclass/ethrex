@@ -1,15 +1,4 @@
-use std::{collections::HashMap, str::FromStr};
-
-use ethrex_common::{Address, H160, H256, U256};
-use ethrex_l2_sdk::calldata::{encode_calldata, Value};
-use ethrex_rpc::{
-    clients::{eth::WrappedTransaction, Overrides},
-    EthClient,
-};
-use keccak_hash::keccak;
-use secp256k1::SecretKey;
-use tracing::{debug, error, info};
-
+use super::utils::sleep_random;
 use crate::{
     sequencer::errors::ProofSenderError,
     utils::{
@@ -23,8 +12,25 @@ use crate::{
         },
     },
 };
+use aligned_sdk::core::types::{FeeEstimationType, Network, ProvingSystemId, VerificationData};
+use aligned_sdk::sdk::{
+    aggregation::{is_proof_verified_in_aggregation_mode, AggregationModeVerificationData},
+    estimate_fee, get_nonce_from_ethereum, submit,
+};
+use ethers::prelude::*;
+use ethers::signers::Wallet;
+use ethrex_common::{Address, H160, H256, U256};
+use ethrex_l2_sdk::calldata::{encode_calldata, Value};
+use ethrex_rpc::{
+    clients::{eth::WrappedTransaction, Overrides},
+    EthClient,
+};
 
-use super::utils::sleep_random;
+use keccak_hash::keccak;
+use secp256k1::SecretKey;
+use std::{collections::HashMap, str::FromStr, time::Duration};
+use tokio::time::sleep;
+use tracing::{debug, error, info};
 
 const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -32,6 +38,8 @@ const DEV_MODE_ADDRESS: H160 = H160([
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
     "verifyBatch(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+
+static ELF: &[u8] = include_bytes!("../../../test_data/elf");
 
 pub async fn start_l1_proof_sender() -> Result<(), ConfigError> {
     let eth_config = EthConfig::from_env()?;
@@ -90,7 +98,7 @@ impl L1ProofSender {
                 }
             }
         } else {
-            needed_proof_types.push(ProverType::Exec);
+            needed_proof_types.push(ProverType::SP1);
         }
 
         Ok(Self {
@@ -114,16 +122,20 @@ impl L1ProofSender {
     }
 
     async fn main_logic(&self) -> Result<(), ProofSenderError> {
-        let batch_to_verify = 1 + self
-            .eth_client
-            .get_last_verified_batch(self.on_chain_proposer_address)
-            .await?;
+        // let batch_to_verify = 1 + self
+        //     .eth_client
+        //     .get_last_verified_batch(self.on_chain_proposer_address)
+        //     .await?;
 
-        if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
-            .is_ok_and(|has_all_proofs| has_all_proofs)
-        {
-            self.send_proof(batch_to_verify).await?;
-        }
+        // if batch_number_has_all_needed_proofs(batch_to_verify, &self.needed_proof_types)
+        //     .is_ok_and(|has_all_proofs| has_all_proofs)
+        // {
+        //     self.send_proof(batch_to_verify).await?;
+        // }
+
+        self.sent_proof_to_aligned().await?;
+        sleep(Duration::from_secs(120)).await;
+        self.verify_proof_aggregation().await?;
 
         Ok(())
     }
@@ -197,5 +209,83 @@ impl L1ProofSender {
         info!("Sent proof for batch {batch_number}, with transaction hash {verify_tx_hash:#x}");
 
         Ok(verify_tx_hash)
+    }
+
+    async fn sent_proof_to_aligned(&self) -> Result<(), ProofSenderError> {
+        let proof = std::fs::read("../../test_data/proof").unwrap();
+
+        let verification_data = VerificationData {
+            proving_system: ProvingSystemId::SP1,
+            proof,
+            proof_generator_addr: self.l1_address.0.into(),
+            vm_program_code: Some(ELF.to_vec()),
+            verification_key: None,
+            pub_input: None,
+        };
+
+        let fee_estimation_default = estimate_fee(&self.eth_client.url, FeeEstimationType::Instant)
+            .await
+            .unwrap();
+
+        let nonce = get_nonce_from_ethereum(
+            &self.eth_client.url,
+            self.l1_address.0.into(),
+            Network::Devnet,
+        )
+        .await
+        .unwrap();
+
+        let wallet = Wallet::from_bytes(self.l1_private_key.as_ref())
+            .map_err(|_| ProofSenderError::InternalError("Failed to create wallet".to_owned()))?;
+        let wallet = wallet.with_chain_id(31337u64);
+
+        info!("L1 proof sender: Sending proof to Aligned");
+
+        submit(
+            Network::Devnet,
+            &verification_data,
+            fee_estimation_default,
+            wallet,
+            nonce,
+        )
+        .await
+        .unwrap();
+
+        info!("L1 proof sender: Proof sent to Aligned");
+
+        Ok(())
+    }
+
+    async fn verify_proof_aggregation(&self) -> Result<(), ProofSenderError> {
+        info!("L1 proof sender: Verifying proof in aggregation mode");
+
+        let vk = std::fs::read("../../test_data/vk")
+            .unwrap()
+            .try_into()
+            .unwrap();
+
+        let public_inputs = std::fs::read("../../test_data/pub").unwrap();
+
+        let verification_data = AggregationModeVerificationData::SP1 { vk, public_inputs };
+
+        match is_proof_verified_in_aggregation_mode(
+            verification_data,
+            Network::Devnet,
+            self.eth_client.url.clone(),
+            "http://127.0.0.1:58517".to_string(), // beacon_client
+            None,
+        )
+        .await
+        {
+            Ok(res) => {
+                info!(
+                    "L1 proof sender: Proof has been verified in the aggregated proof with merkle root 0x{}",
+                    hex::encode(res)
+                );
+            }
+            Err(e) => error!("Error while trying to verify proof {:?}", e),
+        };
+
+        Ok(())
     }
 }
