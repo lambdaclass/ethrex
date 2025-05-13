@@ -18,13 +18,23 @@ use ethrex_storage::{error::StoreError, AccountUpdate};
 use levm::LEVM;
 use revm::db::EvmState;
 use revm::REVM;
+use std::fmt;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum EvmEngine {
     #[default]
-    REVM,
     LEVM,
+    REVM,
+}
+
+impl fmt::Display for EvmEngine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EvmEngine::LEVM => write!(f, "levm"),
+            EvmEngine::REVM => write!(f, "revm"),
+        }
+    }
 }
 
 // Allow conversion from string for backward compatibility
@@ -192,10 +202,10 @@ impl Evm {
     /// [LEVM::get_state_transitions] gathers the information from a [CacheDB].
     ///
     /// They may have the same name, but they serve for different purposes.
-    pub fn get_state_transitions(&mut self, fork: Fork) -> Result<Vec<AccountUpdate>, EvmError> {
+    pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
         match self {
             Evm::REVM { state } => Ok(REVM::get_state_transitions(state)),
-            Evm::LEVM { db } => LEVM::get_state_transitions(db, fork),
+            Evm::LEVM { db } => LEVM::get_state_transitions(db),
         }
     }
 

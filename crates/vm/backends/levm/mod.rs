@@ -164,7 +164,6 @@ impl LEVM {
 
     pub fn get_state_transitions(
         db: &mut GeneralizedDatabase,
-        fork: Fork,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in db.cache.drain() {
@@ -209,17 +208,14 @@ impl LEVM {
             let mut removed = !initial_state_account.is_empty() && new_state_account.is_empty();
 
             // https://eips.ethereum.org/EIPS/eip-161
-            if fork >= Fork::SpuriousDragon {
-                // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
-                if !account_existed && new_state_account.is_empty() {
-                    continue;
-                }
-
-                // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-                // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
-                if new_state_account.is_empty() {
-                    removed = true;
-                }
+            // "No account may change state from non-existent to existent-but-_empty_. If an operation would do this, the account SHALL instead remain non-existent."
+            if !account_existed && new_state_account.is_empty() {
+                continue;
+            }
+            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+            // Note: An account can be empty but still exist in the trie (if that's the case we remove it)
+            if new_state_account.is_empty() {
+                removed = true;
             }
 
             if !removed && !acc_info_updated && !storage_updated {
@@ -403,11 +399,10 @@ impl LEVM {
 
         let mut execution_updates: HashMap<Address, AccountUpdate> = HashMap::new();
         for block in blocks {
-            let fork = chain_config.fork(block.header.timestamp);
             let mut db = GeneralizedDatabase::new(logger.clone(), CacheDB::new());
             // pre-execute and get all state changes
             let _ = Self::execute_block(block, &mut db);
-            let account_updates = Self::get_state_transitions(&mut db, fork).map_err(Box::new)?;
+            let account_updates = Self::get_state_transitions(&mut db).map_err(Box::new)?;
             for update in account_updates {
                 execution_updates
                     .entry(update.address)
