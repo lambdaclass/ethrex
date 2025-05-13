@@ -48,6 +48,8 @@ name = "ethrex_prover"
 path = "src/main.rs"
 
 [features]
+# TODO(#2662) Prover shouldn't have l2 as a default but cargo complains about missing field in struct
+default = ["l2"]
 # prover backends
 pico = ["zkvm_interface/pico", "dep:pico-sdk"]
 risc0 = [

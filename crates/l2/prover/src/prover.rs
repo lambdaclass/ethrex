@@ -83,7 +83,8 @@ impl Prover {
                         input:  ProgramInput {
                             blocks: input.blocks,
                             parent_block_header: input.parent_block_header,
-                            db: input.db
+                            db: input.db,
+                            elasticity_multiplier: input.elasticity_multiplier,
                         }
                     };
                     Ok(prover_data)
