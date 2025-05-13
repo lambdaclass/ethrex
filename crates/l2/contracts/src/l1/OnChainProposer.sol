@@ -248,7 +248,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             require(
                 batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                     picoDepositsLogHash,
-                "OnChainProposer: wrong deposits log hash for pico public inputs"
+                "OnChainProposer: pico deposits hash public input does not match with committed deposits"
             );
 
             // If the verification fails, it will revert.
@@ -270,7 +270,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             require(
                 batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                     risc0DepositsLogHash,
-                "OnChainProposer: wrong deposits log hash for risc0 public inputs"
+                "OnChainProposer: risc0 deposits hash public input does not match with committed deposits"
             );
 
             // If the verification fails, it will revert.
@@ -292,7 +292,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             require(
                 batchCommitments[batchNumber].processedDepositLogsRollingHash ==
                     sp1DepositsLogHash,
-                "OnChainProposer: wrong deposits log hash for sp1 public inputs"
+                "OnChainProposer: sp1 deposits hash public input does not match with committed deposits"
             );
 
             // If the verification fails, it will revert.
