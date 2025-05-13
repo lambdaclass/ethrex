@@ -840,6 +840,7 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
+    /// Handles case in which callframe was initiated by another callframe (with CALL or CREATE family opcodes)
     pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
         let executed_call_frame = self
             .call_frames

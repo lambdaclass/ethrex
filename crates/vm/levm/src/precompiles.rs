@@ -228,15 +228,15 @@ pub fn is_precompile(callee_address: &Address, fork: Fork) -> bool {
     PRECOMPILES.contains(callee_address) || PRECOMPILES_POST_CANCUN.contains(callee_address)
 }
 
-pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, VMError> {
-    let callee_address = current_call_frame.code_address;
+pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<(), VMError> {
+    let precompile_address = current_call_frame.code_address;
     let gas_for_call = current_call_frame
         .gas_limit
         .checked_sub(current_call_frame.gas_used)
         .ok_or(InternalError::ArithmeticOperationUnderflow)?;
     let consumed_gas = &mut current_call_frame.gas_used;
 
-    let result = match callee_address {
+    let result = match precompile_address {
         address if address == ECRECOVER_ADDRESS => {
             ecrecover(&current_call_frame.calldata, gas_for_call, consumed_gas)?
         }
@@ -295,7 +295,9 @@ pub fn execute_precompile(current_call_frame: &mut CallFrame) -> Result<Bytes, V
         _ => return Err(VMError::Internal(InternalError::InvalidPrecompileAddress)),
     };
 
-    Ok(result)
+    current_call_frame.output = result;
+
+    Ok(())
 }
 
 /// Verifies if the gas cost is higher than the gas limit and consumes the gas cost if it is not
