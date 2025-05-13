@@ -1,7 +1,6 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
-    latest_canonical_block_hash,
     payload::{create_payload, BuildPayloadArgs},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
@@ -300,13 +299,9 @@ async fn handle_forkchoice(
         }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
-                InvalidForkChoice::NewHeadAlreadyCanonical => {
-                    ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
-                        latest_canonical_block_hash(&context.storage)
-                            .await
-                            .map_err(|e| RpcErr::Internal(e.to_string()))?,
-                    ))
-                }
+                InvalidForkChoice::NewHeadAlreadyCanonical => ForkChoiceResponse::from(
+                    PayloadStatus::valid_with_hash(fork_choice_state.head_block_hash),
+                ),
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     context
