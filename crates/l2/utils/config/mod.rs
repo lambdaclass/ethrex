@@ -7,7 +7,6 @@ use tracing::{debug, info};
 pub mod prover;
 
 pub mod errors;
-pub mod toml_parser;
 
 /// Reads the desired .env* file
 /// .env        if running the sequencer/L2 node

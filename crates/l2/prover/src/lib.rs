@@ -1,5 +1,4 @@
 pub mod backends;
-pub mod errors;
 pub mod prover;
 
 use ethrex_l2::utils::config::prover::ProverConfig;

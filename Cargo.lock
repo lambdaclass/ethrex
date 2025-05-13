@@ -3288,6 +3288,7 @@ name = "ethrex-prover"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "clap 4.5.36",
  "ethereum-types",
  "ethrex-blockchain",
  "ethrex-common",
