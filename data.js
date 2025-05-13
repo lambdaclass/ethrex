@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747150589027,
+  "lastUpdate": 1747152675679,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6595,6 +6595,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 215909501737,
             "range": "± 407125643",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "ce61df3edb1c9cc5f0b491d8b98d8b6d6ea589a8",
+          "message": "refactor(levm): moved retdata from vm to callframe (#2694)\n\n**Motivation**\n\nMake code more readable by coupling related behaviour.\n\n**Description**\n\nSome fields in retdata were repeated in the callframe, and the retdata\nwas always being popped alongside the current call frame. This PR\ndeletes the retdata struct, and moves the fields that weren't redundant\nto the call frame, refactoring the code where appropriate.\n\nIt also removes `gas_used` from `CallFrame::new()` because we were\nalways setting it to zero.\n\nCloses #2571, Closes #2720\n\n---------\n\nCo-authored-by: JereSalo <jeresalo17@gmail.com>\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>",
+          "timestamp": "2025-05-13T15:12:34Z",
+          "tree_id": "c982bbf01e83b34c55d1770a73656968e84d4469",
+          "url": "https://github.com/lambdaclass/ethrex/commit/ce61df3edb1c9cc5f0b491d8b98d8b6d6ea589a8"
+        },
+        "date": 1747152672369,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 219429486378,
+            "range": "± 473058913",
             "unit": "ns/iter"
           }
         ]
