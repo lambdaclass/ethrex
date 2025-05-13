@@ -44,6 +44,38 @@ pub struct DeployerOptions {
     pub private_key: SecretKey,
     #[arg(
         long,
+        default_value = "10",
+        value_name = "UINT64",
+        env = "ETHREX_ETH_MAX_NUMBER_OF_RETRIES",
+        help_heading = "Eth options"
+    )]
+    pub max_number_of_retries: u64,
+    #[arg(
+        long,
+        default_value = "2",
+        value_name = "UINT64",
+        env = "ETHREX_ETH_BACKOFF_FACTOR",
+        help_heading = "Eth options"
+    )]
+    pub backoff_factor: u64,
+    #[arg(
+        long,
+        default_value = "96",
+        value_name = "UINT64",
+        env = "ETHREX_ETH_MIN_RETRY_DELAY",
+        help_heading = "Eth options"
+    )]
+    pub min_retry_delay: u64,
+    #[arg(
+        long,
+        default_value = "1800",
+        value_name = "UINT64",
+        env = "ETHREX_ETH_MAX_RETRY_DELAY",
+        help_heading = "Eth options"
+    )]
+    pub max_retry_delay: u64,
+    #[arg(
+        long,
         value_name = "PATH",
         env = "ETHREX_DEPLOYER_ENV_FILE_PATH",
         help_heading = "Deployer options",
@@ -190,6 +222,10 @@ impl Default for DeployerOptions {
             rpc_url: "http://localhost:8545".to_string(),
             maximum_allowed_max_fee_per_gas: 10_000_000_000,
             maximum_allowed_max_fee_per_blob_gas: 10_000_000_000,
+            max_number_of_retries: 10,
+            backoff_factor: 2,
+            min_retry_delay: 96,
+            max_retry_delay: 1800,
             #[allow(clippy::unwrap_used)]
             private_key: SecretKey::from_slice(
                 H256([

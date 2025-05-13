@@ -63,7 +63,7 @@ interface IOnChainProposer {
     /// ----------------------------------------------------------------------
     /// @param risc0BlockProof is the proof of the batch to be verified.
     /// @param risc0ImageId Digest of the zkVM imageid.
-    /// @param risc0JournalDigest Digest of the public_inputs aka journal
+    /// @param risc0Journal public_inputs aka journal
     /// ----------------------------------------------------------------------
     /// @param sp1PublicValues Values used to perform the execution
     /// @param sp1ProofBytes Groth16 proof
@@ -76,7 +76,7 @@ interface IOnChainProposer {
         //risc0
         bytes calldata risc0BlockProof,
         bytes32 risc0ImageId,
-        bytes32 risc0JournalDigest,
+        bytes calldata risc0Journal,
         //sp1
         bytes calldata sp1PublicValues,
         bytes calldata sp1ProofBytes,

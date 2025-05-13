@@ -52,7 +52,7 @@ jobs:
         run: |
           cp test_data/rpc_prover/cache_22240087.json crates/l2/prover/bench
           cd crates/l2/prover/bench
-          make prove-sp1-gpu BLOCK_NUMBER=22240087
+          make prove-sp1-gpu-ci BLOCK_NUMBER=22240087
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
@@ -70,12 +70,12 @@ jobs:
       - name: Ensure admin permissions in _work
         if: always()
         run: sudo chown admin:admin -R /home/admin/actions-runner/_work/
-
-      - name: Report Status
-        if: always()
-        uses: ravsamhq/notify-slack-action@v2
-        with:
-          status: ${{ job.status }}
-          notify_when: 'failure'
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
+      # Reenable when job is stable
+      # - name: Report Status
+      #   if: always()
+      #   uses: ravsamhq/notify-slack-action@v2
+      #   with:
+      #     status: ${{ job.status }}
+      #     notify_when: 'failure'
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}
