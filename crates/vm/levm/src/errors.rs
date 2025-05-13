@@ -24,8 +24,6 @@ pub enum VMError {
     InvalidContractPrefix,
     #[error("Very Large Number")]
     VeryLargeNumber,
-    #[error("Fatal Error")]
-    FatalError,
     #[error("Invalid Transaction")]
     InvalidTransaction,
     #[error("Revert Opcode")]
@@ -77,8 +75,10 @@ pub enum VMError {
 }
 
 impl VMError {
-    pub fn is_internal(&self) -> bool {
-        matches!(self, VMError::Internal(_))
+    /// These errors are unexpected and indicate critical issues.
+    /// They should not cause a transaction to revert silently but instead fail loudly, propagating the error.
+    pub fn should_propagate(&self) -> bool {
+        matches!(self, VMError::Internal(_)) || matches!(self, VMError::DatabaseError(_))
     }
 }
 
@@ -90,8 +90,8 @@ pub enum TxValidationError {
     InsufficientAccountFunds,
     #[error("Nonce is max (overflow)")]
     NonceIsMax,
-    #[error("Nonce mismatch")]
-    NonceMismatch,
+    #[error("Nonce mismatch: expected {expected}, got {actual}")]
+    NonceMismatch { expected: u64, actual: u64 },
     #[error("Initcode size exceeded")]
     InitcodeSizeExceeded,
     #[error("Priority fee greater than max fee per gas")]
@@ -106,19 +106,19 @@ pub enum TxValidationError {
     InsufficientMaxFeePerBlobGas,
     #[error("Type 3 transactions are not supported before the Cancun fork")]
     Type3TxPreFork,
-    #[error("Type3TxZeroBlobs")]
+    #[error("Type 3 transaction without blobs")]
     Type3TxZeroBlobs,
-    #[error("Type3TxInvalidBlobVersionedHash")]
+    #[error("Invalid blob versioned hash")]
     Type3TxInvalidBlobVersionedHash,
-    #[error("Type3TxBlobCountExceeded")]
+    #[error("Blob count exceeded")]
     Type3TxBlobCountExceeded,
-    #[error("Type3TxContractCreation")]
+    #[error("Contract creation in blob transaction")]
     Type3TxContractCreation,
     #[error("Type 4 transactions are not supported before the Prague fork")]
     Type4TxPreFork,
-    #[error("Type4TxAuthorizationListIsEmpty")]
+    #[error("Empty authorization list in type 4 transaction")]
     Type4TxAuthorizationListIsEmpty,
-    #[error("Type4TxContractCreation")]
+    #[error("Contract creation in type 4 transaction")]
     Type4TxContractCreation,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
@@ -194,6 +194,8 @@ pub enum InternalError {
     InvalidSpecId,
     #[error("Account should had been delegated")]
     AccountNotDelegated,
+    #[error("No recipient found for privilege transaction")]
+    RecipientNotFoundForPrivilegeTransaction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

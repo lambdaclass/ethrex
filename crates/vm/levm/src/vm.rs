@@ -1,10 +1,10 @@
 use crate::{
-    call_frame::{CacheBackup, CallFrame},
+    call_frame::{CallFrame, CallFrameBackup},
     constants::*,
     db::{cache, gen_db::GeneralizedDatabase},
     environment::Environment,
     errors::{ExecutionReport, InternalError, OpcodeResult, TxResult, VMError},
-    hooks::{default_hook::DefaultHook, hook::Hook, l2_hook::L2Hook},
+    hooks::hook::Hook,
     precompiles::{
         execute_precompile, is_precompile, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE,
         SIZE_PRECOMPILES_PRE_CANCUN,
@@ -25,9 +25,16 @@ use std::{
     fmt::Debug,
     sync::Arc,
 };
+
+#[cfg(not(feature = "l2"))]
+use crate::hooks::DefaultHook;
+#[cfg(feature = "l2")]
+use {crate::hooks::L2Hook, ethrex_common::types::PrivilegedL2Transaction};
+
 pub type Storage = HashMap<U256, H256>;
 
 #[derive(Debug, Clone, Default)]
+/// Information that changes during transaction execution
 pub struct Substate {
     pub selfdestruct_set: HashSet<Address>,
     pub touched_accounts: HashSet<Address>,
@@ -60,15 +67,14 @@ impl StateBackup {
 }
 
 #[derive(Debug, Clone, Copy)]
-/// This structs holds special configuration variables specific to the
+/// This struct holds special configuration variables specific to the
 /// EVM. In most cases, at least at the time of writing (February
 /// 2025), you want to use the default blob_schedule values for the
 /// specified Fork. The "intended" way to do this is by using the `EVMConfig::canonical_values(fork: Fork)` function.
 ///
 /// However, that function should NOT be used IF you want to use a
-/// custom ForkBlobSchedule, like it's described in
-/// [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840). For more
-/// information read the EIP
+/// custom `ForkBlobSchedule`, like it's described in [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840)
+/// Values are determined by [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification)
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
@@ -110,9 +116,6 @@ impl EVMConfig {
         }
     }
 
-    /// After EIP-7691 the maximum number of blob hashes changed. For more
-    /// information see
-    /// [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification).
     const fn max_blobs_per_block(fork: Fork) -> u64 {
         match fork {
             Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
@@ -121,12 +124,6 @@ impl EVMConfig {
         }
     }
 
-    /// According to [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification):
-    ///
-    /// "These changes imply that get_base_fee_per_blob_gas and
-    /// calc_excess_blob_gas functions defined in EIP-4844 use the new
-    /// values for the first block of the fork (and for all subsequent
-    /// blocks)."
     const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
         match fork {
             Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
@@ -134,7 +131,6 @@ impl EVMConfig {
         }
     }
 
-    /// According to [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification):
     const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
         match fork {
             Fork::Prague | Fork::Osaka => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
@@ -157,8 +153,6 @@ impl Default for EVMConfig {
 pub struct VM<'a> {
     pub call_frames: Vec<CallFrame>,
     pub env: Environment,
-    /// Information that is acted upon immediately following the
-    /// transaction.
     pub accrued_substate: Substate,
     pub db: &'a mut GeneralizedDatabase,
     pub tx_kind: TxKind,
@@ -167,6 +161,7 @@ pub struct VM<'a> {
     pub hooks: Vec<Arc<dyn Hook>>,
     pub return_data: Vec<RetData>,
     pub backups: Vec<StateBackup>,
+    /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
 }
 
@@ -218,11 +213,20 @@ impl<'a> VM<'a> {
             default_touched_accounts.insert(Address::from_low_u64_be(i));
         }
 
-        let hooks: Vec<Arc<dyn Hook>> = match tx {
-            Transaction::PrivilegedL2Transaction(privileged_tx) => vec![Arc::new(L2Hook {
-                recipient: privileged_tx.recipient,
-            })],
-            _ => vec![Arc::new(DefaultHook)],
+        #[cfg(not(feature = "l2"))]
+        let hooks: Vec<Arc<dyn Hook>> = vec![Arc::new(DefaultHook)];
+        #[cfg(feature = "l2")]
+        let hooks: Vec<Arc<dyn Hook>> = {
+            let recipient = if let Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
+                recipient,
+                ..
+            }) = tx
+            {
+                Some(*recipient)
+            } else {
+                None
+            };
+            vec![Arc::new(L2Hook { recipient })]
         };
 
         let mut substate = Substate {
@@ -303,7 +307,7 @@ impl<'a> VM<'a> {
                 .call_frames
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let precompile_result = execute_precompile(&mut current_call_frame, fork);
+            let precompile_result = execute_precompile(&mut current_call_frame);
             let backup = self
                 .backups
                 .pop()
@@ -325,24 +329,24 @@ impl<'a> VM<'a> {
                     .current_call_frame_mut()?
                     .increment_pc_by(pc_increment)?,
                 Ok(OpcodeResult::Halt) => {
-                    let mut current_call_frame = self
+                    let mut executed_call_frame = self
                         .call_frames
                         .pop()
                         .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_result(&mut current_call_frame)?;
-                    if self.handle_return(&current_call_frame, &report)? {
+                    let report = self.handle_opcode_result(&mut executed_call_frame)?;
+                    if self.handle_return(&executed_call_frame, &report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
                         return Ok(report);
                     }
                 }
                 Err(error) => {
-                    let mut current_call_frame = self
+                    let mut executed_call_frame = self
                         .call_frames
                         .pop()
                         .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_error(error, &mut current_call_frame)?;
-                    if self.handle_return(&current_call_frame, &report)? {
+                    let report = self.handle_opcode_error(error, &mut executed_call_frame)?;
+                    if self.handle_return(&executed_call_frame, &report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
                         return Ok(report);
@@ -355,7 +359,7 @@ impl<'a> VM<'a> {
     pub fn restore_state(
         &mut self,
         backup: StateBackup,
-        call_frame_backup: CacheBackup,
+        call_frame_backup: CallFrameBackup,
     ) -> Result<(), VMError> {
         self.restore_cache_state(call_frame_backup)?;
         self.accrued_substate = backup.substate;
@@ -381,7 +385,7 @@ impl<'a> VM<'a> {
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
-            self.restore_cache_state(self.current_call_frame()?.cache_backup.clone())?;
+            self.restore_cache_state(self.current_call_frame()?.call_frame_backup.clone())?;
             return Err(e);
         }
 
@@ -389,7 +393,10 @@ impl<'a> VM<'a> {
         // revert the changes it made.
         // Even if the transaction reverts we want to apply these kind of changes!
         // These are: Incrementing sender nonce, transferring value to a delegate account, decreasing sender account balance
-        self.current_call_frame_mut()?.cache_backup = HashMap::new();
+        self.current_call_frame_mut()?.call_frame_backup = CallFrameBackup {
+            original_accounts_info: HashMap::new(),
+            original_account_storage_slots: HashMap::new(),
+        };
 
         // In CREATE type transactions:
         //  Add created contract to cache, reverting transaction if the address is already occupied
@@ -407,9 +414,7 @@ impl<'a> VM<'a> {
             )?;
 
             // https://eips.ethereum.org/EIPS/eip-161
-            if self.env.config.fork >= Fork::SpuriousDragon {
-                self.increment_account_nonce(new_contract_address)?;
-            };
+            self.increment_account_nonce(new_contract_address)?;
         }
 
         // Backup of Substate, Gas Refunds and Transient Storage if sub-context is reverted
@@ -475,16 +480,66 @@ impl<'a> VM<'a> {
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
-    fn restore_cache_state(&mut self, call_frame_backup: CacheBackup) -> Result<(), VMError> {
-        for (address, account_opt) in call_frame_backup {
-            if let Some(account) = account_opt {
-                // restore the account to the state before the call
-                cache::insert_account(&mut self.db.cache, address, account.clone());
-            } else {
-                // remove from cache if it wasn't there before
-                cache::remove_account(&mut self.db.cache, &address);
+    fn restore_cache_state(&mut self, call_frame_backup: CallFrameBackup) -> Result<(), VMError> {
+        for (address, account) in call_frame_backup.original_accounts_info {
+            if let Some(current_account) = cache::get_account_mut(&mut self.db.cache, &address) {
+                current_account.info = account.info;
+                current_account.code = account.code;
             }
         }
+
+        for (address, storage) in call_frame_backup.original_account_storage_slots {
+            // This call to `get_account_mut` should never return None, because we are looking up accounts
+            // that had their storage modified, which means they should be in the cache. That's why
+            // we return an internal error in case we haven't found it.
+            let account = cache::get_account_mut(&mut self.db.cache, &address).ok_or(
+                VMError::Internal(crate::errors::InternalError::AccountNotFound),
+            )?;
+
+            for (key, value) in storage {
+                account.storage.insert(key, value);
+            }
+        }
+
+        Ok(())
+    }
+
+    // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
+    //   - For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
+    //   - For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
+    //   - Do the same for every individual storage slot.
+    pub fn merge_call_frame_backup_with_parent(
+        &mut self,
+        child_call_frame_backup: &CallFrameBackup,
+    ) -> Result<(), VMError> {
+        let parent_backup_accounts = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_accounts_info;
+        for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
+            if parent_backup_accounts.get(address).is_none() {
+                parent_backup_accounts.insert(*address, account.clone());
+            }
+        }
+
+        let parent_backup_storage = &mut self
+            .current_call_frame_mut()?
+            .call_frame_backup
+            .original_account_storage_slots;
+        for (address, storage) in child_call_frame_backup
+            .original_account_storage_slots
+            .iter()
+        {
+            let parent_storage = parent_backup_storage
+                .entry(*address)
+                .or_insert(HashMap::new());
+            for (key, value) in storage {
+                if parent_storage.get(key).is_none() {
+                    parent_storage.insert(*key, *value);
+                }
+            }
+        }
+
         Ok(())
     }
 }

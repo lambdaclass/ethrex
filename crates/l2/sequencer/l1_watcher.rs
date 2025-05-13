@@ -1,17 +1,12 @@
-use crate::{
-    sequencer::errors::L1WatcherError,
-    utils::{
-        config::{errors::ConfigError, eth::EthConfig, l1_watcher::L1WatcherConfig},
-        parse::hash_to_address,
-    },
-};
+use crate::{sequencer::errors::L1WatcherError, utils::parse::hash_to_address};
+use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{types::Transaction, H160};
 use ethrex_rpc::types::receipt::RpcLog;
 use ethrex_rpc::{
-    clients::eth::{errors::EthClientError, eth_sender::Overrides, EthClient},
+    clients::eth::{eth_sender::Overrides, EthClient},
     types::receipt::RpcLogInfo,
 };
 use ethrex_storage::Store;
@@ -19,15 +14,15 @@ use keccak_hash::keccak;
 use std::{cmp::min, sync::Arc};
 use tracing::{debug, error, info, warn};
 
+use super::errors::SequencerError;
 use super::utils::sleep_random;
 
 pub async fn start_l1_watcher(
     store: Store,
     blockchain: Arc<Blockchain>,
-) -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    let watcher_config = L1WatcherConfig::from_env()?;
-    let mut l1_watcher = L1Watcher::new_from_config(watcher_config, eth_config).await?;
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
+    let mut l1_watcher = L1Watcher::new_from_config(&cfg.l1_watcher, &cfg.eth).await?;
     l1_watcher.run(&store, &blockchain).await;
     Ok(())
 }
@@ -43,9 +38,9 @@ pub struct L1Watcher {
 
 impl L1Watcher {
     pub async fn new_from_config(
-        watcher_config: L1WatcherConfig,
-        eth_config: EthConfig,
-    ) -> Result<Self, EthClientError> {
+        watcher_config: &L1WatcherConfig,
+        eth_config: &EthConfig,
+    ) -> Result<Self, L1WatcherError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
         let l2_client = EthClient::new("http://localhost:1729");
 
@@ -151,37 +146,23 @@ impl L1Watcher {
         let mut deposit_txs = Vec::new();
 
         for log in logs {
-            let (mint_value, to_address, deposit_id, recipient, from, gas_limit, calldata) =
-                parse_values_log(log.log)?;
+            let deposit_data = DepositData::from_log(log.log)?;
 
-            let value_bytes = mint_value.to_big_endian();
-            let id_bytes = deposit_id.to_big_endian();
-            let gas_limit_bytes = gas_limit.to_big_endian();
-            let deposit_hash = keccak(
-                [
-                    to_address.as_bytes(),
-                    &value_bytes,
-                    &id_bytes,
-                    recipient.as_bytes(),
-                    from.as_bytes(),
-                    &gas_limit_bytes,
-                    keccak(&calldata).as_bytes(),
-                ]
-                .concat(),
-            );
-
-            let deposit_already_processed = store
-                .get_transaction_by_hash(deposit_hash)
-                .await
-                .map_err(L1WatcherError::FailedAccessingStore)?
-                .is_some();
-
-            if deposit_already_processed {
-                warn!("Deposit already processed (to: {recipient:#x}, value: {mint_value}, depositId: {deposit_id}), skipping.");
+            if self
+                .deposit_already_processed(deposit_data.deposit_tx_hash, store)
+                .await?
+            {
+                warn!(
+                    "Deposit already processed (to: {:x}, value: {:x}, depositId: {:#}), skipping.",
+                    deposit_data.recipient, deposit_data.mint_value, deposit_data.deposit_id
+                );
                 continue;
             }
 
-            info!("Initiating mint transaction for {recipient:#x} with value {mint_value:#x} and depositId: {deposit_id:#}",);
+            info!(
+                "Initiating mint transaction for {:x} with value {:x} and depositId: {:#}",
+                deposit_data.recipient, deposit_data.mint_value, deposit_data.deposit_id
+            );
 
             let gas_price = self.l2_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()
@@ -192,10 +173,10 @@ impl L1Watcher {
             let mint_transaction = self
                 .eth_client
                 .build_privileged_transaction(
-                    to_address,
-                    recipient,
-                    from,
-                    Bytes::copy_from_slice(&calldata),
+                    deposit_data.to_address,
+                    deposit_data.recipient,
+                    deposit_data.from,
+                    Bytes::copy_from_slice(&deposit_data.calldata),
                     Overrides {
                         chain_id: Some(
                             store
@@ -208,9 +189,9 @@ impl L1Watcher {
                         // Using the deposit_id as nonce.
                         // If we make a transaction on the L2 with this address, we may break the
                         // deposit workflow.
-                        nonce: Some(deposit_id.as_u64()),
-                        value: Some(mint_value),
-                        gas_limit: Some(gas_limit.as_u64()),
+                        nonce: Some(deposit_data.deposit_id.as_u64()),
+                        value: Some(deposit_data.mint_value),
+                        gas_limit: Some(deposit_data.gas_limit.as_u64()),
                         // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
                         // Otherwise, the transaction is not included in the mempool.
                         // We should override the blockchain to always include the transaction.
@@ -239,100 +220,137 @@ impl L1Watcher {
 
         Ok(deposit_txs)
     }
+
+    async fn deposit_already_processed(
+        &self,
+        deposit_hash: H256,
+        store: &Store,
+    ) -> Result<bool, L1WatcherError> {
+        if store
+            .get_transaction_by_hash(deposit_hash)
+            .await
+            .map_err(L1WatcherError::FailedAccessingStore)?
+            .is_some()
+        {
+            return Ok(true);
+        }
+
+        // If we have a reconstructed state, we don't have the transaction in our store.
+        // Check if the deposit is marked as pending in the contract.
+        let pending_deposits = self
+            .eth_client
+            .get_pending_deposit_logs(self.address)
+            .await?;
+        Ok(!pending_deposits.contains(&deposit_hash))
+    }
 }
 
-#[allow(clippy::type_complexity)]
-fn parse_values_log(
-    log: RpcLogInfo,
-) -> Result<(U256, H160, U256, H160, H160, U256, Vec<u8>), L1WatcherError> {
-    let mint_value = format!(
-        "{:#x}",
-        log.topics
-            .get(1)
+struct DepositData {
+    pub mint_value: U256,
+    pub to_address: H160,
+    pub deposit_id: U256,
+    pub recipient: H160,
+    pub from: H160,
+    pub gas_limit: U256,
+    pub calldata: Vec<u8>,
+    pub deposit_tx_hash: H256,
+}
+
+impl DepositData {
+    fn from_log(log: RpcLogInfo) -> Result<DepositData, L1WatcherError> {
+        let mint_value = format!(
+            "{:#x}",
+            log.topics
+                .get(1)
+                .ok_or(L1WatcherError::FailedToDeserializeLog(
+                    "Failed to parse mint value from log: log.topics[1] out of bounds".to_owned()
+                ))?
+        )
+        .parse::<U256>()
+        .map_err(|e| {
+            L1WatcherError::FailedToDeserializeLog(format!(
+                "Failed to parse mint value from log: {e:#?}"
+            ))
+        })?;
+        let to_address_hash = log
+            .topics
+            .get(2)
             .ok_or(L1WatcherError::FailedToDeserializeLog(
-                "Failed to parse mint value from log: log.topics[1] out of bounds".to_owned()
-            ))?
-    )
-    .parse::<U256>()
-    .map_err(|e| {
-        L1WatcherError::FailedToDeserializeLog(format!(
-            "Failed to parse mint value from log: {e:#?}"
-        ))
-    })?;
-    let to_address_hash = log
-        .topics
-        .get(2)
-        .ok_or(L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse beneficiary from log: log.topics[2] out of bounds".to_owned(),
-        ))?;
-    let to_address = hash_to_address(*to_address_hash);
+                "Failed to parse beneficiary from log: log.topics[2] out of bounds".to_owned(),
+            ))?;
+        let to_address = hash_to_address(*to_address_hash);
 
-    let deposit_id = log
-        .topics
-        .get(3)
-        .ok_or(L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse beneficiary from log: log.topics[3] out of bounds".to_owned(),
-        ))?;
+        let deposit_id = log
+            .topics
+            .get(3)
+            .ok_or(L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse beneficiary from log: log.topics[3] out of bounds".to_owned(),
+            ))?;
 
-    let deposit_id = format!("{deposit_id:#x}").parse::<U256>().map_err(|e| {
-        L1WatcherError::FailedToDeserializeLog(format!(
-            "Failed to parse depositId value from log: {e:#?}"
-        ))
-    })?;
+        let deposit_id = format!("{deposit_id:#x}").parse::<U256>().map_err(|e| {
+            L1WatcherError::FailedToDeserializeLog(format!(
+                "Failed to parse depositId value from log: {e:#?}"
+            ))
+        })?;
 
-    // The previous values are indexed in the topic of the log. Data contains the rest.
-    // DATA = recipient: Address || from: Address || gas_limit: uint256 || offset_calldata: uint256 || tx_hash: H256 || length_calldata: uint256 || calldata: bytes
-    // DATA = 0..32              || 32..64        || 64..96             || 96..128                  || 128..160      || 160..192                 || 192..(192+calldata_len)
-    // Any value that is not 32 bytes is padded with zeros.
+        // The previous values are indexed in the topic of the log. Data contains the rest.
+        // DATA = recipient: Address || from: Address || gas_limit: uint256 || offset_calldata: uint256 || tx_hash: H256 || length_calldata: uint256 || calldata: bytes
+        // DATA = 0..32              || 32..64        || 64..96             || 96..128                  || 128..160      || 160..192                 || 192..(192+calldata_len)
+        // Any value that is not 32 bytes is padded with zeros.
 
-    let recipient = log
-        .data
-        .get(12..32)
-        .ok_or(L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse recipient from log: log.data[0..32] out of bounds".to_owned(),
-        ))?;
-    let recipient = Address::from_slice(recipient);
+        let recipient = log
+            .data
+            .get(12..32)
+            .ok_or(L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse recipient from log: log.data[0..32] out of bounds".to_owned(),
+            ))?;
+        let recipient = Address::from_slice(recipient);
 
-    let from = log
-        .data
-        .get(44..64)
-        .ok_or(L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse from from log: log.data[44..64] out of bounds".to_owned(),
-        ))?;
-    let from = Address::from_slice(from);
+        let from = log
+            .data
+            .get(44..64)
+            .ok_or(L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse from from log: log.data[44..64] out of bounds".to_owned(),
+            ))?;
+        let from = Address::from_slice(from);
 
-    let gas_limit = U256::from_big_endian(log.data.get(64..96).ok_or(
-        L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse gas_limit from log: log.data[64..96] out of bounds".to_owned(),
-        ),
-    )?);
+        let gas_limit = U256::from_big_endian(log.data.get(64..96).ok_or(
+            L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse gas_limit from log: log.data[64..96] out of bounds".to_owned(),
+            ),
+        )?);
 
-    let _deposit_tx_hash = H256::from_slice(log.data.get(128..160).ok_or(
-        L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse deposit_tx_hash from log: log.data[64..96] out of bounds".to_owned(),
-        ),
-    )?);
+        let deposit_tx_hash = H256::from_slice(
+            log.data
+                .get(128..160)
+                .ok_or(L1WatcherError::FailedToDeserializeLog(
+                    "Failed to parse deposit_tx_hash from log: log.data[64..96] out of bounds"
+                        .to_owned(),
+                ))?,
+        );
 
-    let calldata_len = U256::from_big_endian(log.data.get(160..192).ok_or(
-        L1WatcherError::FailedToDeserializeLog(
-            "Failed to parse calldata_len from log: log.data[96..128] out of bounds".to_owned(),
-        ),
-    )?);
-    let calldata =
-        log.data
+        let calldata_len = U256::from_big_endian(log.data.get(160..192).ok_or(
+            L1WatcherError::FailedToDeserializeLog(
+                "Failed to parse calldata_len from log: log.data[96..128] out of bounds".to_owned(),
+            ),
+        )?);
+        let calldata = log
+            .data
             .get(192..192 + calldata_len.as_usize())
             .ok_or(L1WatcherError::FailedToDeserializeLog(
             "Failed to parse calldata from log: log.data[128..128 + calldata_len] out of bounds"
                 .to_owned(),
         ))?;
 
-    Ok((
-        mint_value,
-        to_address,
-        deposit_id,
-        recipient,
-        from,
-        gas_limit,
-        calldata.to_vec(),
-    ))
+        Ok(Self {
+            mint_value,
+            to_address,
+            deposit_id,
+            recipient,
+            from,
+            gas_limit,
+            calldata: calldata.to_vec(),
+            deposit_tx_hash,
+        })
+    }
 }

@@ -45,12 +45,12 @@ pub enum EngineType {
 }
 
 impl Store {
-    pub fn new(path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
+    pub fn new(_path: &str, engine_type: EngineType) -> Result<Self, StoreError> {
         info!("Starting storage engine ({engine_type:?})");
         let store = match engine_type {
             #[cfg(feature = "libmdbx")]
             EngineType::Libmdbx => Self {
-                engine: Arc::new(LibmdbxStore::new(path)?),
+                engine: Arc::new(LibmdbxStore::new(_path)?),
             },
             EngineType::InMemory => Self {
                 engine: Arc::new(InMemoryStore::new()),
@@ -1074,6 +1074,8 @@ impl Store {
         self.engine.read_storage_snapshot(account_hash, start).await
     }
 
+    /// Fetches the latest valid ancestor for a block that was previously marked as invalid
+    /// Returns None if the block was never marked as invalid
     pub async fn get_latest_valid_ancestor(
         &self,
         block: BlockHash,
@@ -1081,6 +1083,7 @@ impl Store {
         self.engine.get_latest_valid_ancestor(block).await
     }
 
+    /// Marks a block as invalid and sets its latest valid ancestor
     pub async fn set_latest_valid_ancestor(
         &self,
         bad_block: BlockHash,
