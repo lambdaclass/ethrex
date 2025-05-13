@@ -13,6 +13,7 @@ ethrex-sdk.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 futures = "0.3"
+sha3.workspace = true
 
 eyre.workspace = true
 keccak-hash.workspace = true
