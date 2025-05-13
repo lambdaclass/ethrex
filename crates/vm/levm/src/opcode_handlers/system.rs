@@ -836,7 +836,7 @@ impl<'a> VM<'a> {
             let backup = self.accrued_substate.clone();
             self.substate_backups.push(backup);
         }
-        
+
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
@@ -854,6 +854,8 @@ impl<'a> VM<'a> {
         } else {
             self.handle_return_call(executed_call_frame, tx_report)?;
         }
+        self.current_call_frame_mut()?.increment_pc_by(1)?;
+        
         Ok(true)
     }
     pub fn handle_return_call(
