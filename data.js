@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747165262484,
+  "lastUpdate": 1747165598073,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6949,6 +6949,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007379453789731051,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "martin.c.paulucci@gmail.com",
+            "name": "Martin Paulucci",
+            "username": "mpaulucci"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b0cdf7d0aadfc9e88fc204aa7b0c1bbae6221382",
+          "message": "refactor(l1): rename ExecutionDB to ProverDB. (#2770)\n\n**Motivation**\nTo have a clearer name.",
+          "timestamp": "2025-05-13T17:46:25Z",
+          "tree_id": "fc5fe9ab4869c2c5a2ceb7db65e611b5fcfeb0eb",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b0cdf7d0aadfc9e88fc204aa7b0c1bbae6221382"
+        },
+        "date": 1747165596827,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007234411792905081,
             "unit": "Mgas/s"
           }
         ]
