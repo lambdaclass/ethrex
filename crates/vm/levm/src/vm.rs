@@ -359,9 +359,9 @@ impl<'a> VM<'a> {
     pub fn restore_state(
         &mut self,
         backup: StateBackup,
-        current_call_frame: &mut CallFrame,
+        call_frame_backup: CallFrameBackup,
     ) -> Result<(), VMError> {
-        current_call_frame.restore_cache_state(self.db)?;
+        self.restore_cache_state(call_frame_backup)?;
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
@@ -385,12 +385,7 @@ impl<'a> VM<'a> {
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
-            let mut current_call_frame = self
-                .call_frames
-                .pop()
-                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            current_call_frame.restore_cache_state(self.db)?;
-            self.call_frames.push(current_call_frame);
+            self.restore_cache_state(self.current_call_frame()?.call_frame_backup.clone())?;
             return Err(e);
         }
 
@@ -437,18 +432,6 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    pub fn current_call_frame_mut(&mut self) -> Result<&mut CallFrame, VMError> {
-        self.call_frames.last_mut().ok_or(VMError::Internal(
-            InternalError::CouldNotAccessLastCallframe,
-        ))
-    }
-
-    pub fn current_call_frame(&self) -> Result<&CallFrame, VMError> {
-        self.call_frames.last().ok_or(VMError::Internal(
-            InternalError::CouldNotAccessLastCallframe,
-        ))
-    }
-
     fn handle_create_non_empty_account(&mut self) -> Result<ExecutionReport, VMError> {
         let mut report = ExecutionReport {
             result: TxResult::Revert(VMError::AddressAlreadyOccupied),
@@ -479,45 +462,6 @@ impl<'a> VM<'a> {
         // run
         for hook in self.hooks.clone() {
             hook.finalize_execution(self, report)?;
-        }
-
-        Ok(())
-    }
-
-    // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
-    //   - For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
-    //   - For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.
-    //   - Do the same for every individual storage slot.
-    pub fn merge_call_frame_backup_with_parent(
-        &mut self,
-        child_call_frame_backup: &CallFrameBackup,
-    ) -> Result<(), VMError> {
-        let parent_backup_accounts = &mut self
-            .current_call_frame_mut()?
-            .call_frame_backup
-            .original_accounts_info;
-        for (address, account) in child_call_frame_backup.original_accounts_info.iter() {
-            if parent_backup_accounts.get(address).is_none() {
-                parent_backup_accounts.insert(*address, account.clone());
-            }
-        }
-
-        let parent_backup_storage = &mut self
-            .current_call_frame_mut()?
-            .call_frame_backup
-            .original_account_storage_slots;
-        for (address, storage) in child_call_frame_backup
-            .original_account_storage_slots
-            .iter()
-        {
-            let parent_storage = parent_backup_storage
-                .entry(*address)
-                .or_insert(HashMap::new());
-            for (key, value) in storage {
-                if parent_storage.get(key).is_none() {
-                    parent_storage.insert(*key, *value);
-                }
-            }
         }
 
         Ok(())
