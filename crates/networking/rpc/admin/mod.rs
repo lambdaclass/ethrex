@@ -3,7 +3,6 @@ use ethrex_p2p::types::{Node, NodeRecord};
 use ethrex_storage::Store;
 use serde::Serialize;
 use serde_json::Value;
-use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 
 use crate::utils::RpcErr;
@@ -52,7 +51,7 @@ pub fn node_info(
     let node_info = NodeInfo {
         enode: enode_url,
         enr: enr_url,
-        id: hex::encode(Keccak256::digest(local_node.node_id.as_bytes())),
+        id: hex::encode(local_node.node_id()),
         name: client_version,
         ip: local_node.ip.to_string(),
         ports: Ports {
