@@ -15,6 +15,7 @@ pub static CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS: LazyLock<Address> =
 // transactions_root(H256) + receipts_root(H256) + parent_hash(H256) + gas_limit(u64) + gas_used(u64) + timestamp(u64)
 // block_number(u64) + base_fee_per_gas(u64)
 // 32bytes + 32bytes + 32bytes + 8bytes + 8bytes + 8bytes + 8bytes + 8bytes
+// TODO: this should be changed to follow this issue https://github.com/lambdaclass/ethrex/issues/2655
 pub const LAST_HEADER_FIELDS_SIZE: usize = 136;
 
 // address(H160) + amount(U256) + tx_hash(H256).
