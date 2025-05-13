@@ -1,12 +1,12 @@
 use std::{fs::File, io::Write};
 
 use clap::Parser;
+use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_prover_bench::{
     cache::{load_cache, write_cache, Cache},
     rpc::{db::RpcDB, get_block, get_latest_block_number},
 };
 use ethrex_prover_lib::execute;
-use machine_info::Machine;
 use serde_json::json;
 use zkvm_interface::io::ProgramInput;
 
@@ -90,6 +90,7 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
         })
         .expect("proving failed");
     } else {
@@ -98,6 +99,7 @@ async fn main() {
             blocks: vec![block],
             parent_block_header,
             db,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
         })
         .expect("proving failed");
     }
@@ -125,24 +127,16 @@ fn write_benchmark_file(gas_used: f64, elapsed: f64) {
         unreachable!();
     };
 
-    let mut machine = Machine::new();
-    let processing_unit = if cfg!(feature = "gpu") {
-        // assumes single GPU
-        format!(
-            "GPU: {}",
-            machine
-                .system_info()
-                .graphics
-                .first()
-                .expect("could not write bench file: no gpu info found")
-                .name
-        )
+    let processor = if cfg!(feature = "ci") {
+        "RTX A6000"
+    } else if cfg!(feature = "gpu") {
+        "GPU"
     } else {
-        format!("CPU: {}", machine.system_info().processor.brand)
+        "CPU"
     };
 
     let benchmark_json = &json!([{
-        "name": format!("{backend}, {processing_unit}"),
+        "name": format!("{backend}, {}", processor),
         "unit": "Mgas/s",
         "value": rate
     }]);

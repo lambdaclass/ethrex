@@ -27,6 +27,7 @@ use super::{
 pub struct BlockProducer {
     block_time_ms: u64,
     coinbase_address: Address,
+    elasticity_multiplier: u64,
 }
 
 pub async fn start_block_producer(
@@ -47,10 +48,12 @@ impl BlockProducer {
         let BlockProducerConfig {
             block_time_ms,
             coinbase_address,
+            elasticity_multiplier,
         } = config;
         Self {
             block_time_ms: *block_time_ms,
             coinbase_address: *coinbase_address,
+            elasticity_multiplier: *elasticity_multiplier,
         }
     }
 
@@ -103,6 +106,7 @@ impl BlockProducer {
             withdrawals: Default::default(),
             beacon_root: Some(head_beacon_block_root),
             version,
+            elasticity_multiplier: self.elasticity_multiplier,
         };
         let payload = create_payload(&args, &store)?;
 
@@ -116,7 +120,12 @@ impl BlockProducer {
         // Blockchain stores block
         let block = payload_build_result.payload;
         let chain_config = store.get_chain_config()?;
-        validate_block(&block, &head_header, &chain_config)?;
+        validate_block(
+            &block,
+            &head_header,
+            &chain_config,
+            self.elasticity_multiplier,
+        )?;
 
         let account_updates = payload_build_result.account_updates;
 
