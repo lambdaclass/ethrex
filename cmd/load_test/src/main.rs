@@ -10,6 +10,7 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hex::ToHex;
 use secp256k1::{PublicKey, SecretKey};
+use sha3::{Digest, Keccak256};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -89,14 +90,9 @@ async fn deploy_contract(
 ) -> eyre::Result<Address> {
     let address = get_address_from_secret_key(&deployer.1)
         .map_err(|e| eyre::eyre!("Failed to get address from secret key: {}", e))?;
-    
+
     let (_, contract_address) = client
-        .deploy(
-            address,
-            deployer.1,
-            contract.into(),
-            Overrides::default(),
-        )
+        .deploy(address, deployer.1, contract.into(), Overrides::default())
         .await?;
 
     eyre::Ok(contract_address)
@@ -135,7 +131,7 @@ async fn claim_erc20_balances(
             let address = get_address_from_secret_key(&sk)
                 .map_err(|e| eyre::eyre!("Failed to get address from secret key: {}", e))
                 .unwrap();
-            
+
             let claim_tx = client
                 .build_eip1559_transaction(
                     contract,
@@ -224,9 +220,10 @@ async fn load_test(
         let client = client.clone();
         let tx_builder = tx_builder.clone();
         tasks.push(async move {
-            let address = get_address_from_secret_key(&sk)
-                .map_err(|e| EthClientError::Custom(format!("Failed to get address from secret key: {}", e)))?;
-                
+            let address = get_address_from_secret_key(&sk).map_err(|e| {
+                EthClientError::Custom(format!("Failed to get address from secret key: {}", e))
+            })?;
+
             let nonce = client
                 .get_nonce(address, BlockByNumber::Latest)
                 .await
@@ -270,6 +267,20 @@ async fn load_test(
         result?; // Propagate errors from tasks
     }
     Ok(())
+}
+
+// Function to derive address from public key
+fn address_from_pub_key(public_key: PublicKey) -> Address {
+    let public_key = public_key.serialize_uncompressed();
+
+    // The public key is 65 bytes, the first byte is a format byte
+    // so we skip it and hash only the actual key data
+    let hash = Keccak256::digest(&public_key[1..]);
+
+    // Take the last 20 bytes of the hash as the address
+    let mut address = Address::default();
+    address.0.copy_from_slice(&hash[12..]);
+    address
 }
 
 // Waits until the nonce of each account has reached the tx_amount.
