@@ -18,8 +18,7 @@ $(VECTORS_DIR):
 	$(MAKE) setup-test-dirs
 	$(MAKE) clone-ef-tests
 	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
-	tar -xzf $(STATETEST_ARTIFACT) -C $(TMP_DIR)
-	mv $(TMP_DIR)/fixtures/state_tests/* $(VECTORS_DIR)/state_tests/
+	tar -xzf $(STATETEST_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests
 	rm -f $(STATETEST_ARTIFACT)
 	rm -rf $(TMP_DIR)
 
