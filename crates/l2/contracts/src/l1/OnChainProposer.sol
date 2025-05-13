@@ -244,6 +244,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
                     picoWithdrawalsMerkleRoot,
                 "OnChainProposer: pico withdrawals public inputs don't match with committed withdrawals"
             );
+            bytes32 picoDepositsLogHash = bytes32(picoPublicValues[96:128]);
+            require(
+                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
+                    picoDepositsLogHash,
+                "OnChainProposer: pico deposits hash public input does not match with committed deposits"
+            );
 
             // If the verification fails, it will revert.
             IPicoVerifier(PICOVERIFIER).verifyPicoProof(
@@ -260,6 +266,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
                     risc0WithdrawalsMerkleRoot,
                 "OnChainProposer: risc0 withdrawals public inputs don't match with committed withdrawals"
             );
+            bytes32 risc0DepositsLogHash = bytes32(risc0Journal[96:128]);
+            require(
+                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
+                    risc0DepositsLogHash,
+                "OnChainProposer: risc0 deposits hash public input does not match with committed deposits"
+            );
 
             // If the verification fails, it will revert.
             IRiscZeroVerifier(R0VERIFIER).verify(
@@ -275,6 +287,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
                 batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
                     sp1WithdrawalsMerkleRoot,
                 "OnChainProposer: sp1 withdrawals public inputs don't match with committed withdrawals"
+            );
+            bytes32 sp1DepositsLogHash = bytes32(sp1PublicValues[112:144]);
+            require(
+                batchCommitments[batchNumber].processedDepositLogsRollingHash ==
+                    sp1DepositsLogHash,
+                "OnChainProposer: sp1 deposits hash public input does not match with committed deposits"
             );
 
             // If the verification fails, it will revert.
