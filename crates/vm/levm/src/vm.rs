@@ -212,24 +212,20 @@ impl<'a> VM<'a> {
                 Ok(OpcodeResult::Continue { pc_increment }) => self
                     .current_call_frame_mut()?
                     .increment_pc_by(pc_increment)?,
-                Ok(OpcodeResult::Halt) => {
+                Ok(OpcodeResult::Halt) | Err(_) => {
                     let mut executed_call_frame = self
                         .call_frames
                         .pop()
                         .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_result(&mut executed_call_frame)?;
-                    if self.handle_return(&executed_call_frame, &report)? {
-                        self.current_call_frame_mut()?.increment_pc_by(1)?;
-                    } else {
-                        return Ok(report);
-                    }
-                }
-                Err(error) => {
-                    let mut executed_call_frame = self
-                        .call_frames
-                        .pop()
-                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_error(error, &mut executed_call_frame)?;
+
+                    let report = match op_result {
+                        Ok(OpcodeResult::Halt) => {
+                            self.handle_opcode_result(&mut executed_call_frame)?
+                        }
+                        Err(error) => self.handle_opcode_error(error, &mut executed_call_frame)?,
+                        _ => unreachable!(),
+                    };
+
                     if self.handle_return(&executed_call_frame, &report)? {
                         self.current_call_frame_mut()?.increment_pc_by(1)?;
                     } else {
