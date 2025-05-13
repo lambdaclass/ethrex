@@ -68,7 +68,7 @@ L1_AUTH_PORT=8551
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
 
-PROVER_ENV_FILE ?= ".env.prover" 
+PROVER_ENV_FILE ?= ".env.prover"
 
 # Local L1
 init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
@@ -120,6 +120,8 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
 	--deposit-rich
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
@@ -228,7 +230,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	ETHREX_PROPOSER_BLOCK_TIME_MS=${ETHREX_PROPOSER_BLOCK_TIME_MS} \
 	ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
-	
+
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
 	cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
@@ -243,7 +245,7 @@ state-diff-test:
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
-	
+
 	cargo test state_reconstruct --release
 
 # Purge L2's state
