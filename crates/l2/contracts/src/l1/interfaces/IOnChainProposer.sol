@@ -29,11 +29,13 @@ interface IOnChainProposer {
     /// @param bridge the address of the bridge contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
+    /// @param tdxverifier the address of the tdx verifier.
     function initialize(
         address bridge,
         address r0verifier,
         address sp1verifier,
         address picoverifier,
+        address tdxverifier,
         address[] calldata sequencerAddress
     ) external;
 

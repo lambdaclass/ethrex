@@ -1,9 +1,5 @@
 use std::{
-    fs::{read_to_string, File, OpenOptions},
-    io::{BufWriter, Write},
-    path::PathBuf,
-    process::{Command, ExitStatus},
-    str::FromStr,
+    fs::{read_to_string, File, OpenOptions}, io::{BufWriter, Write}, path::PathBuf, process::{Command, ExitStatus}, str::FromStr
 };
 
 use bytes::Bytes;
@@ -28,7 +24,7 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address,address[])";
+    "initialize(address,address,address,address,address,address[])";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
@@ -55,6 +51,7 @@ async fn main() -> Result<(), DeployerError> {
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
+        tdx_verifier_address
     ) = deploy_contracts(&eth_client, &opts).await?;
 
     initialize_contracts(
@@ -63,6 +60,7 @@ async fn main() -> Result<(), DeployerError> {
         risc0_verifier_address,
         sp1_verifier_address,
         pico_verifier_address,
+        tdx_verifier_address,
         &eth_client,
         &opts,
     )
@@ -161,7 +159,7 @@ lazy_static::lazy_static! {
 async fn deploy_contracts(
     eth_client: &EthClient,
     opts: &DeployerOptions,
-) -> Result<(Address, Address, Address, Address, Address), DeployerError> {
+) -> Result<(Address, Address, Address, Address, Address, Address), DeployerError> {
     let deploy_frames = spinner!(["📭❱❱", "❱📬❱", "❱❱📫"], 220);
 
     let mut spinner = Spinner::new(
@@ -272,12 +270,19 @@ async fn deploy_contracts(
                 "Risc0Verifier address is not set and risc0_deploy_verifier is false".to_string(),
             ))?;
 
+    let tdx_verifier_address =
+    opts.tdx_verifier_address
+        .ok_or(DeployerError::InternalError(
+            "TDXVerifierAddress address is not set and tdx_verifier_address is false".to_string(),
+        ))?;
+
     Ok((
         on_chain_proposer_address,
         bridge_address,
         sp1_verifier_address,
         pico_verifier_address,
         risc0_verifier_address,
+        tdx_verifier_address
     ))
 }
 
@@ -288,6 +293,7 @@ async fn initialize_contracts(
     risc0_verifier_address: Address,
     sp1_verifier_address: Address,
     pico_verifier_address: Address,
+    tdx_verifier_address: Address,
     eth_client: &EthClient,
     opts: &DeployerOptions,
 ) -> Result<(), DeployerError> {
@@ -305,6 +311,7 @@ async fn initialize_contracts(
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
+            Value::Address(tdx_verifier_address),
             Value::Array(vec![
                 Value::Address(opts.committer_l1_address),
                 Value::Address(opts.proof_sender_l1_address),

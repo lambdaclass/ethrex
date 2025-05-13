@@ -57,6 +57,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     address public PICOVERIFIER;
     address public R0VERIFIER;
     address public SP1VERIFIER;
+    address public TDXVERIFIER;
 
     /// @notice Address used to avoid the verification process.
     /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
@@ -88,6 +89,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         address r0verifier,
         address sp1verifier,
         address picoverifier,
+        address tdxverifier,
         address[] calldata sequencerAddresses
     ) public nonReentrant {
         // Set the CommonBridge address
@@ -149,6 +151,21 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: sp1verifier is the contract address"
         );
         SP1VERIFIER = sp1verifier;
+
+        // Set the TDXVerifier address
+        require(
+            TDXVERIFIER == address(0),
+            "OnChainProposer: contract already initialized"
+        );
+        require(
+            tdxverifier != address(0),
+            "OnChainProposer: tdxverifier is the zero address"
+        );
+        require(
+            tdxverifier != address(this),
+            "OnChainProposer: tdxverifier is the contract address"
+        );
+        TDXVERIFIER = tdxverifier;
 
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;

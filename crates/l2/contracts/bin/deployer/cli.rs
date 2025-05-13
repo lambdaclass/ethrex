@@ -187,6 +187,26 @@ pub struct DeployerOptions {
     )]
     pub sp1_deploy_verifier: bool,
     #[arg(
+        long = "tdx.verifier-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER",
+        required_if_eq("tdx_deploy_verifier", "false"),
+        help_heading = "Deployer options",
+        help = "If set to 0xAA skip proof verification -> Only use in dev mode."
+    )]
+    pub tdx_verifier_address: Option<Address>,
+    #[arg(
+        long = "tdx.deploy-verifier",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        action = ArgAction::SetTrue,
+        env = "ETHREX_DEPLOYER_TDX_DEPLOY_VERIFIER",
+        required_unless_present = "tdx_verifier_address",
+        help_heading = "Deployer options",
+        help = "If set to true, it will deploy the contract and override the address above with the deployed one.",
+    )]
+    pub tdx_deploy_verifier: bool,
+    #[arg(
         long,
         default_value = "false",
         value_name = "BOOLEAN",
@@ -256,6 +276,11 @@ impl Default for DeployerOptions {
                 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
             ])),
             sp1_deploy_verifier: false,
+            tdx_verifier_address: Some(H160([
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0xaa,
+            ])),
+            tdx_deploy_verifier: false,
             randomize_contract_deployment: false,
             validium: false,
         }

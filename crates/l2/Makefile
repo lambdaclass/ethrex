@@ -120,6 +120,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
 	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
+	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
 	--deposit-rich
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia

@@ -67,7 +67,6 @@ impl L1ProofSender {
                         Overrides::default(),
                     )
                     .await?;
-
                 // trim to 20 bytes, also removes 0x prefix
                 let trimmed_response = &response[26..];
 
