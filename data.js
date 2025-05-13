@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747149322542,
+  "lastUpdate": 1747149711840,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6535,6 +6535,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 215689162333,
             "range": "± 607668027",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@edgl.dev",
+            "name": "Edgar",
+            "username": "edg-l"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5d3354f492aa8a1f880d366131ee8e14d86d6b69",
+          "message": "perf(l1): reduce transaction clone and Vec grow overhead in mempool (#2637)\n\n**Motivation**\n\nImprove perfomance\n\n**Description**\n\nReduces transaction clone overhead on the mempool and Vec initial grow\noverhead.\n\nThe main focus on this pr was the mempool fetch transaction method whose\noverhead before was 15%~, reducing it to 13%~, whose main time is spent\nin the filter transaction method, which had a clone taking 5% of the\ntime now reduced to non existent levels using an Arc.\n\nImages of the perf profile:\n\nBefore\n\n\n![image](https://github.com/user-attachments/assets/8a2a9e32-8e8d-4c24-8fd2-b5cb91401ee5)\n\nAfter\n\n\n![image](https://github.com/user-attachments/assets/1d3a0c56-5826-4efe-874b-8687c230c070)\n\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-13T14:24:24Z",
+          "tree_id": "af56d3b6746259cf1d61d3c2da8ae37d3545ded7",
+          "url": "https://github.com/lambdaclass/ethrex/commit/5d3354f492aa8a1f880d366131ee8e14d86d6b69"
+        },
+        "date": 1747149709029,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 216117720419,
+            "range": "± 813275620",
             "unit": "ns/iter"
           }
         ]
