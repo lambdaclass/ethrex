@@ -64,7 +64,7 @@ async fn setup() -> (ProgramInput, Block) {
         .unwrap()
         .unwrap();
 
-    let db = Evm::to_execution_db(&store.clone(), &vec![block_to_prove.clone()])
+    let db = Evm::to_prover_db(&store.clone(), &vec![block_to_prove.clone()])
         .await
         .unwrap();
 
