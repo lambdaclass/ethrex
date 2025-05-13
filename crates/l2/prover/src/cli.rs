@@ -8,7 +8,7 @@ pub struct ProverClientOptions {
         long = "prover-server-endpoint",
         value_name = "PROVER_SERVER_ENDPOINT",
         env = "PROVER_CLIENT_PROVER_SERVER_ENDPOINT",
-        help = "Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs",
+        help = "Endpoint address where the server is running",
         help_heading = "Prover client options",
         default_value = "localhost:3900"
     )]
@@ -17,7 +17,7 @@ pub struct ProverClientOptions {
         long = "proving-time",
         value_name = "PROVING_TIME_MS",
         env = "PROVER_CLIENT_PROVING_TIME_MS",
-        help = "Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs",
+        help = "Time to wait before requesting new data to prove",
         help_heading = "Prover client options",
         default_value_t = 5000
     )]
