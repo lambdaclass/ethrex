@@ -33,8 +33,7 @@ interface IOnChainProposer {
         address bridge,
         address r0verifier,
         address sp1verifier,
-        address picoverifier,
-        address[] calldata sequencerAddress
+        address picoverifier
     ) external;
 
     /// @notice Commits to a batch of L2 blocks.

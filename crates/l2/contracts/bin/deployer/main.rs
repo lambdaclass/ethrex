@@ -27,8 +27,7 @@ use spinoff::{spinner, spinners, Color, Spinner};
 mod cli;
 mod error;
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address,address[])";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(address,address,address,address)";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 
 #[tokio::main]
@@ -305,10 +304,6 @@ async fn initialize_contracts(
             Value::Address(risc0_verifier_address),
             Value::Address(sp1_verifier_address),
             Value::Address(pico_verifier_address),
-            Value::Array(vec![
-                Value::Address(opts.committer_l1_address),
-                Value::Address(opts.proof_sender_l1_address),
-            ]),
         ];
         let on_chain_proposer_initialization_calldata =
             encode_calldata(INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE, &calldata_values)?;

@@ -49,10 +49,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     /// @dev This is crucial for ensuring that only subsequents batches are committed in the contract.
     uint256 public lastCommittedBatch;
 
-    /// @dev The sequencer addresses that are authorized to commit and verify batches.
-    mapping(address _authorizedAddress => bool)
-        public authorizedSequencerAddresses;
-
     address public BRIDGE;
     address public PICOVERIFIER;
     address public R0VERIFIER;
@@ -74,21 +70,12 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         VALIDIUM = _validium;
     }
 
-    modifier onlySequencer() {
-        require(
-            authorizedSequencerAddresses[msg.sender],
-            "OnChainProposer: caller is not the sequencer"
-        );
-        _;
-    }
-
     /// @inheritdoc IOnChainProposer
     function initialize(
         address bridge,
         address r0verifier,
         address sp1verifier,
-        address picoverifier,
-        address[] calldata sequencerAddresses
+        address picoverifier
     ) public nonReentrant {
         // Set the CommonBridge address
         require(
@@ -149,10 +136,6 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             "OnChainProposer: sp1verifier is the contract address"
         );
         SP1VERIFIER = sp1verifier;
-
-        for (uint256 i = 0; i < sequencerAddresses.length; i++) {
-            authorizedSequencerAddresses[sequencerAddresses[i]] = true;
-        }
     }
 
     /// @inheritdoc IOnChainProposer
@@ -162,7 +145,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 stateDiffKZGVersionedHash,
         bytes32 withdrawalsLogsMerkleRoot,
         bytes32 processedDepositLogsRollingHash
-    ) external override onlySequencer {
+    ) external override {
         // TODO: Refactor validation
         require(
             batchNumber == lastCommittedBatch + 1,
@@ -222,7 +205,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         bytes32 picoRiscvVkey,
         bytes calldata picoPublicValues,
         uint256[8] calldata picoProof
-    ) external override onlySequencer {
+    ) external override {
         // TODO: Refactor validation
         // TODO: imageid, programvkey and riscvvkey should be constants
         // TODO: organize each zkvm proof arguments in their own structs
