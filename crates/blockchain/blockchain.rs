@@ -11,9 +11,10 @@ use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS};
 use ethrex_common::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use ethrex_common::types::{
-    compute_receipts_root, validate_block_header, validate_block_body, validate_cancun_header_fields,
-    validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHash,
-    BlockHeader, BlockNumber, ChainConfig, EIP4844Transaction, Receipt, Transaction, MempoolTransaction
+    compute_receipts_root, validate_block_body, validate_block_header,
+    validate_cancun_header_fields, validate_prague_header_fields,
+    validate_pre_cancun_header_fields, Block, BlockHash, BlockHeader, BlockNumber, ChainConfig,
+    EIP4844Transaction, MempoolTransaction, Receipt, Transaction,
 };
 
 use ethrex_common::types::{BlobsBundle, Fork, ELASTICITY_MULTIPLIER};
@@ -576,7 +577,8 @@ pub fn validate_block(
             .map_err(InvalidBlockError::from)?;
         verify_blob_gas_usage(block, chain_config)?;
     } else {
-        validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)? }
+        validate_pre_cancun_header_fields(&block.header).map_err(InvalidBlockError::from)?
+    }
 
     Ok(())
 }
