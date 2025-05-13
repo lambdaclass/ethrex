@@ -64,9 +64,9 @@ impl From<SequencerOptions> for SequencerConfig {
     fn from(opts: SequencerOptions) -> Self {
         Self {
             block_producer: BlockProducerConfig {
-                block_time_ms: opts.proposer_opts.block_time_ms,
-                coinbase_address: opts.proposer_opts.coinbase_address,
-                elasticity_multiplier: opts.proposer_opts.elasticity_multiplier,
+                block_time_ms: opts.block_producer_opts.block_time_ms,
+                coinbase_address: opts.block_producer_opts.coinbase_address,
+                elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts.committer_opts.on_chain_proposer_address,
