@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747154907760,
+  "lastUpdate": 1747156240017,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6685,6 +6685,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 212556006834,
             "range": "± 468298929",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "9faceb7cda8f4317ed9ea465aa2d38a49fe1ca50",
+          "message": "fix(l1): support both `data` and `input` fields on `GenericTransaction` as long as they have the same value (#2685)\n\n**Motivation**\nIssue #2665 reported that some tools create transactions with both the\n`data` and `input` fields set to the same value, which is not currently\nsupported by our deserialization which admits only one. Other\nimplementations also support having both fields in their equivalent of\n`GenericTransaction`. This PR handles this case by adding a custom\ndeserialization that can parse both fields and check that they are equal\nif set to prevent unexpected behaviours.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Implement custom field deserialization so that both `input` & `data`\nfields are supported but deserialized as one\n* Add test case for the reported failure case\n* Use a non-trivial input for the current and added deserialization test\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #2665",
+          "timestamp": "2025-05-13T16:14:39Z",
+          "tree_id": "4096c716b0add7c4617dfe56b24f76e6de3b2460",
+          "url": "https://github.com/lambdaclass/ethrex/commit/9faceb7cda8f4317ed9ea465aa2d38a49fe1ca50"
+        },
+        "date": 1747156236876,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 218439928619,
+            "range": "± 1275869476",
             "unit": "ns/iter"
           }
         ]
