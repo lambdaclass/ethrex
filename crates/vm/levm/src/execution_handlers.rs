@@ -14,8 +14,7 @@ impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,
-        backup: Substate,
-        current_call_frame: &mut CallFrame,
+        current_call_frame: &CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
             Ok(output) => Ok(ExecutionReport {
@@ -29,8 +28,6 @@ impl<'a> VM<'a> {
                 if error.should_propagate() {
                     return Err(error);
                 }
-
-                self.restore_state(backup, current_call_frame.call_frame_backup.clone())?;
 
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),

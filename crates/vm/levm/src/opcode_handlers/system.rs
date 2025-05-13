@@ -828,13 +828,15 @@ impl<'a> VM<'a> {
             ret_size,
         );
         self.call_frames.push(new_call_frame);
-        // Backup of Substate, a copy of the substate to restore if sub-context is reverted
-        let backup = self.accrued_substate.clone();
-        self.substate_backups.push(backup);
 
         if is_precompile(&code_address, self.env.config.fork) {
             let _report = self.run_execution()?;
+        } else {
+            // Backup of Substate, a copy of the substate to restore if sub-context is reverted
+            let backup = self.accrued_substate.clone();
+            self.substate_backups.push(backup);
         }
+        
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
