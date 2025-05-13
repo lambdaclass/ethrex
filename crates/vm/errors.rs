@@ -17,7 +17,7 @@ pub enum EvmError {
     #[error("DB error: {0}")]
     DB(#[from] StoreError),
     #[error("Execution DB error: {0}")]
-    ExecutionDB(#[from] ExecutionDBError),
+    ExecutionDB(#[from] ProverDBError),
     #[error("{0}")]
     Precompile(String),
     #[error("Invalid EVM or EVM not supported: {0}")]
@@ -29,7 +29,7 @@ pub enum EvmError {
 }
 
 #[derive(Debug, Error)]
-pub enum ExecutionDBError {
+pub enum ProverDBError {
     #[error("Database error: {0}")]
     Database(#[from] DatabaseError),
     #[error("Store error: {0}")]
@@ -104,8 +104,8 @@ impl From<RevmError<StoreError>> for EvmError {
     }
 }
 
-impl From<RevmError<ExecutionDBError>> for EvmError {
-    fn from(value: RevmError<ExecutionDBError>) -> Self {
+impl From<RevmError<ProverDBError>> for EvmError {
+    fn from(value: RevmError<ProverDBError>) -> Self {
         match value {
             RevmError::Transaction(err) => EvmError::Transaction(err.to_string()),
             RevmError::Header(err) => EvmError::Header(err.to_string()),

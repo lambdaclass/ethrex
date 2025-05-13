@@ -13,7 +13,7 @@ use ethrex_common::{
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
-use ethrex_vm::{Evm, EvmError, ExecutionDB};
+use ethrex_vm::{Evm, EvmError, ProverDB};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Debug, net::IpAddr};
 use tokio::{
@@ -30,7 +30,7 @@ use super::utils::sleep_random;
 pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
-    pub db: ExecutionDB,
+    pub db: ProverDB,
     pub elasticity_multiplier: u64,
 }
 

@@ -7,7 +7,7 @@ use crate::constants::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionDB, ExecutionDBError, ExecutionResult, StoreWrapper};
+use crate::{EvmError, ExecutionResult, ProverDB, ProverDBError, StoreWrapper};
 use bytes::Bytes;
 use ethrex_common::{
     types::{
@@ -320,7 +320,7 @@ impl LEVM {
             TxResult::Success => Ok(report),
             // EIP-7002 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
-                "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.", 
+                "REVERT when reading withdrawal requests with error: {:?}. According to EIP-7002, the revert of this system call invalidates the block.",
                 vm_error
             ))),
         }
@@ -349,7 +349,7 @@ impl LEVM {
             TxResult::Success => Ok(report),
             // EIP-7251 specifies that a failed system call invalidates the entire block.
             TxResult::Revert(vm_error) => Err(EvmError::Custom(format!(
-                "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.", 
+                "REVERT when dequeuing consolidation requests with error: {:?}. According to EIP-7251, the revert of this system call invalidates the block.",
                 vm_error
             ))),
         }
@@ -381,13 +381,13 @@ impl LEVM {
     pub async fn to_execution_db(
         blocks: &[Block],
         store: &Store,
-    ) -> Result<ExecutionDB, ExecutionDBError> {
+    ) -> Result<ProverDB, ProverDBError> {
         let chain_config = store.get_chain_config()?;
         let Some(first_block_parent_hash) = blocks.first().map(|e| e.header.parent_hash) else {
-            return Err(ExecutionDBError::Custom("Unable to get first block".into()));
+            return Err(ProverDBError::Custom("Unable to get first block".into()));
         };
         let Some(last_block) = blocks.last() else {
-            return Err(ExecutionDBError::Custom("Unable to get last block".into()));
+            return Err(ProverDBError::Custom("Unable to get last block".into()));
         };
 
         let logger = Arc::new(DatabaseLogger::new(Arc::new(Mutex::new(Box::new(
@@ -425,7 +425,7 @@ impl LEVM {
             .state_accessed
             .lock()
             .map_err(|_| {
-                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
             })?
             .clone();
 
@@ -439,14 +439,14 @@ impl LEVM {
                     .transpose()
                     .map(|account| Ok((*address, account?)))
             })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+            .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
         // fetch all read/written code from store
         let code_accessed = logger
             .code_accessed
             .lock()
             .map_err(|_| {
-                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
             })?
             .clone();
         let code = accounts
@@ -459,7 +459,7 @@ impl LEVM {
                     .transpose()
                     .map(|account| Ok((hash, account?)))
             })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+            .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
         // fetch all read/written storage from store
         let added_storage = execution_updates.iter().filter_map(|(address, update)| {
@@ -475,7 +475,7 @@ impl LEVM {
             .into_iter()
             .chain(added_storage)
             .map(|(address, keys)| {
-                let keys: Result<HashMap<_, _>, ExecutionDBError> = keys
+                let keys: Result<HashMap<_, _>, ProverDBError> = keys
                     .iter()
                     .filter_map(|key| {
                         store
@@ -486,13 +486,13 @@ impl LEVM {
                     .collect();
                 Ok((address, keys?))
             })
-            .collect::<Result<HashMap<_, _>, ExecutionDBError>>()?;
+            .collect::<Result<HashMap<_, _>, ProverDBError>>()?;
 
         let block_hashes = logger
             .block_hashes_accessed
             .lock()
             .map_err(|_| {
-                ExecutionDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
+                ProverDBError::Store(StoreError::Custom("Could not lock mutex".to_string()))
             })?
             .clone()
             .into_iter()
@@ -502,10 +502,10 @@ impl LEVM {
         // get account proofs
         let state_trie = store
             .state_trie(last_block.hash())?
-            .ok_or(ExecutionDBError::NewMissingStateTrie(last_block.hash()))?;
-        let parent_state_trie = store.state_trie(first_block_parent_hash)?.ok_or(
-            ExecutionDBError::NewMissingStateTrie(first_block_parent_hash),
-        )?;
+            .ok_or(ProverDBError::NewMissingStateTrie(last_block.hash()))?;
+        let parent_state_trie = store
+            .state_trie(first_block_parent_hash)?
+            .ok_or(ProverDBError::NewMissingStateTrie(first_block_parent_hash))?;
         let hashed_addresses: Vec<_> = state_accessed.keys().map(hash_address).collect();
         let initial_state_proofs = parent_state_trie.get_proofs(&hashed_addresses)?;
         let final_state_proofs: Vec<_> = hashed_addresses
@@ -533,7 +533,7 @@ impl LEVM {
                 continue;
             };
             let storage_trie = store.storage_trie(last_block.hash(), address)?.ok_or(
-                ExecutionDBError::NewMissingStorageTrie(last_block.hash(), address),
+                ProverDBError::NewMissingStorageTrie(last_block.hash(), address),
             )?;
             let paths = storage_keys.iter().map(hash_key).collect::<Vec<_>>();
 
@@ -561,7 +561,7 @@ impl LEVM {
             final_storage_proofs.insert(address, final_proofs);
         }
 
-        Ok(ExecutionDB {
+        Ok(ProverDB {
             accounts,
             code,
             storage,

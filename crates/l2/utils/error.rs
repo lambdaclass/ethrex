@@ -1,6 +1,6 @@
 use ethrex_blockchain::error::ChainError;
 use ethrex_storage::error::StoreError;
-use ethrex_vm::ExecutionDBError;
+use ethrex_vm::ProverDBError;
 use keccak_hash::H256;
 
 use super::config::errors::ConfigError;
@@ -16,7 +16,7 @@ pub enum ProverInputError {
     #[error("Chain error: {0}")]
     ChainError(#[from] ChainError),
     #[error("ExecutionDB error: {0}")]
-    ExecutionDBError(#[from] ExecutionDBError),
+    ExecutionDBError(#[from] ProverDBError),
     #[error("Invalid Environment variable: {0}")]
     InvalidEnvVar(#[from] ConfigError),
 }

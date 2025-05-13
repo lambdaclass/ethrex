@@ -5,7 +5,7 @@ use self::revm::db::evm_state;
 use crate::execution_result::ExecutionResult;
 use crate::helpers::{fork_to_spec_id, spec_id, SpecId};
 use crate::{db::StoreWrapper, errors::EvmError};
-use crate::{ExecutionDB, ExecutionDBError};
+use crate::{ProverDB, ProverDBError};
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
     AccessList, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction, Withdrawal,
@@ -86,7 +86,7 @@ impl Evm {
         }
     }
 
-    pub fn from_execution_db(db: ExecutionDB) -> Self {
+    pub fn from_execution_db(db: ProverDB) -> Self {
         Evm::LEVM {
             db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
         }
@@ -95,7 +95,7 @@ impl Evm {
     pub async fn to_execution_db(
         store: &Store,
         blocks: &[Block],
-    ) -> Result<ExecutionDB, ExecutionDBError> {
+    ) -> Result<ProverDB, ProverDBError> {
         LEVM::to_execution_db(blocks, store).await
     }
 
