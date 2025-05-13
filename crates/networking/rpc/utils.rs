@@ -460,7 +460,7 @@ pub mod test_utils {
             #[cfg(feature = "l2")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
             #[cfg(feature = "l2")]
-            gateway_pubkey: Default::default(),
+            _gateway_pubkey: Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),
             #[cfg(feature = "l2")]

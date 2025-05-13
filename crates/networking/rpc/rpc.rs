@@ -75,9 +75,6 @@ cfg_if::cfg_if! {
     }
 }
 
-#[cfg(feature = "l2")]
-use crate::based::versioned_message::SignedMessage;
-
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RpcRequestWrapper {
@@ -97,7 +94,7 @@ pub struct RpcApiContext {
     #[cfg(feature = "l2")]
     pub gateway_auth_client: EngineClient,
     #[cfg(feature = "l2")]
-    pub gateway_pubkey: Public,
+    pub _gateway_pubkey: Public,
     #[cfg(feature = "l2")]
     pub valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")]
@@ -182,7 +179,7 @@ pub async fn start_api(
         #[cfg(feature = "l2")]
         gateway_auth_client,
         #[cfg(feature = "l2")]
-        gateway_pubkey,
+        _gateway_pubkey: gateway_pubkey,
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
         #[cfg(feature = "l2")]
@@ -473,11 +470,9 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
 }
 
 #[cfg(feature = "l2")]
-pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn map_based_requests(req: &RpcRequest, _context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "based_env" => SignedMessage::call_env(req, context),
-        "based_newFrag" => SignedMessage::call_new_frag(req, context),
-        "based_sealFrag" => SignedMessage::call_seal_frag(req, context),
+        "based_block" => Ok(Value::Null), // TODO.
         unknown_based_method => Err(RpcErr::MethodNotFound(unknown_based_method.to_owned())),
     }
 }
