@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747145057771,
+  "lastUpdate": 1747148067582,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6475,6 +6475,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 216613314283,
             "range": "± 471487870",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "francisco.gauna@lambdaclass.com",
+            "name": "fedacking",
+            "username": "fedacking"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "987089f71eb5c446c4a51ba4db3bac7b1edd3695",
+          "message": "fix(l1): fixed engine_forkchoiceUpdatedV1 on canonical heads (#2754)\n\n**Motivation**\n\nThis test updates the forkchoiceupdated method to respect the paris\nspecification. The wrong latestValidHash was being sent.\n\n```Client software MAY skip an update of the forkchoice state and MUST NOT begin a payload build process if forkchoiceState.headBlockHash references a VALID ancestor of the head of canonical chain, i.e. the ancestor passed [payload validation](https://github.com/ethereum/execution-apis/blob/main/src/engine/paris.md#payload-validation) process and deemed VALID. In the case of such an event, client software MUST return {payloadStatus: {status: VALID, latestValidHash: forkchoiceState.headBlockHash, validationError: null}, payloadId: null}.```\n\n**Description**\n\nWhen on an `InvalidForkChoice::NewHeadAlreadyCanonical` branch, changed the `latestValidHash` from the latest canonical for the one given in the `forkchoiceState.headBlockHash` field, as indicated by the spec. Added the `Re-Org Back into Canonical Chain, Depth=10, Execute Side Payload on Re-Org` test back to the CI as it's now fixed.\n\nFixed a test on #1285",
+          "timestamp": "2025-05-13T13:59:48Z",
+          "tree_id": "14aecde51550040a9d7754f18279bb25965ca142",
+          "url": "https://github.com/lambdaclass/ethrex/commit/987089f71eb5c446c4a51ba4db3bac7b1edd3695"
+        },
+        "date": 1747148065786,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 218104494696,
+            "range": "± 989460263",
             "unit": "ns/iter"
           }
         ]
