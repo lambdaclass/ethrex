@@ -242,7 +242,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             require(
                 batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
                     picoWithdrawalsMerkleRoot,
-                "OnChainProposer: wrong withdrawals log merkle root for pico public inputs"
+                "OnChainProposer: pico withdrawals public inputs don't match with committed withdrawals"
             );
             bytes32 picoDepositsLogHash = bytes32(picoPublicValues[96:128]);
             require(
@@ -264,7 +264,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             require(
                 batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
                     risc0WithdrawalsMerkleRoot,
-                "OnChainProposer: wrong withdrawals log merkle root for risc0 public inputs"
+                "OnChainProposer: risc0 withdrawals public inputs don't match with committed withdrawals"
             );
             bytes32 risc0DepositsLogHash = bytes32(risc0Journal[96:128]);
             require(
@@ -286,7 +286,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
             require(
                 batchCommitments[batchNumber].withdrawalsLogsMerkleRoot ==
                     sp1WithdrawalsMerkleRoot,
-                "OnChainProposer: wrong withdrawals log merkle root for sp1 public inputs"
+                "OnChainProposer: sp1 withdrawals public inputs don't match with committed withdrawals"
             );
             bytes32 sp1DepositsLogHash = bytes32(sp1PublicValues[112:144]);
             require(

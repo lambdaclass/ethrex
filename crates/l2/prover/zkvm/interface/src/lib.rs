@@ -40,6 +40,8 @@ pub mod io {
         pub parent_block_header: BlockHeader,
         /// database containing only the data necessary to execute
         pub db: ExecutionDB,
+        /// value used to calculate base fee
+        pub elasticity_multiplier: u64,
     }
 
     /// Public output variables exposed by the zkVM execution program. Some of these are part of

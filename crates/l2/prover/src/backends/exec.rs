@@ -46,6 +46,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         blocks,
         parent_block_header,
         mut db,
+        elasticity_multiplier,
     } = input;
 
     // Tries used for validating initial and final state root
@@ -72,7 +73,12 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
 
     for block in blocks {
         // Validate the block
-        validate_block(&block, &parent_header, &db.chain_config)?;
+        validate_block(
+            &block,
+            &parent_header,
+            &db.chain_config,
+            elasticity_multiplier,
+        )?;
 
         // Execute block
         let mut vm = Evm::from_execution_db(db.clone());
