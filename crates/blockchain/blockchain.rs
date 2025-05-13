@@ -411,7 +411,6 @@ impl Blockchain {
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config()?;
-
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
@@ -446,7 +445,6 @@ impl Blockchain {
         };
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
-
         if let Some(sender_acc_info) = maybe_sender_acc_info {
             if tx.nonce() < sender_acc_info.nonce {
                 return Err(MempoolError::InvalidNonce);
@@ -455,7 +453,6 @@ impl Blockchain {
             let tx_cost = tx
                 .cost_without_base_fee()
                 .ok_or(MempoolError::InvalidTxGasvalues)?;
-
             if tx_cost > sender_acc_info.balance {
                 return Err(MempoolError::NotEnoughBalance);
             }
