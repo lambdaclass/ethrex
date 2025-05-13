@@ -1,15 +1,14 @@
-#[cfg(feature = "c-kzg")]
-use lazy_static::lazy_static;
 use std::ops::AddAssign;
 
 use crate::serde_utils;
-use crate::{
-    types::{constants::VERSIONED_HASH_VERSION_KZG, transaction::EIP4844Transaction},
-    Bytes, H256,
-};
+use crate::{types::constants::VERSIONED_HASH_VERSION_KZG, Bytes, H256};
 
 #[cfg(feature = "c-kzg")]
-use c_kzg::{ethereum_kzg_settings, KzgCommitment, KzgProof, KzgSettings};
+use {
+    crate::types::transaction::EIP4844Transaction,
+    c_kzg::{ethereum_kzg_settings, KzgCommitment, KzgProof, KzgSettings},
+    lazy_static::lazy_static,
+};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -255,6 +254,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "c-kzg")]
     fn transaction_with_valid_blobs_should_pass() {
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()
@@ -282,7 +282,9 @@ mod tests {
 
         assert!(matches!(blobs_bundle.validate(&tx), Ok(())));
     }
+
     #[test]
+    #[cfg(feature = "c-kzg")]
     fn transaction_with_invalid_proofs_should_fail() {
         // blob data taken from: https://etherscan.io/tx/0x02a623925c05c540a7633ffa4eb78474df826497faa81035c4168695656801a2#blobs, but with 0 size blobs
         let blobs_bundle = BlobsBundle {
@@ -333,6 +335,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "c-kzg")]
     fn transaction_with_incorrect_blobs_should_fail() {
         // blob data taken from: https://etherscan.io/tx/0x02a623925c05c540a7633ffa4eb78474df826497faa81035c4168695656801a2#blobs
         let blobs_bundle = BlobsBundle {

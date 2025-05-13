@@ -19,7 +19,7 @@ use ethrex_common::types::{
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_rlp::error::RLPDecodeError;
-use ethrex_trie::{Nibbles, Trie};
+use ethrex_trie::{Nibbles, NodeHash, Trie};
 use libmdbx::orm::{Decodable, DupSort, Encodable, Table};
 use libmdbx::{
     dupsort,
@@ -1150,7 +1150,7 @@ table!(
 
 table!(
     /// state trie nodes
-    ( StateTrieNodes ) Vec<u8> => Vec<u8>
+    ( StateTrieNodes ) NodeHash => Vec<u8>
 );
 
 // Local Blocks

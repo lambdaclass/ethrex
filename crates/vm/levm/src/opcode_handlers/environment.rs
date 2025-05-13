@@ -5,8 +5,7 @@ use crate::{
     utils::word_to_address,
     vm::VM,
 };
-use ethrex_common::{types::Fork, U256};
-use keccak_hash::keccak;
+use ethrex_common::U256;
 
 // Environmental Information (16)
 // Opcodes: ADDRESS, BALANCE, ORIGIN, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, CALLDATACOPY, CODESIZE, CODECOPY, GASPRICE, EXTCODESIZE, EXTCODECOPY, RETURNDATASIZE, RETURNDATACOPY, EXTCODEHASH
@@ -28,18 +27,17 @@ impl<'a> VM<'a> {
 
     // BALANCE operation
     pub fn op_balance(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
-        let (account_info, address_was_cold) = self
+        let (account, address_was_cold) = self
             .db
             .access_account(&mut self.accrued_substate, address)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold, fork)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::balance(address_was_cold)?)?;
 
-        current_call_frame.stack.push(account_info.balance)?;
+        current_call_frame.stack.push(account.info.balance)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
@@ -256,27 +254,23 @@ impl<'a> VM<'a> {
 
     // EXTCODESIZE operation
     pub fn op_extcodesize(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
-        let (account_info, address_was_cold) = self
+        let (account, address_was_cold) = self
             .db
             .access_account(&mut self.accrued_substate, address)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold, fork)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodesize(address_was_cold)?)?;
 
-        current_call_frame
-            .stack
-            .push(account_info.bytecode.len().into())?;
+        current_call_frame.stack.push(account.code.len().into())?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })
     }
 
     // EXTCODECOPY operation
     pub fn op_extcodecopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
         let dest_offset = self.current_call_frame_mut()?.stack.pop()?;
         let offset = self.current_call_frame_mut()?.stack.pop()?;
@@ -288,7 +282,7 @@ impl<'a> VM<'a> {
             .map_err(|_| VMError::VeryLargeNumber)?;
         let current_memory_size = self.current_call_frame()?.memory.len();
 
-        let (account_info, address_was_cold) = self
+        let (account, address_was_cold) = self
             .db
             .access_account(&mut self.accrued_substate, address)?;
 
@@ -300,7 +294,6 @@ impl<'a> VM<'a> {
                 new_memory_size,
                 current_memory_size,
                 address_was_cold,
-                fork,
             )?)?;
 
         if size == 0 {
@@ -309,7 +302,7 @@ impl<'a> VM<'a> {
 
         // If the bytecode is a delegation designation, it will copy the marker (0xef0100) || address.
         // https://eips.ethereum.org/EIPS/eip-7702#delegation-designation
-        let bytecode = account_info.bytecode;
+        let bytecode = account.code;
 
         let mut data = vec![0u8; size];
         if offset < bytecode.len().into() {
@@ -334,10 +327,6 @@ impl<'a> VM<'a> {
 
     // RETURNDATASIZE operation
     pub fn op_returndatasize(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-211
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         let current_call_frame = self.current_call_frame_mut()?;
         current_call_frame.increase_consumed_gas(gas_cost::RETURNDATASIZE)?;
 
@@ -350,10 +339,6 @@ impl<'a> VM<'a> {
 
     // RETURNDATACOPY operation
     pub fn op_returndatacopy(&mut self) -> Result<OpcodeResult, VMError> {
-        // https://eips.ethereum.org/EIPS/eip-211
-        if self.env.config.fork < Fork::Byzantium {
-            return Err(VMError::InvalidOpcode);
-        };
         let current_call_frame = self.current_call_frame_mut()?;
         let dest_offset = current_call_frame.stack.pop()?;
         let returndata_offset: usize = current_call_frame
@@ -411,24 +396,23 @@ impl<'a> VM<'a> {
 
     // EXTCODEHASH operation
     pub fn op_extcodehash(&mut self) -> Result<OpcodeResult, VMError> {
-        let fork = self.env.config.fork;
         let address = word_to_address(self.current_call_frame_mut()?.stack.pop()?);
 
-        let (account_info, address_was_cold) = self
+        let (account, address_was_cold) = self
             .db
             .access_account(&mut self.accrued_substate, address)?;
 
         let current_call_frame = self.current_call_frame_mut()?;
 
-        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold, fork)?)?;
+        current_call_frame.increase_consumed_gas(gas_cost::extcodehash(address_was_cold)?)?;
 
         // An account is considered empty when it has no code and zero nonce and zero balance. [EIP-161]
-        if account_info.is_empty() {
+        if account.is_empty() {
             current_call_frame.stack.push(U256::zero())?;
             return Ok(OpcodeResult::Continue { pc_increment: 1 });
         }
 
-        let hash = U256::from_big_endian(keccak(account_info.bytecode).as_fixed_bytes());
+        let hash = U256::from_big_endian(&account.info.code_hash.0);
         current_call_frame.stack.push(hash)?;
 
         Ok(OpcodeResult::Continue { pc_increment: 1 })

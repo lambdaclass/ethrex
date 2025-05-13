@@ -1,10 +1,10 @@
 use crate::runner::{EFTestRunnerError, InternalError};
 use colored::Colorize;
-use ethrex_common::{types::Fork, Address, H256};
-use ethrex_levm::{
-    errors::{ExecutionReport, TxResult, VMError},
-    Account,
+use ethrex_common::{
+    types::{Account, Fork},
+    Address, H256,
 };
+use ethrex_levm::errors::{ExecutionReport, TxResult, VMError};
 use ethrex_storage::{error::StoreError, AccountUpdate};
 use itertools::Itertools;
 use revm::primitives::{EVMError, ExecutionResult as RevmExecutionResult};
@@ -127,7 +127,7 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
             "type": "section",
             "text": {{
                 "type": "mrkdwn",
-                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"
+                "text": "*Summary*: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n"
             }}
         }}
     ]
@@ -135,15 +135,7 @@ pub fn summary_for_slack(reports: &[EFTestReport]) -> String {
         fork_summary_for_slack(reports, Fork::Prague),
         fork_summary_for_slack(reports, Fork::Cancun),
         fork_summary_for_slack(reports, Fork::Shanghai),
-        fork_summary_for_slack(reports, Fork::Byzantium),
-        fork_summary_for_slack(reports, Fork::Berlin),
-        fork_summary_for_slack(reports, Fork::Constantinople),
-        fork_summary_for_slack(reports, Fork::Petersburg),
         fork_summary_for_slack(reports, Fork::Paris),
-        fork_summary_for_slack(reports, Fork::Homestead),
-        fork_summary_for_slack(reports, Fork::Istanbul),
-        fork_summary_for_slack(reports, Fork::London),
-        fork_summary_for_slack(reports, Fork::Frontier),
     )
 }
 
@@ -172,19 +164,11 @@ pub fn summary_for_github(reports: &[EFTestReport]) -> String {
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n"#,
+        r#"Summary: {total_passed}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n"#,
         fork_summary_for_github(reports, Fork::Prague),
         fork_summary_for_github(reports, Fork::Cancun),
         fork_summary_for_github(reports, Fork::Shanghai),
-        fork_summary_for_github(reports, Fork::Byzantium),
-        fork_summary_for_github(reports, Fork::Berlin),
-        fork_summary_for_github(reports, Fork::Constantinople),
-        fork_summary_for_github(reports, Fork::Petersburg),
         fork_summary_for_github(reports, Fork::Paris),
-        fork_summary_for_github(reports, Fork::Homestead),
-        fork_summary_for_github(reports, Fork::Istanbul),
-        fork_summary_for_github(reports, Fork::London),
-        fork_summary_for_github(reports, Fork::Frontier),
     )
 }
 
@@ -213,7 +197,7 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
     let total_run = total_fork_test_run(reports);
     let success_percentage = (total_passed as f64 / total_run as f64) * 100.0;
     format!(
-        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n\n\n{}\n",
+        "{} {}/{total_run} ({success_percentage:.2}%)\n\n{}\n{}\n{}\n{}\n\n\n{}\n",
         "Summary:".bold(),
         if total_passed == total_run {
             format!("{}", total_passed).green()
@@ -222,7 +206,6 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         } else {
             format!("{}", total_passed).red()
         },
-
         // NOTE: Keep in order, see the Fork Enum to check
         // NOTE: Uncomment the summaries if EF tests for those specific forks exist.
 
@@ -231,22 +214,6 @@ pub fn summary_for_shell(reports: &[EFTestReport]) -> String {
         fork_summary_shell(reports, Fork::Cancun),
         fork_summary_shell(reports, Fork::Shanghai),
         fork_summary_shell(reports, Fork::Paris),
-        // fork_summary_shell(reports, Fork::GrayGlacier),
-        // fork_summary_shell(reports, Fork::ArrowGlacier),
-        fork_summary_shell(reports, Fork::London),
-        fork_summary_shell(reports, Fork::Berlin),
-        // fork_summary_shell(reports, Fork::MuirGlacier),
-        fork_summary_shell(reports, Fork::Istanbul),
-        fork_summary_shell(reports, Fork::Petersburg),
-        fork_summary_shell(reports, Fork::Constantinople),
-        fork_summary_shell(reports, Fork::Byzantium),
-        fork_summary_shell(reports, Fork::SpuriousDragon),
-        fork_summary_shell(reports, Fork::Tangerine),
-        // fork_summary_shell(reports, Fork::DaoFork),
-        fork_summary_shell(reports, Fork::Homestead),
-        // fork_summary_shell(reports, Fork::FrontierThawing),
-        fork_summary_shell(reports, Fork::Frontier),
-
         test_dir_summary_for_shell(reports),
     )
 }
@@ -360,17 +327,7 @@ impl Display for EFTestsReport {
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Prague))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Cancun))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Shanghai))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Byzantium))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Berlin))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Constantinople))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Petersburg))?;
         writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Paris))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Homestead))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Istanbul))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::London))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Frontier))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::SpuriousDragon))?;
-        writeln!(f, "{}", fork_summary_shell(&self.0, Fork::Tangerine))?;
         writeln!(f)?;
         writeln!(f, "Failed tests:")?;
         writeln!(f)?;
@@ -664,14 +621,14 @@ impl fmt::Display for ComparisonReport {
                         base_account.info.balance, new_info.balance
                     )?;
 
-                    if base_account.info.bytecode_hash() != new_info.code_hash {
+                    if base_account.info.code_hash != new_info.code_hash {
                         writeln!(
                             f,
                             "\t\t\t\t\tCode: {} -> {}",
-                            if base_account.info.bytecode.is_empty() {
+                            if base_account.code.is_empty() {
                                 "empty".to_string()
                             } else {
-                                hex::encode(&base_account.info.bytecode)
+                                hex::encode(&base_account.code)
                             },
                             account_update
                                 .code
@@ -691,7 +648,7 @@ impl fmt::Display for ComparisonReport {
                     writeln!(
                         f,
                         "\t\t\t\t\tStorage slot: {key:#x}: {} -> {}",
-                        initial_value.original_value, value
+                        initial_value, value
                     )?;
                 }
             }

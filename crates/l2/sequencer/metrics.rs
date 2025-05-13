@@ -1,25 +1,17 @@
 use crate::{
-    sequencer::errors::MetricsGathererError,
-    utils::config::{
-        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        l1_watcher::L1WatcherConfig,
-    },
+    sequencer::errors::{MetricsGathererError, SequencerError},
+    CommitterConfig, EthConfig, L1WatcherConfig, SequencerConfig,
 };
 use ethereum_types::Address;
 use ethrex_metrics::metrics_l2::{MetricsL2BlockType, METRICS_L2};
-use ethrex_rpc::clients::eth::{errors::EthClientError, EthClient};
+use ethrex_rpc::clients::eth::EthClient;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
 
-pub async fn start_metrics_gatherer() -> Result<(), ConfigError> {
-    let eth_config = EthConfig::from_env()?;
-    // Just for the CommonBridge address
-    let watcher_config = L1WatcherConfig::from_env()?;
-    // Just for the OnChainProposer Address
-    let committer_config = CommitterConfig::from_env()?;
+pub async fn start_metrics_gatherer(cfg: SequencerConfig) -> Result<(), SequencerError> {
     let mut metrics_gatherer =
-        MetricsGatherer::new_from_config(watcher_config, committer_config, eth_config).await?;
+        MetricsGatherer::new_from_config(&cfg.l1_watcher, &cfg.l1_committer, &cfg.eth).await?;
     metrics_gatherer.run().await;
     Ok(())
 }
@@ -33,12 +25,11 @@ pub struct MetricsGatherer {
 
 impl MetricsGatherer {
     pub async fn new_from_config(
-        watcher_config: L1WatcherConfig,
-        committer_config: CommitterConfig,
-        eth_config: EthConfig,
-    ) -> Result<Self, EthClientError> {
+        watcher_config: &L1WatcherConfig,
+        committer_config: &CommitterConfig,
+        eth_config: &EthConfig,
+    ) -> Result<Self, MetricsGathererError> {
         let eth_client = EthClient::new(&eth_config.rpc_url);
-        //let l2_client = EthClient::new("http://localhost:1729");
         Ok(Self {
             eth_client,
             common_bridge_address: watcher_config.bridge_address,
@@ -57,27 +48,27 @@ impl MetricsGatherer {
         }
     }
 
+    // TODO: update metrics to work with batches.
     async fn main_logic(&mut self) -> Result<(), MetricsGathererError> {
         loop {
-            let last_fetched_l1_block =
-                EthClient::get_last_fetched_l1_block(&self.eth_client, self.common_bridge_address)
-                    .await?;
+            let last_fetched_l1_block = self
+                .eth_client
+                .get_last_fetched_l1_block(self.common_bridge_address)
+                .await?;
 
-            let last_committed_block = EthClient::get_last_committed_block(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
+            let last_committed_batch = self
+                .eth_client
+                .get_last_committed_batch(self.on_chain_proposer_address)
+                .await?;
 
-            let last_verified_block = EthClient::get_last_verified_block(
-                &self.eth_client,
-                self.on_chain_proposer_address,
-            )
-            .await?;
+            let last_verified_block = self
+                .eth_client
+                .get_last_verified_batch(self.on_chain_proposer_address)
+                .await?;
 
             METRICS_L2.set_block_type_and_block_number(
                 MetricsL2BlockType::LastCommittedBlock,
-                last_committed_block,
+                last_committed_batch,
             )?;
             METRICS_L2.set_block_type_and_block_number(
                 MetricsL2BlockType::LastVerifiedBlock,

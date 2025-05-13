@@ -188,6 +188,7 @@ pub fn prepare_vm_for_tx<'a>(
             tx_nonce: test_tx.nonce,
             block_gas_limit: test.env.current_gas_limit,
             transient_storage: HashMap::new(),
+            is_privileged: false,
         },
         db,
         &tx,
@@ -198,29 +199,29 @@ pub fn prepare_vm_for_tx<'a>(
 pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError> {
     let world_state = &evm.db.store;
     for (address, pre_value) in &test.pre.0 {
-        let account = world_state.get_account_info(*address).map_err(|e| {
+        let account = world_state.get_account(*address).map_err(|e| {
             EFTestRunnerError::Internal(InternalError::Custom(format!(
                 "Failed to get account info when ensuring pre state: {}",
                 e
             )))
         })?;
         ensure_pre_state_condition(
-            account.nonce == pre_value.nonce,
+            account.info.nonce == pre_value.nonce,
             format!(
                 "Nonce mismatch for account {:#x}: expected {}, got {}",
-                address, pre_value.nonce, account.nonce
+                address, pre_value.nonce, account.info.nonce
             ),
         )?;
         ensure_pre_state_condition(
-            account.balance == pre_value.balance,
+            account.info.balance == pre_value.balance,
             format!(
                 "Balance mismatch for account {:#x}: expected {}, got {}",
-                address, pre_value.balance, account.balance
+                address, pre_value.balance, account.info.balance
             ),
         )?;
         for (k, v) in &pre_value.storage {
             let storage_slot = world_state
-                .get_storage_slot(*address, H256::from_slice(&k.to_big_endian()))
+                .get_storage_value(*address, H256::from_slice(&k.to_big_endian()))
                 .unwrap();
             ensure_pre_state_condition(
                 &storage_slot == v,
@@ -231,12 +232,12 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )?;
         }
         ensure_pre_state_condition(
-            keccak(account.bytecode.clone()) == keccak(pre_value.code.as_ref()),
+            account.info.code_hash == keccak(pre_value.code.as_ref()),
             format!(
                 "Code hash mismatch for account {:#x}: expected {}, got {}",
                 address,
                 keccak(pre_value.code.as_ref()),
-                keccak(account.bytecode)
+                account.info.code_hash
             ),
         )?;
     }
@@ -339,8 +340,8 @@ pub async fn ensure_post_state(
                 }
                 // Execution result was successful and no exception was expected.
                 None => {
-                    let levm_account_updates =
-                        backends::levm::LEVM::get_state_transitions(db, *fork).map_err(|_| {
+                    let levm_account_updates = backends::levm::LEVM::get_state_transitions(db)
+                        .map_err(|_| {
                             InternalError::Custom(
                                 "Error at LEVM::get_state_transitions in ensure_post_state()"
                                     .to_owned(),

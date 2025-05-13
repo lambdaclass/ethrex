@@ -1,9 +1,6 @@
 use crate::{
     constants::*,
-    db::{
-        cache::{self},
-        gen_db::GeneralizedDatabase,
-    },
+    db::gen_db::GeneralizedDatabase,
     errors::{InternalError, OutOfGasError, TxValidationError, VMError},
     gas_cost::{
         self, fake_exponential, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST,
@@ -12,9 +9,9 @@ use crate::{
     },
     opcodes::Opcode,
     vm::{EVMConfig, Substate, VM},
-    AccountInfo,
 };
 use bytes::Bytes;
+use ethrex_common::types::Account;
 use ethrex_common::{
     types::{tx_fields::*, Fork},
     Address, H256, U256,
@@ -28,8 +25,8 @@ use std::collections::{HashMap, HashSet};
 pub type Storage = HashMap<U256, H256>;
 
 // ================== Address related functions ======================
+/// Converts address (H160) to word (U256)
 pub fn address_to_word(address: Address) -> U256 {
-    // This unwrap can't panic, as Address are 20 bytes long and U256 use 32 bytes
     let mut word = [0u8; 32];
 
     for (word_byte, address_byte) in word.iter_mut().skip(12).zip(address.as_bytes().iter()) {
@@ -56,12 +53,11 @@ pub fn calculate_create_address(
     )?))
 }
 
-/// Calculates the address of a new contract using the CREATE2 opcode as follow
+/// Calculates the address of a new contract using the CREATE2 opcode as follows
 ///
 /// initialization_code = memory[offset:offset+size]
 ///
-/// address = keccak256(0xff + sender_address + salt + keccak256(initialization_code))[12:]
-///
+/// address = keccak256(0xff || sender_address || salt || keccak256(initialization_code))[12:]
 pub fn calculate_create2_address(
     sender_address: Address,
     initialization_code: &Bytes,
@@ -88,6 +84,10 @@ pub fn calculate_create2_address(
     Ok(generated_address)
 }
 
+/// Calculates valid jump destinations given some bytecode.
+/// This is a necessary calculation because of PUSH opcodes.
+/// JUMPDEST (jump destination) is opcode "5B" but not everytime there's a "5B" in the code it means it's a JUMPDEST.
+/// Example: PUSH4 75BC5B42. In this case the 5B is inside a value being pushed and therefore it's not the JUMPDEST opcode.
 pub fn get_valid_jump_destinations(code: &Bytes) -> Result<HashSet<usize>, VMError> {
     let mut valid_jump_destinations = HashSet::new();
     let mut pc = 0;
@@ -211,15 +211,15 @@ pub fn word_to_address(word: U256) -> Address {
 
 /// Checks if account.info.bytecode has been delegated as the EIP7702
 /// determines.
-pub fn has_delegation(account_info: &AccountInfo) -> Result<bool, VMError> {
+pub fn has_delegation(account: &Account) -> Result<bool, VMError> {
     let mut has_delegation = false;
-    if account_info.has_code() && account_info.bytecode.len() == EIP7702_DELEGATED_CODE_LEN {
-        let first_3_bytes = account_info
-            .bytecode
+    if account.has_code() && account.code.len() == EIP7702_DELEGATED_CODE_LEN {
+        let first_3_bytes = &account
+            .code
             .get(..3)
             .ok_or(VMError::Internal(InternalError::SlicingError))?;
 
-        if first_3_bytes == SET_CODE_DELEGATION_BYTES {
+        if *first_3_bytes == SET_CODE_DELEGATION_BYTES {
             has_delegation = true;
         }
     }
@@ -228,10 +228,10 @@ pub fn has_delegation(account_info: &AccountInfo) -> Result<bool, VMError> {
 
 /// Gets the address inside the account.info.bytecode if it has been
 /// delegated as the EIP7702 determines.
-pub fn get_authorized_address(account_info: &AccountInfo) -> Result<Address, VMError> {
-    if has_delegation(account_info)? {
-        let address_bytes = account_info
-            .bytecode
+pub fn get_authorized_address(account: &Account) -> Result<Address, VMError> {
+    if has_delegation(account)? {
+        let address_bytes = &account
+            .code
             .get(SET_CODE_DELEGATION_BYTES.len()..)
             .ok_or(VMError::Internal(InternalError::SlicingError))?;
         // It shouldn't panic when doing Address::from_slice()
@@ -331,25 +331,25 @@ pub fn eip7702_recover_address(
 /// The idea of this function comes from ethereum/execution-specs:
 /// https://github.com/ethereum/execution-specs/blob/951fc43a709b493f27418a8e57d2d6f3608cef84/src/ethereum/prague/vm/eoa_delegation.py#L115
 pub fn eip7702_get_code(
-    db: &GeneralizedDatabase,
+    db: &mut GeneralizedDatabase,
     accrued_substate: &mut Substate,
     address: Address,
 ) -> Result<(bool, u64, Address, Bytes), VMError> {
     // Address is the delgated address
-    let account = db.get_account_no_push_cache(address)?;
-    let bytecode = account.info.bytecode.clone();
+    let account = db.get_account(address)?;
+    let bytecode = account.code.clone();
 
     // If the Address doesn't have a delegation code
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !has_delegation(&account.info)? {
+    if !has_delegation(&account)? {
         return Ok((false, 0, address, bytecode));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address(&account.info)?;
+    let auth_address = get_authorized_address(&account)?;
 
     let access_cost = if accrued_substate.touched_accounts.contains(&auth_address) {
         WARM_ADDRESS_ACCESS_COST
@@ -358,17 +358,9 @@ pub fn eip7702_get_code(
         COLD_ADDRESS_ACCESS_COST
     };
 
-    let authorized_bytecode = db.get_account_no_push_cache(auth_address)?.info.bytecode;
+    let authorized_bytecode = db.get_account(auth_address)?.code;
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
-}
-
-/// Checks if a given account exists in the database or cache
-pub fn account_exists(db: &mut GeneralizedDatabase, address: Address) -> bool {
-    match cache::get_account(&db.cache, &address) {
-        Some(_) => true,
-        None => db.store.account_exists(address),
-    }
 }
 
 impl<'a> VM<'a> {
@@ -400,14 +392,13 @@ impl<'a> VM<'a> {
             };
 
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
-            self.accrued_substate
-                .touched_accounts
-                .insert(authority_address);
-            let authority_account_info = self.db.get_account_no_push_cache(authority_address)?.info;
+            let (authority_account, _address_was_cold) = self
+                .db
+                .access_account(&mut self.accrued_substate, authority_address)?;
 
             // 5. Verify the code of authority is either empty or already delegated.
-            let empty_or_delegated = authority_account_info.bytecode.is_empty()
-                || has_delegation(&authority_account_info)?;
+            let empty_or_delegated =
+                authority_account.code.is_empty() || has_delegation(&authority_account)?;
             if !empty_or_delegated {
                 continue;
             }
@@ -415,14 +406,12 @@ impl<'a> VM<'a> {
             // 6. Verify the nonce of authority is equal to nonce. In case authority does not exist in the trie, verify that nonce is equal to 0.
             // If it doesn't exist, it means the nonce is zero. The access_account() function will return AccountInfo::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
-            if authority_account_info.nonce != auth_tuple.nonce {
+            if authority_account.info.nonce != auth_tuple.nonce {
                 continue;
             }
 
             // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
-            if cache::is_account_cached(&self.db.cache, &authority_address)
-                || account_exists(self.db, authority_address)
-            {
+            if !authority_account.is_empty() {
                 let refunded_gas_if_exists = PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST;
                 refunded_gas = refunded_gas
                     .checked_add(refunded_gas_if_exists)
@@ -440,11 +429,12 @@ impl<'a> VM<'a> {
             // Clear the account’s code and reset the account’s code hash to the empty hash.
             let auth_account = self.get_account_mut(authority_address)?;
 
-            auth_account.info.bytecode = if auth_tuple.address != Address::zero() {
+            let code = if auth_tuple.address != Address::zero() {
                 delegation_bytes.into()
             } else {
                 Bytes::new()
             };
+            auth_account.set_code(code);
 
             // 9. Increase the nonce of authority by one.
             self.increment_account_nonce(authority_address)
@@ -464,9 +454,9 @@ impl<'a> VM<'a> {
                 .db
                 .access_account(&mut self.accrued_substate, code_address)?;
 
-            self.current_call_frame_mut()?.bytecode = auth_address_info.bytecode.clone();
+            self.current_call_frame_mut()?.bytecode = auth_address_info.code.clone();
         } else {
-            self.current_call_frame_mut()?.bytecode = code_address_info.bytecode.clone();
+            self.current_call_frame_mut()?.bytecode = code_address_info.code.clone();
         }
 
         self.current_call_frame_mut()?.valid_jump_destinations =
@@ -496,9 +486,8 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost =
-            gas_cost::tx_calldata(&self.current_call_frame()?.calldata, self.env.config.fork)
-                .map_err(VMError::OutOfGas)?;
+        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame()?.calldata)
+            .map_err(VMError::OutOfGas)?;
 
         intrinsic_gas = intrinsic_gas
             .checked_add(calldata_cost)
@@ -512,11 +501,9 @@ impl<'a> VM<'a> {
         // Create Cost
         if self.is_create() {
             // https://eips.ethereum.org/EIPS/eip-2#specification
-            if self.env.config.fork >= Fork::Homestead {
-                intrinsic_gas = intrinsic_gas
-                    .checked_add(CREATE_BASE_COST)
-                    .ok_or(OutOfGasError::ConsumedGasOverflow)?;
-            }
+            intrinsic_gas = intrinsic_gas
+                .checked_add(CREATE_BASE_COST)
+                .ok_or(OutOfGasError::ConsumedGasOverflow)?;
 
             // https://eips.ethereum.org/EIPS/eip-3860
             if self.env.config.fork >= Fork::Shanghai {
@@ -588,7 +575,7 @@ impl<'a> VM<'a> {
         // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
         // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
         // see it in https://eips.ethereum.org/EIPS/eip-7623
-        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata, self.env.config.fork)
+        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)
             .map_err(VMError::OutOfGas)?
             .checked_div(STANDARD_TOKEN_COST)
             .ok_or(VMError::Internal(InternalError::DivisionError))?;

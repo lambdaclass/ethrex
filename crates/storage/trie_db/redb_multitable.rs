@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use redb::{Database, MultimapTableDefinition};
 
-use ethrex_trie::{TrieDB, TrieError};
+use ethrex_trie::{NodeHash, TrieDB, TrieError};
 
 use super::utils::node_hash_to_fixed_size;
 
@@ -24,7 +24,7 @@ impl RedBMultiTableTrieDB {
 }
 
 impl TrieDB for RedBMultiTableTrieDB {
-    fn get(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, TrieError> {
+    fn get(&self, key: NodeHash) -> Result<Option<Vec<u8>>, TrieError> {
         let read_txn = self
             .db
             .begin_read()
@@ -56,7 +56,7 @@ impl TrieDB for RedBMultiTableTrieDB {
         }
     }
 
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), TrieError> {
+    fn put(&self, key: NodeHash, value: Vec<u8>) -> Result<(), TrieError> {
         let write_txn = self
             .db
             .begin_write()
@@ -76,7 +76,7 @@ impl TrieDB for RedBMultiTableTrieDB {
         Ok(())
     }
 
-    fn put_batch(&self, key_values: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), TrieError> {
+    fn put_batch(&self, key_values: Vec<(NodeHash, Vec<u8>)>) -> Result<(), TrieError> {
         let write_txn = self
             .db
             .begin_write()

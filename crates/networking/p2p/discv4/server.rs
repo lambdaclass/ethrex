@@ -238,6 +238,13 @@ impl Discv4Server {
                 let Some(node) = node else {
                     return Err(DiscoveryError::InvalidMessage("not a known node".into()));
                 };
+                // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
+                // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
+                // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
+                // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
+                if from.ip() != node.node.ip {
+                    return Err(DiscoveryError::InvalidMessage("not a known node".into()));
+                }
                 if !node.is_proven {
                     return Err(DiscoveryError::InvalidMessage("node isn't proven".into()));
                 }
@@ -701,6 +708,7 @@ pub(super) mod tests {
             storage,
             blockchain,
             broadcast,
+            client_version: "ethrex/test".to_string(),
         };
 
         let discv4 = Discv4Server::try_new(ctx.clone()).await?;
