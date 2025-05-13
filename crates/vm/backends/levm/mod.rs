@@ -378,10 +378,7 @@ impl LEVM {
         Ok((report.into(), access_list))
     }
 
-    pub async fn to_execution_db(
-        blocks: &[Block],
-        store: &Store,
-    ) -> Result<ProverDB, ProverDBError> {
+    pub async fn to_prover_db(blocks: &[Block], store: &Store) -> Result<ProverDB, ProverDBError> {
         let chain_config = store.get_chain_config()?;
         let Some(first_block_parent_hash) = blocks.first().map(|e| e.header.parent_hash) else {
             return Err(ProverDBError::Custom("Unable to get first block".into()));

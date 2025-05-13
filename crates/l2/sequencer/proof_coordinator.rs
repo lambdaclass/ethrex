@@ -321,8 +321,8 @@ impl ProofCoordinator {
 
         let blocks = self.fetch_blocks(block_numbers).await?;
 
-        // Create execution_db
-        let db = Evm::to_execution_db(&self.store.clone(), &blocks)
+        // Create prover_db
+        let db = Evm::to_prover_db(&self.store.clone(), &blocks)
             .await
             .map_err(EvmError::ProverDB)?;
 

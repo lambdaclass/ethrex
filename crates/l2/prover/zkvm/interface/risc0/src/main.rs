@@ -47,7 +47,7 @@ fn main() {
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
 
         // Execute block
-        let mut vm = Evm::from_execution_db(db.clone());
+        let mut vm = Evm::from_prover_db(db.clone());
         let result = vm.execute_block(&block).expect("failed to execute block");
         let receipts = result.receipts;
         let account_updates = vm

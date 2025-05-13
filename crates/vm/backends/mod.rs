@@ -86,17 +86,14 @@ impl Evm {
         }
     }
 
-    pub fn from_execution_db(db: ProverDB) -> Self {
+    pub fn from_prover_db(db: ProverDB) -> Self {
         Evm::LEVM {
             db: GeneralizedDatabase::new(Arc::new(db), CacheDB::new()),
         }
     }
 
-    pub async fn to_execution_db(
-        store: &Store,
-        blocks: &[Block],
-    ) -> Result<ProverDB, ProverDBError> {
-        LEVM::to_execution_db(blocks, store).await
+    pub async fn to_prover_db(store: &Store, blocks: &[Block]) -> Result<ProverDB, ProverDBError> {
+        LEVM::to_prover_db(blocks, store).await
     }
 
     pub fn default(store: Store, parent_hash: H256) -> Self {
