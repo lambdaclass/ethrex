@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747165598073,
+  "lastUpdate": 1747169062612,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6978,6 +6978,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007234411792905081,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "a1699859576100713a64b17d45ffa66e49597380",
+          "message": "refactor(levm): decluttering vm.rs (#2733)\n\n**Motivation**\n\nMaking the code of the vm.rs file cleaner, since it's a bit cluttered\nright now.\n\n**Description**\n\nThe code of vm.rs is a bit messy right now. This PR moves EVM config to\nenvironment, moves a few attributes from environment to substate that\nmake more sense there, and removes the StateBackup struct since it's\nmade unnecessary by this change.\n\nCloses #2731, Closes #2717 \nResolves most of #2718\n\n---------\n\nCo-authored-by: JereSalo <jeresalo17@gmail.com>",
+          "timestamp": "2025-05-13T18:45:14Z",
+          "tree_id": "3b22d90177c95ac844d95c6f4ae34f98db195cd3",
+          "url": "https://github.com/lambdaclass/ethrex/commit/a1699859576100713a64b17d45ffa66e49597380"
+        },
+        "date": 1747169062021,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007325719902912622,
             "unit": "Mgas/s"
           }
         ]
