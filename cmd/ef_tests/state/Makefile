@@ -1,7 +1,9 @@
 .PHONY: run-evm-ef-tests
 
 FIXTURES_FILE := .fixtures_url
+STATETEST_ARTIFACT := test.tar.gz
 VECTORS_DIR := vectors
+
 TMP_DIR := tmp
 TESTS_REPO := $(TMP_DIR)/ethereum-tests
 
@@ -9,15 +11,15 @@ ETH_TEST_URL := https://github.com/ethereum/tests.git
 ETH_TEST_TAG := v17.0
 COMMIT_LEGACY_TESTS_FOR_TAG := b3f67fe
 
-STATETEST_VERSION := pectra-devnet-6%40v1.0.0
-STATETEST_NET := pectra-devnet-6
-STATETEST_ARTIFACT := fixtures_$(STATETEST_NET).tar.gz
 STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
-$(VECTORS_DIR): 
+$(STATETEST_ARTIFACT): $(FIXTURES_FILE)
+	$(MAKE) clean-evm-ef-tests
+	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
+
+$(VECTORS_DIR): $(STATETEST_ARTIFACT)
 	$(MAKE) setup-test-dirs
 	$(MAKE) clone-ef-tests
-	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
 	tar -xzf $(STATETEST_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests
 	rm -f $(STATETEST_ARTIFACT)
 	rm -rf $(TMP_DIR)
@@ -49,7 +51,7 @@ clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
 
 refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-downloads tests, useful when they are outdated!
 
-run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
+run-evm-ef-tests: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
 		time cargo test --quiet --test all --release -- $(flags) --summary;\
 	elif [ "$(DEBUG)" = "true" ]; then \
@@ -58,14 +60,14 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 		time cargo test --test all --release -- $(flags);\
 	fi
 
-run-evm-ef-tests-ci: ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
+run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
 	time cargo test --test all --release -- --summary
 
-generate-evm-ef-tests-report: ## 📊 Generate EF Tests Report
+generate-evm-ef-tests-report:$(VECTORS_DIR) ## 📊 Generate EF Tests Report
 	cargo test --test all --release -- --summary
 
-test-levm: 
+test-levm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--summary"
 
-test-revm: 
+test-revm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--revm"
