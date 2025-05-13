@@ -191,12 +191,10 @@ impl<'a> VM<'a> {
 
             let report = self.handle_precompile_result(precompile_result)?;
 
-            let mut current_call_frame = self
-                .call_frames
-                .pop()
-                .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
- 
-            self.handle_return(&current_call_frame, &report)?;
+            if self.call_frames.len() > 1 {
+                self.handle_return(&report)?;
+            }
+
             return Ok(report);
         }
 
@@ -210,23 +208,19 @@ impl<'a> VM<'a> {
                     .current_call_frame_mut()?
                     .increment_pc_by(pc_increment)?,
                 Ok(OpcodeResult::Halt) => {
-                    let mut executed_call_frame = self
-                        .call_frames
-                        .pop()
-                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_result(&mut executed_call_frame)?;
-                    if self.handle_return(&executed_call_frame, &report)? {
+                    let report = self.handle_opcode_result()?;
+
+                    if self.call_frames.len() > 1 {
+                        self.handle_return(&report)?;
                     } else {
                         return Ok(report);
                     }
                 }
                 Err(error) => {
-                    let mut executed_call_frame = self
-                        .call_frames
-                        .pop()
-                        .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-                    let report = self.handle_opcode_error(error, &mut executed_call_frame)?;
-                    if self.handle_return(&executed_call_frame, &report)? {
+                    let report = self.handle_opcode_error(error)?;
+
+                    if self.call_frames.len() > 1 {
+                        self.handle_return(&report)?;
                     } else {
                         return Ok(report);
                     }

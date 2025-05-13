@@ -840,23 +840,21 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue { pc_increment: 0 })
     }
 
-    pub fn handle_return(
-        &mut self,
-        executed_call_frame: &CallFrame,
-        tx_report: &ExecutionReport,
-    ) -> Result<bool, VMError> {
-        if executed_call_frame.depth == 0 {
-            self.call_frames.push(executed_call_frame.clone());
-            return Ok(false);
-        }
+    pub fn handle_return(&mut self, tx_report: &ExecutionReport) -> Result<(), VMError> {
+        let executed_call_frame = self
+            .call_frames
+            .pop()
+            .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
+
         if executed_call_frame.create_op_called {
-            self.handle_return_create(executed_call_frame, tx_report)?;
+            self.handle_return_create(&executed_call_frame, tx_report)?;
         } else {
-            self.handle_return_call(executed_call_frame, tx_report)?;
+            self.handle_return_call(&executed_call_frame, tx_report)?;
         }
+
         self.current_call_frame_mut()?.increment_pc_by(1)?;
-        
-        Ok(true)
+
+        Ok(())
     }
     pub fn handle_return_call(
         &mut self,
