@@ -12,20 +12,20 @@ use revm::{
     DatabaseRef,
 };
 
-use crate::db::ExecutionDB;
+use crate::prover_db::ProverDB;
 use crate::{
     db::StoreWrapper,
-    errors::{EvmError, ExecutionDBError},
+    errors::{EvmError, ProverDBError},
 };
 
 /// State used when running the EVM. The state can be represented with a [StoreWrapper] database, or
-/// with a [ExecutionDB] in case we only want to store the necessary data for some particular
+/// with a [ProverDB] in case we only want to store the necessary data for some particular
 /// execution, for example when proving in L2 mode.
 ///
 /// Encapsulates state behaviour to be agnostic to the evm implementation for crate users.
 pub enum EvmState {
     Store(revm::db::State<StoreWrapper>),
-    Execution(Box<revm::db::CacheDB<ExecutionDB>>),
+    Execution(Box<revm::db::CacheDB<ProverDB>>),
 }
 
 // Needed because revm::db::State is not cloneable and we need to
@@ -42,7 +42,7 @@ impl Clone for EvmState {
                 block_hashes: state.block_hashes.clone(),
             }),
             EvmState::Execution(execution) => {
-                EvmState::Execution(Box::new(Into::<revm::db::CacheDB<ExecutionDB>>::into(
+                EvmState::Execution(Box::new(Into::<revm::db::CacheDB<ProverDB>>::into(
                     *execution.clone(),
                 )))
             }
@@ -80,15 +80,15 @@ pub fn evm_state(store: Store, block_hash: BlockHash) -> EvmState {
     )
 }
 
-impl From<ExecutionDB> for EvmState {
-    fn from(value: ExecutionDB) -> Self {
+impl From<ProverDB> for EvmState {
+    fn from(value: ProverDB) -> Self {
         EvmState::Execution(Box::new(revm::db::CacheDB::new(value)))
     }
 }
 
-impl DatabaseRef for ExecutionDB {
+impl DatabaseRef for ProverDB {
     /// The database error type.
-    type Error = ExecutionDBError;
+    type Error = ProverDBError;
 
     /// Get basic account information.
     fn basic_ref(&self, address: RevmAddress) -> Result<Option<RevmAccountInfo>, Self::Error> {
@@ -109,17 +109,17 @@ impl DatabaseRef for ExecutionDB {
         self.code
             .get(&CoreH256::from(code_hash.as_ref()))
             .map(|b| RevmBytecode::new_raw(RevmBytes(b.clone())))
-            .ok_or(ExecutionDBError::CodeNotFound(code_hash))
+            .ok_or(ProverDBError::CodeNotFound(code_hash))
     }
 
     /// Get storage value of address at index.
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
         self.storage
             .get(&CoreAddress::from(address.0.as_ref()))
-            .ok_or(ExecutionDBError::AccountNotFound(address))?
+            .ok_or(ProverDBError::AccountNotFound(address))?
             .get(&CoreH256::from(index.to_be_bytes()))
             .map(|v| RevmU256::from_limbs(v.0))
-            .ok_or(ExecutionDBError::StorageValueNotFound(address, index))
+            .ok_or(ProverDBError::StorageValueNotFound(address, index))
     }
 
     /// Get block hash by block number.
@@ -127,7 +127,7 @@ impl DatabaseRef for ExecutionDB {
         self.block_hashes
             .get(&number)
             .map(|h| RevmB256::from_slice(&h.0))
-            .ok_or(ExecutionDBError::BlockHashNotFound(number))
+            .ok_or(ProverDBError::BlockHashNotFound(number))
     }
 }
 

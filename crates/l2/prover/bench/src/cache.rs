@@ -4,7 +4,7 @@ use std::{
 };
 
 use ethrex_common::types::{Block, BlockHeader};
-use ethrex_vm::ExecutionDB;
+use ethrex_vm::ProverDB;
 
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 pub struct Cache {
     pub block: Block,
     pub parent_block_header: BlockHeader,
-    pub db: ExecutionDB,
+    pub db: ProverDB,
 }
 
 pub fn load_cache(block_number: usize) -> Result<Cache, String> {

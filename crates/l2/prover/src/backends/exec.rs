@@ -81,7 +81,7 @@ fn execution_program(input: ProgramInput) -> Result<ProgramOutput, Box<dyn std::
         )?;
 
         // Execute block
-        let mut vm = Evm::from_execution_db(db.clone());
+        let mut vm = Evm::from_prover_db(db.clone());
         let result = vm.execute_block(&block)?;
         let receipts = result.receipts;
         let account_updates = vm.get_state_transitions()?;

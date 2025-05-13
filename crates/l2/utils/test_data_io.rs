@@ -87,7 +87,7 @@ pub async fn generate_program_input(
     read_env_file_by_config().map_err(ProverInputError::InvalidEnvVar)?;
     let elasticity_multiplier = ELASTICITY_MULTIPLIER;
     let blocks = vec![block];
-    let db = Evm::to_execution_db(&store, &blocks).await?;
+    let db = Evm::to_prover_db(&store, &blocks).await?;
 
     Ok(ProgramInput {
         db,
