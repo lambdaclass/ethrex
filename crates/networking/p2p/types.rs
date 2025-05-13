@@ -328,11 +328,11 @@ impl NodeRecord {
             }
         }
 
-        // remove previous eth version``
+        // remove previous eth version
         self.pairs.retain(|(k, _)| k != "eth");
 
         self.pairs
-            .push(("eth".into(), fork_id.encode_to_vec().into()));
+            .push(("eth".into(), vec![fork_id.clone()].encode_to_vec().into()));
 
         self.update_seq(signer)?;
         Ok(())
