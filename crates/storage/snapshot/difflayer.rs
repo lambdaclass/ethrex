@@ -92,7 +92,7 @@ impl DiffLayer {
         }
 
         // Start traversing layers.
-        self.get_account_traverse(hash, 0, layers)
+        self.get_account_traverse(hash, layers)
     }
 
     pub fn get_storage(
@@ -159,26 +159,22 @@ impl DiffLayer {
     pub fn get_account_traverse(
         &self,
         hash: H256,
-        depth: usize,
         layers: &Layers,
     ) -> Result<Option<Option<AccountState>>, SnapshotError> {
         // todo: check if its stale
 
         // If it's in this layer, return it.
         if let Some(value) = self.accounts.get(&hash) {
-            debug!("Snapshot DiffLayer get_account_traverse hit at depth {depth}");
             return Ok(Some(value.clone()));
         }
 
         // delegate to parent
         match &layers[&self.parent] {
             Layer::DiskLayer(disk_layer) => disk_layer.get_account(hash, layers),
-            Layer::DiffLayer(diff_layer) => {
-                diff_layer
-                    .read()
-                    .unwrap()
-                    .get_account_traverse(hash, depth + 1, layers)
-            }
+            Layer::DiffLayer(diff_layer) => diff_layer
+                .read()
+                .unwrap()
+                .get_account_traverse(hash, layers),
         }
     }
 
@@ -197,7 +193,6 @@ impl DiffLayer {
             .get(&account_hash)
             .and_then(|x| x.get(&storage_hash))
         {
-            debug!("Snapshot DiffLayer get_storage_traverse hit at depth {depth}");
             return Ok(Some(*value));
         }
 

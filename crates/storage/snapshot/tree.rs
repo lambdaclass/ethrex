@@ -116,34 +116,37 @@ impl SnapshotTree {
     /// from the head block until the number of allowed layers is passed.
     ///
     /// It's used to flatten the layers.
-    pub fn cap(&self, root: H256, layers: usize) -> Result<(), SnapshotError> {
-        let diff = if let Some(diff) = self.snapshot(root) {
+    pub fn cap(&self, head_block_hash: H256, layers_n: usize) -> Result<(), SnapshotError> {
+        let diff = if let Some(diff) = self.snapshot(head_block_hash) {
             match diff {
-                Layer::DiskLayer(_) => return Err(SnapshotError::SnapshotIsdiskLayer(root)),
+                Layer::DiskLayer(_) => {
+                    return Err(SnapshotError::SnapshotIsdiskLayer(head_block_hash))
+                }
                 Layer::DiffLayer(diff) => diff,
             }
         } else {
-            return Err(SnapshotError::SnapshotNotFound(root));
+            return Err(SnapshotError::SnapshotNotFound(head_block_hash));
         };
 
-        if layers == 0 {
+        if layers_n == 0 {
             // Full commit
-            let base = self.save_diff(self.flatten_diff(root)?)?;
-            // TODO: save diff to disk?
+            info!("SnapshotTree: cap full commit triggered, clearing snapshots");
             let mut layers = self.layers.write().unwrap();
+            let base = self.save_diff(self.flatten_diff(head_block_hash, &mut layers)?)?;
             layers.clear();
-            layers.insert(root, Layer::DiskLayer(base));
+            layers.insert(head_block_hash, Layer::DiskLayer(base));
             return Ok(());
         }
 
-        let persisted = self.cap_layers(diff, layers)?;
+        // Hold write lock the whole time for consistency in data.
+        let mut layers = self.layers.write().unwrap();
+
+        let new_disk_layer = self.cap_layers(diff, layers_n, &mut layers)?;
 
         // Remove stale layers or ones that link into one.
 
-        let mut layers = self.layers.write().unwrap();
-
         info!(
-            "SnapshotTree cap triggered, current layers: {}",
+            "SnapshotTree: cap triggered, current layers: {}",
             layers.len()
         );
 
@@ -163,10 +166,12 @@ impl SnapshotTree {
         let mut to_remove: HashSet<H256> = HashSet::new();
 
         fn remove(root: H256, children: &HashMap<H256, Vec<H256>>, to_remove: &mut HashSet<H256>) {
-            to_remove.insert(root);
-            if let Some(childs) = children.get(&root) {
-                for child in childs {
-                    remove(*child, children, to_remove);
+            if !to_remove.contains(&root) {
+                to_remove.insert(root);
+                if let Some(childs) = children.get(&root) {
+                    for child in childs {
+                        remove(*child, children, to_remove);
+                    }
                 }
             }
         }
@@ -191,8 +196,7 @@ impl SnapshotTree {
             children.remove(root);
         }
 
-        let mut new_root = root;
-        if let Some(base) = persisted {
+        if let Some(base) = new_disk_layer {
             fn rebloom(
                 root: H256,
                 layers: &HashMap<H256, Layer>,
@@ -213,14 +217,13 @@ impl SnapshotTree {
                     }
                 }
             }
-            new_root = base.root;
+            info!("SnapshotTree: changed disk layer block hash: {}", base.root);
             rebloom(base.root, &layers, &children, base);
         }
 
         info!(
-            "SnapshotTree cap finished, current layers: {}, using disk layer block {}",
+            "SnapshotTree: cap finished, current layers: {}",
             layers.len(),
-            new_root
         );
 
         Ok(())
@@ -231,10 +234,10 @@ impl SnapshotTree {
         &self,
         diff: Arc<RwLock<DiffLayer>>,
         layers_n: usize,
+        layers: &mut HashMap<H256, Layer>,
     ) -> Result<Option<Arc<DiskLayer>>, SnapshotError> {
         // Dive until end or disk layer.
         let mut diff_wrapped = Layer::DiffLayer(diff.clone());
-        let mut layers = self.layers.write().unwrap();
         for _ in 0..(layers_n - 1) {
             match diff_wrapped {
                 Layer::DiskLayer(_) => {
@@ -269,7 +272,7 @@ impl SnapshotTree {
 
             let parent_root = parent.read().unwrap().root();
             // flatten parent into grand parent.
-            let flattened = self.flatten_diff(parent_root)?;
+            let flattened = self.flatten_diff(parent_root, layers)?;
             let flattened_root = match &flattened {
                 Layer::DiskLayer(disk_layer) => disk_layer.root(),
                 Layer::DiffLayer(diff_layer) => diff_layer.read().unwrap().root(),
@@ -313,9 +316,12 @@ impl SnapshotTree {
         }
 
         let storage = diff_value.storage();
-        for (hash, storage) in storage.iter() {
-            for (slot, value) in storage.iter() {
-                prev_disk.cache.storages.insert((*hash, *slot), *value);
+        for (account_hash, storage) in storage.iter() {
+            for (storage_hash, value) in storage.iter() {
+                prev_disk
+                    .cache
+                    .storages
+                    .insert((*account_hash, *storage_hash), *value);
             }
         }
 
@@ -387,9 +393,11 @@ impl SnapshotTree {
         Err(SnapshotError::SnapshotNotFound(block_hash))
     }
 
-    pub fn flatten_diff(&self, diff: H256) -> Result<Layer, SnapshotError> {
-        let layers = self.layers.write().unwrap();
-
+    pub fn flatten_diff(
+        &self,
+        diff: H256,
+        layers: &mut HashMap<H256, Layer>,
+    ) -> Result<Layer, SnapshotError> {
         let layer = match &layers[&diff] {
             Layer::DiskLayer(_) => return Err(SnapshotError::DiskLayerFlatten),
             Layer::DiffLayer(diff) => diff.clone(),
@@ -407,7 +415,7 @@ impl SnapshotTree {
         };
 
         // Flatten diff parent first.
-        let parent = match self.flatten_diff(parent.read().unwrap().root())? {
+        let parent = match self.flatten_diff(parent.read().unwrap().root(), layers)? {
             Layer::DiskLayer(_) => unreachable!("only diff can be returned at this point"),
             Layer::DiffLayer(diff) => diff,
         };

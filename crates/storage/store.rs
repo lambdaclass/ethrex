@@ -444,7 +444,6 @@ impl Store {
     }
 
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
-        // todo
         self.engine.add_blocks(blocks).await
     }
 
@@ -1131,7 +1130,7 @@ impl Store {
     pub async fn add_block_snapshot(&self, block: Block, account_updates: Vec<AccountUpdate>) {
         let store = self.clone();
 
-        fn add_block_snapshot_task(
+        async fn add_block_snapshot_task(
             block: Block,
             store: Store,
             account_updates: Vec<AccountUpdate>,
@@ -1183,13 +1182,16 @@ impl Store {
                     "Snapshot (diff layer) created for {} with parent {}",
                     hash, parent_hash
                 );
+
+                // Use this point to cap the amount of layers if needs be
+                store.snapshots.cap(hash, 8)?;
             }
             Ok(())
         }
 
         // We don't await the task as we don't need to wait for any result, so it can be done entirely concurrently.
         tokio::spawn(async move {
-            if let Err(err) = add_block_snapshot_task(block, store, account_updates) {
+            if let Err(err) = add_block_snapshot_task(block, store, account_updates).await {
                 error!("Error adding block snapshot: {}", err);
             }
         });
