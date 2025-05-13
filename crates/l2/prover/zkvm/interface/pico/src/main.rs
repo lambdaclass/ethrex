@@ -5,6 +5,7 @@ use pico_sdk::io::{commit, read_as};
 use ethrex_blockchain::{validate_block, validate_gas_used};
 use ethrex_common::Address;
 use ethrex_storage::AccountUpdate;
+use ethrex_vm::backends::revm::{db::EvmState, REVM};
 use ethrex_vm::Evm;
 use std::collections::HashMap;
 use zkvm_interface::{
@@ -19,6 +20,7 @@ pub fn main() {
         blocks,
         parent_block_header,
         mut db,
+        elasticity_multiplier,
     } = read_as();
     // Tries used for validating initial and final state root
     let (mut state_trie, mut storage_tries) = db
@@ -41,7 +43,13 @@ pub fn main() {
 
     for block in blocks {
         // Validate the block
-        validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
+        validate_block(
+            &block,
+            &parent_header,
+            &db.chain_config,
+            elasticity_multiplier,
+        )
+        .expect("invalid block");
 
         // Execute block
         let mut vm = Evm::from_execution_db(db.clone());
