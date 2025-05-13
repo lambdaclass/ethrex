@@ -1,13 +1,10 @@
 use crate::sequencer::errors::ProverServerError;
+use crate::utils::prover::proving_systems::ProofCalldata;
 use crate::utils::prover::save_state::{
     batch_number_has_state_file, write_state, StateFileType, StateType,
 };
-use crate::utils::{
-    config::{
-        committer::CommitterConfig, errors::ConfigError, eth::EthConfig,
-        proof_coordinator::ProofCoordinatorConfig,
-    },
-    prover::proving_systems::ProofCalldata,
+use crate::{
+    BlockProducerConfig, CommitterConfig, EthConfig, ProofCoordinatorConfig, SequencerConfig,
 };
 use ethrex_common::{
     types::{Block, BlockHeader},
@@ -26,6 +23,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+use super::errors::SequencerError;
 use super::utils::sleep_random;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -33,6 +31,7 @@ pub struct ProverInputData {
     pub blocks: Vec<Block>,
     pub parent_block_header: BlockHeader,
     pub db: ExecutionDB,
+    pub elasticity_multiplier: u64,
 }
 
 #[derive(Clone)]
@@ -42,6 +41,7 @@ struct ProofCoordinator {
     store: Store,
     eth_client: EthClient,
     on_chain_proposer_address: Address,
+    elasticity_multiplier: u64,
     rollup_store: StoreRollup,
 }
 
@@ -113,14 +113,13 @@ impl ProofData {
 pub async fn start_proof_coordinator(
     store: Store,
     rollup_store: StoreRollup,
-) -> Result<(), ConfigError> {
-    let server_config = ProofCoordinatorConfig::from_env()?;
-    let eth_config = EthConfig::from_env()?;
-    let committer_config = CommitterConfig::from_env()?;
+    cfg: SequencerConfig,
+) -> Result<(), SequencerError> {
     let proof_coordinator = ProofCoordinator::new_from_config(
-        server_config.clone(),
-        &committer_config,
-        eth_config.clone(),
+        &cfg.proof_coordinator,
+        &cfg.l1_committer,
+        &cfg.eth,
+        &cfg.block_producer,
         store,
         rollup_store,
     )
@@ -132,16 +131,21 @@ pub async fn start_proof_coordinator(
 
 impl ProofCoordinator {
     pub async fn new_from_config(
-        config: ProofCoordinatorConfig,
+        config: &ProofCoordinatorConfig,
         committer_config: &CommitterConfig,
-        eth_config: EthConfig,
+        eth_config: &EthConfig,
+        proposer_config: &BlockProducerConfig,
         store: Store,
         rollup_store: StoreRollup,
-    ) -> Result<Self, ConfigError> {
-        let eth_client = EthClient::new_with_maximum_fees(
+    ) -> Result<Self, SequencerError> {
+        let eth_client = EthClient::new_with_config(
             &eth_config.rpc_url,
-            eth_config.maximum_allowed_max_fee_per_blob_gas,
-            eth_config.maximum_allowed_max_fee_per_blob_gas,
+            eth_config.max_number_of_retries,
+            eth_config.backoff_factor,
+            eth_config.min_retry_delay,
+            eth_config.max_retry_delay,
+            Some(eth_config.maximum_allowed_max_fee_per_gas),
+            Some(eth_config.maximum_allowed_max_fee_per_blob_gas),
         );
         let on_chain_proposer_address = committer_config.on_chain_proposer_address;
 
@@ -151,6 +155,7 @@ impl ProofCoordinator {
             store,
             eth_client,
             on_chain_proposer_address,
+            elasticity_multiplier: proposer_config.elasticity_multiplier,
             rollup_store,
         })
     }
@@ -341,6 +346,7 @@ impl ProofCoordinator {
             db,
             blocks,
             parent_block_header,
+            elasticity_multiplier: self.elasticity_multiplier,
         })
     }
 
