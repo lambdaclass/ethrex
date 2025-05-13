@@ -501,7 +501,15 @@ impl Blockchain {
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
+        #[cfg(not(feature = "l2"))]
         let (report, gas_used) = context.vm.execute_tx(
+            &head.tx,
+            &context.payload.header,
+            &mut context.remaining_gas,
+            head.tx.sender(),
+        )?;
+        #[cfg(feature = "l2")]
+        let (report, gas_used) = context.vm.execute_tx_l2(
             &head.tx,
             &context.payload.header,
             &mut context.remaining_gas,
