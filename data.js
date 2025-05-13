@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747144241077,
+  "lastUpdate": 1747144735282,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6415,6 +6415,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 217113916878,
             "range": "± 553393828",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "175ce2691ba329e247918c4eef505f6e241b25cc",
+          "message": "fix(core): warnings when compiling crates separately (#2749)\n\n**Motivation**\nSeveral warnings pop up when trying to test or build ethrex crates\nseparately. Most of them are due to code that is only used under\nfeature-gated code not being imported of defined under the respective\nfeature. While these warnings don't prevent compilation and don't pop up\nwhen building the full project, they can still be annoying during\nspecific dev cycles (such as adding or running a crate's unit tests) and\ncan be easily removed by using the correct feature flags\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* Use an underscore for the path when creating a Store, as the path\nvariable is only used under the libmdbx feature\n* Fix an import only being used under featured code not being in a\nfeature-gated import statement\n* Only compile `storage::rlp` module under `libmdbx` & `redb` features,\nas we don't use it on the in-memory version\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses #issue_number",
+          "timestamp": "2025-05-13T13:01:48Z",
+          "tree_id": "f0b35b5df10b032f7ab9919ef8bf4ad974aab034",
+          "url": "https://github.com/lambdaclass/ethrex/commit/175ce2691ba329e247918c4eef505f6e241b25cc"
+        },
+        "date": 1747144732593,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 215258300059,
+            "range": "± 381179602",
             "unit": "ns/iter"
           }
         ]
