@@ -136,7 +136,7 @@ update-system-contracts:
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
 DEFAULT_BRIDGE_ADDRESS=$$((grep ETHREX_WATCHER_BRIDGE_ADDRESS .env || echo 0x07a51433fc034bdcb54a053ee858e2eac9bc4974) | cut -d= -f2)
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$((grep ETHREX_WATCHER_BRIDGE_ADDRESS .env || echo 0x7eb9ed9dd9543f88ab287ca14b912cd9c9fb2afe) | cut -d= -f2)
+DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=$$((grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env || echo 0x7eb9ed9dd9543f88ab287ca14b912cd9c9fb2afe) | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
