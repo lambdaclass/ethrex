@@ -14,6 +14,15 @@ STATETEST_NET := pectra-devnet-6
 STATETEST_ARTIFACT := fixtures_$(STATETEST_NET).tar.gz
 STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
+$(VECTORS_DIR): 
+	$(MAKE) setup-test-dirs
+	$(MAKE) clone-ef-tests
+	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
+	tar -xzf $(STATETEST_ARTIFACT) -C $(TMP_DIR)
+	mv $(TMP_DIR)/fixtures/state_tests/* $(VECTORS_DIR)/state_tests/
+	rm -f $(STATETEST_ARTIFACT)
+	rm -rf $(TMP_DIR)
+
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
@@ -32,14 +41,7 @@ clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	cp -r $(TESTS_REPO)/LegacyTests/Constantinople/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Constantinople/GeneralStateTests/
 	cp -r $(TESTS_REPO)/LegacyTests/Cancun/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests/;
 
-download-state-tests: ## 📥 Download and setup state tests fixtures
-	curl -L -o $(STATETEST_ARTIFACT) $(STATETEST_URL)
-	tar -xzf $(STATETEST_ARTIFACT) -C $(TMP_DIR)
-	mv $(TMP_DIR)/fixtures/state_tests/* $(VECTORS_DIR)/state_tests/
-	rm -f $(STATETEST_ARTIFACT)
-
-download-evm-ef-tests: setup-test-dirs clone-ef-tests download-state-tests ## 📥 Download and setup all EF Tests
-	rm -rf $(TMP_DIR)
+download-state-tests: $(VECTORS_DIR) ## 📥 Download and setup state tests fixtures
 
 clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
 	rm -rf $(VECTORS_DIR)
