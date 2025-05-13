@@ -258,14 +258,14 @@ These inputs are required for proof generation, but not all of them are committe
 #### Execution witness
 The purpose of the execution witness is to allow executing the blocks without having access to the whole Ethereum state, as it wouldn't fit in a zkVM program. It contains only the state values needed during the execution.
 
-An execution witness (represented by the `ExecutionDB` type) contains:
+An execution witness (represented by the `ProverDB` type) contains:
 1. all the initial state values (accounts, code, storage, block hashes) that will be read or written to during the blocks' execution.
 2. Merkle Patricia Trie (MPT) proofs that prove the inclusion or exclusion of each initial value in the initial world state trie.
 
 An execution witness is created from a prior execution of the blocks. Before proving, we need to:
 1. execute the blocks (also called "pre-execution").
 2. log every initial state value accessed or updated during this execution.
-3. store each logged value in an in-memory key-value database (`ExecutionDB`, implemented just using hash maps).
+3. store each logged value in an in-memory key-value database (`ProverDB`, implemented just using hash maps).
 4. retrieve an MPT proof for each value, linking it (or its non-existence) to the initial state root hash.
 
 Steps 1-3 are straightforward. Step 4 involves more complex logic due to potential issues when restructuring the pruned state trie after value removals. In sections [initial state validation](#step-1-initial-state-validation) and [final state validation](#step-3-final-state-validation) we explain what are pruned tries and in which case they get restructured.
@@ -319,7 +319,7 @@ These three components are specific additions for ethrex's L2 protocol, layered 
 For more details, refer to [Overview](overview.md), [Withdrawals](withdrawals.md), and [State diffs](state_diffs.md).
 
 #### Step 1: initial state validation
-The program validates the `ExecutionDB` by iterating over each provided state value (stored in hash maps) and verifying its MPT proof against the initial state hash (obtained from the first block's parent block header input). This is the role of the `verify_db()` function (to link the values with the proofs). We could instead directly decode the data from the MPT proofs on each EVM read/write, although this would incur performance costs.
+The program validates the `ProverDB` by iterating over each provided state value (stored in hash maps) and verifying its MPT proof against the initial state hash (obtained from the first block's parent block header input). This is the role of the `verify_db()` function (to link the values with the proofs). We could instead directly decode the data from the MPT proofs on each EVM read/write, although this would incur performance costs.
 
 Having the initial state proofs (paths from the root to each relevant leaf) is equivalent to having a relevant subset of the world state trie and storage tries – a set of "pruned tries". This allows operating directly on these pruned tries (adding, removing, modifying values) during execution.
 
