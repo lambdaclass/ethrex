@@ -243,8 +243,8 @@ async fn test_deposit(
     let deposit_tx_hash = ethrex_l2_sdk::deposit_through_contract_call(
         deposit_value,
         deposit_recipient_address,
-        21000 * 5,
-        21000 * 5,
+        21000 * 10,
+        21000 * 10,
         depositor_private_key,
         bridge_address,
         eth_client,
