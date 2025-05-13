@@ -34,8 +34,8 @@ pub fn calc_modified_accounts_size(
         // for each added_storage: 32bytes + 32bytes | key(H256) + value(U256)
         modified_accounts_size += account_update.added_storage.len() * 2 * 32;
 
+        modified_accounts_size += 2; // 2bytes | bytecode_len(u16)
         if let Some(bytecode) = &account_update.code {
-            modified_accounts_size += 2; // 2bytes | bytecode_len(u16)
             modified_accounts_size += bytecode.len(); // (len)bytes | bytecode(Bytes)
         }
     }
