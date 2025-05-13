@@ -14,12 +14,11 @@ impl<'a> VM<'a> {
     pub fn handle_precompile_result(
         &mut self,
         precompile_result: Result<Bytes, VMError>,
-        current_call_frame: &CallFrame,
     ) -> Result<ExecutionReport, VMError> {
         match precompile_result {
             Ok(output) => Ok(ExecutionReport {
                 result: TxResult::Success,
-                gas_used: current_call_frame.gas_used,
+                gas_used: self.current_call_frame()?.gas_used,
                 gas_refunded: self.accrued_substate.refunded_gas,
                 output,
                 logs: vec![],
@@ -31,7 +30,7 @@ impl<'a> VM<'a> {
 
                 Ok(ExecutionReport {
                     result: TxResult::Revert(error),
-                    gas_used: current_call_frame.gas_limit,
+                    gas_used: self.current_call_frame()?.gas_limit,
                     gas_refunded: self.accrued_substate.refunded_gas,
                     output: Bytes::new(),
                     logs: vec![],
