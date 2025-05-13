@@ -26,7 +26,7 @@ const DEV_MODE_ADDRESS: H160 = H160([
     0x00, 0x00, 0x00, 0xAA,
 ]);
 const VERIFY_FUNCTION_SIGNATURE: &str =
-    "verifyBatch(uint256,bytes,bytes32,bytes32,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
+    "verifyBatch(uint256,bytes,bytes32,bytes,bytes32,bytes,bytes,bytes32,bytes,uint256[8])";
 
 pub async fn start_l1_proof_sender(cfg: SequencerConfig) -> Result<(), SequencerError> {
     let proof_sender =

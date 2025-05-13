@@ -16,7 +16,7 @@ use bytes::Bytes;
 use ethrex_common::{
     types::{
         tx_fields::{AccessList, AuthorizationList},
-        BlockHeader, ChainConfig, Fork, ForkBlobSchedule, Transaction, TxKind,
+        Fork, Transaction, TxKind,
     },
     Address, H256, U256,
 };
@@ -40,114 +40,8 @@ pub struct Substate {
     pub touched_accounts: HashSet<Address>,
     pub touched_storage_slots: HashMap<Address, BTreeSet<H256>>,
     pub created_accounts: HashSet<Address>,
-}
-
-/// Backup if sub-context is reverted. It consists of a copy of:
-///   - Substate
-///   - Gas Refunds
-///   - Transient Storage
-pub struct StateBackup {
-    pub substate: Substate,
     pub refunded_gas: u64,
     pub transient_storage: TransientStorage,
-}
-
-impl StateBackup {
-    pub fn new(
-        substate: Substate,
-        refunded_gas: u64,
-        transient_storage: TransientStorage,
-    ) -> StateBackup {
-        StateBackup {
-            substate,
-            refunded_gas,
-            transient_storage,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-/// This struct holds special configuration variables specific to the
-/// EVM. In most cases, at least at the time of writing (February
-/// 2025), you want to use the default blob_schedule values for the
-/// specified Fork. The "intended" way to do this is by using the `EVMConfig::canonical_values(fork: Fork)` function.
-///
-/// However, that function should NOT be used IF you want to use a
-/// custom `ForkBlobSchedule`, like it's described in [EIP-7840](https://eips.ethereum.org/EIPS/eip-7840)
-/// Values are determined by [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691#specification)
-pub struct EVMConfig {
-    pub fork: Fork,
-    pub blob_schedule: ForkBlobSchedule,
-}
-
-impl EVMConfig {
-    pub fn new(fork: Fork, blob_schedule: ForkBlobSchedule) -> EVMConfig {
-        EVMConfig {
-            fork,
-            blob_schedule,
-        }
-    }
-
-    pub fn new_from_chain_config(chain_config: &ChainConfig, block_header: &BlockHeader) -> Self {
-        let fork = chain_config.fork(block_header.timestamp);
-
-        let blob_schedule = chain_config
-            .get_fork_blob_schedule(block_header.timestamp)
-            .unwrap_or_else(|| EVMConfig::canonical_values(fork));
-
-        EVMConfig::new(fork, blob_schedule)
-    }
-
-    /// This function is used for running the EF tests. If you don't
-    /// have acces to a EVMConfig (mainly in the form of a
-    /// genesis.json file) you can use this function to get the
-    /// "Default" ForkBlobSchedule for that specific Fork.
-    /// NOTE: This function could potentially be expanded to include
-    /// other types of "default"s.
-    pub fn canonical_values(fork: Fork) -> ForkBlobSchedule {
-        let max_blobs_per_block: u64 = Self::max_blobs_per_block(fork);
-        let target: u64 = Self::get_target_blob_gas_per_block_(fork);
-        let base_fee_update_fraction: u64 = Self::get_blob_base_fee_update_fraction_value(fork);
-
-        ForkBlobSchedule {
-            target,
-            max: max_blobs_per_block,
-            base_fee_update_fraction,
-        }
-    }
-
-    const fn max_blobs_per_block(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague => MAX_BLOB_COUNT_ELECTRA,
-            Fork::Osaka => MAX_BLOB_COUNT_ELECTRA,
-            _ => MAX_BLOB_COUNT,
-        }
-    }
-
-    const fn get_blob_base_fee_update_fraction_value(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague | Fork::Osaka => BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-            _ => BLOB_BASE_FEE_UPDATE_FRACTION,
-        }
-    }
-
-    const fn get_target_blob_gas_per_block_(fork: Fork) -> u64 {
-        match fork {
-            Fork::Prague | Fork::Osaka => TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
-            _ => TARGET_BLOB_GAS_PER_BLOCK,
-        }
-    }
-}
-
-impl Default for EVMConfig {
-    /// The default EVMConfig depends on the default Fork.
-    fn default() -> Self {
-        let fork = core::default::Default::default();
-        EVMConfig {
-            fork,
-            blob_schedule: Self::canonical_values(fork),
-        }
-    }
 }
 
 pub struct VM<'a> {
@@ -159,21 +53,9 @@ pub struct VM<'a> {
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
-    pub return_data: Vec<RetData>,
-    pub backups: Vec<StateBackup>,
+    pub substate_backups: Vec<Substate>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
-}
-
-pub struct RetData {
-    pub is_create: bool,
-    pub ret_offset: U256,
-    pub ret_size: usize,
-    pub should_transfer_value: bool,
-    pub to: Address,
-    pub msg_sender: Address,
-    pub value: U256,
-    pub max_message_call_gas: u64,
 }
 
 impl<'a> VM<'a> {
@@ -234,6 +116,8 @@ impl<'a> VM<'a> {
             touched_accounts: default_touched_accounts,
             touched_storage_slots: default_touched_storage_slots,
             created_accounts: HashSet::new(),
+            refunded_gas: 0,
+            transient_storage: HashMap::new(),
         };
 
         let bytecode;
@@ -280,8 +164,10 @@ impl<'a> VM<'a> {
             false,
             env.gas_limit,
             0,
-            0,
+            true,
             false,
+            U256::zero(),
+            0,
         );
 
         Ok(Self {
@@ -293,8 +179,7 @@ impl<'a> VM<'a> {
             access_list: tx.access_list(),
             authorization_list: tx.authorization_list(),
             hooks,
-            return_data: vec![],
-            backups: vec![],
+            substate_backups: vec![],
             storage_original_values: HashMap::new(),
         })
     }
@@ -309,7 +194,7 @@ impl<'a> VM<'a> {
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
             let precompile_result = execute_precompile(&mut current_call_frame);
             let backup = self
-                .backups
+                .substate_backups
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
             let report =
@@ -358,13 +243,11 @@ impl<'a> VM<'a> {
 
     pub fn restore_state(
         &mut self,
-        backup: StateBackup,
+        backup: Substate,
         call_frame_backup: CallFrameBackup,
     ) -> Result<(), VMError> {
         self.restore_cache_state(call_frame_backup)?;
-        self.accrued_substate = backup.substate;
-        self.env.refunded_gas = backup.refunded_gas;
-        self.env.transient_storage = backup.transient_storage;
+        self.accrued_substate = backup;
         Ok(())
     }
 
@@ -417,14 +300,10 @@ impl<'a> VM<'a> {
             self.increment_account_nonce(new_contract_address)?;
         }
 
-        // Backup of Substate, Gas Refunds and Transient Storage if sub-context is reverted
-        let backup = StateBackup::new(
-            self.accrued_substate.clone(),
-            self.env.refunded_gas,
-            self.env.transient_storage.clone(),
-        );
+        // Backup of Substate,a copy of the current substate to restore if sub-context is reverted
+        let backup = self.accrued_substate.clone();
 
-        self.backups.push(backup);
+        self.substate_backups.push(backup);
 
         let mut report = self.run_execution()?;
 
