@@ -3,6 +3,12 @@ use ethrex_l2::utils::config::prover::ProverConfig;
 use tracing::Level;
 
 #[derive(Parser)]
+pub struct ProverCLI {
+    #[command(flatten)]
+    pub prover_client_options: ProverClientOptions,
+}
+
+#[derive(Parser)]
 pub struct ProverClientOptions {
     #[arg(
         long = "prover-server-endpoint",
