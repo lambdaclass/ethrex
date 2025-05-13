@@ -24,12 +24,12 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 
 #[derive(Serialize, Deserialize)]
-pub struct ConfigFile {
+pub struct NodeConfigFile {
     pub known_peers: Vec<Node>,
     pub node_record: NodeRecord,
 }
 
-impl ConfigFile {
+impl NodeConfigFile {
     pub async fn new(table: Arc<Mutex<KademliaTable>>, node_record: NodeRecord) -> Self {
         let mut connected_peers = vec![];
 
@@ -38,7 +38,7 @@ impl ConfigFile {
                 connected_peers.push(peer.node);
             }
         }
-        ConfigFile {
+        NodeConfigFile {
             known_peers: connected_peers,
             node_record,
         }
@@ -120,7 +120,7 @@ pub fn set_datadir(datadir: &str) -> String {
         .to_owned()
 }
 
-pub async fn store_config_file(config: ConfigFile, file_path: PathBuf) {
+pub async fn store_node_config_file(config: NodeConfigFile, file_path: PathBuf) {
     let json = match serde_json::to_string(&config) {
         Ok(json) => json,
         Err(e) => {
@@ -135,7 +135,7 @@ pub async fn store_config_file(config: ConfigFile, file_path: PathBuf) {
 }
 
 #[allow(dead_code)]
-pub fn read_config_file(file_path: PathBuf) -> Result<ConfigFile, String> {
+pub fn read_node_config_file(file_path: PathBuf) -> Result<NodeConfigFile, String> {
     match std::fs::File::open(file_path) {
         Ok(file) => serde_json::from_reader(file).map_err(|e| format!("Invlid config file {}", e)),
         Err(e) => Err(format!("No config file found: {}", e)),

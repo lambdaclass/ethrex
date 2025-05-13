@@ -2,8 +2,8 @@ use crate::{
     cli::Options,
     networks,
     utils::{
-        get_client_version, parse_socket_addr, read_config_file, read_genesis_file,
-        read_jwtsecret_file,
+        get_client_version, parse_socket_addr, read_genesis_file, read_jwtsecret_file,
+        read_node_config_file,
     },
 };
 use ethrex_blockchain::Blockchain;
@@ -18,6 +18,7 @@ use ethrex_vm::EvmEngine;
 use k256::ecdsa::SigningKey;
 use local_ip_address::local_ip;
 use rand::rngs::OsRng;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
     future::IntoFuture,
@@ -324,7 +325,7 @@ pub fn get_bootnodes(opts: &Options, network: &str, data_dir: &str) -> Vec<Node>
 
     info!("Reading known peers from config file {:?}", config_file);
 
-    match read_config_file(config_file) {
+    match read_node_config_file(config_file) {
         Ok(ref mut config) => bootnodes.append(&mut config.known_peers),
         Err(e) => error!("Could not read from peers file: {e}"),
     };
@@ -390,15 +391,21 @@ pub fn get_local_node_record(
     local_p2p_node: &Node,
     signer: &SigningKey,
 ) -> NodeRecord {
-    let config_file = PathBuf::from(data_dir.to_owned() + "/config.json");
+    let config_file = PathBuf::from(data_dir.to_owned() + "/node_config.json");
 
-    match read_config_file(config_file) {
+    match read_node_config_file(config_file) {
         Ok(ref mut config) => {
             NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
                 .expect("Node record could not be created from local node")
         }
-        Err(_) => NodeRecord::from_node(local_p2p_node, 1, signer)
-            .expect("Node record could not be created from local node"),
+        Err(_) => {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            NodeRecord::from_node(local_p2p_node, timestamp, signer)
+                .expect("Node record could not be created from local node")
+        }
     }
 }
 
