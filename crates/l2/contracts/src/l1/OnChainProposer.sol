@@ -58,7 +58,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
     address public R0VERIFIER;
     address public SP1VERIFIER;
 
-    bytes32 public SP1VKEY;
+    bytes32 public SP1_VERIFICATION_KEY;
 
     /// @notice Address used to avoid the verification process.
     /// @dev If the `R0VERIFIER` or the `SP1VERIFIER` contract address is set to this address,
@@ -90,7 +90,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
         address r0verifier,
         address sp1verifier,
         address picoverifier,
-        bytes32 sp1vkey,
+        bytes32 sp1Vk,
         address[] calldata sequencerAddresses
     ) public nonReentrant {
         // Set the CommonBridge address
@@ -155,10 +155,10 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
         // Set the SP1 program verification key
         require(
-            SP1VKEY == bytes32(0),
+            SP1_VERIFICATION_KEY == bytes32(0),
             "OnChainProposer: contract already initialized"
         );
-        SP1VKEY = sp1vkey;
+        SP1_VERIFICATION_KEY = sp1Vk;
 
         for (uint256 i = 0; i < sequencerAddresses.length; i++) {
             authorizedSequencerAddresses[sequencerAddresses[i]] = true;
@@ -306,7 +306,7 @@ contract OnChainProposer is IOnChainProposer, ReentrancyGuard {
 
             // If the verification fails, it will revert.
             ISP1Verifier(SP1VERIFIER).verifyProof(
-                SP1VKEY,
+                SP1_VERIFICATION_KEY,
                 sp1PublicValues,
                 sp1ProofBytes
             );
