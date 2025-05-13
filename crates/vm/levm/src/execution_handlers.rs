@@ -23,7 +23,7 @@ impl<'a> VM<'a> {
                 gas_used: current_call_frame.gas_used,
                 gas_refunded: self.accrued_substate.refunded_gas,
                 output,
-                logs: std::mem::take(&mut current_call_frame.logs),
+                logs: vec![],
             }),
             Err(error) => {
                 if error.should_propagate() {
