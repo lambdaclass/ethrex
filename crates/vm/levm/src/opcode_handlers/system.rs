@@ -721,7 +721,6 @@ impl<'a> VM<'a> {
             true,
             U256::zero(),
             0,
-            true,
         );
         self.call_frames.push(new_call_frame);
 
@@ -828,11 +827,10 @@ impl<'a> VM<'a> {
             gas_limit,
             0,
             new_depth,
-            false,
+            should_transfer_value,
             false,
             ret_offset,
             ret_size,
-            should_transfer_value,
         );
         self.call_frames.push(new_call_frame);
         // Backup of Database, Substate, Gas Refunds and Transient Storage if sub-context is reverted
@@ -858,7 +856,7 @@ impl<'a> VM<'a> {
             self.call_frames.push(executed_call_frame.clone());
             return Ok(false);
         }
-        if executed_call_frame.is_create {
+        if executed_call_frame.create_op_called {
             self.handle_return_create(executed_call_frame, tx_report)?;
         } else {
             self.handle_return_call(executed_call_frame, tx_report)?;

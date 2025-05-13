@@ -258,7 +258,7 @@ impl<'a> VM<'a> {
             }
         }
 
-        let initial_call_frame = CallFrame::new_without_retdata(
+        let initial_call_frame = CallFrame::new(
             env.origin,
             destination_and_code_address,
             destination_and_code_address,
@@ -269,7 +269,10 @@ impl<'a> VM<'a> {
             env.gas_limit,
             0,
             0,
+            true,
             false,
+            U256::zero(),
+            0,
         );
 
         Ok(Self {
