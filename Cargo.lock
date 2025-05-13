@@ -108,7 +108,7 @@ dependencies = [
 [[package]]
 name = "aligned-sdk"
 version = "0.1.0"
-source = "git+https://github.com/yetanotherco/aligned_layer?tag=v0.15.2#004debe2858de9086016074fcd4ae2100e6c63bf"
+source = "git+https://github.com/yetanotherco/aligned_layer?rev=dece6368f87978970ab214c024d61bd5e88e3b8f#dece6368f87978970ab214c024d61bd5e88e3b8f"
 dependencies = [
  "ciborium",
  "dialoguer",
@@ -5725,22 +5725,15 @@ dependencies = [
 
 [[package]]
 name = "lambdaworks-crypto"
-version = "0.10.0"
-source = "git+https://github.com/lambdaclass/lambdaworks.git?rev=efd46f0b0aea3aa95d94bba7de86cb96611b40d3#efd46f0b0aea3aa95d94bba7de86cb96611b40d3"
+version = "0.12.0"
+source = "git+https://github.com/lambdaclass/lambdaworks.git?rev=5f8f2cfcc8a1a22f77e8dff2d581f1166eefb80b#5f8f2cfcc8a1a22f77e8dff2d581f1166eefb80b"
 dependencies = [
- "lambdaworks-math 0.10.0",
+ "lambdaworks-math 0.12.0",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "serde",
  "sha2 0.10.8",
  "sha3",
-]
-
-[[package]]
-name = "lambdaworks-math"
-version = "0.10.0"
-source = "git+https://github.com/lambdaclass/lambdaworks.git?rev=efd46f0b0aea3aa95d94bba7de86cb96611b40d3#efd46f0b0aea3aa95d94bba7de86cb96611b40d3"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -5750,6 +5743,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "708d148956bcdc21ae5c432b4e20bbaa26fd68d5376a3a6c461f41095abea0ba"
 dependencies = [
  "rayon",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "lambdaworks-math"
+version = "0.12.0"
+source = "git+https://github.com/lambdaclass/lambdaworks.git?rev=5f8f2cfcc8a1a22f77e8dff2d581f1166eefb80b#5f8f2cfcc8a1a22f77e8dff2d581f1166eefb80b"
+dependencies = [
+ "getrandom 0.2.15",
+ "rand 0.8.5",
  "serde",
  "serde_json",
 ]
