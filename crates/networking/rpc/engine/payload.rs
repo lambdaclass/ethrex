@@ -185,7 +185,7 @@ impl RpcHandler for NewPayloadV4Request {
         })
     }
 
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
         context: RpcApiContext,
@@ -371,7 +371,7 @@ impl RpcHandler for GetPayloadV4Request {
         Ok(Self { payload_id })
     }
 
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
         context: RpcApiContext,

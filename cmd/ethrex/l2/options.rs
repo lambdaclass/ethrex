@@ -24,7 +24,6 @@ pub struct Options {
     pub sponsorable_addresses_file_path: Option<String>,
     #[arg(long, value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: Option<SecretKey>,
-    #[cfg(feature = "based")]
     #[command(flatten)]
     pub based_opts: BasedOptions,
 }
@@ -360,7 +359,6 @@ impl Default for ProofCoordinatorOptions {
     }
 }
 
-#[cfg(feature = "based")]
 #[derive(Parser, Default)]
 pub struct BasedOptions {
     #[arg(

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-#[cfg(feature = "based")]
+#[cfg(feature = "l2")]
 use crate::utils::RpcRequest;
 use crate::{
     eth::block,
@@ -603,7 +603,7 @@ impl RpcHandler for SendRawTransactionRequest {
         Ok(transaction)
     }
 
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
         context: RpcApiContext,

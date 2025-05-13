@@ -139,14 +139,7 @@ DEFAULT_BRIDGE_ADDRESS=0x554a14cd047c485b3ac3edbd9fbb373d6f84ad3f
 DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=0xc66617ef7eff0ce31a54067183f541f52f39a7dc
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
-	if [ -z "$$BASED" ]; then \
-		FEATURES="l2,rollup_storage_libmdbx,metrics"; \
-		echo "Running ethrex L2 vanilla"; \
-	else \
-		FEATURES="metrics,based"; \
-		echo "Running ethrex L2 with based"; \
-	fi; \
-	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features $$FEATURES -- \
+	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features l2,rollup_storage_libmdbx,metrics -- \
 	l2 init \
 	--network ${L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \

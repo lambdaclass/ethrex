@@ -29,7 +29,7 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     InvalidPayloadAttributes(String),
     UnknownPayload(String),
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     InvalidBasedMessage(String),
     #[cfg(feature = "l2")]
     InvalidEthrexL2Message(String),
@@ -132,7 +132,7 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Unknown payload: {context}"),
             },
-            #[cfg(feature = "based")]
+            #[cfg(feature = "l2")]
             RpcErr::InvalidBasedMessage(context) => RpcErrorMetadata {
                 code: -38003,
                 data: None,
@@ -174,7 +174,7 @@ pub enum RpcNamespace {
     Net,
     #[cfg(feature = "l2")]
     EthrexL2,
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     Based,
 }
 
@@ -206,8 +206,8 @@ impl RpcRequest {
                 "net" => Ok(RpcNamespace::Net),
                 #[cfg(feature = "l2")]
                 "ethrex" => Ok(RpcNamespace::EthrexL2),
-                #[cfg(feature = "based")]
-                "based" => Ok(RpcNamespace::Based),
+                #[cfg(feature = "l2")]
+                "l2" => Ok(RpcNamespace::Based),
                 _ => Err(RpcErr::MethodNotFound(self.method.clone())),
             }
         } else {
@@ -349,9 +349,9 @@ pub mod test_utils {
     use k256::ecdsa::SigningKey;
 
     use crate::rpc::{start_api, NodeData, RpcApiContext};
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     use crate::{EngineClient, EthClient};
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     use bytes::Bytes;
     #[cfg(feature = "l2")]
     use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
@@ -405,9 +405,9 @@ pub mod test_utils {
         let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
         let jwt_secret = Default::default();
         let local_p2p_node = example_p2p_node();
-        #[cfg(feature = "based")]
+        #[cfg(feature = "l2")]
         let gateway_eth_client = EthClient::new("");
-        #[cfg(feature = "based")]
+        #[cfg(feature = "l2")]
         let gateway_auth_client = EngineClient::new("", Bytes::default());
         #[cfg(feature = "l2")]
         let valid_delegation_addresses = Vec::new();
@@ -426,11 +426,11 @@ pub mod test_utils {
             example_local_node_record(),
             SyncManager::dummy(),
             "ethrex/test".to_string(),
-            #[cfg(feature = "based")]
+            #[cfg(feature = "l2")]
             gateway_eth_client,
-            #[cfg(feature = "based")]
+            #[cfg(feature = "l2")]
             gateway_auth_client,
-            #[cfg(feature = "based")]
+            #[cfg(feature = "l2")]
             Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses,
@@ -455,11 +455,11 @@ pub mod test_utils {
                 local_node_record: example_local_node_record(),
                 client_version: "ethrex/test".to_string(),
             },
-            #[cfg(feature = "based")]
+            #[cfg(feature = "l2")]
             gateway_eth_client: EthClient::new(""),
-            #[cfg(feature = "based")]
+            #[cfg(feature = "l2")]
             gateway_auth_client: EngineClient::new("", Bytes::default()),
-            #[cfg(feature = "based")]
+            #[cfg(feature = "l2")]
             gateway_pubkey: Default::default(),
             #[cfg(feature = "l2")]
             valid_delegation_addresses: Vec::new(),

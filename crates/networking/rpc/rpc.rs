@@ -37,7 +37,7 @@ use crate::utils::{
     RpcSuccessResponse,
 };
 use crate::{admin, net};
-#[cfg(feature = "based")]
+#[cfg(feature = "l2")]
 use crate::{EngineClient, EthClient};
 use axum::extract::State;
 use axum::{routing::post, Json, Router};
@@ -47,7 +47,7 @@ use axum_extra::{
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
-#[cfg(feature = "based")]
+#[cfg(feature = "l2")]
 use ethrex_common::Public;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -75,7 +75,7 @@ cfg_if::cfg_if! {
     }
 }
 
-#[cfg(feature = "based")]
+#[cfg(feature = "l2")]
 use crate::based::versioned_message::SignedMessage;
 
 #[derive(Deserialize)]
@@ -92,11 +92,11 @@ pub struct RpcApiContext {
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
     pub node_data: NodeData,
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     pub gateway_eth_client: EthClient,
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     pub gateway_auth_client: EngineClient,
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     pub gateway_pubkey: Public,
     #[cfg(feature = "l2")]
     pub valid_delegation_addresses: Vec<Address>,
@@ -126,7 +126,7 @@ pub trait RpcHandler: Sized {
     /// The default implementation of this method is to call `RpcHandler::call` method because
     /// not all requests need to be relayed to the gateway client, and the only ones that have to
     /// must override this method.
-    #[cfg(feature = "based")]
+    #[cfg(feature = "l2")]
     async fn relay_to_gateway_or_fallback(
         req: &RpcRequest,
         context: RpcApiContext,
@@ -156,9 +156,9 @@ pub async fn start_api(
     local_node_record: NodeRecord,
     syncer: SyncManager,
     client_version: String,
-    #[cfg(feature = "based")] gateway_eth_client: EthClient,
-    #[cfg(feature = "based")] gateway_auth_client: EngineClient,
-    #[cfg(feature = "based")] gateway_pubkey: Public,
+    #[cfg(feature = "l2")] gateway_eth_client: EthClient,
+    #[cfg(feature = "l2")] gateway_auth_client: EngineClient,
+    #[cfg(feature = "l2")] gateway_pubkey: Public,
     #[cfg(feature = "l2")] valid_delegation_addresses: Vec<Address>,
     #[cfg(feature = "l2")] sponsor_pk: SecretKey,
     #[cfg(feature = "l2")] rollup_store: StoreRollup,
@@ -177,11 +177,11 @@ pub async fn start_api(
             local_node_record,
             client_version,
         },
-        #[cfg(feature = "based")]
+        #[cfg(feature = "l2")]
         gateway_eth_client,
-        #[cfg(feature = "based")]
+        #[cfg(feature = "l2")]
         gateway_auth_client,
-        #[cfg(feature = "based")]
+        #[cfg(feature = "l2")]
         gateway_pubkey,
         #[cfg(feature = "l2")]
         valid_delegation_addresses,
@@ -219,7 +219,7 @@ pub async fn start_api(
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
-    if cfg!(any(feature = "l2", feature = "based")) {
+    if cfg!(feature = "l2") {
         info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
 
         let _ = tokio::try_join!(http_server)
@@ -307,7 +307,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
             "Engine namespace not allowed in map_http_requests".to_owned(),
         )),
-        #[cfg(feature = "based")]
+        #[cfg(feature = "l2")]
         Ok(RpcNamespace::Based) => map_based_requests(req, context),
         Err(rpc_err) => Err(rpc_err),
         #[cfg(feature = "l2")]
@@ -370,7 +370,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         }
         "eth_sendRawTransaction" => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
+                if #[cfg(feature = "l2")] {
                     SendRawTransactionRequest::relay_to_gateway_or_fallback(req, context).await
                 } else {
                     SendRawTransactionRequest::call(req, context).await
@@ -406,7 +406,7 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
+                if #[cfg(feature = "l2")] {
                     ForkChoiceUpdatedV3::relay_to_gateway_or_fallback(req, context).await
                 } else {
                     ForkChoiceUpdatedV3::call(req, context).await
@@ -415,7 +415,7 @@ pub async fn map_engine_requests(
         }
         "engine_newPayloadV4" => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
+                if #[cfg(feature = "l2")] {
                     NewPayloadV4Request::relay_to_gateway_or_fallback(req, context).await
                 } else {
                     NewPayloadV4Request::call(req, context).await
@@ -431,7 +431,7 @@ pub async fn map_engine_requests(
         "engine_getPayloadV4" => GetPayloadV4Request::call(req, context).await,
         "engine_getPayloadV3" => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "based")] {
+                if #[cfg(feature = "l2")] {
                     GetPayloadV3Request::relay_to_gateway_or_fallback(req, context).await
                 } else {
                     GetPayloadV3Request::call(req, context).await
@@ -472,7 +472,7 @@ pub fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value
     }
 }
 
-#[cfg(feature = "based")]
+#[cfg(feature = "l2")]
 pub fn map_based_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "based_env" => SignedMessage::call_env(req, context),

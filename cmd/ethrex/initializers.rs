@@ -31,22 +31,21 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{filter::Directive, EnvFilter, FmtSubscriber};
 
 #[cfg(feature = "l2")]
+use crate::l2::BasedOptions;
+#[cfg(feature = "l2")]
 use crate::l2::L2Options;
+#[cfg(feature = "l2")]
+use ethrex_common::Public;
+#[cfg(feature = "l2")]
+use ethrex_rpc::{EngineClient, EthClient};
+#[cfg(feature = "l2")]
+use std::str::FromStr;
 #[cfg(feature = "l2")]
 use ::{
     ethrex_common::Address,
     ethrex_storage_rollup::{EngineTypeRollup, StoreRollup},
     secp256k1::SecretKey,
 };
-
-#[cfg(feature = "based")]
-use crate::l2::BasedOptions;
-#[cfg(feature = "based")]
-use ethrex_common::Public;
-#[cfg(feature = "based")]
-use ethrex_rpc::{EngineClient, EthClient};
-#[cfg(feature = "based")]
-use std::str::FromStr;
 
 pub fn init_tracing(opts: &Options) {
     let log_filter = EnvFilter::builder()
@@ -160,11 +159,11 @@ pub async fn init_rpc_api(
         local_node_record,
         syncer,
         get_client_version(),
-        #[cfg(feature = "based")]
+        #[cfg(feature = "l2")]
         get_gateway_http_client(&l2_opts.based_opts),
-        #[cfg(feature = "based")]
+        #[cfg(feature = "l2")]
         get_gateway_auth_client(&l2_opts.based_opts),
-        #[cfg(feature = "based")]
+        #[cfg(feature = "l2")]
         get_gateway_public_key(&l2_opts.based_opts),
         #[cfg(feature = "l2")]
         get_valid_delegation_addresses(l2_opts),
@@ -178,7 +177,7 @@ pub async fn init_rpc_api(
     tracker.spawn(rpc_api);
 }
 
-#[cfg(feature = "based")]
+#[cfg(feature = "l2")]
 fn get_gateway_http_client(opts: &BasedOptions) -> EthClient {
     let gateway_http_socket_addr = parse_socket_addr(&opts.gateway_addr, &opts.gateway_eth_port)
         .expect("Failed to parse gateway http address and port");
@@ -186,7 +185,7 @@ fn get_gateway_http_client(opts: &BasedOptions) -> EthClient {
     EthClient::new(&gateway_http_socket_addr.to_string())
 }
 
-#[cfg(feature = "based")]
+#[cfg(feature = "l2")]
 fn get_gateway_auth_client(opts: &BasedOptions) -> EngineClient {
     let gateway_authrpc_socket_addr =
         parse_socket_addr(&opts.gateway_addr, &opts.gateway_auth_port)
@@ -197,7 +196,7 @@ fn get_gateway_auth_client(opts: &BasedOptions) -> EngineClient {
     EngineClient::new(&gateway_authrpc_socket_addr.to_string(), gateway_jwtsecret)
 }
 
-#[cfg(feature = "based")]
+#[cfg(feature = "l2")]
 fn get_gateway_public_key(based_opts: &BasedOptions) -> Public {
     Public::from_str(&based_opts.gateway_pubkey).expect("Failed to parse gateway pubkey")
 }

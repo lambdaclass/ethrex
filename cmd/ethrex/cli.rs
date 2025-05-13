@@ -16,7 +16,7 @@ use crate::{
     DEFAULT_DATADIR,
 };
 
-#[cfg(any(feature = "l2", feature = "based"))]
+#[cfg(feature = "l2")]
 use crate::l2;
 
 #[allow(clippy::upper_case_acronyms)]
@@ -235,7 +235,7 @@ pub enum Subcommand {
         #[arg(long = "removedb", action = ArgAction::SetTrue)]
         removedb: bool,
     },
-    #[cfg(any(feature = "l2", feature = "based"))]
+    #[cfg(feature = "l2")]
     #[command(subcommand)]
     L2(l2::Command),
 }
@@ -266,7 +266,7 @@ impl Subcommand {
 
                 import_blocks(&path, &opts.datadir, network, opts.evm).await;
             }
-            #[cfg(any(feature = "l2", feature = "based"))]
+            #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
         }
         Ok(())

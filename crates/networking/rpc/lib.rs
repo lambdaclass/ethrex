@@ -1,6 +1,6 @@
 mod admin;
 mod authentication;
-#[cfg(feature = "based")]
+#[cfg(feature = "l2")]
 mod based;
 mod engine;
 mod eth;
