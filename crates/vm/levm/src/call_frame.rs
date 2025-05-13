@@ -1,8 +1,9 @@
 use crate::{
-    constants::STACK_LIMIT,
-    errors::{InternalError, OutOfGasError, VMError},
-    memory::Memory,
-    opcodes::Opcode,
+    constants::STACK_LIMIT, 
+    db::{cache, gen_db::GeneralizedDatabase}, 
+    errors::{InternalError, OutOfGasError, VMError}, 
+    memory::Memory, 
+    opcodes::Opcode, 
     utils::get_valid_jump_destinations,
 };
 use bytes::Bytes;
@@ -165,6 +166,35 @@ impl CallFrame {
         }
 
         self.gas_used = potential_consumed_gas;
+
+        Ok(())
+    }
+
+    /// Restores the cache state to the state before changes made during a callframe.
+    pub fn restore_cache_state(
+        &mut self,
+        db: &mut GeneralizedDatabase
+    ) -> Result<(), VMError> {
+        let call_frame_backup = self.call_frame_backup.clone();
+        for (address, account) in call_frame_backup.original_accounts_info {
+            if let Some(current_account) = cache::get_account_mut(&mut db.cache, &address) {
+                current_account.info = account.info;
+                current_account.code = account.code;
+            }
+        }
+
+        for (address, storage) in call_frame_backup.original_account_storage_slots {
+            // This call to `get_account_mut` should never return None, because we are looking up accounts
+            // that had their storage modified, which means they should be in the cache. That's why
+            // we return an internal error in case we haven't found it.
+            let account = cache::get_account_mut(&mut db.cache, &address).ok_or(
+                VMError::Internal(crate::errors::InternalError::AccountNotFound),
+            )?;
+
+            for (key, value) in storage {
+                account.storage.insert(key, value);
+            }
+        }
 
         Ok(())
     }
