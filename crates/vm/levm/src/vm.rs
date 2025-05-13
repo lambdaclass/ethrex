@@ -159,21 +159,9 @@ pub struct VM<'a> {
     pub access_list: AccessList,
     pub authorization_list: Option<AuthorizationList>,
     pub hooks: Vec<Arc<dyn Hook>>,
-    pub return_data: Vec<RetData>,
     pub backups: Vec<StateBackup>,
     /// Original storage values before the transaction. Used for gas calculations in SSTORE.
     pub storage_original_values: HashMap<Address, HashMap<H256, U256>>,
-}
-
-pub struct RetData {
-    pub is_create: bool,
-    pub ret_offset: U256,
-    pub ret_size: usize,
-    pub should_transfer_value: bool,
-    pub to: Address,
-    pub msg_sender: Address,
-    pub value: U256,
-    pub max_message_call_gas: u64,
 }
 
 impl<'a> VM<'a> {
@@ -280,8 +268,10 @@ impl<'a> VM<'a> {
             false,
             env.gas_limit,
             0,
-            0,
+            true,
             false,
+            U256::zero(),
+            0,
         );
 
         Ok(Self {
@@ -293,7 +283,6 @@ impl<'a> VM<'a> {
             access_list: tx.access_list(),
             authorization_list: tx.authorization_list(),
             hooks,
-            return_data: vec![],
             backups: vec![],
             storage_original_values: HashMap::new(),
         })
