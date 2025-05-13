@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747169062612,
+  "lastUpdate": 1747179739739,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7007,6 +7007,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007325719902912622,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "manuel.bilbao@lambdaclass.com",
+            "name": "Manuel Iñaki Bilbao",
+            "username": "ManuelBilbao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "e92418ed4dc8f915f603be49eadd192aeed78b27",
+          "message": "feat(l2): make L1 contracts upgradeable (#2660)\n\n**Motivation**\n\n<!-- Why does this pull request exist? What are its goals? -->\nWe want the L1 contracts to be upgradeable so it's possible to fix bugs\nand introduce new features.\n\n**Description**\n\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\nChanged the contracts to follow the UUPS proxy pattern (from\nOpenZeppelin's library). The deployer binary now deploys both the\nimplementation and the proxy.\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->",
+          "timestamp": "2025-05-13T22:47:52Z",
+          "tree_id": "78298de98b0eafc8acd0b8f9c26b625b05e8da60",
+          "url": "https://github.com/lambdaclass/ethrex/commit/e92418ed4dc8f915f603be49eadd192aeed78b27"
+        },
+        "date": 1747179739395,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007441313116370809,
             "unit": "Mgas/s"
           }
         ]
