@@ -425,7 +425,6 @@ async fn make_deposits(
         let overrides = Overrides {
             value: Some(value_to_deposit),
             from: Some(address),
-            gas_limit: Some(21000 * 5),
             max_fee_per_gas: Some(gas_price),
             max_priority_fee_per_gas: Some(gas_price),
             ..Overrides::default()
