@@ -361,7 +361,7 @@ impl<'a> VM<'a> {
         backup: StateBackup,
         current_call_frame: &mut CallFrame,
     ) -> Result<(), VMError> {
-        current_call_frame.restore_cache_state(&mut self.db)?;
+        current_call_frame.restore_cache_state(self.db)?;
         self.accrued_substate = backup.substate;
         self.env.refunded_gas = backup.refunded_gas;
         self.env.transient_storage = backup.transient_storage;
@@ -389,7 +389,7 @@ impl<'a> VM<'a> {
                 .call_frames
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            current_call_frame.restore_cache_state(&mut self.db)?;
+            current_call_frame.restore_cache_state(self.db)?;
             self.call_frames.push(current_call_frame);
             return Err(e);
         }
