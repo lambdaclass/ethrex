@@ -17,6 +17,7 @@ pub struct SequencerConfig {
 pub struct BlockProducerConfig {
     pub block_time_ms: u64,
     pub coinbase_address: Address,
+    pub elasticity_multiplier: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +35,10 @@ pub struct EthConfig {
     pub rpc_url: Url,
     pub maximum_allowed_max_fee_per_gas: u64,
     pub maximum_allowed_max_fee_per_blob_gas: u64,
+    pub max_number_of_retries: u64,
+    pub backoff_factor: u64,
+    pub min_retry_delay: u64,
+    pub max_retry_delay: u64,
 }
 
 #[derive(Clone, Debug)]

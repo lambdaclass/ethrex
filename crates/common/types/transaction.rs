@@ -2302,6 +2302,7 @@ mod mempool {
     use super::*;
     use std::{
         cmp::Ordering,
+        sync::Arc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -2310,7 +2311,7 @@ mod mempool {
         // Unix timestamp (in microseconds) created once the transaction reached the MemPool
         timestamp: u128,
         sender: Address,
-        inner: Transaction,
+        inner: Arc<Transaction>,
     }
 
     impl MempoolTransaction {
@@ -2321,7 +2322,7 @@ mod mempool {
                     .expect("Invalid system time")
                     .as_micros(),
                 sender,
-                inner: tx,
+                inner: Arc::new(tx),
             }
         }
         pub fn time(&self) -> u128 {
@@ -2331,13 +2332,17 @@ mod mempool {
         pub fn sender(&self) -> Address {
             self.sender
         }
+
+        pub fn transaction(&self) -> &Transaction {
+            &self.inner
+        }
     }
 
     impl RLPEncode for MempoolTransaction {
         fn encode(&self, buf: &mut dyn bytes::BufMut) {
             Encoder::new(buf)
                 .encode_field(&self.timestamp)
-                .encode_field(&self.inner)
+                .encode_field(&*self.inner)
                 .finish();
         }
     }
@@ -2352,7 +2357,7 @@ mod mempool {
                 Self {
                     timestamp,
                     sender,
-                    inner,
+                    inner: Arc::new(inner),
                 },
                 decoder.finish()?,
             ))
@@ -2364,12 +2369,6 @@ mod mempool {
 
         fn deref(&self) -> &Self::Target {
             &self.inner
-        }
-    }
-
-    impl From<MempoolTransaction> for Transaction {
-        fn from(val: MempoolTransaction) -> Self {
-            val.inner
         }
     }
 

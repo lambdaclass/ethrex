@@ -5,7 +5,8 @@ use ethrex_common::Address;
 use ethrex_storage::AccountUpdate;
 use ethrex_vm::Evm;
 use std::collections::HashMap;
-
+#[cfg(feature = "l2")]
+use zkvm_interface::withdrawals::{get_block_withdrawals, get_withdrawals_merkle_root};
 use zkvm_interface::{
     io::{ProgramInput, ProgramOutput},
     trie::{update_tries, verify_db},
@@ -38,8 +39,10 @@ fn main() {
 
     let mut cumulative_gas_used = 0;
 
+    #[cfg(feature = "l2")]
+    let mut withdrawals = vec![];
+
     for block in blocks {
-        let fork = db.chain_config.fork(block.header.timestamp);
         // Validate the block
         validate_block(&block, &parent_header, &db.chain_config).expect("invalid block");
 
@@ -48,8 +51,16 @@ fn main() {
         let result = vm.execute_block(&block).expect("failed to execute block");
         let receipts = result.receipts;
         let account_updates = vm
-            .get_state_transitions(fork)
+            .get_state_transitions()
             .expect("failed to get state transitions");
+
+        // Get L2 withdrawals for this block
+        #[cfg(feature = "l2")]
+        {
+            let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)
+                .expect("failed to get block withdrawals");
+            withdrawals.extend(block_withdrawals);
+        }
 
         cumulative_gas_used += receipts
             .last()
@@ -73,6 +84,12 @@ fn main() {
         parent_header = block.header;
     }
 
+    // Calculate L2 withdrawals root
+    #[cfg(feature = "l2")]
+    let Ok(withdrawals_merkle_root) = get_withdrawals_merkle_root(withdrawals) else {
+        panic!("Failed to calculate withdrawals merkle root");
+    };
+
     // Update state trie
     let acc_account_updates: Vec<AccountUpdate> = acc_account_updates.values().cloned().collect();
     update_tries(&mut state_trie, &mut storage_tries, &acc_account_updates)
@@ -89,5 +106,7 @@ fn main() {
     env::commit(&ProgramOutput {
         initial_state_hash,
         final_state_hash,
+        #[cfg(feature = "l2")]
+        withdrawals_merkle_root,
     });
 }

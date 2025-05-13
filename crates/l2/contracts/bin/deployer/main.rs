@@ -1,5 +1,5 @@
 use std::{
-    fs::{read_to_string, OpenOptions},
+    fs::{read_to_string, File, OpenOptions},
     io::{BufWriter, Write},
     path::PathBuf,
     process::{Command, ExitStatus},
@@ -35,10 +35,14 @@ const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 async fn main() -> Result<(), DeployerError> {
     let opts = DeployerOptions::parse();
 
-    let eth_client = EthClient::new_with_maximum_fees(
+    let eth_client = EthClient::new_with_config(
         &opts.rpc_url,
-        opts.maximum_allowed_max_fee_per_gas,
-        opts.maximum_allowed_max_fee_per_blob_gas,
+        opts.max_number_of_retries,
+        opts.backoff_factor,
+        opts.min_retry_delay,
+        opts.max_retry_delay,
+        Some(opts.maximum_allowed_max_fee_per_gas),
+        Some(opts.maximum_allowed_max_fee_per_blob_gas),
     );
 
     download_contract_deps(&opts)?;
@@ -443,10 +447,22 @@ fn write_contract_addresses_to_env(
     risc0_verifier_address: Address,
     env_file_path: Option<PathBuf>,
 ) -> Result<(), DeployerError> {
+    let env_file_path =
+        env_file_path.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env")); // ethrex/crates/l2/.env
+
+    if !env_file_path.exists() {
+        File::create(&env_file_path).map_err(|err| {
+            DeployerError::InternalError(format!(
+                "Failed to create .env file at {}: {err}",
+                env_file_path.display()
+            ))
+        })?;
+    }
+
     let env_file = OpenOptions::new()
         .write(true)
         .truncate(true)
-        .open(env_file_path.unwrap_or(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env")))?; // ethrex/crates/l2/.env
+        .open(env_file_path)?; // ethrex/crates/l2/.env
     let mut writer = BufWriter::new(env_file);
     writeln!(
         writer,
