@@ -1,9 +1,9 @@
 use crate::{
-    constants::STACK_LIMIT, 
-    db::{cache, gen_db::GeneralizedDatabase}, 
-    errors::{InternalError, OutOfGasError, VMError}, 
-    memory::Memory, 
-    opcodes::Opcode, 
+    constants::STACK_LIMIT,
+    db::{cache, gen_db::GeneralizedDatabase},
+    errors::{InternalError, OutOfGasError, VMError},
+    memory::Memory,
+    opcodes::Opcode,
     utils::get_valid_jump_destinations,
 };
 use bytes::Bytes;
@@ -171,10 +171,7 @@ impl CallFrame {
     }
 
     /// Restores the cache state to the state before changes made during a callframe.
-    pub fn restore_cache_state(
-        &mut self,
-        db: &mut GeneralizedDatabase
-    ) -> Result<(), VMError> {
+    pub fn restore_cache_state(&mut self, db: &mut GeneralizedDatabase) -> Result<(), VMError> {
         let call_frame_backup = self.call_frame_backup.clone();
         for (address, account) in call_frame_backup.original_accounts_info {
             if let Some(current_account) = cache::get_account_mut(&mut db.cache, &address) {
