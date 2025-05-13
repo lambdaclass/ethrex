@@ -64,8 +64,9 @@ pub fn main() {
         {
             let block_withdrawals = get_block_withdrawals(&block.body.transactions, &receipts)
                 .expect("failed to get block withdrawals");
-            let mut block_deposits_hashes = Vec::with_capacity(block_withdrawals.len());
-            for deposit in get_block_deposits(&block.body.transactions) {
+            let block_deposits = get_block_deposits(&block.body.transactions);
+            let mut block_deposits_hashes = Vec::with_capacity(block_deposits.len());
+            for deposit in block_deposits {
                 block_deposits_hashes.push(
                     deposit
                         .get_deposit_hash()
