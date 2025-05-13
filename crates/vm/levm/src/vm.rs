@@ -302,12 +302,24 @@ impl<'a> VM<'a> {
     pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
         let fork = self.env.config.fork;
 
-        if is_precompile(&self.current_call_frame()?.code_address, fork) {
+        let code_address = &self.current_call_frame()?.code_address.clone();
+        if is_precompile(code_address, fork) {
             let mut current_call_frame = self
                 .call_frames
                 .pop()
                 .ok_or(VMError::Internal(InternalError::CouldNotPopCallframe))?;
-            let precompile_result = execute_precompile(&mut current_call_frame);
+
+            let delegated_addresses: Vec<Address> = self
+                .authorization_list
+                .as_ref()
+                .map_or(vec![], |list| list.iter().map(|l| l.address).collect());
+
+            let precompile_result = if delegated_addresses.contains(code_address) {
+                Ok(Bytes::new())
+            } else {
+                execute_precompile(&mut current_call_frame)
+            };
+
             let backup = self
                 .backups
                 .pop()

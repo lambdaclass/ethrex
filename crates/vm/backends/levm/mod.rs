@@ -66,6 +66,9 @@ impl LEVM {
         let mut cumulative_gas_used = 0;
 
         for (tx, tx_sender) in block.body.get_transactions_with_sender() {
+            println!("Transaction pre-execution");
+            dbg!(&tx);
+
             let report =
                 Self::execute_tx(tx, tx_sender, &block.header, db).map_err(EvmError::from)?;
 
@@ -76,6 +79,10 @@ impl LEVM {
                 cumulative_gas_used,
                 report.logs.clone(),
             );
+
+            println!("Report and Receipts post-execution");
+            dbg!(&report);
+            dbg!(&receipts);
 
             receipts.push(receipt);
         }
