@@ -15,8 +15,8 @@ pub enum ProverInputError {
     StoreError(#[from] StoreError),
     #[error("Chain error: {0}")]
     ChainError(#[from] ChainError),
-    #[error("ExecutionDB error: {0}")]
-    ExecutionDBError(#[from] ProverDBError),
+    #[error("ProverDB error: {0}")]
+    ProverDBError(#[from] ProverDBError),
     #[error("Invalid Environment variable: {0}")]
     InvalidEnvVar(#[from] ConfigError),
 }

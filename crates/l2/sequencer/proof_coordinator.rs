@@ -324,7 +324,7 @@ impl ProofCoordinator {
         // Create execution_db
         let db = Evm::to_execution_db(&self.store.clone(), &blocks)
             .await
-            .map_err(EvmError::ExecutionDB)?;
+            .map_err(EvmError::ProverDB)?;
 
         // Get the block_header of the parent of the first block
         let parent_hash = blocks
