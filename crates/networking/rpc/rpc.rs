@@ -632,39 +632,6 @@ mod tests {
         assert_eq!(response.to_string(), expected_response.to_string());
     }
 
-    #[tokio::test]
-    async fn create_access_list_create() {
-        // Create Request
-        // Request taken from https://github.com/ethereum/execution-apis/blob/main/tests/eth_createAccessList/create-al-contract.io
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","gas":"0xea60","gasPrice":"0x44103f2","input":"0x010203040506","nonce":"0x0","to":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df"},"0x00"]}"#;
-        let request: RpcRequest = serde_json::from_str(body).unwrap();
-        // Setup initial storage
-        let storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let genesis = read_execution_api_genesis_file();
-        storage
-            .add_initial_state(genesis)
-            .await
-            .expect("Failed to add genesis block to DB");
-        // Process request
-        let context = default_context_with_storage(storage).await;
-
-        let result = map_http_requests(&request, context).await;
-        let response =
-            serde_json::from_value::<RpcSuccessResponse>(rpc_response(request.id, result))
-                .expect("Request failed");
-        let expected_response_string = r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[{"address":"0x7dcd17433742f4c0ca53122ab541d0ba67fc27df","storageKeys":["0x0000000000000000000000000000000000000000000000000000000000000000","0x13a08e3cd39a1bc7bf9103f63f83273cced2beada9f723945176d6b983c65bd2"]}],"gasUsed":"0xca3c"}}"#;
-        let expected_response =
-            serde_json::from_str::<RpcSuccessResponse>(expected_response_string).unwrap();
-        // Due to the scope of this test, we don't have the full state up to date which can cause variantions in gas used due to the difference in the blockchain state
-        // So we will skip checking the gas_used and only check that the access list is correct
-        // The gas_used will be checked when running the hive test framework
-        assert_eq!(
-            response.result["accessList"],
-            expected_response.result["accessList"]
-        )
-    }
-
     fn example_chain_config() -> ChainConfig {
         ChainConfig {
             chain_id: 3151908_u64,
