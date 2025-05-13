@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747089986896,
+  "lastUpdate": 1747144241077,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -6385,6 +6385,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 217621497335,
             "range": "± 826858822",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "99273364+fmoletta@users.noreply.github.com",
+            "name": "fmoletta",
+            "username": "fmoletta"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1dd145092a00b26da441f50f76a200243e9c3f81",
+          "message": "fix(core): add tokio as dev-dependency for ethrex-storage (#2747)\n\n**Motivation**\nWhen running the tests for the ethrex-storage package (via cargo t\n--package `ethrex-storage`) due to `tokio` being used by the test module\nbut not being declared as a dependency. This PR fixes this issue by\nadding it as a dev-dependency.\n<!-- Why does this pull request exist? What are its goals? -->\n\n**Description**\n* add `tokio` as dev-dependency for `ethrex-storage` crate\n<!-- A clear and concise general description of the changes this PR\nintroduces -->\n\n<!-- Link to issues: Resolves #111, Resolves #222 -->\n\nCloses None, but fixes developer experience",
+          "timestamp": "2025-05-13T10:48:22Z",
+          "tree_id": "6c53d581e009ea34c27672dbc4bf56da7a5686f6",
+          "url": "https://github.com/lambdaclass/ethrex/commit/1dd145092a00b26da441f50f76a200243e9c3f81"
+        },
+        "date": 1747144239048,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 217113916878,
+            "range": "± 553393828",
             "unit": "ns/iter"
           }
         ]
