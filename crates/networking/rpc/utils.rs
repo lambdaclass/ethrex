@@ -423,7 +423,7 @@ pub mod test_utils {
             blockchain,
             jwt_secret,
             local_p2p_node,
-            Arc::new(tokio::sync::Mutex::new(example_local_node_record())),
+            example_local_node_record(),
             SyncManager::dummy(),
             "ethrex/test".to_string(),
             #[cfg(feature = "based")]

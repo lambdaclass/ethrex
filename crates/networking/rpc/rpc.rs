@@ -153,7 +153,7 @@ pub async fn start_api(
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
     local_p2p_node: Node,
-    local_node_record: Arc<tokio::sync::Mutex<NodeRecord>>,
+    local_node_record: NodeRecord,
     syncer: SyncManager,
     client_version: String,
     #[cfg(feature = "based")] gateway_eth_client: EthClient,
@@ -547,13 +547,7 @@ mod tests {
         let context = default_context_with_storage(storage).await;
         let local_p2p_node = context.node_data.local_p2p_node;
 
-        let enr_url = context
-            .node_data
-            .local_node_record
-            .lock()
-            .await
-            .enr_url()
-            .unwrap();
+        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
         let blob_schedule = serde_json::json!({
