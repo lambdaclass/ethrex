@@ -348,7 +348,7 @@ pub mod test_utils {
     use ethrex_storage::{EngineType, Store};
     use k256::ecdsa::SigningKey;
 
-    use crate::rpc::{start_api, RpcApiContext};
+    use crate::rpc::{start_api, NodeData, RpcApiContext};
     #[cfg(feature = "based")]
     use crate::{EngineClient, EthClient};
     #[cfg(feature = "based")]
@@ -447,12 +447,14 @@ pub mod test_utils {
         RpcApiContext {
             storage,
             blockchain,
-            jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record: example_local_node_record(),
             active_filters: Default::default(),
             syncer: Arc::new(SyncManager::dummy()),
-            client_version: "ethrex/test".to_string(),
+            node_data: NodeData {
+                jwt_secret: Default::default(),
+                local_p2p_node: example_p2p_node(),
+                local_node_record: example_local_node_record(),
+                client_version: "ethrex/test".to_string(),
+            },
             #[cfg(feature = "based")]
             gateway_eth_client: EthClient::new(""),
             #[cfg(feature = "based")]

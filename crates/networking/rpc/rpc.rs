@@ -89,12 +89,9 @@ enum RpcRequestWrapper {
 pub struct RpcApiContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
-    pub jwt_secret: Bytes,
-    pub local_p2p_node: Node,
-    pub local_node_record: NodeRecord,
     pub active_filters: ActiveFilters,
     pub syncer: Arc<SyncManager>,
-    pub client_version: String,
+    pub node_data: NodeData,
     #[cfg(feature = "based")]
     pub gateway_eth_client: EthClient,
     #[cfg(feature = "based")]
@@ -107,6 +104,14 @@ pub struct RpcApiContext {
     pub sponsor_pk: SecretKey,
     #[cfg(feature = "l2")]
     pub rollup_store: StoreRollup,
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeData {
+    pub jwt_secret: Bytes,
+    pub local_p2p_node: Node,
+    pub local_node_record: NodeRecord,
+    pub client_version: String,
 }
 
 pub trait RpcHandler: Sized {
@@ -164,12 +169,14 @@ pub async fn start_api(
     let service_context = RpcApiContext {
         storage,
         blockchain,
-        jwt_secret,
-        local_p2p_node,
-        local_node_record,
         active_filters: active_filters.clone(),
         syncer: Arc::new(syncer),
-        client_version,
+        node_data: NodeData {
+            jwt_secret,
+            local_p2p_node,
+            local_node_record,
+            client_version,
+        },
         #[cfg(feature = "based")]
         gateway_eth_client,
         #[cfg(feature = "based")]
@@ -279,7 +286,7 @@ pub async fn handle_authrpc_request(
             ));
         }
     };
-    match authenticate(&service_context.jwt_secret, auth_header) {
+    match authenticate(&service_context.node_data.jwt_secret, auth_header) {
         Err(error) => Json(rpc_response(req.id, Err(error))),
         Ok(()) => {
             // Proceed with the request
@@ -445,19 +452,14 @@ pub async fn map_engine_requests(
 
 pub fn map_admin_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "admin_nodeInfo" => admin::node_info(
-            context.storage,
-            context.local_p2p_node,
-            context.local_node_record,
-            context.client_version,
-        ),
+        "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data),
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
     }
 }
 
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
-        "web3_clientVersion" => Ok(Value::String(context.client_version)),
+        "web3_clientVersion" => Ok(Value::String(context.node_data.client_version)),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
 }
@@ -543,9 +545,9 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.local_p2p_node;
+        let local_p2p_node = context.node_data.local_p2p_node;
 
-        let enr_url = context.local_node_record.enr_url().unwrap();
+        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result);
         let blob_schedule = serde_json::json!({
