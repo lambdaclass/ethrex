@@ -307,12 +307,12 @@ contract OnChainProposer is
         bytes32 initialStateRoot = bytes32(publicData[0:32]);
         require(
             batchCommitments[lastVerifiedBatch].newStateRoot == initialStateRoot,
-                "OnChainProposer: withdrawals public inputs don't match with initial state root"
+                "OnChainProposer: initial state root public inputs don't match with initial state root"
         ); 
         bytes32 finalStateRoot = bytes32(publicData[32:64]);
         require(
             batchCommitments[batchNumber].newStateRoot == finalStateRoot,
-                "OnChainProposer: withdrawals public inputs don't match with final state root"
+                "OnChainProposer: final state root public inputs don't match with final state root"
         );
         bytes32 withdrawalsMerkleRoot = bytes32(publicData[80:112]);
         require(
