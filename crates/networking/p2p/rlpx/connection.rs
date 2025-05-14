@@ -59,7 +59,7 @@ pub(crate) type Aes256Ctr64BE = ctr::Ctr64BE<aes::Aes256>;
 pub(crate) type RLPxConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
 pub(crate) struct RemoteState {
-    pub(crate) node_id: H512,
+    pub(crate) public_key: H512,
     pub(crate) nonce: H256,
     pub(crate) ephemeral_key: PublicKey,
     pub(crate) init_message: Vec<u8>,
@@ -177,7 +177,7 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 let mut table_lock = table.lock().await;
                 //table_lock.insert_node_forced(self.node);
                 table_lock.init_backend_communication(
-                    self.node.node_id,
+                    self.node.public_key,
                     peer_channels,
                     capabilities,
                 );
@@ -223,12 +223,12 @@ impl<S: AsyncWrite + AsyncRead + std::marker::Unpin> RLPxConnection<S> {
                 log_peer_debug(&self.node, "Peer already connected, don't replace it");
             }
             _ => {
-                let remote_node_id = self.node.node_id;
+                let remote_public_key = self.node.public_key;
                 log_peer_error(
                     &self.node,
-                    &format!("{error_text}: ({error}), discarding peer {remote_node_id}"),
+                    &format!("{error_text}: ({error}), discarding peer {remote_public_key}"),
                 );
-                table.lock().await.replace_peer(remote_node_id);
+                table.lock().await.replace_peer(remote_public_key);
             }
         }
 
