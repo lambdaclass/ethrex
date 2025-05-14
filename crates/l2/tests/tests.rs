@@ -23,10 +23,10 @@ const DEFAULT_L1_RICH_WALLET_PRIVATE_KEY: H256 = H256([
     0xbc, 0xdf, 0x20, 0x24, 0x9a, 0xbf, 0x0e, 0xd6, 0xd9, 0x44, 0xc0, 0x28, 0x8f, 0xad, 0x48, 0x9e,
     0x33, 0xf6, 0x6b, 0x39, 0x60, 0xd9, 0xe6, 0x22, 0x9c, 0x1c, 0xd2, 0x14, 0xed, 0x3b, 0xbe, 0x31,
 ]);
-// 0xf31d5383c0dfb1c8e3e64654b31d22d08762f6de
+// 0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
 const DEFAULT_BRIDGE_ADDRESS: Address = H160([
-    0xf3, 0x1d, 0x53, 0x83, 0xc0, 0xdf, 0xb1, 0xc8, 0xe3, 0xe6, 0x46, 0x54, 0xb3, 0x1d, 0x22, 0xd0,
-    0x87, 0x62, 0xf6, 0xde,
+    0x8c, 0xcf, 0x74, 0x99, 0x9c, 0x49, 0x6e, 0x4d, 0x27, 0xa2, 0xb0, 0x29, 0x41, 0x67, 0x3f, 0x41,
+    0xdd, 0x0d, 0xab, 0x2a,
 ]);
 // 0x0007a881CD95B1484fca47615B64803dad620C8d
 const DEFAULT_PROPOSER_COINBASE_ADDRESS: Address = H160([
@@ -68,7 +68,7 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
 
     test_transfer(&rich_wallet_private_key, &proposer_client).await?;
 
-    test_withdraw(&rich_wallet_private_key, &eth_client, &proposer_client).await?;
+    test_n_withdraws(&rich_wallet_private_key, &eth_client, &proposer_client, 5).await?;
 
     println!("l2_integration_test is done");
     Ok(())
@@ -243,8 +243,8 @@ async fn test_deposit(
     let deposit_tx_hash = ethrex_l2_sdk::deposit_through_contract_call(
         deposit_value,
         deposit_recipient_address,
-        21000 * 5,
-        21000 * 5,
+        21000 * 10,
+        21000 * 10,
         depositor_private_key,
         bridge_address,
         eth_client,
@@ -400,10 +400,11 @@ async fn test_transfer(
     Ok(())
 }
 
-async fn test_withdraw(
+async fn test_n_withdraws(
     withdrawer_private_key: &SecretKey,
     eth_client: &EthClient,
     proposer_client: &EthClient,
+    n: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // 7. Withdraw funds from L2 to L1
     let withdrawer_address = ethrex_l2_sdk::get_address_from_secret_key(withdrawer_private_key)?;
@@ -439,18 +440,28 @@ async fn test_withdraw(
 
     println!("Withdrawing funds from L2 to L1");
 
-    let withdraw_tx = ethrex_l2_sdk::withdraw(
-        withdraw_value,
-        withdrawer_address,
-        *withdrawer_private_key,
-        proposer_client,
-    )
-    .await?;
+    let mut withdraw_txs = vec![];
+    let mut receipts = vec![];
 
-    let withdraw_tx_receipt =
-        ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, proposer_client, 1000)
-            .await
-            .expect("Withdraw tx receipt not found");
+    for x in 1..n + 1 {
+        println!("Sending withdraw {x}/{n}");
+        let withdraw_tx = ethrex_l2_sdk::withdraw(
+            withdraw_value,
+            withdrawer_address,
+            *withdrawer_private_key,
+            proposer_client,
+        )
+        .await?;
+
+        withdraw_txs.push(withdraw_tx);
+
+        let withdraw_tx_receipt =
+            ethrex_l2_sdk::wait_for_transaction_receipt(withdraw_tx, proposer_client, 1000)
+                .await
+                .expect("Withdraw tx receipt not found");
+
+        receipts.push(withdraw_tx_receipt);
+    }
 
     println!("Checking balances on L1 and L2 after withdrawal");
 
@@ -459,9 +470,9 @@ async fn test_withdraw(
         .await?;
 
     assert!(
-        (withdrawer_l2_balance_before_withdrawal - withdraw_value)
+        (withdrawer_l2_balance_before_withdrawal - withdraw_value * n)
             .abs_diff(withdrawer_l2_balance_after_withdrawal)
-            < L2_GAS_COST_MAX_DELTA,
+            < L2_GAS_COST_MAX_DELTA * n,
         "Withdrawer L2 balance didn't decrease as expected after withdrawal"
     );
 
@@ -478,58 +489,70 @@ async fn test_withdraw(
         .get_balance(fees_vault(), BlockByNumber::Latest)
         .await?;
 
-    let withdraw_fees = get_fees_details_l2(withdraw_tx_receipt, proposer_client).await;
+    let mut withdraw_fees = U256::zero();
+    for receipt in receipts {
+        withdraw_fees += get_fees_details_l2(receipt, proposer_client)
+            .await
+            .recoverable_fees;
+    }
 
     assert_eq!(
         fee_vault_balance_after_withdrawal,
-        fee_vault_balance_before_withdrawal + withdraw_fees.recoverable_fees,
+        fee_vault_balance_before_withdrawal + withdraw_fees,
         "Fee vault balance didn't increase as expected after withdrawal"
     );
 
-    println!("Getting withdrawal proof");
-
-    // We need to wait for the tx to be included in a batch
-    let withdrawal_proof = proposer_client
-        .wait_for_withdrawal_proof(withdraw_tx, 1000)
-        .await?;
-
-    while u64::from_str_radix(
-        eth_client
-            .call(
-                Address::from_str(
-                    &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
-                        .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
-                )
-                .unwrap(),
-                calldata::encode_calldata("lastVerifiedBatch()", &[])?.into(),
-                Overrides::default(),
-            )
-            .await?
-            .get(2..)
-            .unwrap(),
-        16,
-    )
-    .unwrap()
-        < withdrawal_proof.batch_number
-    {
-        println!("Withdrawal is not verified on L1 yet");
-        tokio::time::sleep(Duration::from_secs(2)).await;
+    // We need to wait for all the txs to be included in some batch
+    let mut proofs = vec![];
+    for (i, tx) in withdraw_txs.clone().into_iter().enumerate() {
+        println!("Getting withdrawal proof {}/{n}", i + 1);
+        let withdrawal_proof = proposer_client.wait_for_withdrawal_proof(tx, 1000).await?;
+        proofs.push(withdrawal_proof);
     }
 
-    println!("Claiming withdrawal on L1");
+    for proof in &proofs {
+        while u64::from_str_radix(
+            eth_client
+                .call(
+                    Address::from_str(
+                        &std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
+                            .expect("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS env var not set"),
+                    )
+                    .unwrap(),
+                    calldata::encode_calldata("lastVerifiedBatch()", &[])?.into(),
+                    Overrides::default(),
+                )
+                .await?
+                .get(2..)
+                .unwrap(),
+            16,
+        )
+        .unwrap()
+            < proof.batch_number
+        {
+            println!("Withdrawal is not verified on L1 yet");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
 
-    let withdraw_claim_tx = ethrex_l2_sdk::claim_withdraw(
-        withdraw_value,
-        withdraw_tx,
-        withdrawer_address,
-        *withdrawer_private_key,
-        eth_client,
-        &withdrawal_proof,
-    )
-    .await?;
+    let mut withdraw_claim_txs_receipts = vec![];
 
-    let withdraw_claim_tx_receipt =
-        wait_for_transaction_receipt(withdraw_claim_tx, eth_client, 5).await?;
+    for (x, (tx, proof)) in withdraw_txs.iter().zip(proofs.iter()).enumerate() {
+        println!("Claiming withdrawal on L1 {x}/{n}");
+
+        let withdraw_claim_tx = ethrex_l2_sdk::claim_withdraw(
+            withdraw_value,
+            *tx,
+            withdrawer_address,
+            *withdrawer_private_key,
+            eth_client,
+            proof,
+        )
+        .await?;
+        let withdraw_claim_tx_receipt =
+            wait_for_transaction_receipt(withdraw_claim_tx, eth_client, 5).await?;
+        withdraw_claim_txs_receipts.push(withdraw_claim_tx_receipt);
+    }
 
     println!("Checking balances on L1 and L2 after claim");
 
@@ -537,11 +560,14 @@ async fn test_withdraw(
         .get_balance(withdrawer_address, BlockByNumber::Latest)
         .await?;
 
+    let gas_used_value: u64 = withdraw_claim_txs_receipts
+        .iter()
+        .map(|x| x.tx_info.gas_used * x.tx_info.effective_gas_price)
+        .sum();
+
     assert_eq!(
         withdrawer_l1_balance_after_claim,
-        withdrawer_l1_balance_after_withdrawal + withdraw_value
-            - withdraw_claim_tx_receipt.tx_info.gas_used
-                * withdraw_claim_tx_receipt.tx_info.effective_gas_price,
+        withdrawer_l1_balance_after_withdrawal + withdraw_value * n - gas_used_value,
         "Withdrawer L1 balance wasn't updated as expected after claim"
     );
 
@@ -560,7 +586,7 @@ async fn test_withdraw(
 
     assert_eq!(
         bridge_balance_after_withdrawal,
-        bridge_balance_before_withdrawal - withdraw_value,
+        bridge_balance_before_withdrawal - withdraw_value * n,
         "Bridge balance didn't decrease as expected after withdrawal"
     );
 
