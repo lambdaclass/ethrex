@@ -686,7 +686,7 @@ pub(crate) fn generic_system_contract_revm(
     let tx_env = TxEnv {
         caller: RevmAddress::from_slice(system_address.as_bytes()),
         transact_to: RevmTxKind::Call(RevmAddress::from_slice(contract_address.as_bytes())),
-        gas_limit: gas_limit,
+        gas_limit,
         data: calldata,
         ..Default::default()
     };
