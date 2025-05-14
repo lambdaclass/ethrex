@@ -24,13 +24,31 @@ jobs:
               file_name: rpc-compat,
               simulation: ethereum/rpc-compat,
             }
-          - { name: "Devp2p eth tests", file_name: devp2p, simulation: devp2p }
+          - { 
+              name: "Devp2p eth tests", 
+              file_name: devp2p, 
+              simulation: devp2p,
+            }
           - {
               name: "Cancun Engine tests",
               file_name: engine,
               simulation: ethereum/engine,
             }
-          - { name: "Sync tests", file_name: sync, simulation: ethereum/sync }
+          - { 
+              name: "Sync tests", 
+              file_name: sync, 
+              simulation: ethereum/sync, 
+            }
+          - {
+              name: "Consume engine ef tests",
+              filename: consume-engine,
+              simulation: ethereum/eest/consume-engine,
+            }
+          - { 
+              name: "Consume rlp ef tests",
+              filename: consume-rlp,
+              simulation: ethereum/eest/consume-rlp, 
+            }
 
     steps:
       - name: Checkout sources
@@ -58,6 +76,13 @@ jobs:
 
       - name: Setup Hive
         run: make setup-hive
+
+      - name: Set custom hive flags
+        run: |
+          if [[ "${{ matrix.test.simulation }}" == "ethereum/eest/consume-engine" || "${{ matrix.test.simulation }}" == "ethereum/eest/consume-rlp" ]]; then
+            EEST_FIXTURES=$(cat cmd/ef_tests/blockchain/.fixtures_url)
+            echo "HIVE_FLAGS="--sim.buildarg fixtures=$EEST_FIXTURES"" >> $GITHUB_ENV
+          fi
 
       - name: Run Hive Simulation
         run: cd hive && ./hive --client ethrex --sim ${{ matrix.test.simulation }} --ethrex.flags "--evm ${{ inputs.evm }}" --sim.parallelism 16
