@@ -28,7 +28,7 @@ mod cli;
 mod error;
 
 const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str =
-    "initialize(address,address,address,address,bytes32,address[])";
+    "initialize(bool,address,address,address,address,address,bytes32,address[])";
 const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address)";
 
 #[tokio::main]
