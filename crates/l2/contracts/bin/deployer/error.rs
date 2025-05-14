@@ -1,4 +1,3 @@
-use ethrex_l2::utils::config::errors;
 use ethrex_l2_sdk::{ContractCompilationError, DeployError};
 use ethrex_rpc::clients::{eth::errors::CalldataEncodeError, EthClientError};
 
@@ -18,8 +17,6 @@ pub enum DeployerError {
     EthClientError(#[from] EthClientError),
     #[error("Deployer decoding error: {0}")]
     DecodingError(String),
-    #[error("Config error: {0}")]
-    ConfigError(#[from] errors::ConfigError),
     #[error("Failed to encode calldata: {0}")]
     CalldataEncodeError(#[from] CalldataEncodeError),
     #[error("Failed to compile contract: {0}")]

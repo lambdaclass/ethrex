@@ -128,7 +128,6 @@ jobs:
       - name: Start L1 & Deploy contracts
         run: |
           cd crates/l2
-          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           touch .env
           CI_ETHREX_WORKDIR=/usr/local/bin \
           ETHREX_DEPLOYER_DEPLOY_RICH=true \
@@ -193,7 +192,6 @@ jobs:
       - name: Start L1 & Deploy contracts
         run: |
           cd crates/l2
-          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           touch .env
           mkdir -p prover/zkvm/interface/sp1/out && touch prover/zkvm/interface/sp1/out/riscv32im-succinct-zkvm-vk
           CI_ETHREX_WORKDIR=/usr/local/bin docker compose -f docker-compose-l2.yaml up contract_deployer
@@ -201,7 +199,6 @@ jobs:
       - name: Run tests
         run: |
           cd crates/l2
-          cp configs/prover_client_config_example.toml configs/prover_client_config.toml
           make state-diff-test
 
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
