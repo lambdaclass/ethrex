@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747260915641,
+  "lastUpdate": 1747261725102,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7480,6 +7480,35 @@ window.BENCHMARK_DATA = {
           {
             "name": "SP1, RTX A6000",
             "value": 0.0007415716461916462,
+            "unit": "Mgas/s"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "iovoid@users.noreply.github.com",
+            "name": "Lucas Fiegl",
+            "username": "iovoid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "76521daffea5dfb35562c67903f4cbd028eeb77c",
+          "message": "feat(l2): verify state roots (#2784)\n\n**Motivation**\n\nCurrently the OnChainProposer does not verify the initial and final\nstate roots contained in the program output.\n\n**Description**\n\nThe initial and state roots are verified, based on the commitment\nvalues. The genesis state root is added as a 0th block at initialization\ntime.\n\nCloses #2772",
+          "timestamp": "2025-05-14T20:35:46Z",
+          "tree_id": "41ad4be8fa147cf42bf27a250fb4b48692af9507",
+          "url": "https://github.com/lambdaclass/ethrex/commit/76521daffea5dfb35562c67903f4cbd028eeb77c"
+        },
+        "date": 1747261723730,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "SP1, RTX A6000",
+            "value": 0.0007244831012962074,
             "unit": "Mgas/s"
           }
         ]
