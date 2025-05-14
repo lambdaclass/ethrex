@@ -80,11 +80,6 @@ impl Store {
             serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
         let store = Self::new(store_path, engine_type)?;
         store.add_initial_state(genesis).await?;
-
-        // TODO: put it behind a task?
-        store
-            .snapshots
-            .rebuild(store.get_latest_canonical_block_hash().await?.unwrap());
         Ok(store)
     }
 
@@ -1138,13 +1133,16 @@ impl Store {
             let hash = block.hash();
             let parent_hash = block.header.parent_hash;
             let state_root = block.header.state_root;
-            info!("Creating snapshot for block {}", hash);
+            info!(
+                "Creating snapshot for block {}, state_root {}",
+                hash, state_root
+            );
 
             // TODO: len acquires briefly a lock, maybe we can track emptiness in another way.
             if store.snapshots.len() == 0 {
                 // There are no snapshots yet, use this block as root
                 // TODO: find if there is a better place to create the initial "disk layer".
-                store.snapshots.rebuild(hash);
+                store.snapshots.rebuild(hash, state_root);
                 info!(
                     "Snapshot (disk layer) created for {} with parent {}",
                     hash, parent_hash
@@ -1177,7 +1175,7 @@ impl Store {
 
                 store
                     .snapshots
-                    .update(hash, parent_hash, accounts, storage)?;
+                    .update(hash, state_root, parent_hash, accounts, storage)?;
                 info!(
                     "Snapshot (diff layer) created for {} with parent {}",
                     hash, parent_hash

@@ -8,7 +8,10 @@ use std::{
 };
 
 use crate::{api::StoreEngine, cache::Cache};
-use ethrex_common::{types::AccountState, H256, U256};
+use ethrex_common::{
+    types::{AccountState, BlockHash},
+    H256, U256,
+};
 use ethrex_rlp::decode::RLPDecode;
 use tracing::debug;
 
@@ -18,7 +21,8 @@ use super::{difflayer::DiffLayer, error::SnapshotError, tree::Layers};
 pub struct DiskLayer {
     pub(super) db: Arc<dyn StoreEngine>,
     pub(super) cache: Cache,
-    pub(super) root: H256,
+    pub(super) block_hash: BlockHash,
+    pub(super) state_root: H256,
     pub(super) stale: Arc<AtomicBool>,
 }
 
@@ -27,16 +31,17 @@ impl fmt::Debug for DiskLayer {
         f.debug_struct("DiskLayer")
             .field("db", &self.db)
             .field("cache", &self.cache)
-            .field("root", &self.root)
+            .field("root", &self.state_root)
             .field("stale", &self.stale)
             .finish_non_exhaustive()
     }
 }
 
 impl DiskLayer {
-    pub fn new(db: Arc<dyn StoreEngine>, root: H256) -> Self {
+    pub fn new(db: Arc<dyn StoreEngine>, block_hash: BlockHash, state_root: H256) -> Self {
         Self {
-            root,
+            block_hash,
+            state_root,
             db,
             cache: Cache::new(10000, 10000),
             stale: Arc::new(AtomicBool::new(false)),
@@ -46,22 +51,22 @@ impl DiskLayer {
 
 impl DiskLayer {
     pub fn root(&self) -> H256 {
-        self.root
+        self.state_root
     }
 
     pub fn get_account(
         &self,
         hash: H256,
         _layers: &Layers,
-    ) -> Result<Option<Option<AccountState>>, SnapshotError> {
+    ) -> Result<Option<AccountState>, SnapshotError> {
         debug!("get_account disk layer hit for {}", hash);
         if let Some(value) = self.cache.accounts.get(&hash) {
             debug!("get_account disk layer cache hit for {}", hash);
-            return Ok(Some(value.clone()));
+            return Ok(value.clone());
         }
         debug!("get_account disk layer cache miss for {}", hash);
 
-        let state_trie = self.db.open_state_trie(self.root);
+        let state_trie = self.db.open_state_trie(self.state_root);
 
         let value = if let Some(value) = state_trie
             .get(hash)
@@ -79,7 +84,7 @@ impl DiskLayer {
 
         self.cache.accounts.insert(hash, value.clone().into());
 
-        Ok(Some(Some(value)))
+        Ok(Some(value))
     }
 
     pub fn get_storage(
@@ -104,7 +109,7 @@ impl DiskLayer {
             account_hash, storage_hash
         );
 
-        let account = if let Some(Some(account)) = self.get_account(account_hash, layers)? {
+        let account = if let Some(account) = self.get_account(account_hash, layers)? {
             account
         } else {
             return Ok(None);
@@ -128,17 +133,25 @@ impl DiskLayer {
         Ok(Some(value))
     }
 
-    pub fn parent(&self) -> Option<H256> {
-        None
+    pub fn block_hash(&self) -> H256 {
+        self.block_hash
     }
 
     pub fn update(
         self: Arc<Self>, // import self is like this
-        block: H256,
+        block_hash: BlockHash,
+        state_root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> DiffLayer {
-        let mut layer = DiffLayer::new(self.root, self.clone(), block, accounts, storage);
+        let mut layer = DiffLayer::new(
+            self.block_hash,
+            self.clone(),
+            block_hash,
+            state_root,
+            accounts,
+            storage,
+        );
 
         layer.rebloom(self.clone());
 
