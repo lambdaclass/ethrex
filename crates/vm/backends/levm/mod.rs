@@ -279,6 +279,7 @@ impl LEVM {
             *BEACON_ROOTS_ADDRESS,
             *SYSTEM_ADDRESS,
             30_000_000,
+            30_000_000,
         )?;
         Ok(())
     }
@@ -294,6 +295,7 @@ impl LEVM {
             *HISTORY_STORAGE_ADDRESS,
             *SYSTEM_ADDRESS,
             30_000_000,
+            30_000_000,
         )?;
         Ok(())
     }
@@ -307,7 +309,8 @@ impl LEVM {
             db,
             *WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-            30_000_000 + 21_000, // EIP-7002 dictates that system calls to WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS do not use intrinsic gas
+            30_000_000 + 21_000, // EIP-7251 dictates that this system call does not use intrinsic gas. So we add the base cost that will be taken in the execution.
+            u64::MAX, // In this system call, there is no constraint on the block's gas limit.
         )?;
 
         // According to EIP-7002 we need to check if the WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS
@@ -337,7 +340,8 @@ impl LEVM {
             db,
             *CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
             *SYSTEM_ADDRESS,
-            30_000_000 + 21_000, // EIP-7251 dictates that system calls to CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS do not use intrinsic gas
+            30_000_000 + 21_000, // EIP-7251 dictates that this system call does not use intrinsic gas. So we add the base cost that will be taken in the execution.
+            u64::MAX, // In this system call, there is no constraint on the block's gas limit.
         )?;
 
         // According to EIP-7251 we need to check if the CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS
@@ -580,6 +584,7 @@ pub fn generic_system_contract_levm(
     contract_address: Address,
     system_address: Address,
     gas_limit: u64,
+    block_gas_limit: u64,
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config();
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
@@ -596,7 +601,7 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas.map(U256::from),
         block_blob_gas_used: block_header.blob_gas_used.map(U256::from),
-        block_gas_limit: gas_limit,
+        block_gas_limit,
         config,
         ..Default::default()
     };
