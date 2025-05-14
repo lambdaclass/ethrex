@@ -8,9 +8,10 @@ use crate::{
     network::{public_key_from_signing_key, P2PContext},
     types::Node,
 };
-use ethrex_common::H512;
+use ethrex_common::{H256, H512};
 use k256::ecdsa::SigningKey;
 use rand::rngs::OsRng;
+use sha3::{Digest, Keccak256};
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::UdpSocket;
 use tracing::debug;
@@ -99,9 +100,16 @@ impl Discv4LookupHandler {
         }
     }
 
+    /// We use the public key instead of the node_id as target as we might need to perform a FindNode request
     async fn recursive_lookup(&self, target: H512) {
         // lookups start with the closest nodes to the target from our table
-        let mut peers_to_ask: Vec<Node> = self.ctx.table.lock().await.get_closest_nodes(target);
+        let target_node_id = H256(Keccak256::new_with_prefix(target).finalize().into());
+        let mut peers_to_ask: Vec<Node> = self
+            .ctx
+            .table
+            .lock()
+            .await
+            .get_closest_nodes(target_node_id);
         // stores the peers in peers_to_ask + the peers that were in peers_to_ask but were replaced by closer targets
         let mut seen_peers: HashSet<H512> = HashSet::default();
         let mut asked_peers = HashSet::default();
@@ -117,7 +125,7 @@ impl Discv4LookupHandler {
             for node in nodes_found {
                 if !seen_peers.contains(&node.public_key) {
                     seen_peers.insert(node.public_key);
-                    self.peers_to_ask_push(&mut peers_to_ask, target, node);
+                    self.peers_to_ask_push(&mut peers_to_ask, target_node_id, node);
                 }
             }
 
@@ -129,6 +137,7 @@ impl Discv4LookupHandler {
         }
     }
 
+    /// We use the public key instead of the node_id as target as we might need to perform a FindNode request
     async fn lookup(
         &self,
         target: H512,
@@ -145,7 +154,7 @@ impl Discv4LookupHandler {
                 continue;
             }
             let mut locked_table = self.ctx.table.lock().await;
-            if let Some(peer) = locked_table.get_by_public_key_mut(node.public_key) {
+            if let Some(peer) = locked_table.get_by_node_id_mut(node.node_id) {
                 // if the peer has an ongoing find_node request, don't query
                 if peer.find_node_request.is_none() {
                     let (tx, mut receiver) = tokio::sync::mpsc::unbounded_channel::<Vec<Node>>();
@@ -163,12 +172,7 @@ impl Discv4LookupHandler {
                         nodes.append(&mut found_nodes);
                     }
 
-                    if let Some(peer) = self
-                        .ctx
-                        .table
-                        .lock()
-                        .await
-                        .get_by_public_key_mut(node.public_key)
+                    if let Some(peer) = self.ctx.table.lock().await.get_by_node_id_mut(node.node_id)
                     {
                         peer.find_node_request = None;
                     };
@@ -185,8 +189,8 @@ impl Discv4LookupHandler {
 
     /// Adds a node to `peers_to_ask` if there's space; otherwise, replaces the farthest node
     /// from `target` if the new node is closer.
-    fn peers_to_ask_push(&self, peers_to_ask: &mut Vec<Node>, target: H512, node: Node) {
-        let distance = bucket_number(target, node.public_key);
+    fn peers_to_ask_push(&self, peers_to_ask: &mut Vec<Node>, target_node_id: H256, node: Node) {
+        let distance = bucket_number(target_node_id, node.node_id);
 
         if peers_to_ask.len() < MAX_NODES_PER_BUCKET {
             peers_to_ask.push(node);
@@ -197,7 +201,7 @@ impl Discv4LookupHandler {
         let (mut idx_to_replace, mut highest_distance) = (None, 0);
 
         for (i, peer) in peers_to_ask.iter().enumerate() {
-            let current_distance = bucket_number(peer.public_key, target);
+            let current_distance = bucket_number(peer.node_id, target_node_id);
 
             if distance < current_distance && current_distance >= highest_distance {
                 highest_distance = current_distance;
@@ -213,12 +217,12 @@ impl Discv4LookupHandler {
     async fn find_node_and_wait_for_response(
         &self,
         node: Node,
-        target_id: H512,
+        target: H512,
         request_receiver: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<Node>>,
     ) -> Result<Vec<Node>, DiscoveryError> {
         let expiration: u64 = get_msg_expiration_from_seconds(20);
 
-        let msg = Message::FindNode(FindNodeMessage::new(target_id, expiration));
+        let msg = Message::FindNode(FindNodeMessage::new(target, expiration));
 
         let mut buf = Vec::new();
         msg.encode_with_header(&mut buf, &self.ctx.signer);
@@ -293,18 +297,18 @@ mod tests {
         // because the table is filled, before making the connection, remove a node from the `b` bucket
         // otherwise it won't be added.
         let b_bucket = bucket_number(
-            server_a.ctx.local_node.public_key,
-            server_b.ctx.local_node.public_key,
+            server_a.ctx.local_node.node_id,
+            server_b.ctx.local_node.node_id,
         );
-        let public_key_to_remove = server_a.ctx.table.lock().await.buckets()[b_bucket].peers[0]
+        let node_id_to_remove = server_a.ctx.table.lock().await.buckets()[b_bucket].peers[0]
             .node
-            .public_key;
+            .node_id;
         server_a
             .ctx
             .table
             .lock()
             .await
-            .replace_peer_on_custom_bucket(public_key_to_remove, b_bucket);
+            .replace_peer_on_custom_bucket(node_id_to_remove, b_bucket);
 
         connect_servers(&mut server_a, &mut server_b).await?;
 
@@ -314,13 +318,13 @@ mod tests {
             .table
             .lock()
             .await
-            .get_closest_nodes(server_b.ctx.local_node.public_key);
+            .get_closest_nodes(server_b.ctx.local_node.node_id);
         let nodes_to_ask = server_b
             .ctx
             .table
             .lock()
             .await
-            .get_closest_nodes(server_b.ctx.local_node.public_key);
+            .get_closest_nodes(server_b.ctx.local_node.node_id);
 
         let lookup_handler = lookup_handler_from_server(server_b.clone());
         lookup_handler
@@ -337,10 +341,10 @@ mod tests {
         // now all peers should've been inserted
         for peer in closets_peers_to_b_from_a {
             let table = server_b.ctx.table.lock().await;
-            let node = table.get_by_public_key(peer.public_key);
+            let node = table.get_by_node_id(peer.node_id);
             // sometimes nodes can send ourselves as a neighbor
             // make sure we don't add it
-            if peer.public_key == server_b.ctx.local_node.public_key {
+            if peer.node_id == server_b.ctx.local_node.node_id {
                 assert!(node.is_none());
             } else {
                 assert!(node.is_some());
@@ -380,7 +384,7 @@ mod tests {
                 .table
                 .lock()
                 .await
-                .get_closest_nodes(server_a.ctx.local_node.public_key),
+                .get_closest_nodes(server_a.ctx.local_node.node_id),
         );
         expected_peers.extend(
             server_c
@@ -388,7 +392,7 @@ mod tests {
                 .table
                 .lock()
                 .await
-                .get_closest_nodes(server_a.ctx.local_node.public_key),
+                .get_closest_nodes(server_a.ctx.local_node.node_id),
         );
         expected_peers.extend(
             server_d
@@ -396,7 +400,7 @@ mod tests {
                 .table
                 .lock()
                 .await
-                .get_closest_nodes(server_a.ctx.local_node.public_key),
+                .get_closest_nodes(server_a.ctx.local_node.node_id),
         );
 
         let lookup_handler = lookup_handler_from_server(server_a.clone());
@@ -410,9 +414,9 @@ mod tests {
         // make sure we don't add it
         for peer in expected_peers {
             let table = server_a.ctx.table.lock().await;
-            let node = table.get_by_public_key(peer.public_key);
+            let node = table.get_by_node_id(peer.node_id);
 
-            if peer.public_key == server_a.ctx.local_node.public_key {
+            if peer.node_id == server_a.ctx.local_node.node_id {
                 assert!(node.is_none());
             } else {
                 assert!(node.is_some());
