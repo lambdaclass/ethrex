@@ -1,6 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use ethrex_common::{types::AccountState, Bloom, BloomInput, H256, U256};
+use ethrex_common::{
+    types::{AccountState, BlockHash},
+    Bloom, BloomInput, H256, U256,
+};
 
 use super::{
     disklayer::DiskLayer,
@@ -11,8 +14,10 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct DiffLayer {
     origin: Arc<DiskLayer>,
+    /// parent block hash
     parent: H256,
-    root: H256,
+    block_hash: BlockHash,
+    state_root: H256,
     stale: bool,
     accounts: HashMap<H256, Option<AccountState>>, // None if deleted
     storage: HashMap<H256, HashMap<H256, U256>>,
@@ -24,14 +29,16 @@ impl DiffLayer {
     pub fn new(
         parent: H256,
         origin: Arc<DiskLayer>,
-        root: H256,
+        block_hash: BlockHash,
+        state_root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> Self {
         DiffLayer {
             origin: origin.clone(),
             parent,
-            root,
+            block_hash,
+            state_root,
             stale: false,
             accounts,
             storage,
@@ -64,7 +71,11 @@ impl DiffLayer {
 
 impl DiffLayer {
     pub fn root(&self) -> H256 {
-        self.root
+        self.state_root
+    }
+
+    pub fn block_hash(&self) -> H256 {
+        self.block_hash
     }
 
     pub fn get_account(
@@ -125,11 +136,19 @@ impl DiffLayer {
 
     pub fn update(
         &self,
-        block: ethrex_common::H256,
+        block: BlockHash,
+        state_root: H256,
         accounts: HashMap<H256, Option<AccountState>>,
         storage: HashMap<H256, HashMap<H256, U256>>,
     ) -> DiffLayer {
-        let mut layer = DiffLayer::new(self.root, self.origin.clone(), block, accounts, storage);
+        let mut layer = DiffLayer::new(
+            self.block_hash,
+            self.origin.clone(),
+            block,
+            state_root,
+            accounts,
+            storage,
+        );
 
         layer.rebloom(self.origin.clone());
 
