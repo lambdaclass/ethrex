@@ -74,7 +74,7 @@ impl Discv4LookupHandler {
 
             debug!("Starting lookup");
 
-            // lookup closest to our public_key
+            // lookup closest to our node_id
             self.ctx.tracker.spawn({
                 let self_clone = self.clone();
                 async move {
