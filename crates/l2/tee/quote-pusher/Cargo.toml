@@ -7,6 +7,7 @@ edition = "2021"
 tokio.workspace = true
 ethrex-rpc = { path = "../../../networking/rpc" }
 ethrex-sdk = { path = "../../../l2/sdk" }
+ethrex-common.workspace = true
 secp256k1.workspace = true
 ethereum-types = { workspace = true, features = ["serialize"] }
 thiserror.workspace = true
