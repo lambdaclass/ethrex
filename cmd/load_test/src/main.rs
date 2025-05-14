@@ -121,6 +121,7 @@ async fn claim_erc20_balances(
 
         tasks.spawn(async move {
             let claim_balance_calldata = calldata::encode_calldata("freeMint()", &[]).unwrap();
+
             let claim_tx = client
                 .build_eip1559_transaction(
                     contract,
