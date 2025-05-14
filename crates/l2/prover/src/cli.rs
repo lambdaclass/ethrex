@@ -26,8 +26,8 @@ pub struct ProverClientOptions {
     pub http_port: u16,
     #[arg(
         long = "proving-time",
-        value_name = "PROVING_TIME_MS",
-        env = "PROVER_CLIENT_PROVING_TIME_MS",
+        value_name = "PROVING_TIME",
+        env = "PROVER_CLIENT_PROVING_TIME",
         help = "Time to wait before requesting new data to prove",
         help_heading = "Prover client options",
         default_value_t = 5000

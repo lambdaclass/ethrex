@@ -196,10 +196,10 @@ pub struct WatcherOptions {
     )]
     pub bridge_address: Address,
     #[arg(
-        long = "watcher.watch-interval-ms",
+        long = "watcher.watch-interval",
         default_value = "1000",
         value_name = "UINT64",
-        env = "ETHREX_WATCHER_WATCH_INTERVAL_MS",
+        env = "ETHREX_WATCHER_WATCH_INTERVAL",
         help_heading = "L1 Watcher options"
     )]
     pub watch_interval_ms: u64,
@@ -228,10 +228,10 @@ impl Default for WatcherOptions {
 #[derive(Parser, Default)]
 pub struct BlockProducerOptions {
     #[arg(
-        long = "block-producer.block-time-ms",
+        long = "block-producer.block-time",
         default_value = "5000",
         value_name = "UINT64",
-        env = "ETHREX_BLOCK_PRODUCER_BLOCK_TIME_MS",
+        env = "ETHREX_BLOCK_PRODUCER_BLOCK_TIME",
         help_heading = "L1 Watcher options"
     )]
     pub block_time_ms: u64,
@@ -271,10 +271,10 @@ pub struct CommitterOptions {
     )]
     pub on_chain_proposer_address: Address,
     #[arg(
-        long = "committer.commit-time-ms",
+        long = "committer.commit-time",
         default_value = "60000",
         value_name = "UINT64",
-        env = "ETHREX_COMMITTER_COMMIT_TIME_MS",
+        env = "ETHREX_COMMITTER_COMMIT_TIME",
         help_heading = "L1 Committer options",
         help = "How often does the sequencer commit new blocks to the L1."
     )]
@@ -344,10 +344,10 @@ pub struct ProofCoordinatorOptions {
     )]
     pub listen_port: u16,
     #[arg(
-        long = "proof-coordinator.send-interval-ms",
+        long = "proof-coordinator.send-interval",
         default_value = "5000",
         value_name = "UINT64",
-        env = "ETHREX_PROOF_COORDINATOR_SEND_INTERVAL_MS",
+        env = "ETHREX_PROOF_COORDINATOR_SEND_INTERVAL",
         help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
