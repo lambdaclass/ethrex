@@ -183,6 +183,66 @@ impl<'a> VM<'a> {
         })
     }
 
+    /// Main function for executing an external transaction
+    pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        if let Err(e) = self.prepare_execution() {
+            // Restore cache to state previous to this Tx execution because this Tx is invalid.
+            self.restore_cache_state(self.current_call_frame()?.call_frame_backup.clone())?;
+            return Err(e);
+        }
+
+        // Clear callframe backup so that changes made in prepare_execution are written in stone.
+        // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
+        self.current_call_frame_mut()?.call_frame_backup.clear();
+
+        if self.is_create() {
+            // Create contract, reverting the Tx if address is already occupied.
+            if let Some(report) = self.handle_create_transaction()? {
+                return Ok(report);
+            }
+        }
+
+        // Backup of Substate, a copy of the current substate to restore if sub-context is reverted
+        let backup = self.accrued_substate.clone();
+
+        self.substate_backups.push(backup);
+
+        let mut report = self.run_execution()?;
+
+        self.finalize_execution(&mut report)?;
+        Ok(report)
+    }
+
+    /// Callframe execution logic: Precompiles and Opcodes.
+    pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
+        if self.is_precompile()? {
+            return self.execute_precompile();
+        }
+
+        loop {
+            let opcode = self.current_call_frame()?.next_opcode();
+
+            let op_result = self.execute_opcode(opcode);
+
+            let result = match op_result {
+                Ok(OpcodeResult::Continue { pc_increment }) => {
+                    self.increment_pc_by(pc_increment)?;
+                    continue;
+                }
+                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
+                Err(error) => self.handle_opcode_error(error)?,
+            };
+
+            // Return the ExecutionReport if the executed callframe was the first one.
+            if self.is_initial_call_frame() {
+                return Ok(result);
+            }
+
+            // Handle interaction between child and parent callframe.
+            self.handle_return(&result)?;
+        }
+    }
+
     pub fn execute_precompile(&mut self) -> Result<ExecutionReport, VMError> {
         let callframe = self.current_call_frame_mut()?;
 
@@ -199,34 +259,6 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    pub fn run_execution(&mut self) -> Result<ExecutionReport, VMError> {
-        if self.is_precompile()? {
-            return self.execute_precompile();
-        }
-
-        loop {
-            let opcode = self.current_call_frame()?.next_opcode();
-
-            let op_result = self.handle_current_opcode(opcode);
-
-            let result = match op_result {
-                Ok(OpcodeResult::Continue { pc_increment }) => {
-                    self.current_call_frame_mut()?
-                        .increment_pc_by(pc_increment)?;
-                    continue;
-                }
-                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
-                Err(error) => self.handle_opcode_error(error)?,
-            };
-
-            if self.is_initial_call_frame() {
-                return Ok(result);
-            }
-
-            self.handle_return(&result)?;
-        }
-    }
-
     pub fn restore_state(
         &mut self,
         backup: Substate,
@@ -237,6 +269,7 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// True if external transaction is a contract creation
     pub fn is_create(&self) -> bool {
         matches!(self.tx_kind, TxKind::Create)
     }
@@ -250,51 +283,20 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    /// Main function for executing an external transaction
-    pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        if let Err(e) = self.prepare_execution() {
-            // We need to do a cleanup of the cache so that it doesn't interfere with next transaction's execution
-            self.restore_cache_state(self.current_call_frame()?.call_frame_backup.clone())?;
-            return Err(e);
+    fn handle_create_transaction(&mut self) -> Result<Option<ExecutionReport>, VMError> {
+        let new_contract_address = self.current_call_frame()?.to;
+        let new_account = self.get_account_mut(new_contract_address)?;
+
+        if new_account.has_code_or_nonce() {
+            let report = self.handle_create_non_empty_account()?;
+            return Ok(Some(report));
         }
 
-        // Here we clear the cache backup because if prepare_execution succeeded we don't want to
-        // revert the changes it made.
-        // Even if the transaction reverts we want to apply these kind of changes!
-        // These are: Incrementing sender nonce, transferring value to a delegate account, decreasing sender account balance
-        self.current_call_frame_mut()?.call_frame_backup = CallFrameBackup {
-            original_accounts_info: HashMap::new(),
-            original_account_storage_slots: HashMap::new(),
-        };
+        self.increase_account_balance(new_contract_address, self.current_call_frame()?.msg_value)?;
 
-        // In CREATE type transactions:
-        //  Add created contract to cache, reverting transaction if the address is already occupied
-        if self.is_create() {
-            let new_contract_address = self.current_call_frame()?.to;
-            let new_account = self.get_account_mut(new_contract_address)?;
+        self.increment_account_nonce(new_contract_address)?;
 
-            if new_account.has_code_or_nonce() {
-                return self.handle_create_non_empty_account();
-            }
-
-            self.increase_account_balance(
-                new_contract_address,
-                self.current_call_frame()?.msg_value,
-            )?;
-
-            // https://eips.ethereum.org/EIPS/eip-161
-            self.increment_account_nonce(new_contract_address)?;
-        }
-
-        // Backup of Substate,a copy of the current substate to restore if sub-context is reverted
-        let backup = self.accrued_substate.clone();
-
-        self.substate_backups.push(backup);
-
-        let mut report = self.run_execution()?;
-
-        self.finalize_execution(&mut report)?;
-        Ok(report)
+        Ok(None)
     }
 
     fn handle_create_non_empty_account(&mut self) -> Result<ExecutionReport, VMError> {

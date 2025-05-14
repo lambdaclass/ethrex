@@ -110,6 +110,13 @@ pub struct CallFrameBackup {
     pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
 }
 
+impl CallFrameBackup {
+    pub fn clear(&mut self) {
+        self.original_accounts_info.clear();
+        self.original_account_storage_slots.clear();
+    }
+}
+
 impl CallFrame {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -270,5 +277,9 @@ impl<'a> VM<'a> {
         }
 
         Ok(())
+    }
+
+    pub fn increment_pc_by(&mut self, count: usize) -> Result<(), VMError> {
+        self.current_call_frame_mut()?.increment_pc_by(count)
     }
 }

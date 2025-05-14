@@ -37,7 +37,7 @@ impl<'a> VM<'a> {
             }
         }
     }
-    pub fn handle_current_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
+    pub fn execute_opcode(&mut self, opcode: Opcode) -> Result<OpcodeResult, VMError> {
         match opcode {
             Opcode::STOP => Ok(OpcodeResult::Halt),
             Opcode::ADD => self.op_add(),

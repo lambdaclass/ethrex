@@ -852,7 +852,7 @@ impl<'a> VM<'a> {
         }
 
         // Increment PC of the parent callframe after execution of the child.
-        self.current_call_frame_mut()?.increment_pc_by(1)?;
+        self.increment_pc_by(1)?;
 
         Ok(())
     }
