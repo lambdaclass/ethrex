@@ -23,7 +23,6 @@ interface IOnChainProposer {
     /// @dev Event emitted when a batch is verified.
     event BatchVerified(uint256 indexed lastVerifiedBatch);
 
-
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
     /// and to publish withdrawals if any.
