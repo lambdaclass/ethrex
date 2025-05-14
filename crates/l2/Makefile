@@ -54,7 +54,6 @@ ethrex_METRICS_OVERRIDES_L2_DOCKER_COMPOSE_PATH=$(ethrex_PATH)/crates/blockchain
 CI_ETHREX_WORKDIR := /usr/local/bin
 
 ethrex_L2_CONFIGS_PATH=$(shell pwd)/configs
-ethrex_L2_PROVER_CLIENT_CONFIG_FILE=prover_client_config.toml
 ethrex_L2_CONTRACTS_PATH=./contracts
 L1_RPC_URL=http://localhost:8545
 L1_PRIVATE_KEY=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
@@ -67,8 +66,6 @@ L1_AUTH_PORT=8551
 
 # Matches the ports used by the blockchain/metrics dir
 L2_PROMETHEUS_METRICS_PORT = 3702
-
-PROVER_ENV_FILE ?= ".env.prover" 
 
 # Local L1
 init-local-l1: ## 🚀 Initializes an L1 Lambda ethrex Client with Docker (Used with make init)
@@ -116,13 +113,15 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	cargo run --release --bin ethrex_l2_l1_deployer --manifest-path contracts/Cargo.toml -- \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--private-keys-file-path ../../test_data/private_keys_l1.txt \
-	--genesis-l1-path ../../test_data/genesis-l1-dev.json \
 	--contracts-path contracts \
 	--pico.verifier-address 0x00000000000000000000000000000000000000aa \
 	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
 	--sp1.verifier-address 0x00000000000000000000000000000000000000aa \
-	--deposit-rich
+	--on-chain-proposer-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--bridge-owner 0x03d0a0aee676cc45bf7032649e0871927c947c8e \
+	--deposit-rich \
+	--private-keys-file-path ../../test_data/private_keys_l1.txt \
+	--genesis-l1-path ../../test_data/genesis-l1-dev.json
 
 ## Same as deploy-l1 but does not do deposits for rich accounts since that doesn't make sense for deployments to devnets/testnets i.e Sepolia
 deploy-l1-testnet: ## 📜 Deploys the L1 contracts
@@ -137,8 +136,8 @@ update-system-contracts:
 # L2
 init-l2: init-metrics init-l2-no-metrics ## 🚀 Initializes an L2 Lambda ethrex Client with metrics
 
-DEFAULT_BRIDGE_ADDRESS=0x8ccf74999c496e4d27a2b02941673f41dd0dab2a
-DEFAULT_ON_CHAIN_PROPOSER_ADDRESS=0x9185452b7d40694572ca6623799223dd5ada60f7
+BRIDGE_ADDRESS=$$(grep ETHREX_WATCHER_BRIDGE_ADDRESS .env | cut -d= -f2)
+ON_CHAIN_PROPOSER_ADDRESS=$$(grep ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS .env | cut -d= -f2)
 
 init-l2-no-metrics: ## 🚀 Initializes an L2 Lambda ethrex Client
 	if [ -z "$$BASED" ]; then \
@@ -177,8 +176,6 @@ restart-l2: down-l2 rm-db-l2 init-l2 ## 🔄 Restarts the L2 Lambda ethrex Clien
 
 init-prover: ../../target/release/ethrex_prover ## 🚀 Initializes the Prover
 	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	PROVER_CLIENT_CONFIG_FILE=${ethrex_L2_PROVER_CLIENT_CONFIG_FILE} \
-	PROVER_ENV_FILE=${PROVER_ENV_FILE} \
 	../../target/release/ethrex_prover
 
 build-prover: ../../target/release/ethrex_prover
@@ -198,8 +195,6 @@ build-prover: ../../target/release/ethrex_prover
 	fi; \
 
 	CONFIGS_PATH=${ethrex_L2_CONFIGS_PATH} \
-	PROVER_CLIENT_CONFIG_FILE=${ethrex_L2_PROVER_CLIENT_CONFIG_FILE} \
-	PROVER_ENV_FILE=${PROVER_ENV_FILE} \
 	RUSTFLAGS='-C target-cpu=native' \
 	cargo build --release --features "$$PROVER$$GPU,l2" \
 	--manifest-path ./prover/Cargo.toml  \
@@ -234,7 +229,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME_MS=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME_MS} \
 	ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER=${ETHREX_DEPLOYER_PICO_DEPLOY_VERIFIER} \
 	docker compose -f ${ethrex_L2_DOCKER_COMPOSE_PATH} up --detach --build
-	
+
 	RUST_LOG=info,ethrex_prover_lib=debug SP1_PROVER=cuda make init-prover & \
 	cargo test l2 --release -- --nocapture --test-threads=1
 	killall ethrex_prover -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
@@ -249,7 +244,7 @@ state-diff-test:
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml down
 	CI_ETHREX_WORKDIR=${CI_ETHREX_WORKDIR} \
 	docker compose -f docker-compose-l2.yaml -f docker-compose-l2-store.overrides.yaml up --detach
-	
+
 	cargo test state_reconstruct --release
 
 # Purge L2's state

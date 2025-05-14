@@ -175,7 +175,7 @@ pub async fn withdraw(
                 // Also we have some mismatches at the end of the L2 integration test.
                 max_fee_per_gas: Some(800000000),
                 max_priority_fee_per_gas: Some(800000000),
-                gas_limit: Some(21000 * 2),
+                gas_limit: Some(21000 * 66),
                 ..Default::default()
             },
         )
@@ -303,6 +303,26 @@ pub fn compile_contract(
     if !Command::new("solc")
         .arg(bin_flag)
         .arg(
+            "@openzeppelin/contracts=".to_string()
+                + general_contracts_path
+                    .join("lib")
+                    .join("openzeppelin-contracts-upgradeable")
+                    .join("lib")
+                    .join("openzeppelin-contracts")
+                    .join("contracts")
+                    .to_str()
+                    .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+        )
+        .arg(
+            "@openzeppelin/contracts-upgradeable=".to_string()
+                + general_contracts_path
+                    .join("lib")
+                    .join("openzeppelin-contracts-upgradeable")
+                    .join("contracts")
+                    .to_str()
+                    .ok_or(ContractCompilationError::FailedToGetStringFromPath)?,
+        )
+        .arg(
             general_contracts_path
                 .join(contract_path)
                 .to_str()
@@ -347,6 +367,13 @@ const DETERMINISTIC_CREATE2_ADDRESS: Address = H160([
     0xc0, 0xb4, 0x95, 0x6c,
 ]);
 
+pub struct ProxyDeployment {
+    pub proxy_address: Address,
+    pub proxy_tx_hash: H256,
+    pub implementation_address: Address,
+    pub implementation_tx_hash: H256,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DeployError {
     #[error("Failed to decode init code: {0}")]
@@ -369,6 +396,68 @@ pub async fn deploy_contract(
     let (deploy_tx_hash, contract_address) =
         create2_deploy(salt, &init_code, deployer_private_key, eth_client).await?;
     Ok((deploy_tx_hash, contract_address))
+}
+
+async fn deploy_proxy(
+    deployer_private_key: SecretKey,
+    eth_client: &EthClient,
+    contract_binaries: &Path,
+    implementation_address: Address,
+    salt: &[u8],
+) -> Result<(H256, Address), DeployError> {
+    let mut init_code = hex::decode(
+        std::fs::read_to_string(contract_binaries.join("ERC1967Proxy.bin"))
+            .map_err(DeployError::FailedToReadInitCode)?,
+    )
+    .map_err(DeployError::FailedToDecodeBytecode)?;
+
+    init_code.extend(H256::from(implementation_address).0);
+    init_code.extend(H256::from_low_u64_be(0x40).0);
+    init_code.extend(H256::zero().0);
+
+    let (deploy_tx_hash, proxy_address) = create2_deploy(
+        salt,
+        &Bytes::from(init_code),
+        &deployer_private_key,
+        eth_client,
+    )
+    .await
+    .map_err(DeployError::from)?;
+
+    Ok((deploy_tx_hash, proxy_address))
+}
+
+pub async fn deploy_with_proxy(
+    deployer_private_key: SecretKey,
+    eth_client: &EthClient,
+    contract_binaries: &Path,
+    contract_name: &str,
+    salt: &[u8],
+) -> Result<ProxyDeployment, DeployError> {
+    let (implementation_tx_hash, implementation_address) = deploy_contract(
+        &[],
+        &contract_binaries.join(contract_name),
+        &deployer_private_key,
+        salt,
+        eth_client,
+    )
+    .await?;
+
+    let (proxy_tx_hash, proxy_address) = deploy_proxy(
+        deployer_private_key,
+        eth_client,
+        contract_binaries,
+        implementation_address,
+        salt,
+    )
+    .await?;
+
+    Ok(ProxyDeployment {
+        proxy_address,
+        proxy_tx_hash,
+        implementation_address,
+        implementation_tx_hash,
+    })
 }
 
 async fn create2_deploy(
