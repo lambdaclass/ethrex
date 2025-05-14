@@ -9,7 +9,6 @@ use ethrex_rpc::clients::eth::{
     errors::EthClientError, eth_sender::Overrides, EthClient, WrappedTransaction,
 };
 use ethrex_rpc::types::receipt::RpcReceipt;
-use tracing::info;
 
 use keccak_hash::keccak;
 use secp256k1::SecretKey;
@@ -394,19 +393,8 @@ pub async fn deploy_contract(
 ) -> Result<(H256, Address), DeployError> {
     let bytecode = hex::decode(read_to_string(contract_path)?)?;
     let init_code = [&bytecode, constructor_args].concat();
-    let (deploy_tx_hash, contract_address, receipt) =
+    let (deploy_tx_hash, contract_address) =
         create2_deploy(salt, &init_code, deployer_private_key, eth_client).await?;
-
-    let gas_used = U256::from(receipt.tx_info.gas_used);
-
-    info!(
-        target: "ethrex_l2_sdk",
-        contract_path = %contract_path.display(),
-        tx_hash = %format!("{deploy_tx_hash:#x}"),
-        gas_used = %gas_used,
-        "Contract deployed"
-    );
-
     Ok((deploy_tx_hash, contract_address))
 }
 
@@ -427,7 +415,7 @@ async fn deploy_proxy(
     init_code.extend(H256::from_low_u64_be(0x40).0);
     init_code.extend(H256::zero().0);
 
-    let (deploy_tx_hash, proxy_address, _receipt_for_proxy) = create2_deploy(
+    let (deploy_tx_hash, proxy_address) = create2_deploy(
         salt,
         &Bytes::from(init_code),
         &deployer_private_key,
@@ -477,7 +465,7 @@ async fn create2_deploy(
     init_code: &[u8],
     deployer_private_key: &SecretKey,
     eth_client: &EthClient,
-) -> Result<(H256, Address, RpcReceipt), EthClientError> {
+) -> Result<(H256, Address), EthClientError> {
     let calldata = [salt, init_code].concat();
     let gas_price = eth_client
         .get_gas_price_with_extra(20)
@@ -510,11 +498,11 @@ async fn create2_deploy(
         .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, deployer_private_key)
         .await?;
 
-    let receipt = wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
+    wait_for_transaction_receipt(deploy_tx_hash, eth_client, 10).await?;
 
     let deployed_address = create2_address(salt, keccak(init_code));
 
-    Ok((deploy_tx_hash, deployed_address, receipt))
+    Ok((deploy_tx_hash, deployed_address))
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -571,18 +559,6 @@ pub async fn initialize_contract(
     let initialize_tx_hash = eth_client
         .send_tx_bump_gas_exponential_backoff(&mut wrapped_tx, initializer_private_key)
         .await?;
-
-    let receipt = wait_for_transaction_receipt(initialize_tx_hash, eth_client, 10).await?;
-
-    let gas_used = U256::from(receipt.tx_info.gas_used);
-
-    info!(
-        target: "ethrex_l2_sdk",
-        contract_address = %format!("{contract_address:#x}"),
-        tx_hash = %format!("{initialize_tx_hash:#x}"),
-        gas_used = %gas_used,
-        "Contract initialized"
-    );
 
     Ok(initialize_tx_hash)
 }
