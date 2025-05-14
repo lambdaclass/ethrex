@@ -151,7 +151,7 @@ pub async fn init_rpc_api(
         blockchain,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
         local_p2p_node,
-        local_node_record.lock().await.clone(),
+        local_node_record,
         syncer,
         get_client_version(),
         #[cfg(feature = "based")]
