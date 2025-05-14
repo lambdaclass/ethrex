@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747258222962,
+  "lastUpdate": 1747260915641,
   "repoUrl": "https://github.com/lambdaclass/ethrex",
   "entries": {
     "Benchmark": [
@@ -7075,6 +7075,36 @@ window.BENCHMARK_DATA = {
             "name": "Block import/Block import ERC20 transfers",
             "value": 215871106532,
             "range": "± 673861273",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "44068466+SDartayet@users.noreply.github.com",
+            "name": "SDartayet",
+            "username": "SDartayet"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b47623fdc8865f8e6f83857fccee1d74f145e03e",
+          "message": "docs(levm): update levm readme (#2712)\n\n**Motivation**\n\nKeeping docs updated.\n\n**Description**\n\nThe README was severely out of date, specially the roadmap. This updates\nit to line up with the current project state and goals.\n\nCloses #2704\n\n---------\n\nCo-authored-by: Jeremías Salomón <48994069+JereSalo@users.noreply.github.com>\nCo-authored-by: Martin Paulucci <martin.c.paulucci@gmail.com>",
+          "timestamp": "2025-05-14T21:21:08Z",
+          "tree_id": "48e8dd7ddc3cfc5cd0de6bda26c06bd70643bd90",
+          "url": "https://github.com/lambdaclass/ethrex/commit/b47623fdc8865f8e6f83857fccee1d74f145e03e"
+        },
+        "date": 1747260913598,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "Block import/Block import ERC20 transfers",
+            "value": 213977625223,
+            "range": "± 486410635",
             "unit": "ns/iter"
           }
         ]
