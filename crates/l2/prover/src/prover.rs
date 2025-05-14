@@ -35,6 +35,7 @@ impl Prover {
     }
 
     pub async fn start(&self) {
+        info!("Prover started on {}", self.prover_server_endpoint);
         // Build the prover depending on the prover_type passed as argument.
         loop {
             match self.request_new_input().await {
