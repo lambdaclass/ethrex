@@ -3530,7 +3530,6 @@ dependencies = [
  "lazy_static",
  "secp256k1",
  "serde_json",
- "spinoff",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
